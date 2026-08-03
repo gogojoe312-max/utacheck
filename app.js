@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "2026-08-03-43";
+const APP_VER = "2026-08-03-46";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -74,7 +74,7 @@ let S = {
   groups: [], groupId: "",
   src: "", key: "", keyInLink: true,
   memos: {}, recs: {}, kbps: 128, preroll: 5, viewer: false, srcGroup: "",
-  draws: {},
+  draws: {}, showFilter: "",
   size: 19,
 };
 let U = { view: "live", songIdx: 0, sheet: null, mode: "member", allShows: false, picker: false, overview: false, ovSize: 9, draw: false, erase: false, pick: [], menu: null, busy: "", incoming: null, allShowList: false };
@@ -134,6 +134,15 @@ function todayLabel() {
 const VIEW = () => !!S.viewer && !S.groups.some((g) => g.gistId);
 const group = (id) => S.groups.find((g) => g.id === (id || S.groupId)) || S.groups[0] || {};
 const groupOfSong = (sid) => (S.songs.find((x) => x.id === sid) || {}).groupId;
+// 選んだグループの曲がある公演だけを出す（曲がまだ無い公演と、今開いている公演は常に出す）
+function showsFor() {
+  const gid = S.showFilter;
+  const all = showsNewestFirst();
+  if (!gid || !S.groups.some((g) => g.id === gid)) return all;
+  return all.filter((sw) => sw.id === S.showId
+    || !S.songs.some((x) => x.showId === sw.id)
+    || S.songs.some((x) => x.showId === sw.id && x.groupId === gid));
+}
 const showsNewestFirst = () => S.shows.slice().sort((a, b) => (b.ts || 0) - (a.ts || 0));
 const showName = (id) => (S.shows.find((x) => x.id === (id || S.showId)) || {}).name || "";
 const NOTES = () => S.notes.concat(S.pubNotes);
@@ -961,7 +970,12 @@ function renderSheet() {
   }
 
   if (U.picker) {
-    const shows = showsNewestFirst().map((sw) => `<button class="chip sm" data-act="jumpshow" data-id="${sw.id}"
+    const gfil = S.groups.length > 1 ? `<div class="chips" style="margin-bottom:8px">
+        <button class="chip sm" data-act="showfilter" data-id="" style="${!S.showFilter ? "background:var(--accent);color:#0A0A0A" : ""}">すべて</button>
+        ${S.groups.map((g) => `<button class="chip sm" data-act="showfilter" data-id="${g.id}"
+          style="${S.showFilter === g.id ? "background:var(--accent);color:#0A0A0A" : ""}">${h(g.name)}</button>`).join("")}
+      </div>` : "";
+    const shows = showsFor().map((sw) => `<button class="chip sm" data-act="jumpshow" data-id="${sw.id}"
         style="${sw.id === S.showId ? "background:var(--accent);color:#0A0A0A" : ""}">${h(sw.name)}</button>`).join("");
     const list = SONGS().map((x, i) => {
       const gn = (S.groups.find((g) => g.id === x.groupId) || {}).name || "";
@@ -976,7 +990,7 @@ function renderSheet() {
     overlay.innerHTML = `<button class="sp" data-act="close"></button><div class="sheet">
       <div class="row" style="margin-bottom:12px"><span class="grow" style="font-size:11px;color:var(--dim)">公演と曲を選ぶ</span>
       <button data-act="cancel" style="width:36px;height:36px;border-radius:10px;background:var(--panel2);font-size:17px">✕</button></div>
-      <div class="sec"><h4>公演</h4><div class="chips">${shows}</div>
+      <div class="sec"><h4>公演</h4>${gfil}<div class="chips">${shows}</div>
         ${VIEW() ? "" : `<button class="ghost" data-act="dupshow" style="margin-top:8px">今のセットリストを複製して新しい公演にする</button>`}
 
       </div>
@@ -1236,7 +1250,7 @@ function viewPrint() {
 /* ---- setup ---- */
 function viewSetup() {
   if (VIEW()) {
-    const list = showsNewestFirst().map((sw) => `<div class="row card" style="margin-bottom:8px;padding:12px;${sw.id === S.showId ? "outline:1px solid var(--accent)" : ""}">
+    const list = showsFor().map((sw) => `<div class="row card" style="margin-bottom:8px;padding:12px;${sw.id === S.showId ? "outline:1px solid var(--accent)" : ""}">
       <button class="grow" style="text-align:left" data-act="useshow" data-id="${sw.id}">
         <div class="trunc" style="${sw.id === S.showId ? "color:var(--accent)" : ""}">${h(sw.name)}</div>
         <div style="font-size:11px;color:var(--dim)">${S.songs.filter((x) => x.showId === sw.id).length}曲 ・ ${NOTES().filter((n) => n.showId === sw.id).length}件</div>
@@ -1248,7 +1262,7 @@ function viewSetup() {
     <div class="scroll pad"><div style="height:6px"></div>${list}<div style="height:40px"></div></div>`;
   }
 
-  const allShows = showsNewestFirst();
+  const allShows = showsFor();
   const shownShows = U.allShowList ? allShows : allShows.slice(0, 6);
   const shows = shownShows.map((sw) => `<div class="row card" style="margin-bottom:8px;padding:10px 12px;${sw.id === S.showId ? "outline:1px solid var(--accent)" : ""}">
       <button class="grow" style="text-align:left" data-act="useshow" data-id="${sw.id}">
@@ -1288,6 +1302,11 @@ function viewSetup() {
              : `<span style="font-size:11px;color:var(--dim)">${APP_VER}</span>`}</div>
   <div class="scroll pad">
     <h4 class="head">公演</h4>
+    ${S.groups.length > 1 ? `<div class="chips" style="margin-bottom:10px">
+      <button class="chip sm" data-act="showfilter" data-id="" style="${!S.showFilter ? "background:var(--accent);color:#0A0A0A" : ""}">すべて</button>
+      ${S.groups.map((g) => `<button class="chip sm" data-act="showfilter" data-id="${g.id}"
+        style="${S.showFilter === g.id ? "background:var(--accent);color:#0A0A0A" : ""}">${h(g.name)}</button>`).join("")}
+    </div>` : ""}
     ${shows}
     ${allShows.length > 6 ? `<button class="ghost" data-act="allshowlist" style="margin-bottom:10px">${U.allShowList ? "最近の6公演だけ表示" : `すべて表示（全${allShows.length}公演）`}</button>` : ""}
     <div class="row" style="margin-bottom:22px">
@@ -1604,6 +1623,21 @@ document.addEventListener("click", (e) => {
     }
     case "autopub": S.autoPub = !S.autoPub; save(); render(); break;
     case "connectlink": connectLink(id); break;
+    case "showfilter": {
+      S.showFilter = id;
+      // 絞り込みの対象外の公演を開いていたら、対象の中で一番新しいものに移る
+      if (id) {
+        const ok = (sw) => !S.songs.some((x) => x.showId === sw.id)
+          || S.songs.some((x) => x.showId === sw.id && x.groupId === id);
+        const cur2 = S.shows.find((x) => x.id === S.showId);
+        if (cur2 && !ok(cur2)) {
+          const next = showsNewestFirst().find(ok);
+          if (next) { S.showId = next.id; U.songIdx = 0; }
+        }
+      }
+      save(); render(); if (U.picker) renderSheet();
+      break;
+    }
     case "allshowlist": U.allShowList = !U.allShowList; render(); break;
     case "usegroup": S.groupId = id; save(); render(); break;
     case "renamegroup": {
@@ -1654,6 +1688,21 @@ document.addEventListener("click", (e) => {
     }
     case "autopub": S.autoPub = !S.autoPub; save(); render(); break;
     case "connectlink": connectLink(id); break;
+    case "showfilter": {
+      S.showFilter = id;
+      // 絞り込みの対象外の公演を開いていたら、対象の中で一番新しいものに移る
+      if (id) {
+        const ok = (sw) => !S.songs.some((x) => x.showId === sw.id)
+          || S.songs.some((x) => x.showId === sw.id && x.groupId === id);
+        const cur2 = S.shows.find((x) => x.id === S.showId);
+        if (cur2 && !ok(cur2)) {
+          const next = showsNewestFirst().find(ok);
+          if (next) { S.showId = next.id; U.songIdx = 0; }
+        }
+      }
+      save(); render(); if (U.picker) renderSheet();
+      break;
+    }
     case "allshowlist": U.allShowList = !U.allShowList; render(); break;
     case "usegroup": S.groupId = id; save(); render(); break;
     case "renamegroup": {
@@ -2090,35 +2139,57 @@ async function wrap(obj, g) {
 /* ---- GitHub Gist：グループごとに配信する ---- */
 function publicationData(gid) {
   const g = group(gid);
-  // 直近5公演ぶんだけ配る（際限なく増えないように）
-  const recent = showsNewestFirst().slice(0, 5).map((x) => x.id);
-  const songs = S.songs.filter((x) => x.groupId === g.id && recent.includes(x.showId));
-  const idx = new Map(songs.map((x, i) => [x.id, i]));
-  const used = [];
-  songs.forEach((x) => x.lines.forEach((l) => (l.parts || []).forEach((pid) => {
-    const nm = (member(pid) || {}).name;
-    if (nm && !used.includes(nm)) used.push(nm);
-  })));
-  return {
-    version: Date.now(), authorId: S.deviceId, src: g.src || "", groupName: g.name || "",
-    members: used.map((n) => ({ name: n })),
-    songs: songs.map((x) => ({
-      title: x.title, credit: x.credit, showId: x.showId, take: x.take || 1,
-      fromIdx: x.from != null ? idx.get(x.from) : null, groups: {}, order: used,
-      lines: x.lines.map((l) => (l.gap ? ["", ""] : [l.cont ? "→" : l.label, l.t])),
-    })),
-    shows: S.shows.filter((x) => recent.includes(x.id)),
-    notes: S.notes.filter((n) => idx.has(n.songId)).map((n) => ({
-      songIdx: idx.get(n.songId), lineIdx: n.lineIdx,
-      memberNames: n.memberIds.map((mid) => (member(mid) || {}).name).filter(Boolean),
-      tags: n.tags, memo: n.memo, pitch: n.pitch || null, lineEnd: n.lineEnd || null,
-      from: n.from, to: n.to, showId: n.showId,
-    })),
-    memos: Object.entries(S.memos || {}).map(([k, v]) => {
-      const [sid, sgid] = k.split("|");
-      return idx.has(sgid) ? { showId: sid, songIdx: idx.get(sgid), text: v } : null;
-    }).filter((x) => x && x.text),
+  // 同じ歌詞を公演の数だけ送ると際限なく膨らむので、歌詞は1曲ぶんだけ持ち、
+  // 各公演はそれを指す形にする。これで全公演をずっと残せる。
+  const build = (showIds) => {
+    const songs = S.songs.filter((x) => x.groupId === g.id && showIds.includes(x.showId));
+    const idx = new Map(songs.map((x, i) => [x.id, i]));
+    const lib = [], libKey = new Map();
+    const used = [];
+    songs.forEach((x) => x.lines.forEach((l) => (l.parts || []).forEach((pid) => {
+      const nm = (member(pid) || {}).name;
+      if (nm && !used.includes(nm)) used.push(nm);
+    })));
+    const entry = (x) => {
+      const lines = x.lines.map((l) => (l.gap ? ["", ""] : [l.cont ? "→" : l.label, l.t]));
+      const key = x.title + "\u0001" + JSON.stringify(lines);
+      if (libKey.has(key)) return libKey.get(key);
+      lib.push({ title: x.title, credit: x.credit, groups: {}, order: used, lines });
+      libKey.set(key, lib.length - 1);
+      return lib.length - 1;
+    };
+    return {
+      version: Date.now(), authorId: S.deviceId, src: g.src || "", groupName: g.name || "",
+      members: used.map((n) => ({ name: n })),
+      lib,
+      songs: songs.map((x) => ({
+        showId: x.showId, libIdx: entry(x), take: x.take || 1,
+        fromIdx: x.from != null && idx.has(x.from) ? idx.get(x.from) : null,
+      })),
+      shows: S.shows.filter((x) => showIds.includes(x.id)),
+      notes: S.notes.filter((n) => idx.has(n.songId)).map((n) => ({
+        songIdx: idx.get(n.songId), lineIdx: n.lineIdx,
+        memberNames: n.memberIds.map((mid) => (member(mid) || {}).name).filter(Boolean),
+        tags: n.tags, memo: n.memo, pitch: n.pitch || null, lineEnd: n.lineEnd || null,
+        from: n.from, to: n.to, showId: n.showId, at: n.at != null ? n.at : null,
+      })),
+      memos: Object.entries(S.memos || {}).map(([k, v]) => {
+        const [sid, sgid] = k.split("|");
+        return idx.has(sgid) ? { showId: sid, songIdx: idx.get(sgid), text: v } : null;
+      }).filter((x) => x && x.text),
+    };
   };
+
+  // このグループの曲がある公演を、新しい順に全部。大きすぎる時だけ古い方から落とす。
+  let ids = showsNewestFirst()
+    .filter((sw) => S.songs.some((x) => x.showId === sw.id && x.groupId === g.id))
+    .map((x) => x.id);
+  let d = build(ids);
+  while (ids.length > 1 && JSON.stringify(d).length > 700000) {
+    ids = ids.slice(0, -1);
+    d = build(ids);
+  }
+  return d;
 }
 
 async function gh(path, opts) {
@@ -2299,8 +2370,10 @@ function applySetlist(d) {
   S.songs = [];
   (d.members || []).forEach((x) => addMember(x.name));
   const added = [];
+  const lib = Array.isArray(d.lib) ? d.lib : null;
   (d.songs || []).forEach((sg) => {
-    const o = Object.assign(buildSong(sg), { groupId: S.groupId, showId: sg.showId || S.showId, take: sg.take || 1 });
+    const src = lib ? (lib[sg.libIdx] || { lines: [] }) : sg;
+    const o = Object.assign(buildSong(src), { groupId: S.groupId, showId: sg.showId || S.showId, take: sg.take || 1 });
     S.songs.push(o); added.push(o);
   });
   (d.songs || []).forEach((sg, i) => { if (sg.fromIdx != null && added[sg.fromIdx]) added[i].from = added[sg.fromIdx].id; });
