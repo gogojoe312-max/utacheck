@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "2026-08-03-61";
+const APP_VER = "2026-08-03-62";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -882,7 +882,7 @@ function viewLive() {
     ${s && !VIEW() ? `<div class="pull" id="pull">
       <div class="pullbar"><i id="pullfill"></i></div>
       <div class="pulltx" id="pulltx">引き上げて テイク${nextTake(s)} を作る</div>
-    </div>` : `<div style="height:24px"></div>`}</div>
+    </div>` : `<div style="height:120px"></div>`}</div>
   ${U.draw && !VIEW() ? `<div class="aubar">
     <button data-act="pen" class="aub" style="${U.erase ? "" : "background:var(--bad);color:#0A0A0A"}">✎</button>
     <button data-act="eraser" class="aub" style="${U.erase ? "background:var(--accent);color:#0A0A0A" : ""}">消</button>
@@ -1160,10 +1160,7 @@ function viewSummary() {
       style="${U.allShows ? "background:var(--accent);color:#0A0A0A" : ""}">全公演をまとめる</button>
     <span class="grow"></span>
   </div>
-  <div class="scroll pad">${body}
-    ${S.notes.some((n) => n.showId === S.showId) ? `<button class="ghost" data-act="clearshow"
-      style="color:var(--bad);margin:10px 0 30px">この公演の記録をすべて消す（${S.notes.filter((n) => n.showId === S.showId).length}件）</button>` : ""}
-    <div style="height:40px"></div></div>`;
+  <div class="scroll pad">${body}<div style="height:40px"></div></div>`;
 }
 
 /* ---- 前回との差 ---- */
@@ -1715,15 +1712,6 @@ document.addEventListener("click", (e) => {
     case "delnote": pushUndo(); delClip(id); S.notes = S.notes.filter((n) => n.id !== id); save(); schedulePush(); commitFields(); render(); break;
     case "mode": U.mode = id; render(); break;
     case "allshows": U.allShows = !U.allShows; render(); break;
-    case "clearshow": {
-      const n = S.notes.filter((x) => x.showId === S.showId).length;
-      if (n && confirm(`${showName()} の記録 ${n}件 をすべて消しますか？\n取り消しは「取消」ボタンでできます。`)) {
-        pushUndo();
-        S.notes = S.notes.filter((x) => x.showId !== S.showId);
-        save(); schedulePush(); render();
-      }
-      break;
-    }
 
     case "opensong": commitFields(); U.songIdx = i; U.view = "live"; render(); break;
     case "up": case "down": {
