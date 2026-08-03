@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "2026-08-03-46";
+const APP_VER = "2026-08-03-48";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -77,7 +77,7 @@ let S = {
   draws: {}, showFilter: "",
   size: 19,
 };
-let U = { view: "live", songIdx: 0, sheet: null, mode: "member", allShows: false, picker: false, overview: false, ovSize: 9, draw: false, erase: false, pick: [], menu: null, busy: "", incoming: null, allShowList: false };
+let U = { view: "live", songIdx: 0, sheet: null, mode: "member", allShows: false, picker: false, overview: false, ovSize: 9, draw: false, erase: false, pick: [], menu: null, busy: "", allShowList: false };
 
 function load() {
   try {
@@ -850,13 +850,7 @@ function viewLive() {
     <button class="ic" data-act="size">A</button>
   </div>
   ${saveErr ? `<div class="banner">保存できませんでした。端末の空き容量を確認してください。</div>` : ""}
-  ${U.incoming ? `<div class="banner" style="background:var(--accent)">
-      <span>${U.incoming.notes && U.incoming.notes.length
-        ? `チェック済みのセットリスト（${U.incoming.songs.length}曲・${U.incoming.notes.length}件の指摘）が届いています`
-        : `新しいセットリスト（${U.incoming.songs.length}曲）が届いています`}</span>
-      <button data-act="takeincoming" style="font-weight:700;text-decoration:underline;margin-left:10px">入れ替える</button>
-      <button data-act="dropincoming" style="margin-left:10px;opacity:.7">あとで</button>
-    </div>` : ""}
+
   <div class="scroll" style="position:relative">
     <canvas id="ink" class="ink" style="pointer-events:${U.draw && !VIEW() ? "auto" : "none"};touch-action:${U.draw ? "none" : "auto"}"></canvas>
     ${body}
@@ -1666,8 +1660,6 @@ document.addEventListener("click", (e) => {
       if (el) { S.src = el.value.trim(); S.setlistVer = 0; save(); syncSetlist(true); }
       break;
     }
-    case "takeincoming": applySetlist(U.incoming); break;
-    case "dropincoming": U.incoming = null; render(); break;
     case "ghstart": gistStart(id); break;
     case "ghpush": doPush("force"); break;
     case "ghverify": verifyToken(); break;
@@ -1731,8 +1723,6 @@ document.addEventListener("click", (e) => {
       if (el) { S.src = el.value.trim(); S.setlistVer = 0; save(); syncSetlist(true); }
       break;
     }
-    case "takeincoming": applySetlist(U.incoming); break;
-    case "dropincoming": U.incoming = null; render(); break;
     case "refresh":
       commitFields(); save();
       (async () => {
@@ -2362,7 +2352,7 @@ function resetForNewSource() {
   S.songs = []; S.notes = []; S.pubNotes = []; S.memos = {}; S.recs = {};
   const nid = uid();
   S.shows = [{ id: nid, name: todayLabel(), ts: Date.now() }];
-  S.showId = nid; S.setlistVer = 0; U.songIdx = 0; U.incoming = null;
+  S.showId = nid; S.setlistVer = 0; U.songIdx = 0;
 }
 
 function applySetlist(d) {
@@ -2383,27 +2373,36 @@ function applySetlist(d) {
 
   const mine = d.authorId && d.authorId === S.deviceId;
   if (!mine && !S.groups.some((g) => g.gistId)) S.viewer = true;
-  if (!mine && Array.isArray(d.notes) && d.notes.length) {
-    S.pubNotes = d.notes.map((n) => {
+
+  if (mine) {
+    S.pubNotes = [];
+  } else {
+    // 受け取り側は、届いた内容だけにする。公演も届いたものに置き換える。
+    S.pubNotes = (d.notes || []).map((n) => {
       const so = S.songs[n.songIdx];
       if (!so) return null;
       const ids = (n.memberNames || []).map((nm) => addMember(nm).id);
       return Object.assign({}, n, { id: "p" + uid(), songId: so.id, memberIds: ids, ro: true });
     }).filter(Boolean);
+
+    S.memos = {};
     (d.memos || []).forEach((m) => {
       const so = S.songs[m.songIdx];
       if (so) S.memos[m.showId + "|" + so.id] = m.text;
     });
-    if (Array.isArray(d.shows) && d.shows.length) {
-      const own = S.shows.filter((x) => S.notes.some((n) => n.showId === x.id));
-      S.shows = d.shows.concat(own.filter((o) => !d.shows.some((x) => x.id === o.id)));
-      const newest = showsNewestFirst()[0];
-      if (newest) S.showId = newest.id;
+
+    if (Array.isArray(d.shows)) S.shows = d.shows.slice();
+    // 曲も記録も無い公演は、そのグループに関係が無いので残さない
+    S.shows = S.shows.filter((sw) =>
+      S.songs.some((x) => x.showId === sw.id) || NOTES().some((n) => n.showId === sw.id));
+    if (!S.shows.length) {
+      const nid = uid();
+      S.shows = [{ id: nid, name: todayLabel(), ts: Date.now() }];
     }
-  } else {
-    S.pubNotes = [];
+    const newest = showsNewestFirst()[0];
+    if (newest) S.showId = newest.id;
   }
-  U.songIdx = 0; U.incoming = null;
+  U.songIdx = 0;
   save(); render();
 }
 
@@ -2426,7 +2425,8 @@ async function syncSetlist(manual) {
   if (d.groupName && S.srcGroup && d.groupName !== S.srcGroup) {
     resetForNewSource(); applySetlist(d); return;
   }
-  if (manual || (d.version && d.version !== S.setlistVer)) { U.incoming = d; render(); }
+  // 受け取り側では確認を出さず、そのまま最新に入れ替える
+  if (manual || (d.version && d.version !== S.setlistVer)) applySetlist(d);
 }
 
 /* ---- 共有リンク：セットリストをURLに入れて渡す ---- */
