@@ -48,11 +48,10 @@ button{cursor:pointer}
 
 /* lyric rows */
 .ln{display:flex;align-items:stretch;gap:8px;padding:7px 10px}
-.ln.hit{background:color-mix(in srgb,var(--accent) 7%,transparent)}
 .lbl{flex:0 0 80px;text-align:right;font-size:11px;color:var(--dim);padding-top:5px;line-height:1.25;word-break:break-word}
 .txt{flex:1;min-width:0;padding-left:4px;touch-action:pan-y;line-height:1.55}
 .txt span{border-bottom:2px solid transparent;padding-bottom:1px;border-radius:2px}
-.mk{display:inline-block;font-size:.62em;font-weight:700;color:#0A0A0A;border-radius:4px;
+.mk{display:inline-block;border:none;font-family:inherit;font-size:.62em;font-weight:700;color:#0A0A0A;border-radius:4px;
     padding:1px 5px;margin:0 2px 0 4px;vertical-align:middle;letter-spacing:.02em;white-space:nowrap}
 .gap{height:16px}
 .ink{position:absolute;left:0;top:0;z-index:5}
@@ -134,15 +133,9 @@ button{cursor:pointer}
 .banner{flex:0 0 auto;padding:9px 14px;font-size:12px;background:var(--bad);color:#0A0A0A;display:flex;align-items:center;flex-wrap:wrap}
 .note{font-size:12px;color:var(--dim);line-height:1.7}
 .head{font-size:11px;color:var(--dim);font-weight:400;margin:18px 0 8px;letter-spacing:.08em}
-.dot{width:9px;height:9px;border-radius:999px;flex:0 0 auto}
-table.prev{width:100%;font-size:13px;border-collapse:collapse}
-table.prev td{padding:5px 4px;border-bottom:1px solid var(--line);vertical-align:top}
-table.prev td.l{width:96px;text-align:right;color:var(--dim);font-size:11px}
-table.prev input{width:100%;background:none;font-size:13px}
-table.prev input.li{font-size:11px;text-align:right;color:var(--dim)}
 
 /* 紙・PDF用 */
-.pr{background:#fff;color:#111;padding:0;width:688px}
+.pr{background:#fff;color:#111;padding:0;width:688px;margin:0 auto}
 
 
 
@@ -159,11 +152,11 @@ table.prev input.li{font-size:11px;text-align:right;color:var(--dim)}
 .prm{margin-top:10px;padding:7px 9px;border:1px solid #999;border-radius:4px;font-size:1em;white-space:pre-wrap;break-inside:avoid}
 @media print{
   html,body{height:auto;overflow:visible;background:#fff}
-  .pr{transform:none!important;margin-bottom:0!important;width:auto!important}
+  .pr{transform:none!important;margin-bottom:0!important;width:688px!important;margin:0!important}
   #app{height:auto;display:block;overflow:visible}
   .noprint,.bottom,.hd{display:none!important}
   .scroll{overflow:visible!important;flex:none}
-  .pr{padding:0}
+
   @page{margin:14mm}
 }
 </style>

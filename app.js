@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "2026-08-03-53";
+const APP_VER = "2026-08-03-58";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -55,11 +55,6 @@ const SWIPES = [
   { id: "lyric",  up: "flip",   dn: "nuke",   lf: "mic" },
   { id: "good" },
 ];
-const TAGCATS = TAGS.reduce((a, t) => {
-  if (!a.length || a[a.length - 1].c !== t.c) a.push({ c: t.c, items: [] });
-  a[a.length - 1].items.push(t);
-  return a;
-}, []);
 // 以前つけた記録が生IDで出ないように
 const LEGACY = { breath: "ブレス", volume: "声量", tone: "声色" };
 const tagName = (id) => (TAGS.find((t) => t.id === id) || {}).l || LEGACY[id] || id;
@@ -69,12 +64,12 @@ let S = {
   members: [], songs: [], notes: [],
   shows: [], showId: "",
   src: "", setlistVer: 0,
-  deviceId: "", pubNotes: [], pubBy: "",
+  deviceId: "", pubNotes: [],
   ghToken: "", autoPub: true,
   groups: [], groupId: "",
   src: "", key: "", keyInLink: true,
   memos: {}, recs: {}, kbps: 128, preroll: 5, viewer: false, srcGroup: "",
-  draws: {}, showFilter: "",
+  draws: {}, showFilter: "", folders: {},
   size: 19,
 };
 let U = { view: "live", songIdx: 0, sheet: null, mode: "member", allShows: false, picker: false, overview: false, ovSize: 9, draw: false, erase: false, pick: [], menu: null, printPick: null, busy: "", allShowList: false };
@@ -95,6 +90,7 @@ function load() {
   if (!S.memos) S.memos = {};
   if (!S.recs) S.recs = {};
   if (!S.draws) S.draws = {};
+  if (!S.folders) S.folders = {};
   S.kbps = 128;
   if (S.preroll == null || S.preroll > 10) S.preroll = 5;
   // 旧データの引き継ぎ：グループが無ければ1つ作り、既存の曲と配信設定を移す
@@ -133,8 +129,21 @@ function todayLabel() {
 // 接続リンクから開いた端末は閲覧専用。配信元（Gistを持つ端末）は編集できる。
 const VIEW = () => !!S.viewer && !S.groups.some((g) => g.gistId);
 const group = (id) => S.groups.find((g) => g.id === (id || S.groupId)) || S.groups[0] || {};
-const groupOfSong = (sid) => (S.songs.find((x) => x.id === sid) || {}).groupId;
 // 選んだグループの曲がある公演だけを出す（曲がまだ無い公演と、今開いている公演は常に出す）
+const folderOf = (sw) => (sw && sw.folder) ? sw.folder : "";
+function groupShows(list) {
+  const map = new Map();
+  list.forEach((sw) => {
+    const k = folderOf(sw);
+    if (!map.has(k)) map.set(k, []);
+    map.get(k).push(sw);
+  });
+  const keys = [...map.keys()].filter(Boolean);
+  keys.sort((a, b) => Math.max(...map.get(b).map((x) => x.ts || 0)) - Math.max(...map.get(a).map((x) => x.ts || 0)));
+  if (map.has("")) keys.push("");
+  return keys.map((k) => [k, map.get(k)]);
+}
+
 function showsFor() {
   const gid = S.showFilter;
   const all = showsNewestFirst();
@@ -231,7 +240,6 @@ function dupSong(id) {
 const song = () => { const a = SONGS(); return a[Math.min(U.songIdx, a.length - 1)] || null; };
 const member = (id) => S.members.find((m) => m.id === id);
 const names = (ids) => (ids || []).map((i) => (member(i) || {}).name).filter(Boolean).join("・");
-const notesOf = (sid, li) => S.notes.filter((n) => n.songId === sid && n.lineIdx === li);
 
 function addMember(name) {
   let m = S.members.find((x) => x.name === name);
@@ -814,7 +822,10 @@ function viewLive() {
       const badge = (n) => {
         const c = noteColor(n);
         const txt = n.tags.length ? n.tags.map(tagName).join("/") : (n.memo ? "メモ" : "・");
-        return `<b class="mk" style="background:${c}">${h(txt)}${n.pitch ? " " + h(pitchLabel(n.pitch)) : ""}</b>`;
+        const body = `${h(txt)}${n.pitch ? " ♪" + h(pitchLabel(n.pitch)) : ""}`;
+        return n.pitch
+          ? `<button class="mk" data-act="playnote" data-id="${n.id}" style="background:${c}">${body}</button>`
+          : `<b class="mk" style="background:${c}">${body}</b>`;
       };
       let cells = chars.map((ch, ci) => {
         const mk = ns.find((n) => n.from != null && ci >= n.from && ci <= n.to);
@@ -878,7 +889,7 @@ function viewLive() {
          <span style="font-size:11px;color:var(--dim)">録音中</span>`
       : hasRec(s)
         ? `<button data-act="${AU && !AU.paused ? "pauseau" : "playtop"}" class="aub">${AU && !AU.paused ? "❚❚" : "▶"}</button>
-           <input id="aubar" type="range" min="0" max="1000" value="0" class="grow" data-act="seek">
+           <input id="aubar" type="range" min="0" max="1000" value="0" class="grow">
            <span id="autime" style="font-size:11px;color:var(--dim);min-width:74px;text-align:right">0:00 / ${mmss(S.recs[recKeyOf(s)].dur)}</span>
            <button data-act="delrec" class="aub" style="font-size:13px;color:var(--dim)">✕</button>`
         : `<button data-act="recstart" class="aub" style="color:var(--bad)">●</button>
@@ -910,7 +921,10 @@ function viewOverview(s) {
     const tail = ns.map((n) => {
       const c = noteColor(n);
       const txt = n.tags.length ? n.tags.map(tagName).join("/") : (n.memo ? "メモ" : "・");
-      return `<b class="mk ovm" style="background:${c}">${h(txt)}${n.pitch ? " " + h(pitchLabel(n.pitch)) : ""}</b>`;
+      const body2 = `${h(txt)}${n.pitch ? " ♪" + h(pitchLabel(n.pitch)) : ""}`;
+      return n.pitch
+        ? `<button class="mk ovm" data-act="playnote" data-id="${n.id}" style="background:${c}">${body2}</button>`
+        : `<b class="mk ovm" style="background:${c}">${body2}</b>`;
     }).join("");
     const past = pastHits(s.id, i);
     const pb = past.count ? `<b class="mk ovm pastmk">前${past.count}</b>` : "";
@@ -942,12 +956,13 @@ function renderSheet() {
   if (overlay) { overlay.remove(); overlay = null; }
 
   if (U.menu) {
-    const x = S.songs.find((y) => y.id === U.menu.id);
+    const many = U.menu.ids && U.menu.ids.length;
+    const x = S.songs.find((y) => y.id === (many ? U.menu.ids[0] : U.menu.id));
     const B = (act, label, col) => `<button class="ghost" data-act="${act}" style="text-align:left;margin-bottom:8px;${col ? "color:" + col : ""}">${label}</button>`;
     const inner = U.menu.kind === "group"
       ? `<div class="sec"><h4>どのグループにしますか</h4>
           ${S.groups.map((g) => `<button class="ghost" data-act="m-setgroup" data-id="${g.id}"
-            style="text-align:left;margin-bottom:8px;${x && x.groupId === g.id ? "background:var(--accent);color:#0A0A0A" : ""}">${h(g.name)}</button>`).join("")}</div>`
+            style="text-align:left;margin-bottom:8px;${!many && x && x.groupId === g.id ? "background:var(--accent);color:#0A0A0A" : ""}">${h(g.name)}</button>`).join("")}</div>`
       : `<div class="sec">
           ${B("m-rename", "曲名を変える")}
           ${B("m-take", "テイクを増やす")}
@@ -958,7 +973,7 @@ function renderSheet() {
     overlay = document.createElement("div");
     overlay.className = "mask";
     overlay.innerHTML = `<button class="sp" data-act="closemenu"></button><div class="sheet">
-      <div class="row" style="margin-bottom:12px"><span class="grow trunc" style="font-size:13px">${h(x ? songName(x) : "")}</span>
+      <div class="row" style="margin-bottom:12px"><span class="grow trunc" style="font-size:13px">${many ? `${U.menu.ids.length}曲` : h(x ? songName(x) : "")}</span>
       <button data-act="closemenu" style="width:36px;height:36px;border-radius:10px;background:var(--panel2);font-size:17px">✕</button></div>
       ${inner}</div>`;
     document.body.appendChild(overlay);
@@ -971,8 +986,10 @@ function renderSheet() {
         ${S.groups.map((g) => `<button class="chip sm" data-act="showfilter" data-id="${g.id}"
           style="${S.showFilter === g.id ? "background:var(--accent);color:#0A0A0A" : ""}">${h(g.name)}</button>`).join("")}
       </div>` : "";
-    const shows = showsFor().map((sw) => `<button class="chip sm" data-act="jumpshow" data-id="${sw.id}"
-        style="${sw.id === S.showId ? "background:var(--accent);color:#0A0A0A" : ""}">${h(sw.name)}</button>`).join("");
+    const shows = groupShows(showsFor()).map(([fname, list]) => `
+      ${fname ? `<div style="font-size:10px;color:var(--dim);width:100%;margin:6px 0 2px">${h(fname)}</div>` : ""}
+      ${list.map((sw) => `<button class="chip sm" data-act="jumpshow" data-id="${sw.id}"
+        style="${sw.id === S.showId ? "background:var(--accent);color:#0A0A0A" : ""}">${h(sw.name)}</button>`).join("")}`).join("");
     const list = SONGS().map((x, i) => {
       const gn = (S.groups.find((g) => g.id === x.groupId) || {}).name || "";
       const cnt = NOTES().filter((n) => n.songId === x.id && n.showId === S.showId).length;
@@ -1197,7 +1214,7 @@ function viewDiff() {
 // 折り返しや行間まで含めた本当の高さで判断するので、はみ出さない。
 const A4_W = 688, A4_H = 1016;   // 余白14mmのA4（1px = 1/96インチ）
 function fitPrintDOM() {
-  const pr = app.querySelector(".pr");
+  const pr = document.getElementById("prpage");
   if (!pr) return;
   pr.style.transform = "none";
   pr.querySelectorAll(".prs").forEach((sec) => {
@@ -1225,6 +1242,16 @@ function fitPrintDOM() {
   pr.style.transformOrigin = "top left";
   pr.style.transform = "scale(" + k + ")";
   pr.style.marginBottom = (-(1 - k) * pr.offsetHeight) + "px";
+}
+
+// 選んだ曲をその場でPDFにする。描画と高さ合わせを同じ操作の中で終わらせてから印刷する。
+function printNow(ids) {
+  commitFields();
+  U.printPick = ids && ids.length ? ids : null;
+  U.view = "print";
+  render();
+  fitPrintDOM();
+  try { window.print(); } catch (e) { /* 印刷できない環境 */ }
 }
 
 function viewPrint() {
@@ -1280,8 +1307,9 @@ function viewPrint() {
     </div>
     <div class="chips" style="margin-bottom:10px">${chips || `<span style="font-size:12px;color:var(--dim)">この公演には曲がありません</span>`}</div>
   </div>
-  <div class="scroll pr">
-    ${body || `<p class="noprint" style="padding:30px;text-align:center;color:#888;font-size:13px">上の曲名を押して選んでください</p>`}
+  <div class="scroll">
+    <div class="pr" id="prpage">${body}</div>
+    ${body ? "" : `<p class="noprint" style="padding:30px;text-align:center;color:var(--dim);font-size:13px">上の曲名を押して選んでください</p>`}
     <div style="height:40px"></div>
   </div>`;
 }
@@ -1298,20 +1326,35 @@ function viewSetup() {
     <div class="hd"><button class="ic" data-act="go-live">‹</button><b>公演</b>
       <span class="grow"></span>
       <span style="font-size:11px;color:var(--dim)">${APP_VER}</span></div>
-    <div class="scroll pad"><div style="height:6px"></div>${list}<div style="height:40px"></div></div>`;
+    <div class="scroll pad"><div style="height:6px"></div>${list}
+    <h4 class="head">音を確かめる</h4>
+    <div class="card">${pianoHTML(null)}</div>
+    <div style="height:40px"></div></div>`;
   }
 
   const allShows = showsFor();
-  const shownShows = U.allShowList ? allShows : allShows.slice(0, 6);
-  const shows = shownShows.map((sw) => `<div class="row card" style="margin-bottom:8px;padding:10px 12px;${sw.id === S.showId ? "outline:1px solid var(--accent)" : ""}">
-      <button class="grow" style="text-align:left" data-act="useshow" data-id="${sw.id}">
+  const curFolder = folderOf(S.shows.find((x) => x.id === S.showId));
+  const showRow = (sw) => `<div class="row card" style="margin-bottom:8px;padding:10px 12px;${sw.id === S.showId ? "outline:1px solid var(--accent)" : ""}">
+      <button class="grow" style="text-align:left;min-width:0" data-act="useshow" data-id="${sw.id}">
         <div class="trunc" style="${sw.id === S.showId ? "color:var(--accent)" : ""}">${h(sw.name)}</div>
         <div style="font-size:11px;color:var(--dim)">${S.songs.filter((x) => x.showId === sw.id).length}曲 ・ ${NOTES().filter((n) => n.showId === sw.id).length}件${sw.id === S.showId ? " ・ 記録中" : ""}</div>
       </button>
-      <button data-act="copyshow" data-id="${sw.id}" style="padding:4px 8px;color:var(--dim)">複製</button>
-      <button data-act="renameshow" data-id="${sw.id}" style="padding:4px 8px;color:var(--dim)">名前</button>
+      <button data-act="showfolder" data-id="${sw.id}" style="padding:4px 6px;color:var(--dim);font-size:12px">箱</button>
+      <button data-act="copyshow" data-id="${sw.id}" style="padding:4px 6px;color:var(--dim);font-size:12px">複製</button>
+      <button data-act="renameshow" data-id="${sw.id}" style="padding:4px 6px;color:var(--dim);font-size:12px">名前</button>
       <button data-act="delshow" data-id="${sw.id}" style="padding:4px 6px;color:var(--bad)">✕</button>
-    </div>`).join("");
+    </div>`;
+  const shows = groupShows(U.allShowList ? allShows : allShows.slice(0, 12)).map(([fname, list]) => {
+    if (!fname) return list.map(showRow).join("");
+    const open = S.folders[fname] !== false || fname === curFolder;
+    return `<button class="row card" data-act="folder" data-id="${h(fname)}"
+        style="width:100%;margin-bottom:8px;padding:11px 12px;text-align:left">
+        <span style="width:18px;color:var(--dim)">${open ? "▾" : "▸"}</span>
+        <span class="grow trunc">${h(fname)}</span>
+        <span style="font-size:11px;color:var(--dim)">${list.length}公演</span>
+      </button>
+      ${open ? `<div style="margin-left:14px">${list.map(showRow).join("")}</div>` : ""}`;
+  }).join("");
 
   const cur = SONGS();
   const songs = cur.map((x, i) => {
@@ -1320,7 +1363,7 @@ function viewSetup() {
       <button data-act="picksong" data-id="${x.id}" style="width:26px;flex:0 0 26px;font-size:15px;color:${on ? "var(--accent)" : "var(--dim)"}">${on ? "☑" : "☐"}</button>
       <button class="grow" style="text-align:left;min-width:0" data-act="opensong" data-i="${i}">
         <div class="trunc">${h(songName(x))}</div>
-        <div class="trunc" style="font-size:11px;color:var(--dim)">${x.lines.filter((l) => l.t).length}行 ・ ${h((S.groups.find((g) => g.id === x.groupId) || {}).name || "—")}</div>
+        <div class="trunc" style="font-size:11px;color:var(--dim)">${h((S.groups.find((g) => g.id === x.groupId) || {}).name || "—")}</div>
       </button>
       <button data-act="up" data-i="${i}" style="padding:4px 5px;color:var(--dim)">↑</button>
       <button data-act="down" data-i="${i}" style="padding:4px 5px;color:var(--dim)">↓</button>
@@ -1331,7 +1374,10 @@ function viewSetup() {
       <button class="chip sm" data-act="pickall">${U.pick.length === cur.length && cur.length ? "選択を解除" : "すべて選ぶ"}</button>
       <button class="chip sm" data-act="sorttitle">曲名順に並べる</button>
       <span class="grow"></span>
-      ${U.pick.length ? `<button class="chip sm" data-act="delpicked" style="background:var(--bad);color:#0A0A0A">${U.pick.length}曲を削除</button>` : ""}
+      ${U.pick.length ? `<button class="chip sm" data-act="pdfpicked" style="background:var(--accent);color:#0A0A0A">${U.pick.length}曲をPDF</button>
+      <button class="chip sm" data-act="picktake">テイク</button>
+      <button class="chip sm" data-act="pickgroup">グループ</button>
+      <button class="chip sm" data-act="delpicked" style="background:var(--bad);color:#0A0A0A">削除</button>` : ""}
     </div>`;
 
   return `
@@ -1377,7 +1423,13 @@ function viewSetup() {
           <button data-act="delgroup" data-id="${g.id}" style="padding:4px 6px;color:var(--bad)">✕</button>
         </div>
         ${g.gistId ? `
-          <button class="primary" data-act="connectlink" data-id="${g.id}" style="margin-bottom:8px">${h(g.name)} の接続リンクを作る</button>
+          <button class="primary" data-act="connectlink" data-id="${g.id}" style="margin-bottom:10px">${h(g.name)} の接続リンクを作る</button>
+          <div class="row" style="margin-bottom:6px">
+            <span style="font-size:11px;color:var(--dim);width:52px">合言葉</span>
+            <input class="field grow" id="key-${g.id}" placeholder="未設定（誰でも開けます）" value="${h(g.key || "")}">
+            <button class="chip sm" data-act="setkey" data-id="${g.id}">保存</button>
+          </div>
+          <div style="font-size:11px;color:${g.key ? "var(--good)" : "var(--bad)"}">${g.key ? "合言葉を入れないと開けません" : "リンクを知っていれば誰でも開けます"}</div>
         ` : (S.ghToken ? `<button class="primary" data-act="ghstart" data-id="${g.id}">${h(g.name)} の自動公開を始める</button>`
                        : "")}
       </div>`;
@@ -1403,6 +1455,9 @@ function viewSetup() {
           </div>
           <div style="font-size:11px;color:var(--dim);margin-top:6px">Tokens (classic) / gist</div>`}
     </div>
+
+    <h4 class="head">音を確かめる</h4>
+    <div class="card">${pianoHTML(null)}</div>
 
     <h4 class="head">録音データ</h4>
     <div class="card" style="margin-bottom:10px">
@@ -1514,6 +1569,18 @@ document.addEventListener("click", (e) => {
       U.pick = U.pick.length === cur2.length ? [] : cur2;
       render(); break;
     }
+    case "picktake": {
+      const ids = U.pick.slice();
+      if (!ids.length) break;
+      if (confirm(`${ids.length}曲 のテイクを増やしますか？`)) {
+        ids.forEach((sid) => dupSong(sid));
+        U.pick = []; render();
+      }
+      break;
+    }
+    case "pickgroup":
+      if (U.pick.length) { U.menu = { kind: "group", ids: U.pick.slice() }; renderSheet(); }
+      break;
     case "delpicked": {
       const n = U.pick.length;
       if (n && confirm(`${n}曲 をこの公演から削除しますか？\n記録も一緒に消えます。`)) {
@@ -1534,13 +1601,14 @@ document.addEventListener("click", (e) => {
     case "m-group": U.menu = { kind: "group", id: U.menu.id }; renderSheet(); break;
     case "m-pdf": {
       const q = U.menu.id; U.menu = null;
-      commitFields(); U.printPick = [q]; U.view = "print"; render();
+      printNow([q]);
       break;
     }
     case "m-setgroup": {
-      const x = S.songs.find((y) => y.id === U.menu.id);
-      if (x) { x.groupId = id; save(); schedulePush(); }
-      U.menu = null; render(); break;
+      const ids = U.menu.ids || [U.menu.id];
+      ids.forEach((sid) => { const x = S.songs.find((y) => y.id === sid); if (x) x.groupId = id; });
+      if (U.menu.ids) U.pick = [];
+      U.menu = null; save(); schedulePush(); render(); break;
     }
     case "m-del": {
       const x = S.songs.find((y) => y.id === U.menu.id);
@@ -1623,16 +1691,11 @@ document.addEventListener("click", (e) => {
       const tmp = S.songs[p1]; S.songs[p1] = S.songs[p2]; S.songs[p2] = tmp;
       save(); schedulePush(); render(); break;
     }
-    case "delsong": {
-      const x = SONGS()[i];
-      if (x && confirm(`「${x.title}」をこの公演から削除しますか？`)) {
-        S.songs = S.songs.filter((y) => y.id !== x.id);
-        S.notes = S.notes.filter((n) => n.songId !== x.id);
-        save(); schedulePush(); render();
-      }
+    case "pickfile": document.getElementById("file").click(); break;
+    case "pdfpicked": {
+      if (U.pick.length) printNow(U.pick.slice());
       break;
     }
-    case "pickfile": document.getElementById("file").click(); break;
     case "printpick": {
       const ids = SONGS().map((x) => x.id);
       const cur3 = U.printPick || ids.slice();
@@ -1666,6 +1729,28 @@ document.addEventListener("click", (e) => {
     }
     case "autopub": S.autoPub = !S.autoPub; save(); render(); break;
     case "connectlink": connectLink(id); break;
+    case "setkey": {
+      const g = group(id);
+      const el = document.getElementById("key-" + id);
+      if (!el) break;
+      const v = el.value.trim();
+      if (v === (g.key || "")) break;
+      g.key = v;
+      save();
+      doPush(false);
+      alert(v ? `合言葉を「${v}」にしました。\nメンバーには、リンクとは別にこの合言葉を伝えてください。\n既に開いている人も、次に開いた時に入力を求められます。`
+              : "合言葉を外しました。リンクを知っていれば誰でも開けます。");
+      render();
+      break;
+    }
+    case "folder": S.folders[id] = !(S.folders[id] !== false); save(); render(); break;
+    case "showfolder": {
+      const sw = S.shows.find((x) => x.id === id);
+      if (!sw) break;
+      const nm = prompt("フォルダ名（空にすると外に出ます）", sw.folder || "");
+      if (nm != null) { sw.folder = nm.trim(); save(); render(); }
+      break;
+    }
     case "showfilter": {
       S.showFilter = id;
       // 絞り込みの対象外の公演を開いていたら、対象の中で一番新しいものに移る
@@ -1711,12 +1796,6 @@ document.addEventListener("click", (e) => {
         if (S.groupId === id) S.groupId = S.groups[0].id;
         save(); render();
       }
-      break;
-    }
-    case "songgroup": { const x = SONGS()[i]; if (x) { U.menu = { kind: "group", id: x.id }; renderSheet(); } break; }
-    case "setsrc": {
-      const el = document.getElementById("src");
-      if (el) { S.src = el.value.trim(); S.setlistVer = 0; save(); syncSetlist(true); }
       break;
     }
     case "addshow": {
@@ -1797,7 +1876,7 @@ function dupShow(fromId) {
   const nm = prompt("新しい公演名", suggest);
   if (nm == null || !nm.trim()) return;
   const nid = uid();
-  S.shows.push({ id: nid, name: nm.trim(), ts: Date.now(), from: fromId });
+  S.shows.push({ id: nid, name: nm.trim(), ts: Date.now(), from: fromId, folder: folderOf(sw) });
   S.songs.filter((x) => x.showId === fromId).forEach((x) => {
     S.songs.push({ id: uid(), showId: nid, groupId: x.groupId, title: x.title, credit: x.credit,
       lines: x.lines.map((l) => Object.assign({}, l, { parts: (l.parts || []).slice() })) });
@@ -1983,6 +2062,7 @@ document.addEventListener("pointerdown", (e) => {
   if (U.draw) return;
   const t = e.target.closest && e.target.closest(".txt");
   if (!t || U.sheet || U.picker || U.overview) { org = null; return; }
+  if (e.target.closest("[data-act]")) { org = null; return; }
   const row = t;
   org = { l: Number(row.dataset.l), row, x: e.clientX, y: e.clientY, c: null, end: null };
   org.c = charAtX(row, e.clientX, e.clientY);
@@ -2081,11 +2161,6 @@ async function openJSON(o, pass) {
   const key = await deriveKey(pass, b64d(o.salt));
   const pt = await crypto.subtle.decrypt({ name: "AES-GCM", iv: b64d(o.iv) }, key, b64d(o.data));
   return JSON.parse(new TextDecoder().decode(new Uint8Array(pt)));
-}
-function newPassphrase() {
-  const cs = "abcdefghjkmnpqrstuvwxyz23456789";
-  const r = crypto.getRandomValues(new Uint8Array(20));
-  return Array.from(r, (b, i) => (i && i % 5 === 0 ? "-" : "") + cs[b % cs.length]).join("");
 }
 async function wrap(obj, g) {
   const k = g ? g.key : S.key;
@@ -2395,9 +2470,10 @@ function applySetlist(d) {
 async function syncSetlist(manual) {
   const d = await fetchSetlist();
   if (d === "nokey" || d === "badkey") {
+    if (d === "badkey") S.key = "";
     const pw = prompt(d === "nokey"
-      ? "この配信には合言葉が必要です。Joeから聞いた合言葉を入れてください。"
-      : "合言葉が合いません。もう一度入れてください。", "");
+      ? "合言葉を入れてください。"
+      : "合言葉が違います。もう一度入れてください。", "");
     if (pw && pw.trim()) { S.key = pw.trim(); save(); return syncSetlist(manual); }
     return;
   }
@@ -2432,14 +2508,11 @@ const b64d = (t) => {
 function connectLink(gid) {
   const g = group(gid);
   if (!g.src) { alert("先にこのグループの自動公開を始めてください。"); return; }
-  const inLink = g.key && g.keyInLink !== false;
-  const payload = JSON.stringify({ src: g.src, key: inLink ? g.key : "" });
+  const payload = JSON.stringify({ src: g.src, key: "" });
   const url = location.origin + location.pathname + "#g=" + b64e(new TextEncoder().encode(payload));
-  const msg = !g.key
-    ? `${g.name} の接続リンクをコピーしました。\nこのグループのメンバーにだけ送ってください。`
-    : inLink
-      ? `${g.name} の接続リンクをコピーしました。\n合言葉もリンクに入っているので別送は不要です。`
-      : `${g.name} の接続リンクをコピーしました。\n合言葉は別途伝えてください：\n\n${g.key}`;
+  const msg = g.key
+    ? `${g.name} の接続リンクをコピーしました。\n\n開くには合言葉が要ります。リンクとは別に伝えてください：\n${g.key}`
+    : `${g.name} の接続リンクをコピーしました。\n\n合言葉が未設定です。リンクを知っていれば誰でも開けます。`;
   copyText(url, msg);
 }
 
