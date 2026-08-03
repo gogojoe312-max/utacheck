@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "2026-08-03-49";
+const APP_VER = "2026-08-03-51";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -77,7 +77,7 @@ let S = {
   draws: {}, showFilter: "",
   size: 19,
 };
-let U = { view: "live", songIdx: 0, sheet: null, mode: "member", allShows: false, picker: false, overview: false, ovSize: 9, draw: false, erase: false, pick: [], menu: null, busy: "", allShowList: false };
+let U = { view: "live", songIdx: 0, sheet: null, mode: "member", allShows: false, picker: false, overview: false, ovSize: 9, draw: false, erase: false, pick: [], menu: null, printPick: null, busy: "", allShowList: false };
 
 function load() {
   try {
@@ -95,8 +95,8 @@ function load() {
   if (!S.memos) S.memos = {};
   if (!S.recs) S.recs = {};
   if (!S.draws) S.draws = {};
-  if (!S.kbps) S.kbps = 128;
-  if (S.preroll == null) S.preroll = 5;
+  S.kbps = 128;
+  if (S.preroll == null || S.preroll > 10) S.preroll = 5;
   // 旧データの引き継ぎ：グループが無ければ1つ作り、既存の曲と配信設定を移す
   if (!S.groups || !S.groups.length) {
     const gid = uid();
@@ -1191,19 +1191,37 @@ function viewDiff() {
 }
 
 /* ---- 紙／PDF ---- */
+// A4縦1枚に収まる文字サイズと段数を決める。折り返しも数える。
+function fitPrint(so, hasMemo) {
+  const PAGE_H = 985, PAGE_W = 688;   // 余白14mmのA4（96dpi換算）
+  const rows = so.lines.filter((l) => l.t);
+  const gaps = so.lines.filter((l) => l.gap).length;
+  // 1段で読める大きさに収まらなければ、縮める前に2段組にする
+  for (const [twoCol, minFs] of [[false, 8.5], [true, 7], [true, 5], [false, 5]]) {
+    const colW = twoCol ? (PAGE_W - 14) / 2 : PAGE_W;
+    const lyricW = colW * 0.66;      // 左の名前欄を除いた幅
+    for (let fs = 12; fs >= minFs; fs -= 0.25) {
+      const cpl = Math.max(4, Math.floor(lyricW / fs));   // 1行に入る文字数
+      let n = 0;
+      rows.forEach((l) => { n += Math.max(1, Math.ceil(Array.from(l.t).length / cpl)); });
+      let h = n * fs * 1.85 + gaps * fs * 0.5 + fs * 1.35 * 2.2;   // 見出しぶんも足す
+      if (hasMemo) h += fs * 1.85 * 3 + 20;
+      if (twoCol) h = h / 2 + fs * 2;
+      if (h <= PAGE_H) return { fs, twoCol };
+    }
+  }
+  return { fs: 5, twoCol: true };
+}
+
 function viewPrint() {
   const g = group();
-  const songs = SONGS().filter((x) => x.groupId === g.id);
-  const body = songs.map((so) => {
+  const all = SONGS().filter((x) => x.groupId === g.id);
+  const picked = U.printPick ? all.filter((x) => U.printPick.includes(x.id)) : all;
+
+  const body = picked.map((so) => {
     const ns0 = NOTES().filter((n) => n.songId === so.id && n.showId === S.showId);
-    const live = so.lines.filter((l) => l.t).length;
     const mm = songMemo(so.id);
-    // A4縦1枚に収まるよう、行数から文字サイズと段数を決める
-    const twoCol = live > 34;
-    const per = twoCol ? Math.ceil(live / 2) : live;
-    const room = 960 - (mm ? 90 : 0);
-    let fs = Math.floor((room / Math.max(per, 1)) / 1.85 * 10) / 10;
-    fs = Math.max(5.5, Math.min(12, fs));
+    const { fs, twoCol } = fitPrint(so, !!mm);
 
     const rows = so.lines.map((l, i) => {
       if (l.gap) return `<div style="height:${(fs * 0.5).toFixed(1)}px"></div>`;
@@ -1231,12 +1249,22 @@ function viewPrint() {
     </section>`;
   }).join("");
 
+  const chips = all.map((x) => {
+    const on = !U.printPick || U.printPick.includes(x.id);
+    return `<button class="chip sm" data-act="printpick" data-id="${x.id}"
+      style="${on ? "background:var(--accent);color:#0A0A0A" : ""}">${h(songName(x))}</button>`;
+  }).join("");
+
   return `
   <div class="hd noprint"><button class="ic" data-act="go-live">‹</button><b>PDF・印刷</b>
     <span class="grow"></span>
     <button class="chip sm" data-act="doprint" style="background:var(--accent);color:#0A0A0A">PDFで保存</button></div>
+  <div class="tabs noprint" style="flex-wrap:wrap;gap:6px">
+    <button class="chip sm" data-act="printall">${picked.length === all.length ? "選択を解除" : "すべて"}</button>
+    ${chips}
+  </div>
   <div class="scroll pr">
-    ${body || `<p style="padding:30px">このグループの曲がありません。</p>`}
+    ${body || `<p style="padding:30px">曲を選んでください。</p>`}
     <div style="height:40px"></div>
   </div>`;
 }
@@ -1362,16 +1390,10 @@ function viewSetup() {
     <h4 class="head">録音データ</h4>
     <div class="card" style="margin-bottom:10px">
       <div class="row" style="margin-bottom:8px">
-        <span class="grow" style="font-size:13px">音質</span>
-        ${[[64, "節約"], [128, "標準"], [192, "高音質"]].map(([k, l]) => `<button class="chip sm" data-act="kbps" data-id="${k}"
-          style="${S.kbps === k ? "background:var(--accent);color:#0A0A0A" : ""}">${l}</button>`).join("")}
-      </div>
-      <div class="row" style="margin-bottom:8px">
         <span class="grow" style="font-size:13px">頭出しの巻き戻し</span>
-        ${[3, 5, 10, 15].map((k) => `<button class="chip sm" data-act="preroll" data-id="${k}"
+        ${[3, 5, 10].map((k) => `<button class="chip sm" data-act="preroll" data-id="${k}"
           style="${S.preroll === k ? "background:var(--accent);color:#0A0A0A" : ""}">${k}秒</button>`).join("")}
       </div>
-      <div style="font-size:11px;color:var(--dim)">8分あたり ${(S.kbps * 1000 / 8 * 480 / 1048576).toFixed(1)}MB</div>
     </div>
     <div class="card">
       ${(() => {
@@ -1560,7 +1582,6 @@ document.addEventListener("click", (e) => {
     case "playfrom": { const n = NOTES().find((x) => x.id === id); if (n) openPlayer(n.at || 0); break; }
     case "playtop": openPlayer(0); break;
     case "pauseau": pauseAudio(); break;
-    case "kbps": S.kbps = Number(id); save(); render(); break;
     case "preroll": S.preroll = Number(id); save(); render(); break;
     case "delreckey": if (confirm("この録音を削除しますか？")) delRec(id); break;
     case "delrec": { const so = song(); if (so && confirm("この曲の録音を削除しますか？")) delRec(recKeyOf(so)); break; }
@@ -1595,7 +1616,18 @@ document.addEventListener("click", (e) => {
       break;
     }
     case "pickfile": document.getElementById("file").click(); break;
-    case "goprint": commitFields(); U.view = "print"; render(); break;
+    case "goprint": commitFields(); U.printPick = null; U.view = "print"; render(); break;
+    case "printpick": {
+      const all2 = SONGS().filter((x) => x.groupId === group().id).map((x) => x.id);
+      const cur3 = U.printPick || all2.slice();
+      U.printPick = cur3.includes(id) ? cur3.filter((x) => x !== id) : cur3.concat(id);
+      render(); break;
+    }
+    case "printall": {
+      const all3 = SONGS().filter((x) => x.groupId === group().id).map((x) => x.id);
+      U.printPick = (U.printPick && U.printPick.length === all3.length) || !U.printPick ? [] : null;
+      render(); break;
+    }
     case "doprint": window.print(); break;
     case "ghstart": gistStart(id); break;
     case "ghpush": doPush("force"); break;
@@ -2244,6 +2276,24 @@ async function doPush(silent) {
 }
 
 window.addEventListener("online", () => { if (pushState === "未送信") doPush(true); });
+
+// 変わっていない相手には送らない
+function hasPending() {
+  return S.groups.some((g) => {
+    if (!g.gistId) return false;
+    try { return payloadKey(publicationData(g.id)) !== g.lastKey; } catch (e) { return false; }
+  });
+}
+
+// アプリを開いている間、1分ごとに自動でやりとりする
+setInterval(() => {
+  if (document.hidden) return;
+  if (S.ghToken && S.groups.some((g) => g.gistId)) {
+    if (hasPending()) doPush(true);
+  } else if (S.src) {
+    syncSetlist(false);
+  }
+}, 60000);
 
 /* ---- 受け取り：配信されたものを取り込む ---- */
 const srcUrl = () => S.src || "./setlist.json";
