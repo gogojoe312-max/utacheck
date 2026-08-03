@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "2026-08-03-41";
+const APP_VER = "2026-08-03-43";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -77,7 +77,7 @@ let S = {
   draws: {},
   size: 19,
 };
-let U = { view: "live", songIdx: 0, sheet: null, mode: "member", allShows: false, picker: false, overview: false, ovSize: 9, draw: false, erase: false, pick: [], busy: "", incoming: null, allShowList: false };
+let U = { view: "live", songIdx: 0, sheet: null, mode: "member", allShows: false, picker: false, overview: false, ovSize: 9, draw: false, erase: false, pick: [], menu: null, busy: "", incoming: null, allShowList: false };
 
 function load() {
   try {
@@ -543,43 +543,43 @@ function freqOf(id) {
   if (!m) return 440;
   return 440 * Math.pow(2, ((SCALE.indexOf(m[1]) - 9) + (Number(m[2]) - 4) * 12) / 12);
 }
-// iPhoneの消音スイッチはWeb Audioを黙らせるが、音声ファイルの再生は黙らせない。
-// そこで、押された音の波形をその場でWAVにして鳴らす。
-const wavCache = new Map();
-function toneURL(id) {
-  if (wavCache.has(id)) return wavCache.get(id);
-  const sr = 22050, dur = 1.35, n = Math.floor(sr * dur), f = freqOf(id);
-  const buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf);
-  const W = (o, str) => { for (let i = 0; i < str.length; i++) v.setUint8(o + i, str.charCodeAt(i)); };
-  W(0, "RIFF"); v.setUint32(4, 36 + n * 2, true); W(8, "WAVEfmt ");
-  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
-  v.setUint32(24, sr, true); v.setUint32(28, sr * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
-  W(36, "data"); v.setUint32(40, n * 2, true);
-  for (let i = 0; i < n; i++) {
-    const t = i / sr;
-    const ph = (t * f) % 1;
-    const tri = 4 * Math.abs(ph - 0.5) - 1;
-    const env = Math.exp(-t * 2.4) * (t < 0.006 ? t / 0.006 : 1);
-    let x = tri * env * 0.4;
-    if (x > 1) x = 1; if (x < -1) x = -1;
-    v.setInt16(44 + i * 2, x * 32767, true);
-  }
-  const url = URL.createObjectURL(new Blob([buf], { type: "audio/wav" }));
-  if (wavCache.size > 40) { const k = wavCache.keys().next().value; URL.revokeObjectURL(wavCache.get(k)); wavCache.delete(k); }
-  wavCache.set(id, url);
-  return url;
+// iPhoneの消音スイッチはWeb Audioを黙らせる。
+// 無音の音声を鳴らしっぱなしにすると音声セッションが「再生」に切り替わり、
+// Web Audioの音も消音スイッチを無視して鳴るようになる。
+const SILENT_WAV = "data:audio/wav;base64,UklGRkQDAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YSADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==";
+let silentEl = null;
+function unlockAudio() {
+  try {
+    AC = AC || new (window.AudioContext || window.webkitAudioContext)();
+    if (AC.state !== "running" && AC.resume) AC.resume();
+    if (!silentEl) {
+      silentEl = new Audio(SILENT_WAV);
+      silentEl.loop = true;
+      silentEl.setAttribute("playsinline", "");
+      const pr = silentEl.play();
+      if (pr && pr.catch) pr.catch(() => {});
+    } else if (silentEl.paused) {
+      const pr = silentEl.play();
+      if (pr && pr.catch) pr.catch(() => {});
+    }
+  } catch (e) { /* 音を出せない端末 */ }
 }
-const pianoPool = [];
-let poolAt = 0;
+document.addEventListener("pointerdown", unlockAudio, true);
+
 function tone(id) {
   try {
-    if (!pianoPool.length) for (let i = 0; i < 4; i++) { const a = new Audio(); a.preload = "auto"; pianoPool.push(a); }
-    const a = pianoPool[poolAt = (poolAt + 1) % pianoPool.length];
-    a.src = toneURL(id);
-    a.currentTime = 0;
-    const pr = a.play();
-    if (pr && pr.catch) pr.catch(() => {});
-  } catch (e) { /* 鳴らせない端末では無音 */ }
+    unlockAudio();
+    if (!AC) return;
+    const t = AC.currentTime;
+    const o = AC.createOscillator(), g = AC.createGain();
+    o.type = "triangle";
+    o.frequency.value = freqOf(id);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.3, t + 0.012);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 1.3);
+    o.connect(g); g.connect(AC.destination);
+    o.start(t); o.stop(t + 1.35);
+  } catch (e) { /* 無音 */ }
 }
 
 // 表示は音名だけ（オクターブの数字は出さない）
@@ -793,15 +793,7 @@ function viewLive() {
 
   let body = "";
   if (!s) {
-    body = `<div style="padding:40px 26px;color:var(--dim);line-height:2;font-size:14px">
-      <div style="font-size:17px;color:var(--text);font-weight:600;margin-bottom:14px">はじめに</div>
-      セットリストは自動で届きます。まだ何も無い場合は、電波のある所で
-      設定の「最新のセットリストを取得」を押してください。<br><br>
-      並んだら、気になった所を<b>横になぞる</b>と、その範囲だけを指摘できます。
-      タグを押すとその場で記録され、自動で戻ります。<br><br>
-      チェックが配信されている場合は、歌詞に色と印が付いた状態で届きます。
-      「集計」を開けば、自分の名前で絞って見られます。電波が無くても動きます。
-      </div>`;
+    body = `<div style="padding:64px 26px;text-align:center;color:var(--dim);font-size:14px">曲がありません</div>`;
   } else {
     const ns0 = NOTES().filter((n) => n.songId === s.id && n.showId === S.showId);
     const gp = groupPos(s.lines);
@@ -944,6 +936,29 @@ function viewOverview(s) {
 /* ---- sheet ---- */
 function renderSheet() {
   if (overlay) { overlay.remove(); overlay = null; }
+
+  if (U.menu) {
+    const x = S.songs.find((y) => y.id === U.menu.id);
+    const B = (act, label, col) => `<button class="ghost" data-act="${act}" style="text-align:left;margin-bottom:8px;${col ? "color:" + col : ""}">${label}</button>`;
+    const inner = U.menu.kind === "group"
+      ? `<div class="sec"><h4>どのグループにしますか</h4>
+          ${S.groups.map((g) => `<button class="ghost" data-act="m-setgroup" data-id="${g.id}"
+            style="text-align:left;margin-bottom:8px;${x && x.groupId === g.id ? "background:var(--accent);color:#0A0A0A" : ""}">${h(g.name)}</button>`).join("")}</div>`
+      : `<div class="sec">
+          ${B("m-rename", "曲名を変える")}
+          ${B("m-take", "テイクを増やす")}
+          ${B("m-group", "グループを変える")}
+          ${B("m-del", "削除する", "var(--bad)")}
+        </div>`;
+    overlay = document.createElement("div");
+    overlay.className = "mask";
+    overlay.innerHTML = `<button class="sp" data-act="closemenu"></button><div class="sheet">
+      <div class="row" style="margin-bottom:12px"><span class="grow trunc" style="font-size:13px">${h(x ? songName(x) : "")}</span>
+      <button data-act="closemenu" style="width:36px;height:36px;border-radius:10px;background:var(--panel2);font-size:17px">✕</button></div>
+      ${inner}</div>`;
+    document.body.appendChild(overlay);
+    return;
+  }
 
   if (U.picker) {
     const shows = showsNewestFirst().map((sw) => `<button class="chip sm" data-act="jumpshow" data-id="${sw.id}"
@@ -1280,6 +1295,16 @@ function viewSetup() {
       <button class="chip" data-act="addshow">追加</button>
     </div>
 
+    <h4 class="head">セットリスト</h4>
+    ${cur.length ? bar : ""}
+    ${songs}
+    <div class="card">
+      <button class="primary" data-act="pickfile" style="margin-bottom:8px">歌割のPDF / Excel を選ぶ（複数可）</button>
+      <input type="file" id="file" multiple style="display:none"
+        accept="application/pdf,.pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.xlsx,.xls,.csv,application/json,.json">
+      <div style="font-size:11px;color:var(--dim);margin-top:6px">→ ${h(group().name || "")}</div>
+    </div>
+
     <h4 class="head">グループ</h4>
     ${S.groups.map((g) => {
       const n = SONGS().filter((x) => x.groupId === g.id).length;
@@ -1295,14 +1320,6 @@ function viewSetup() {
         </div>
         ${g.gistId ? `
           <button class="primary" data-act="connectlink" data-id="${g.id}" style="margin-bottom:8px">${h(g.name)} の接続リンクを作る</button>
-          <div class="row" style="margin-bottom:6px">
-            <span class="grow" style="font-size:11px;color:var(--dim)">暗号化</span>
-            <button class="chip sm" data-act="encoff" data-id="${g.id}" style="${!g.key ? "background:var(--accent);color:#0A0A0A" : ""}">なし</button>
-            <button class="chip sm" data-act="enclink" data-id="${g.id}" style="${g.key && g.keyInLink !== false ? "background:var(--accent);color:#0A0A0A" : ""}">同梱</button>
-            <button class="chip sm" data-act="encsep" data-id="${g.id}" style="${g.key && g.keyInLink === false ? "background:var(--accent);color:#0A0A0A" : ""}">別に伝える</button>
-          </div>
-          ${g.key ? `<div class="row"><span class="grow" style="font-size:13px;word-break:break-all">${h(g.key)}</span>
-            <button class="chip sm" data-act="newkey" data-id="${g.id}">作り直す</button></div>` : ""}
         ` : (S.ghToken ? `<button class="primary" data-act="ghstart" data-id="${g.id}">${h(g.name)} の自動公開を始める</button>`
                        : "")}
       </div>`;
@@ -1310,16 +1327,6 @@ function viewSetup() {
     <div class="row" style="margin-bottom:22px">
       <input class="field grow" id="newgroup" placeholder="グループ名">
       <button class="chip" data-act="addgroup">追加</button>
-    </div>
-
-    <h4 class="head">セットリスト</h4>
-    ${cur.length ? bar : ""}
-    ${songs}
-    <div class="card">
-      <button class="primary" data-act="pickfile" style="margin-bottom:8px">歌割のPDF / Excel を選ぶ（複数可）</button>
-      <input type="file" id="file" multiple style="display:none"
-        accept="application/pdf,.pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.xlsx,.xls,.csv,application/json,.json">
-      <div style="font-size:11px;color:var(--dim);margin-top:6px">→ ${h(group().name || "")}</div>
     </div>
 
     <h4 class="head">自動公開</h4>
@@ -1428,6 +1435,7 @@ document.addEventListener("click", (e) => {
       break;
     }
     // ✕ と背景タップは、記録せずに閉じる
+    case "closemenu": U.menu = null; renderSheet(); break;
     case "cancel":
     case "close":
       clearTimeout(sheetTimer);
@@ -1469,23 +1477,28 @@ document.addEventListener("click", (e) => {
       break;
     }
     case "sorttitle": sortSongsByTitle(); schedulePush(); render(); break;
-    case "songmenu": {
-      const x = SONGS()[i]; if (!x) break;
-      const c = prompt(`「${songName(x)}」\n1 名前を変える\n2 テイクを増やす\n3 グループを変える\n4 削除\n\n番号を入れてください`, "");
-      if (c === "1") { const nm = prompt("曲名", x.title); if (nm && nm.trim()) { x.title = nm.trim(); save(); schedulePush(); render(); } }
-      else if (c === "2") dupSong(x.id);
-      else if (c === "3") {
-        const names2 = S.groups.map((g, k) => `${k + 1}. ${g.name}`).join("\n");
-        const pk = prompt(`どのグループにしますか？\n\n${names2}`, "1");
-        const k2 = Number(pk) - 1;
-        if (S.groups[k2]) { x.groupId = S.groups[k2].id; save(); schedulePush(); render(); }
-      }
-      else if (c === "4" && confirm(`「${songName(x)}」を削除しますか？`)) {
+    case "songmenu": U.menu = { kind: "song", id: SONGS()[i] ? SONGS()[i].id : "" }; renderSheet(); break;
+    case "m-rename": {
+      const x = S.songs.find((y) => y.id === U.menu.id); U.menu = null;
+      if (x) { const nm = prompt("曲名", x.title); if (nm && nm.trim()) { x.title = nm.trim(); save(); schedulePush(); } }
+      render(); break;
+    }
+    case "m-take": { const q = U.menu.id; U.menu = null; dupSong(q); break; }
+    case "m-group": U.menu = { kind: "group", id: U.menu.id }; renderSheet(); break;
+    case "m-setgroup": {
+      const x = S.songs.find((y) => y.id === U.menu.id);
+      if (x) { x.groupId = id; save(); schedulePush(); }
+      U.menu = null; render(); break;
+    }
+    case "m-del": {
+      const x = S.songs.find((y) => y.id === U.menu.id);
+      U.menu = null;
+      if (x && confirm(`「${songName(x)}」を削除しますか？`)) {
         S.songs = S.songs.filter((y) => y.id !== x.id);
         S.notes = S.notes.filter((n2) => n2.songId !== x.id);
-        save(); schedulePush(); render();
+        save(); schedulePush();
       }
-      break;
+      render(); break;
     }
     case "dupshow": { U.picker = false; dupShow(S.showId); break; }
     case "jumpshow": S.showId = id; U.songIdx = 0; save(); renderSheet(); render(); break;
@@ -1591,28 +1604,6 @@ document.addEventListener("click", (e) => {
     }
     case "autopub": S.autoPub = !S.autoPub; save(); render(); break;
     case "connectlink": connectLink(id); break;
-    case "newkey": {
-      const g = group(id);
-      if (confirm(`${g.name} の合言葉を作り直します。\n古い接続リンクでは読めなくなります。`)) {
-        g.key = newPassphrase(); save(); doPush(false); render();
-      }
-      break;
-    }
-    case "encoff": {
-      const g = group(id);
-      if (!g.key || confirm("暗号化をやめます。\nGistのURLを知っていれば誰でも中身を読めるようになります。")) {
-        g.key = ""; save(); doPush(false); render();
-      }
-      break;
-    }
-    case "enclink": { const g = group(id); if (!g.key) g.key = newPassphrase(); g.keyInLink = true; save(); doPush(false); render(); break; }
-    case "encsep": { const g = group(id); if (!g.key) g.key = newPassphrase(); g.keyInLink = false; save(); doPush(false); render(); break; }
-    case "addgroup": {
-      const el = document.getElementById("newgroup");
-      const nm = el && el.value.trim();
-      if (nm) { const ngid = uid(); S.groups.push({ id: ngid, name: nm, gistId: "", src: "", key: "", keyInLink: true }); S.groupId = ngid; save(); render(); }
-      break;
-    }
     case "allshowlist": U.allShowList = !U.allShowList; render(); break;
     case "usegroup": S.groupId = id; save(); render(); break;
     case "renamegroup": {
@@ -1635,14 +1626,7 @@ document.addEventListener("click", (e) => {
       }
       break;
     }
-    case "songgroup": {
-      const sg = SONGS()[i]; if (!sg) break;
-      const names2 = S.groups.map((g, k) => `${k + 1}. ${g.name}`).join("\n");
-      const pick = prompt(`「${sg.title}」をどのグループにしますか？\n番号を入れてください。\n\n${names2}`, "1");
-      const k2 = Number(pick) - 1;
-      if (S.groups[k2]) { sg.groupId = S.groups[k2].id; save(); schedulePush(); render(); }
-      break;
-    }
+    case "songgroup": { const x = SONGS()[i]; if (x) { U.menu = { kind: "group", id: x.id }; renderSheet(); } break; }
     case "setsrc": {
       const el = document.getElementById("src");
       if (el) { S.src = el.value.trim(); S.setlistVer = 0; save(); syncSetlist(true); }
@@ -1670,28 +1654,6 @@ document.addEventListener("click", (e) => {
     }
     case "autopub": S.autoPub = !S.autoPub; save(); render(); break;
     case "connectlink": connectLink(id); break;
-    case "newkey": {
-      const g = group(id);
-      if (confirm(`${g.name} の合言葉を作り直します。\n古い接続リンクでは読めなくなります。`)) {
-        g.key = newPassphrase(); save(); doPush(false); render();
-      }
-      break;
-    }
-    case "encoff": {
-      const g = group(id);
-      if (!g.key || confirm("暗号化をやめます。\nGistのURLを知っていれば誰でも中身を読めるようになります。")) {
-        g.key = ""; save(); doPush(false); render();
-      }
-      break;
-    }
-    case "enclink": { const g = group(id); if (!g.key) g.key = newPassphrase(); g.keyInLink = true; save(); doPush(false); render(); break; }
-    case "encsep": { const g = group(id); if (!g.key) g.key = newPassphrase(); g.keyInLink = false; save(); doPush(false); render(); break; }
-    case "addgroup": {
-      const el = document.getElementById("newgroup");
-      const nm = el && el.value.trim();
-      if (nm) { const ngid = uid(); S.groups.push({ id: ngid, name: nm, gistId: "", src: "", key: "", keyInLink: true }); S.groupId = ngid; save(); render(); }
-      break;
-    }
     case "allshowlist": U.allShowList = !U.allShowList; render(); break;
     case "usegroup": S.groupId = id; save(); render(); break;
     case "renamegroup": {
@@ -1714,14 +1676,7 @@ document.addEventListener("click", (e) => {
       }
       break;
     }
-    case "songgroup": {
-      const sg = SONGS()[i]; if (!sg) break;
-      const names2 = S.groups.map((g, k) => `${k + 1}. ${g.name}`).join("\n");
-      const pick = prompt(`「${sg.title}」をどのグループにしますか？\n番号を入れてください。\n\n${names2}`, "1");
-      const k2 = Number(pick) - 1;
-      if (S.groups[k2]) { sg.groupId = S.groups[k2].id; save(); schedulePush(); render(); }
-      break;
-    }
+    case "songgroup": { const x = SONGS()[i]; if (x) { U.menu = { kind: "group", id: x.id }; renderSheet(); } break; }
     case "setsrc": {
       const el = document.getElementById("src");
       if (el) { S.src = el.value.trim(); S.setlistVer = 0; save(); syncSetlist(true); }
