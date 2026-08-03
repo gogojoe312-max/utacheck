@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "2026-08-03-59";
+const APP_VER = "2026-08-03-60";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -614,6 +614,12 @@ function playSeq(arr, i) {
   if (i + 1 < arr.length) setTimeout(() => playSeq(arr, i + 1), 420);
 }
 
+// どの画面でも同じ位置（C4のあたり）から鍵盤を見せる
+function showPianoAtC4(root) {
+  const el = (root || document).querySelector("#pno");
+  if (el) el.scrollLeft = 34 * 7 - 20;
+}
+
 function pianoHTML(sel) {
   const W = ["C", "D", "E", "F", "G", "A", "B"], B = ["C", "D", "F", "G", "A"];
   let white = "", black = "", i = 0;
@@ -779,6 +785,7 @@ function render() {
   renderSheet();
   if (U.view === "live" && !U.overview) setTimeout(paintInk, 0);
   if (U.view === "print") setTimeout(fitPrintDOM, 0);
+  if (U.view === "setup") setTimeout(() => showPianoAtC4(app), 0);
 }
 
 /* ---- live ---- */
@@ -1078,8 +1085,7 @@ function renderSheet() {
   overlay.className = "mask";
   overlay.innerHTML = `<button class="sp" data-act="close"></button><div class="sheet">${inner}</div>`;
   document.body.appendChild(overlay);
-  const pno = overlay.querySelector("#pno");
-  if (pno) pno.scrollLeft = 34 * 7 - 20; // C4 のあたりから見せる
+  showPianoAtC4(overlay);
 }
 
 /* ---- summary ---- */
@@ -1334,7 +1340,8 @@ function viewSetup() {
 
   const allShows = showsFor();
   const curFolder = folderOf(S.shows.find((x) => x.id === S.showId));
-  const showRow = (sw) => `<div class="row card" style="margin-bottom:8px;padding:10px 12px;${sw.id === S.showId ? "outline:1px solid var(--accent)" : ""}">
+  const showRow = (sw) => `<div class="row card" data-drop="s:${sw.id}" style="margin-bottom:8px;padding:10px 12px;${sw.id === S.showId ? "outline:1px solid var(--accent)" : ""}">
+      <span class="grip" data-drag="${sw.id}">⣿</span>
       <button class="grow" style="text-align:left;min-width:0" data-act="useshow" data-id="${sw.id}">
         <div class="trunc" style="${sw.id === S.showId ? "color:var(--accent)" : ""}">${h(sw.name)}</div>
         <div style="font-size:11px;color:var(--dim)">${S.songs.filter((x) => x.showId === sw.id).length}曲 ・ ${NOTES().filter((n) => n.showId === sw.id).length}件${sw.id === S.showId ? " ・ 記録中" : ""}</div>
@@ -1347,7 +1354,7 @@ function viewSetup() {
   const shows = groupShows(U.allShowList ? allShows : allShows.slice(0, 12)).map(([fname, list]) => {
     if (!fname) return list.map(showRow).join("");
     const open = S.folders[fname] !== false || fname === curFolder;
-    return `<button class="row card" data-act="folder" data-id="${h(fname)}"
+    return `<button class="row card" data-act="folder" data-id="${h(fname)}" data-drop="f:${h(fname)}"
         style="width:100%;margin-bottom:8px;padding:11px 12px;text-align:left">
         <span style="width:18px;color:var(--dim)">${open ? "▾" : "▸"}</span>
         <span class="grow trunc">${h(fname)}</span>
@@ -1919,6 +1926,61 @@ document.addEventListener("pointerup", (e) => {
   commitFields();
   scheduleCommit();
 });
+
+/* ---- 公演をつまんでフォルダにまとめる ---- */
+let sdrag = null;
+const clearDrop = () => app.querySelectorAll("[data-drop]").forEach((x) => { x.style.boxShadow = ""; });
+
+document.addEventListener("pointerdown", (e) => {
+  const g = e.target.closest && e.target.closest("[data-drag]");
+  if (!g) return;
+  e.preventDefault();
+  sdrag = { id: g.dataset.drag, y: e.clientY, moved: false, el: g.closest("[data-drop]") };
+  if (sdrag.el) sdrag.el.style.opacity = "0.5";
+}, { passive: false });
+
+document.addEventListener("pointermove", (e) => {
+  if (!sdrag) return;
+  e.preventDefault();
+  if (Math.abs(e.clientY - sdrag.y) > 5) sdrag.moved = true;
+  clearDrop();
+  const el = document.elementFromPoint(e.clientX, e.clientY);
+  const tgt = el && el.closest && el.closest("[data-drop]");
+  if (tgt && tgt !== sdrag.el) tgt.style.boxShadow = "inset 0 0 0 2px var(--accent)";
+}, { passive: false });
+
+document.addEventListener("pointerup", (e) => {
+  const d = sdrag; sdrag = null;
+  clearDrop();
+  if (!d) return;
+  if (d.el) d.el.style.opacity = "";
+  if (!d.moved) return;
+  const el = document.elementFromPoint(e.clientX, e.clientY);
+  const tgt = el && el.closest && el.closest("[data-drop]");
+  if (!tgt || tgt === d.el) return;
+  dropShow(d.id, tgt.dataset.drop);
+});
+
+function dropShow(id, target) {
+  const sw = S.shows.find((x) => x.id === id);
+  if (!sw || !target) return;
+  if (target.slice(0, 2) === "f:") {
+    sw.folder = target.slice(2);
+  } else if (target.slice(0, 2) === "s:") {
+    const other = S.shows.find((x) => x.id === target.slice(2));
+    if (!other || other.id === sw.id) return;
+    if (other.folder) sw.folder = other.folder;
+    else {
+      // フォルダの無い公演に重ねたら、その場で新しいフォルダを作って両方を入れる
+      const base = other.name.replace(/\s*(昼|夜|\d+回目|\d+日目).*$/, "").trim();
+      const nm = prompt("新しいフォルダの名前", base || "新しいフォルダ");
+      if (nm == null || !nm.trim()) return;
+      other.folder = nm.trim();
+      sw.folder = nm.trim();
+    }
+  }
+  save(); render();
+}
 
 /* ---- 一番下まで来たら、引き上げてテイクを増やす ---- */
 let pull = null;
