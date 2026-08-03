@@ -142,11 +142,11 @@ table.prev input{width:100%;background:none;font-size:13px}
 table.prev input.li{font-size:11px;text-align:right;color:var(--dim)}
 
 /* 紙・PDF用 */
-.pr{background:#fff;color:#111;padding:16px 18px}
+.pr{background:#fff;color:#111;padding:0;width:688px}
 
 
 
-.prs{margin-bottom:22px;break-inside:avoid;page-break-inside:avoid;break-after:page;page-break-after:always}
+.prs{padding:2px 0 22px;break-inside:avoid;page-break-inside:avoid;break-after:page;page-break-after:always}
 .prs:last-child{break-after:auto;page-break-after:auto}
 .prs h3{font-size:1.35em;border-left:4px solid #111;padding-left:7px;margin-bottom:8px}
 .prc{font-size:.62em;color:#666;font-weight:400}
@@ -159,6 +159,7 @@ table.prev input.li{font-size:11px;text-align:right;color:var(--dim)}
 .prm{margin-top:10px;padding:7px 9px;border:1px solid #999;border-radius:4px;font-size:1em;white-space:pre-wrap;break-inside:avoid}
 @media print{
   html,body{height:auto;overflow:visible;background:#fff}
+  .pr{transform:none!important;margin-bottom:0!important;width:auto!important}
   #app{height:auto;display:block;overflow:visible}
   .noprint,.bottom,.hd{display:none!important}
   .scroll{overflow:visible!important;flex:none}

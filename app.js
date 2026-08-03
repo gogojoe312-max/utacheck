@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "2026-08-03-51";
+const APP_VER = "2026-08-03-53";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -770,6 +770,7 @@ function render() {
   if (sc && sameView) sc.scrollTop = st;
   renderSheet();
   if (U.view === "live" && !U.overview) setTimeout(paintInk, 0);
+  if (U.view === "print") setTimeout(fitPrintDOM, 0);
 }
 
 /* ---- live ---- */
@@ -950,6 +951,7 @@ function renderSheet() {
       : `<div class="sec">
           ${B("m-rename", "曲名を変える")}
           ${B("m-take", "テイクを増やす")}
+          ${B("m-pdf", "この曲をPDFにする")}
           ${B("m-group", "グループを変える")}
           ${B("m-del", "削除する", "var(--bad)")}
         </div>`;
@@ -1191,40 +1193,51 @@ function viewDiff() {
 }
 
 /* ---- 紙／PDF ---- */
-// A4縦1枚に収まる文字サイズと段数を決める。折り返しも数える。
-function fitPrint(so, hasMemo) {
-  const PAGE_H = 985, PAGE_W = 688;   // 余白14mmのA4（96dpi換算）
-  const rows = so.lines.filter((l) => l.t);
-  const gaps = so.lines.filter((l) => l.gap).length;
-  // 1段で読める大きさに収まらなければ、縮める前に2段組にする
-  for (const [twoCol, minFs] of [[false, 8.5], [true, 7], [true, 5], [false, 5]]) {
-    const colW = twoCol ? (PAGE_W - 14) / 2 : PAGE_W;
-    const lyricW = colW * 0.66;      // 左の名前欄を除いた幅
-    for (let fs = 12; fs >= minFs; fs -= 0.25) {
-      const cpl = Math.max(4, Math.floor(lyricW / fs));   // 1行に入る文字数
-      let n = 0;
-      rows.forEach((l) => { n += Math.max(1, Math.ceil(Array.from(l.t).length / cpl)); });
-      let h = n * fs * 1.85 + gaps * fs * 0.5 + fs * 1.35 * 2.2;   // 見出しぶんも足す
-      if (hasMemo) h += fs * 1.85 * 3 + 20;
-      if (twoCol) h = h / 2 + fs * 2;
-      if (h <= PAGE_H) return { fs, twoCol };
+// 実際に描いてから高さを測り、A4縦1枚に収まるまで縮める。
+// 折り返しや行間まで含めた本当の高さで判断するので、はみ出さない。
+const A4_W = 688, A4_H = 1016;   // 余白14mmのA4（1px = 1/96インチ）
+function fitPrintDOM() {
+  const pr = app.querySelector(".pr");
+  if (!pr) return;
+  pr.style.transform = "none";
+  pr.querySelectorAll(".prs").forEach((sec) => {
+    const body = sec.querySelector(".prbody");
+    if (!body) return;
+    let cols = 1, fs = 12, guard = 0;
+    const apply = () => {
+      sec.style.fontSize = fs + "px";
+      body.style.columnCount = cols;
+      body.style.columnGap = "14px";
+    };
+    apply();
+    while (sec.offsetHeight > A4_H && guard++ < 90) {
+      if (cols === 1 && fs > 8.5) fs -= 0.5;
+      else if (cols === 1) { cols = 2; fs = 12; }
+      else if (fs > 4) fs -= 0.5;
+      else break;
+      apply();
     }
-  }
-  return { fs: 5, twoCol: true };
+  });
+  // 画面では縮めて全体を見せる。印刷時は等倍に戻る。
+  const sc = app.querySelector(".scroll");
+  const w = (sc ? sc.clientWidth : A4_W) - 10;
+  const k = Math.min(1, w / A4_W);
+  pr.style.transformOrigin = "top left";
+  pr.style.transform = "scale(" + k + ")";
+  pr.style.marginBottom = (-(1 - k) * pr.offsetHeight) + "px";
 }
 
 function viewPrint() {
-  const g = group();
-  const all = SONGS().filter((x) => x.groupId === g.id);
+  // この公演の曲すべてが対象。グループでは絞らない。
+  const all = SONGS();
   const picked = U.printPick ? all.filter((x) => U.printPick.includes(x.id)) : all;
 
   const body = picked.map((so) => {
     const ns0 = NOTES().filter((n) => n.songId === so.id && n.showId === S.showId);
     const mm = songMemo(so.id);
-    const { fs, twoCol } = fitPrint(so, !!mm);
 
     const rows = so.lines.map((l, i) => {
-      if (l.gap) return `<div style="height:${(fs * 0.5).toFixed(1)}px"></div>`;
+      if (l.gap) return `<div style="height:0.5em"></div>`;
       const ns = ns0.filter((n) => covers(n, i));
       const chars = Array.from(l.t);
       const mark = (n) => {
@@ -1242,29 +1255,33 @@ function viewPrint() {
       return `<div class="prl"><span class="prn">${h(l.label)}</span><span class="prx">${cells}</span></div>`;
     }).join("");
 
-    return `<section class="prs" style="font-size:${fs}px">
-      <h3>${h(songName(so))}<span class="prc">　${h(g.name)}　${h(showName())}　${ns0.length}件</span></h3>
-      <div class="prbody" style="${twoCol ? "column-count:2;column-gap:14px" : ""}">${rows}</div>
+    return `<section class="prs">
+      <h3>${h(songName(so))}<span class="prc">　${h((S.groups.find((x) => x.id === so.groupId) || {}).name || "")}　${h(showName())}　${ns0.length}件</span></h3>
+      <div class="prbody">${rows}</div>
       ${mm ? `<div class="prm"><b>総括</b>　${h(mm)}</div>` : ""}
     </section>`;
   }).join("");
 
   const chips = all.map((x) => {
     const on = !U.printPick || U.printPick.includes(x.id);
+    const cnt = NOTES().filter((n) => n.songId === x.id && n.showId === S.showId).length;
     return `<button class="chip sm" data-act="printpick" data-id="${x.id}"
-      style="${on ? "background:var(--accent);color:#0A0A0A" : ""}">${h(songName(x))}</button>`;
+      style="${on ? "background:var(--accent);color:#0A0A0A" : ""}">${on ? "✓ " : ""}${h(songName(x))}${cnt ? ` (${cnt})` : ""}</button>`;
   }).join("");
 
   return `
   <div class="hd noprint"><button class="ic" data-act="go-live">‹</button><b>PDF・印刷</b>
     <span class="grow"></span>
     <button class="chip sm" data-act="doprint" style="background:var(--accent);color:#0A0A0A">PDFで保存</button></div>
-  <div class="tabs noprint" style="flex-wrap:wrap;gap:6px">
-    <button class="chip sm" data-act="printall">${picked.length === all.length ? "選択を解除" : "すべて"}</button>
-    ${chips}
+  <div class="noprint" style="padding:10px 14px 0">
+    <div class="row" style="margin-bottom:8px">
+      <span class="grow" style="font-size:12px;color:var(--dim)">${picked.length} / ${all.length} 曲を選択中</span>
+      <button class="chip sm" data-act="printall">${picked.length === all.length ? "すべて外す" : "すべて選ぶ"}</button>
+    </div>
+    <div class="chips" style="margin-bottom:10px">${chips || `<span style="font-size:12px;color:var(--dim)">この公演には曲がありません</span>`}</div>
   </div>
   <div class="scroll pr">
-    ${body || `<p style="padding:30px">曲を選んでください。</p>`}
+    ${body || `<p class="noprint" style="padding:30px;text-align:center;color:#888;font-size:13px">上の曲名を押して選んでください</p>`}
     <div style="height:40px"></div>
   </div>`;
 }
@@ -1413,11 +1430,6 @@ function viewSetup() {
       })()}
     </div>
 
-    <h4 class="head">紙で渡す</h4>
-    <div class="card">
-      <button class="primary" data-act="goprint">チェック結果をPDFにする</button>
-    </div>
-
     <div style="height:40px"></div>
   </div>`;
 }
@@ -1520,6 +1532,11 @@ document.addEventListener("click", (e) => {
     }
     case "m-take": { const q = U.menu.id; U.menu = null; dupSong(q); break; }
     case "m-group": U.menu = { kind: "group", id: U.menu.id }; renderSheet(); break;
+    case "m-pdf": {
+      const q = U.menu.id; U.menu = null;
+      commitFields(); U.printPick = [q]; U.view = "print"; render();
+      break;
+    }
     case "m-setgroup": {
       const x = S.songs.find((y) => y.id === U.menu.id);
       if (x) { x.groupId = id; save(); schedulePush(); }
@@ -1616,16 +1633,16 @@ document.addEventListener("click", (e) => {
       break;
     }
     case "pickfile": document.getElementById("file").click(); break;
-    case "goprint": commitFields(); U.printPick = null; U.view = "print"; render(); break;
     case "printpick": {
-      const all2 = SONGS().filter((x) => x.groupId === group().id).map((x) => x.id);
-      const cur3 = U.printPick || all2.slice();
+      const ids = SONGS().map((x) => x.id);
+      const cur3 = U.printPick || ids.slice();
       U.printPick = cur3.includes(id) ? cur3.filter((x) => x !== id) : cur3.concat(id);
       render(); break;
     }
     case "printall": {
-      const all3 = SONGS().filter((x) => x.groupId === group().id).map((x) => x.id);
-      U.printPick = (U.printPick && U.printPick.length === all3.length) || !U.printPick ? [] : null;
+      const ids = SONGS().map((x) => x.id);
+      const allOn = !U.printPick || U.printPick.length === ids.length;
+      U.printPick = allOn ? [] : null;
       render(); break;
     }
     case "doprint": window.print(); break;
