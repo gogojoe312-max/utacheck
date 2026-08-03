@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "2026-08-03-60";
+const APP_VER = "2026-08-03-61";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -882,7 +882,7 @@ function viewLive() {
     ${s && !VIEW() ? `<div class="pull" id="pull">
       <div class="pullbar"><i id="pullfill"></i></div>
       <div class="pulltx" id="pulltx">引き上げて テイク${nextTake(s)} を作る</div>
-    </div>` : `<div style="height:120px"></div>`}</div>
+    </div>` : `<div style="height:24px"></div>`}</div>
   ${U.draw && !VIEW() ? `<div class="aubar">
     <button data-act="pen" class="aub" style="${U.erase ? "" : "background:var(--bad);color:#0A0A0A"}">✎</button>
     <button data-act="eraser" class="aub" style="${U.erase ? "background:var(--accent);color:#0A0A0A" : ""}">消</button>
@@ -974,6 +974,8 @@ function renderSheet() {
           ${B("m-rename", "曲名を変える")}
           ${B("m-take", "テイクを増やす")}
           ${B("m-pdf", "この曲をPDFにする")}
+          ${(() => { const n = S.notes.filter((y) => y.songId === U.menu.id && y.showId === S.showId).length;
+            return n ? B("m-clear", `この曲の記録を消す（${n}件）`, "var(--bad)") : ""; })()}
           ${B("m-group", "グループを変える")}
           ${B("m-del", "削除する", "var(--bad)")}
         </div>`;
@@ -1158,7 +1160,10 @@ function viewSummary() {
       style="${U.allShows ? "background:var(--accent);color:#0A0A0A" : ""}">全公演をまとめる</button>
     <span class="grow"></span>
   </div>
-  <div class="scroll pad">${body}<div style="height:40px"></div></div>`;
+  <div class="scroll pad">${body}
+    ${S.notes.some((n) => n.showId === S.showId) ? `<button class="ghost" data-act="clearshow"
+      style="color:var(--bad);margin:10px 0 30px">この公演の記録をすべて消す（${S.notes.filter((n) => n.showId === S.showId).length}件）</button>` : ""}
+    <div style="height:40px"></div></div>`;
 }
 
 /* ---- 前回との差 ---- */
@@ -1383,6 +1388,7 @@ function viewSetup() {
       <span class="grow"></span>
       ${U.pick.length ? `<button class="chip sm" data-act="pdfpicked" style="background:var(--accent);color:#0A0A0A">${U.pick.length}曲をPDF</button>
       <button class="chip sm" data-act="picktake">テイク</button>
+      <button class="chip sm" data-act="clearpicked">記録を消す</button>
       <button class="chip sm" data-act="pickgroup">グループ</button>
       <button class="chip sm" data-act="delpicked" style="background:var(--bad);color:#0A0A0A">削除</button>` : ""}
     </div>`;
@@ -1585,6 +1591,16 @@ document.addEventListener("click", (e) => {
       }
       break;
     }
+    case "clearpicked": {
+      const ids = U.pick.slice();
+      const n = S.notes.filter((y) => ids.includes(y.songId) && y.showId === S.showId).length;
+      if (n && confirm(`選んだ ${ids.length}曲 の記録 ${n}件 を消しますか？`)) {
+        pushUndo();
+        S.notes = S.notes.filter((y) => !(ids.includes(y.songId) && y.showId === S.showId));
+        U.pick = []; save(); schedulePush(); render();
+      } else if (!n) alert("選んだ曲に記録がありません。");
+      break;
+    }
     case "pickgroup":
       if (U.pick.length) { U.menu = { kind: "group", ids: U.pick.slice() }; renderSheet(); }
       break;
@@ -1616,6 +1632,16 @@ document.addEventListener("click", (e) => {
       ids.forEach((sid) => { const x = S.songs.find((y) => y.id === sid); if (x) x.groupId = id; });
       if (U.menu.ids) U.pick = [];
       U.menu = null; save(); schedulePush(); render(); break;
+    }
+    case "m-clear": {
+      const q = U.menu.id; U.menu = null;
+      const n = S.notes.filter((y) => y.songId === q && y.showId === S.showId).length;
+      if (n && confirm(`この曲の記録 ${n}件 を消しますか？`)) {
+        pushUndo();
+        S.notes = S.notes.filter((y) => !(y.songId === q && y.showId === S.showId));
+        save(); schedulePush();
+      }
+      render(); break;
     }
     case "m-del": {
       const x = S.songs.find((y) => y.id === U.menu.id);
@@ -1689,6 +1715,15 @@ document.addEventListener("click", (e) => {
     case "delnote": pushUndo(); delClip(id); S.notes = S.notes.filter((n) => n.id !== id); save(); schedulePush(); commitFields(); render(); break;
     case "mode": U.mode = id; render(); break;
     case "allshows": U.allShows = !U.allShows; render(); break;
+    case "clearshow": {
+      const n = S.notes.filter((x) => x.showId === S.showId).length;
+      if (n && confirm(`${showName()} の記録 ${n}件 をすべて消しますか？\n取り消しは「取消」ボタンでできます。`)) {
+        pushUndo();
+        S.notes = S.notes.filter((x) => x.showId !== S.showId);
+        save(); schedulePush(); render();
+      }
+      break;
+    }
 
     case "opensong": commitFields(); U.songIdx = i; U.view = "live"; render(); break;
     case "up": case "down": {
