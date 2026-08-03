@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "2026-08-03-48";
+const APP_VER = "2026-08-03-49";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1633,6 +1633,16 @@ document.addEventListener("click", (e) => {
       break;
     }
     case "allshowlist": U.allShowList = !U.allShowList; render(); break;
+    case "addgroup": {
+      const el = document.getElementById("newgroup");
+      const nm = el && el.value.trim();
+      if (nm) {
+        const ngid = uid();
+        S.groups.push({ id: ngid, name: nm, gistId: "", src: "", key: "", keyInLink: true });
+        S.groupId = ngid; save(); render();
+      }
+      break;
+    }
     case "usegroup": S.groupId = id; save(); render(); break;
     case "renamegroup": {
       const g = group(id);
@@ -1660,82 +1670,6 @@ document.addEventListener("click", (e) => {
       if (el) { S.src = el.value.trim(); S.setlistVer = 0; save(); syncSetlist(true); }
       break;
     }
-    case "ghstart": gistStart(id); break;
-    case "ghpush": doPush("force"); break;
-    case "ghverify": verifyToken(); break;
-    case "ghclear":
-      if (confirm("トークンを消して入れ直します。\n配信先の設定は残ります。")) { S.ghToken = ""; save(); render(); }
-      break;
-    case "ghtoken": {
-      const el = document.getElementById("ghtoken");
-      const v = el ? el.value.trim() : "";
-      if (!v) break;
-      if (/^github_pat_/.test(v)) {
-        alert("これは fine-grained トークンです。Gistには使えません。\n\nGitHub → Settings → Developer settings → Personal access tokens → Tokens (classic) で作った、ghp_ で始まる方を貼ってください。");
-        break;
-      }
-      S.ghToken = v; save(); render();
-      verifyToken();
-      break;
-    }
-    case "autopub": S.autoPub = !S.autoPub; save(); render(); break;
-    case "connectlink": connectLink(id); break;
-    case "showfilter": {
-      S.showFilter = id;
-      // 絞り込みの対象外の公演を開いていたら、対象の中で一番新しいものに移る
-      if (id) {
-        const ok = (sw) => !S.songs.some((x) => x.showId === sw.id)
-          || S.songs.some((x) => x.showId === sw.id && x.groupId === id);
-        const cur2 = S.shows.find((x) => x.id === S.showId);
-        if (cur2 && !ok(cur2)) {
-          const next = showsNewestFirst().find(ok);
-          if (next) { S.showId = next.id; U.songIdx = 0; }
-        }
-      }
-      save(); render(); if (U.picker) renderSheet();
-      break;
-    }
-    case "allshowlist": U.allShowList = !U.allShowList; render(); break;
-    case "usegroup": S.groupId = id; save(); render(); break;
-    case "renamegroup": {
-      const g = group(id);
-      const nm = prompt("グループ名", g.name);
-      if (nm != null && nm.trim()) { g.name = nm.trim(); save(); render(); }
-      break;
-    }
-    case "delgroup": {
-      if (S.groups.length <= 1) { alert("グループは1つ以上必要です。"); break; }
-      const g = group(id);
-      const cnt = S.songs.filter((x) => x.groupId === id).length;
-      if (confirm(`「${g.name}」を削除しますか？\nこのグループの ${cnt}曲 と、その記録も消えます。\nGist自体はGitHub側に残るので、不要なら別途削除してください。`)) {
-        const sids = S.songs.filter((x) => x.groupId === id).map((x) => x.id);
-        S.songs = S.songs.filter((x) => x.groupId !== id);
-        S.notes = S.notes.filter((n) => !sids.includes(n.songId));
-        S.groups = S.groups.filter((x) => x.id !== id);
-        if (S.groupId === id) S.groupId = S.groups[0].id;
-        save(); render();
-      }
-      break;
-    }
-    case "songgroup": { const x = SONGS()[i]; if (x) { U.menu = { kind: "group", id: x.id }; renderSheet(); } break; }
-    case "setsrc": {
-      const el = document.getElementById("src");
-      if (el) { S.src = el.value.trim(); S.setlistVer = 0; save(); syncSetlist(true); }
-      break;
-    }
-    case "refresh":
-      commitFields(); save();
-      (async () => {
-        try {
-          if (caches && caches.keys) { const ks = await caches.keys(); await Promise.all(ks.map((k) => caches.delete(k))); }
-          if (navigator.serviceWorker) {
-            const rs = await navigator.serviceWorker.getRegistrations();
-            await Promise.all(rs.map((r) => r.unregister()));
-          }
-        } catch (err) { /* オフラインなら何もしない */ }
-        location.reload(true);
-      })();
-      break;
     case "addshow": {
       const el = document.getElementById("newshow");
       const nm = el && el.value.trim();
@@ -1744,21 +1678,6 @@ document.addEventListener("click", (e) => {
     }
     case "useshow": S.showId = id; save(); U.view = "live"; render(); break;
     case "copyshow": { dupShow(id); break; }
-    case "copyshowOld": {
-      const sw = S.shows.find((x) => x.id === id);
-      const nm = prompt("新しい公演名", (sw ? sw.name : "") + " 夜");
-      if (nm != null && nm.trim()) {
-        const nid = uid();
-        S.shows.push({ id: nid, name: nm.trim(), ts: Date.now() });
-        // 複製した時だけセットリストを引き継ぐ（記録は引き継がない）
-        S.songs.filter((x) => x.showId === id).forEach((x) => {
-          S.songs.push({ id: uid(), showId: nid, groupId: x.groupId, title: x.title, credit: x.credit,
-            lines: x.lines.map((l) => Object.assign({}, l, { parts: (l.parts || []).slice() })) });
-        });
-        S.showId = nid; U.songIdx = 0; save(); render();
-      }
-      break;
-    }
     case "renameshow": {
       const sw = S.shows.find((x) => x.id === id);
       const nm = prompt("公演名", sw ? sw.name : "");
