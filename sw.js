@@ -1,6 +1,6 @@
 /* 自分のコードは毎回ネットワークを見に行き、圏外のときだけキャッシュを使う。
    重い vendor/ だけはキャッシュ優先。これで「更新したのに変わらない」が起きない。 */
-const CACHE = "utacheck-2026-08-03-58";
+const CACHE = "utacheck-2026-08-03-59";
 const ASSETS = [
   "./", "./index.html", "./app.js", "./manifest.webmanifest",
   "./icon-192.png", "./icon-512.png", "./setlist.json",
@@ -32,8 +32,9 @@ self.addEventListener("fetch", (e) => {
     e.respondWith(caches.match(e.request).then((hit) => hit || fetch(e.request).then((r) => put(e.request, r))));
     return;
   }
+  // 自分のコードは古いものを掴まないよう、必ず取り直す
   e.respondWith(
-    fetch(e.request)
+    fetch(e.request, { cache: "no-store" })
       .then((r) => put(e.request, r))
       .catch(() => caches.match(e.request, { ignoreSearch: true })
         .then((hit) => hit || caches.match("./index.html")))
