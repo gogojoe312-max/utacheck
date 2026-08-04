@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "2026-08-04-08";
+const APP_VER = "2026-08-04-14";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -70,7 +70,7 @@ let S = {
   groups: [], groupId: "",
   src: "", key: "", keyInLink: true,
   memos: {}, recs: {}, kbps: 128, preroll: 5, viewer: false, srcGroup: "",
-  draws: {}, showFilter: "", folders: {}, subs: {}, subsMan: {},
+  draws: {}, showFilter: "", folders: {}, subs: {}, subsMan: {}, subLib: {},
   size: 19,
 };
 let U = { view: "live", songIdx: 0, sheet: null, mode: "member", allShows: false, picker: false, overview: false, ovSize: 9, draw: false, erase: false, pick: [], menu: null, printPick: null, focus: "", busy: "", allShowList: false };
@@ -94,8 +94,12 @@ function load() {
   if (!S.folders) S.folders = {};
   if (!S.subs) S.subs = {};
   if (!S.subsMan) S.subsMan = {};
+  if (!S.subLib) S.subLib = {};
   // 古いデータにも、その曲に出てくる人の名簿を持たせる
-  S.songs.forEach((so) => { if (!so.roster || !so.roster.length) so.roster = songRoster(so); });
+  S.songs.forEach((so) => {
+    if (!so.roster || !so.roster.length) so.roster = songRoster(so);
+    if (!so.sig) so.sig = songSig(so);
+  });
   S.kbps = 128;
   if (S.preroll == null || S.preroll > 10) S.preroll = 5;
   // 旧データの引き継ぎ：グループが無ければ1つ作り、既存の曲と配信設定を移す
@@ -135,6 +139,14 @@ function todayLabel() {
 const VIEW = () => !!S.viewer && !S.groups.some((g) => g.gistId);
 const group = (id) => S.groups.find((g) => g.id === (id || S.groupId)) || S.groups[0] || {};
 // 選んだグループの曲がある公演だけを出す（曲がまだ無い公演と、今開いている公演は常に出す）
+// 歌詞と担当の並びから、その曲の指紋を作る。曲名は見ない。
+function songSig(so) {
+  if (!so) return 0;
+  const body = so.lines.map((l) => (l.gap ? "" : ((l.parts || []).join(",") + "\u0001" + (l.t || "")))).join("\u0002");
+  return hash32(body);
+}
+const sigOf = (so) => { if (!so) return 0; if (!so.sig) so.sig = songSig(so); return so.sig; };
+
 // その曲に出てくる人
 function songRoster(so) {
   if (!so) return [];
@@ -223,6 +235,44 @@ function autoSubs() {
   if (n) save();
   return n;
 }
+// 一度決めた振り分けは覚えておく。曲名・グループ・欠席の顔ぶれが同じなら次も使う。
+const libKey = (so) => `${sigOf(so)}|${so.groupId}|${absentIds().slice().sort().join(",")}`;
+function rememberSub(so, i, ids) {
+  const l = so.lines[i] || {};
+  const k = libKey(so);
+  const e = S.subLib[k] && S.subLib[k].lines ? S.subLib[k] : { lines: {} };
+  e.lines[i] = { t: l.t || "", from: (l.parts || []).join(","), to: ids.slice() };
+  e.showId = S.showId;
+  e.name = showName();
+  e.at = Date.now();
+  S.subLib[k] = e;
+}
+// 覚えている振り分けを当てはめる。歌詞と元の歌割が一致する行だけ。
+function applyLib() {
+  if (!absentIds().length) return { n: 0, from: "" };
+  let n = 0, from = "", at = 0;
+  SONGS().forEach((so) => {
+    const box = S.subLib[libKey(so)];
+    if (!box) return;
+    const lib = box.lines || box;
+    if (box.showId === S.showId) return;      // 同じ公演のものは引き継ぎではない
+    if ((box.at || 0) > at) { at = box.at || 0; from = box.name || ""; }
+    const k = subKey(so.id);
+    Object.keys(lib).forEach((i) => {
+      const e = lib[i], l = so.lines[i];
+      if (!l || l.t !== e.t || (l.parts || []).join(",") !== e.from) return;
+      if (S.subsMan[k] && S.subsMan[k][i]) return;
+      S.subs[k] = S.subs[k] || {};
+      S.subs[k][i] = e.to.slice();
+      S.subsMan[k] = S.subsMan[k] || {};
+      S.subsMan[k][i] = 1;
+      n++;
+    });
+  });
+  return { n, from };
+}
+let libFrom = "";
+
 // 欠席が変わった時に組み直す。自分で決めた分は、まだ必要なときだけ残す。
 function rebuildSubs() {
   const ab = absentIds();
@@ -243,6 +293,7 @@ function rebuildSubs() {
     if (S.subsMan[k] && !Object.keys(S.subsMan[k]).length) delete S.subsMan[k];
   });
   autoSubs();
+  libFrom = applyLib().from;
 }
 
 // 同じ歌割が続く行のまとまりを返す
@@ -270,7 +321,7 @@ function pastHits(songId, lineIdx) {
   const anc = ancestorsOf(me);
   // 同じ公演の中で複製した元、または前の公演の同じ曲
   const ids = S.songs.filter((x) => x.id !== me.id &&
-    (anc.includes(x.id) || (x.title === me.title && x.groupId === me.groupId && older.has(x.showId)))
+    (anc.includes(x.id) || (sigOf(x) === sigOf(me) && x.groupId === me.groupId && older.has(x.showId)))
   ).map((x) => x.id);
   const ns = NOTES().filter((n) => ids.includes(n.songId) && n.lineIdx === lineIdx && !n.tags.includes("good"));
   return { count: [...new Set(ns.map((n) => n.songId))].length, notes: ns };
@@ -306,7 +357,7 @@ function prevSongOf(so) {
   if (!so) return null;
   if (so.from) { const p = S.songs.find((x) => x.id === so.from); if (p) return p; }
   const pid = prevShowId();
-  return pid ? S.songs.find((x) => x.showId === pid && x.title === so.title && x.groupId === so.groupId) : null;
+  return pid ? S.songs.find((x) => x.showId === pid && sigOf(x) === sigOf(so) && x.groupId === so.groupId) : null;
 }
 // この曲をもう1回ぶん複製する（歌割りだけ引き継ぎ、記録は空）
 const nextTake = (so) => so
@@ -384,8 +435,10 @@ function buildSong(parsed) {
     carry = parts.slice();
     return { label, t, parts, cell: r[2] || "" };
   });
-  return { id: uid(), title: parsed.title || "無題", credit: parsed.credit || "", lines,
+  const so = { id: uid(), title: parsed.title || "無題", credit: parsed.credit || "", lines,
     roster, sheetName: parsed.sheetName || "" };
+  so.sig = songSig(so);
+  return so;
 }
 
 // 拡張子が二重についていても落とす
@@ -981,6 +1034,87 @@ function pianoHTML(sel) {
   return `<div class="pno" id="pno"><div class="pnoin" style="width:${i * 34}px">${white}${black}</div></div>`;
 }
 
+/* ---------------- メトロノーム ---------------- */
+// 鳴らす時刻をあらかじめ音の仕組みに渡すので、画面の重さに影響されず正確に刻む。
+// 1小節を4拍とし、2＝2分音符 / 4＝4分音符 / 8＝8分音符 / 16＝16分音符 で刻む。
+let met = null;
+const metBpm = () => S.bpm || 120;
+const metSub = () => S.sub || 4;
+
+function metClick(t, accent) {
+  const o = AC.createOscillator(), g = AC.createGain();
+  o.type = "square";
+  o.frequency.value = accent ? 1800 : 1100;
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(accent ? 0.5 : 0.24, t + 0.002);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.04);
+  o.connect(g); g.connect(AC.destination);
+  o.start(t); o.stop(t + 0.05);
+}
+const metStep = () => (60 / metBpm()) * 4 / metSub();
+
+function metStart() {
+  unlockAudio();
+  if (!AC) return;
+  metStop(true);
+  met = { next: AC.currentTime + 0.12, n: 0, beat: 0 };
+  met.timer = setInterval(() => {
+    if (!met || !AC) return;
+    const sub = metSub();
+    while (met.next < AC.currentTime + 0.15) {
+      metClick(met.next, met.n % sub === 0);
+      met.beat = met.n % sub;
+      met.next += metStep();
+      met.n++;
+      const el = document.getElementById("metbeat");
+      if (el) el.textContent = String(met.beat + 1);
+    }
+  }, 25);
+  keepAwake();
+  render();
+}
+function metStop(quiet) {
+  if (met) { clearInterval(met.timer); met = null; }
+  if (!quiet) render();
+}
+function metSet(bpm) {
+  S.bpm = Math.max(30, Math.min(280, Math.round(bpm)));
+  save(); render();
+}
+let taps = [];
+function metTap() {
+  const now = Date.now();
+  if (taps.length && now - taps[taps.length - 1] > 2500) taps = [];
+  taps.push(now);
+  if (taps.length > 5) taps.shift();
+  if (taps.length >= 2) {
+    let sum = 0;
+    for (let i = 1; i < taps.length; i++) sum += taps[i] - taps[i - 1];
+    metSet(60000 / (sum / (taps.length - 1)));
+  } else render();
+}
+function metroHTML() {
+  return `<div class="card">
+    <div class="row" style="margin-bottom:10px">
+      <div class="grow" style="font-size:34px;font-weight:700;line-height:1;letter-spacing:-.03em">${metBpm()}<span style="font-size:11px;color:var(--dim);font-weight:400;margin-left:6px">BPM</span></div>
+      <div id="metbeat" style="font-size:26px;color:${met ? "var(--accent)" : "var(--dim)"};width:32px;text-align:center">${met ? met.beat + 1 : "–"}</div>
+      <button class="chip" data-act="${met ? "metstop" : "metstart"}"
+        style="${met ? "background:var(--bad);color:#0A0A0A" : "background:var(--accent);color:#0A0A0A"}">${met ? "停止" : "開始"}</button>
+    </div>
+    <div class="row" style="margin-bottom:8px">
+      <button class="chip sm" data-act="bpm" data-id="-5">−5</button>
+      <button class="chip sm" data-act="bpm" data-id="-1">−1</button>
+      <button class="chip sm grow" data-act="mettap">タップでテンポ</button>
+      <button class="chip sm" data-act="bpm" data-id="1">＋1</button>
+      <button class="chip sm" data-act="bpm" data-id="5">＋5</button>
+    </div>
+    <div class="row">
+      ${[2, 4, 8, 16].map((b) => `<button class="chip sm grow" data-act="metsub" data-id="${b}"
+        style="${metSub() === b ? "background:var(--accent);color:#0A0A0A" : ""}">${b}ビート</button>`).join("")}
+    </div>
+  </div>`;
+}
+
 /* ---------------- 音声メモ（この端末の中だけ） ---------------- */
 let DB = null;
 function db() {
@@ -1394,6 +1528,10 @@ function renderSheet() {
           .map((m) => `<button class="chip sm" data-act="focus" data-id="${m.id}"
             style="${U.focus === m.id ? "background:#4C9BFF;color:#0A0A0A" : ""}">${h(m.name)}</button>`).join("")}
       </div></div>` : ""}
+      ${changedCount() || needCount() ? `<div class="sec">
+        <button class="ghost" data-act="goabsent" style="text-align:left">
+          歌割の変更 ${changedCount()}件${needCount() ? `　<span style="color:var(--bad)">未決 ${needCount()}</span>` : ""}</button>
+      </div>` : ""}
       <div class="sec"><h4>公演</h4>${gfil}<div class="chips">${shows}</div>
         ${VIEW() ? "" : `<button class="ghost" data-act="dupshow" style="margin-top:8px">今のセットリストを複製して新しい公演にする</button>`}
 
@@ -1599,6 +1737,44 @@ function viewDiff() {
     <div style="height:40px"></div></div>`;
 }
 
+// 古い曲から新しい曲へ、記録・総括・振り替えを写す。古い曲はそのまま残す。
+function copyRecords(oldSo, newSo) {
+  // 歌詞で行を突き合わせる
+  const map = new Map();
+  const used = new Set();
+  oldSo.lines.forEach((l, i) => {
+    if (l.gap || !l.t) return;
+    let j = newSo.lines.findIndex((x, k) => !x.gap && x.t === l.t && !used.has(k));
+    if (j < 0) return;
+    used.add(j);
+    map.set(i, j);
+  });
+
+  let moved = 0, lost = 0;
+  S.notes.filter((n) => n.songId === oldSo.id).forEach((n) => {
+    if (!map.has(n.lineIdx)) { lost++; return; }
+    const c = Object.assign({}, n, { id: uid(), songId: newSo.id, lineIdx: map.get(n.lineIdx) });
+    if (n.lineEnd != null) c.lineEnd = map.has(n.lineEnd) ? map.get(n.lineEnd) : map.get(n.lineIdx);
+    S.notes.push(c);
+    moved++;
+  });
+
+  Object.keys(S.memos || {}).forEach((k) => {
+    const [sid, gid] = k.split("|");
+    if (gid === oldSo.id) S.memos[sid + "|" + newSo.id] = S.memos[k];
+  });
+
+  Object.keys(S.subs || {}).forEach((k) => {
+    const [sid, gid] = k.split("|");
+    if (gid !== oldSo.id) return;
+    const src = S.subs[k], dst = {};
+    Object.keys(src).forEach((i) => { if (map.has(Number(i))) dst[map.get(Number(i))] = src[i].slice(); });
+    if (Object.keys(dst).length) S.subs[sid + "|" + newSo.id] = dst;
+  });
+
+  return { moved, lost };
+}
+
 /* ---- 欠席verのExcelを書き出す ---- */
 // 変更のある行だけを、セル番地→新しい名前の形にする
 function absentEdits(so) {
@@ -1677,11 +1853,11 @@ async function exportAbsentXlsx(songId) {
 /* ---- 欠席対応 ---- */
 function viewAbsent() {
   const ab = absentIds();
-  const chips = showRoster().map((mid) => member(mid)).filter(Boolean)
+  const chips = VIEW() ? "" : showRoster().map((mid) => member(mid)).filter(Boolean)
     .map((m) => `<button class="chip sm" data-act="toggleabsent" data-id="${m.id}"
       style="${ab.includes(m.id) ? "background:var(--bad);color:#0A0A0A" : ""}">${h(m.name)}</button>`).join("");
 
-  const body = !ab.length ? `<p style="padding:40px;text-align:center;color:var(--dim);font-size:14px">上から欠席者を選んでください</p>`
+  const body = !ab.length ? `<p style="padding:40px;text-align:center;color:var(--dim);font-size:14px">${VIEW() ? "歌割の変更はありません" : "上から欠席者を選んでください"}</p>`
     : SONGS().map((so) => {
       // 同じ歌割が続く行はひとまとめにして、一度で直せるようにする
       const runs = [];
@@ -1698,7 +1874,7 @@ function viewAbsent() {
         const i0 = r.idx[0];
         const now = names(partsOf(so, i0)) || "—";
         const txt = r.idx.map((i) => so.lines[i].t).join(" / ");
-        return `<button class="row" data-act="assign" data-id="${so.id}" data-i="${i0}" data-idx="${r.idx.join(",")}"
+        return `<button class="row" ${VIEW() ? "" : `data-act="assign" data-id="${so.id}" data-i="${i0}" data-idx="${r.idx.join(",")}"`}
           style="width:100%;text-align:left;padding:8px 10px;margin-bottom:6px;border-radius:10px;
                  background:color-mix(in srgb,${col} 16%,transparent);box-shadow:inset 2px 0 0 ${col}">
           <span style="flex:0 0 100px;font-size:11px;color:${col};text-align:right">${h(so.lines[i0].label || "続き")}${r.idx.length > 1 ? `<br>${r.idx.length}行` : ""} → ${h(now)}</span>
@@ -1711,22 +1887,23 @@ function viewAbsent() {
           <b class="grow trunc">${h(songName(so))}</b>
           ${need ? `<span style="font-size:11px;color:var(--bad)">未決 ${need}</span>`
                  : `<span style="font-size:11px;color:var(--good)">完了</span>`}
-          ${so.xls ? `<button class="chip sm" data-act="xlsout" data-id="${so.id}">Excel</button>` : ""}
+          ${so.xls && !VIEW() ? `<button class="chip sm" data-act="xlsout" data-id="${so.id}">Excel</button>` : ""}
         </div>${rows}</div>`;
     }).join("");
 
   return `
-  <div class="hd"><button class="ic" data-act="go-live">‹</button><b>欠席対応</b>
+  <div class="hd"><button class="ic" data-act="go-live">‹</button><b>${VIEW() ? "歌割の変更" : "欠席対応"}</b>
     <span class="grow"></span>
     <span style="font-size:11px;color:var(--dim)" class="trunc">${h(showName())}</span></div>
   <div class="scroll pad">
-    <div class="card"><h4 style="font-size:11px;color:var(--dim);margin-bottom:8px">欠席するメンバー</h4>
+    ${VIEW() ? `<div class="card"><div style="font-size:12px;color:var(--dim)">${ab.length ? h(ab.map((x) => (member(x) || {}).name).join("・")) + " が欠席" : "欠席なし"}</div></div>`
+      : `<div class="card"><h4 style="font-size:11px;color:var(--dim);margin-bottom:8px">欠席するメンバー</h4>
       <div class="chips">${chips || ``}</div>
       ${ab.length ? `<div class="row" style="margin-top:10px;font-size:12px">
-        <span class="grow"><b style="color:var(--bad)">未決 ${needCount()}</b>　<b style="color:#F0B23C">変更済 ${changedCount()}</b></span>
+        <span class="grow"><b style="color:var(--bad)">未決 ${needCount()}</b>　<b style="color:#F0B23C">変更済 ${changedCount()}</b>${libFrom ? `　<span style="color:var(--good)">前回：${h(libFrom)}</span>` : ""}</span>
         <button class="chip sm" data-act="xlsall">まとめてExcel</button>
         <button class="chip sm" data-act="resetsubs" style="color:var(--dim)">やり直す</button></div>` : ""}
-    </div>
+    </div>`}
     ${body}
     <div style="height:40px"></div>
   </div>`;
@@ -1852,6 +2029,8 @@ function viewSetup() {
     <div class="scroll pad"><div style="height:6px"></div>${list}
     <h4 class="head">音を確かめる</h4>
     <div class="card">${pianoHTML(null)}</div>
+    <h4 class="head">メトロノーム</h4>
+    ${metroHTML()}
     <div style="height:40px"></div></div>`;
   }
 
@@ -2009,6 +2188,9 @@ function viewSetup() {
     <h4 class="head">音を確かめる</h4>
     <div class="card">${pianoHTML(null)}</div>
 
+    <h4 class="head">メトロノーム</h4>
+    ${metroHTML()}
+
     <h4 class="head">録音データ</h4>
     <div class="card" style="margin-bottom:10px">
       <div class="row" style="margin-bottom:8px">
@@ -2077,6 +2259,7 @@ document.addEventListener("click", (e) => {
     case "go-live": commitFields(); U.view = "live"; render(); break;
     case "note": openSheet(i, null); break;
     case "assignline": {
+      if (VIEW()) break;
       const so2 = song(); if (!so2) break;
       U.menu = { kind: "assign", id: so2.id, i, idx: runAt(so2, i) };
       renderSheet(); break;
@@ -2202,6 +2385,11 @@ document.addEventListener("click", (e) => {
       render(); break;
     }
     case "dupshow": { U.picker = false; dupShow(S.showId); break; }
+    case "metstart": metStart(); break;
+    case "metstop": metStop(); break;
+    case "mettap": metTap(); break;
+    case "bpm": metSet(metBpm() + Number(id)); break;
+    case "metsub": S.sub = Number(id); save(); render(); break;
     case "focus": U.focus = id; U.picker = false; render(); break;
     case "jumpshow": S.showId = id; U.songIdx = 0; save(); renderSheet(); render(); break;
 
@@ -2289,8 +2477,12 @@ document.addEventListener("click", (e) => {
     }
     case "resetsubs":
       if (confirm("この公演の振り替えをすべてやり直しますか？")) {
-        SONGS().forEach((so) => { delete S.subs[subKey(so.id)]; delete S.subsMan[subKey(so.id)]; });
-        autoSubs(); save(); render();
+        SONGS().forEach((so) => {
+          delete S.subs[subKey(so.id)];
+          delete S.subsMan[subKey(so.id)];
+          delete S.subLib[libKey(so)];
+        });
+        libFrom = ""; autoSubs(); save(); render();
       }
       break;
     case "assign": {
@@ -2306,7 +2498,12 @@ document.addEventListener("click", (e) => {
       const cur6 = S.subs[k][list[0]] || [];
       const next = cur6.includes(id) ? cur6.filter((x) => x !== id) : cur6.concat(id);
       S.subsMan[k] = S.subsMan[k] || {};
-      list.forEach((li) => { S.subs[k][li] = next.slice(); S.subsMan[k][li] = 1; });   // 続く行もまとめて
+      const so3 = S.songs.find((x) => x.id === sid);
+      list.forEach((li) => {
+        S.subs[k][li] = next.slice();
+        S.subsMan[k][li] = 1;
+        if (so3) rememberSub(so3, li, next);   // 次に同じ人が休んだ時のために覚える
+      });
       save(); schedulePush(); renderSheet(); render();
       break;
     }
@@ -2847,8 +3044,17 @@ async function handleFiles(files) {
       } else {
         const buf = await f.arrayBuffer();
         const so = Object.assign(buildSong(await parseXLSX(f, buf)), { groupId: S.groupId, showId: S.showId });
+        // 同じ曲の入れ直しなら、古い方の記録を写せるようにする
+        const prevSo = SONGS().find((x) => x.title === so.title || sigOf(x) === sigOf(so));
+        const had = prevSo ? S.notes.filter((n) => n.songId === prevSo.id).length : 0;
         S.songs.push(so);
         try { await putClip("xls:" + so.id, new Blob([buf])); so.xls = 1; so.xlsAt = Date.now(); } catch (e) { /* 保管できなくても取り込みは続ける */ }
+        if (prevSo && had) {
+          if (confirm(`この公演に「${songName(prevSo)}」があります。\nそちらの記録 ${had}件 を新しい方に写しますか？\n\n古い方はそのまま残ります。`)) {
+            const r = copyRecords(prevSo, so);
+            if (r.lost) alert(`${r.moved}件を写しました。\n${r.lost}件は歌詞が変わっていて写せませんでした。古い方に残っています。`);
+          }
+        }
       }
       save();
     } catch (err) {
@@ -2921,7 +3127,24 @@ function publicationData(gid) {
         showId: x.showId, libIdx: entry(x), take: x.take || 1,
         fromIdx: x.from != null && idx.has(x.from) ? idx.get(x.from) : null,
       })),
-      shows: S.shows.filter((x) => showIds.includes(x.id)),
+      shows: S.shows.filter((x) => showIds.includes(x.id)).map((x) => Object.assign({}, x, {
+        absent: (x.absent || []).map((mid) => (member(mid) || {}).name).filter(Boolean),
+      })),
+      subs: (() => {
+        const arr = [];
+        showIds.forEach((sid) => {
+          songs.forEach((x) => {
+            if (x.showId !== sid) return;
+            const m = S.subs[sid + "|" + x.id];
+            if (!m) return;
+            Object.keys(m).forEach((li) => {
+              arr.push({ showId: sid, songIdx: idx.get(x.id), lineIdx: Number(li),
+                names: (m[li] || []).map((mid) => (member(mid) || {}).name).filter(Boolean) });
+            });
+          });
+        });
+        return arr;
+      })(),
       notes: S.notes.filter((n) => idx.has(n.songId)).map((n) => ({
         songIdx: idx.get(n.songId), lineIdx: n.lineIdx,
         memberNames: n.memberIds.map((mid) => (member(mid) || {}).name).filter(Boolean),
@@ -3280,7 +3503,19 @@ function applySetlist(d) {
       if (so) S.memos[m.showId + "|" + so.id] = m.text;
     });
 
-    if (Array.isArray(d.shows)) S.shows = d.shows.slice();
+    if (Array.isArray(d.shows)) {
+      S.shows = d.shows.map((x) => Object.assign({}, x, {
+        absent: (x.absent || []).map((nm) => addMember(nm).id),
+      }));
+    }
+    S.subs = {};
+    (d.subs || []).forEach((x) => {
+      const so = S.songs[x.songIdx];
+      if (!so) return;
+      const k = x.showId + "|" + so.id;
+      S.subs[k] = S.subs[k] || {};
+      S.subs[k][x.lineIdx] = (x.names || []).map((nm) => addMember(nm).id);
+    });
     // 曲も記録も無い公演は、そのグループに関係が無いので残さない
     S.shows = S.shows.filter((sw) =>
       S.songs.some((x) => x.showId === sw.id) || NOTES().some((n) => n.showId === sw.id));
