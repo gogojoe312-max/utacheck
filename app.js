@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "2026-08-04-34";
+const APP_VER = "2026-08-04-37";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -100,6 +100,24 @@ function load() {
   S.songs.forEach((so) => {
     if (!so.roster || !so.roster.length) so.roster = songRoster(so);
     if (!so.sig) so.sig = songSig(so);
+    // 古い取り込みには歌詞のセル番地が無い。名前の列から推し量って補う。
+    if (so.lines.some((l) => l.cell && !l.lcell)) {
+      const cn = (t) => { let n = 0; for (let i = 0; i < t.length; i++) n = n * 26 + (t.charCodeAt(i) - 64); return n; };
+      const cs = (n) => { let t = ""; while (n > 0) { const m = (n - 1) % 26; t = String.fromCharCode(65 + m) + t; n = (n - m - 1) / 26; } return t; };
+      const cols = [];
+      so.lines.forEach((l) => {
+        const m = /^([A-Z]+)(\d+)$/.exec(l.cell || "");
+        if (m && !cols.includes(m[1])) cols.push(m[1]);
+      });
+      cols.sort((a, b) => cn(a) - cn(b));
+      // 名前の列が2つなら、その間隔から歌詞の列を割り出す（名前・空欄・歌詞 の並び）
+      const gap = cols.length >= 2 ? cn(cols[1]) - cn(cols[0]) : 3;
+      so.lines.forEach((l) => {
+        const m = /^([A-Z]+)(\d+)$/.exec(l.cell || "");
+        if (!m || l.lcell) return;
+        l.lcell = cs(cn(m[1]) + Math.max(1, Math.min(3, gap - 1))) + m[2];
+      });
+    }
   });
   sweep();
   S.kbps = 128;
@@ -2102,52 +2120,6 @@ async function exportCheckXlsx(songId) {
   }
 }
 
-async function exportAllCheckXlsx() {
-  const files = {};
-  let skipped = 0;
-  U.busy = "Excelを作成中…"; render();
-  try {
-    for (const so of SONGS()) {
-      const ns0 = NOTES().filter((n) => n.songId === so.id && n.showId === S.showId);
-      if (!ns0.length) continue;
-      if (!so.xls) { skipped++; continue; }
-      const blob = await getClip("xls:" + so.id).catch(() => null);
-      if (!blob) { skipped++; continue; }
-      const buf = new Uint8Array(await blob.arrayBuffer());
-      const wb = XLSX.read(buf, { type: "array" });
-      const sh = wb.Sheets[wb.SheetNames[0]];
-      const ref = XLSX.utils.decode_range(sh["!ref"] || "A1");
-      const colName = (n) => { let t = ""; n++; while (n > 0) { const m = (n - 1) % 26; t = String.fromCharCode(65 + m) + t; n = (n - m - 1) / 26; } return t; };
-      const memoCol = colName(ref.e.c + 1);
-      const edits = {};
-      so.lines.forEach((l, i) => {
-        const ns = ns0.filter((n) => covers(n, i));
-        if (!ns.length || !l.lcell) return;
-        const chars = Array.from(l.t);
-        const txt = ns.map((n) => {
-          const where = n.from != null ? `「${chars.slice(n.from, n.to + 1).join("")}」` : "";
-          return where + n.tags.map(tagName).join("・") + (n.pitch ? " " + pitchLabel(n.pitch) : "") + (n.memo ? " " + n.memo : "");
-        }).join(" / ");
-        edits[l.lcell] = { v: l.t, fill: CHKCOL[catOf((ns[0].tags || [])[0])] || "FFFFF3B0" };
-        const row = (l.lcell.match(/\d+$/) || [""])[0];
-        if (row) edits[memoCol + row] = { v: txt, fill: "FFFFFFFF" };
-      });
-      const mm = songMemo(so.id);
-      if (mm) edits[memoCol + (ref.e.r + 2)] = { v: "総括：" + mm, fill: "FFFFFFFF" };
-      const res = await addVersionTab(buf, "チェック " + (showName() || "").slice(0, 18), edits);
-      files[`${so.title}_チェック.xlsx`] = res.data;
-    }
-    const n = Object.keys(files).length;
-    if (!n) { U.busy = ""; render(); alert("記録のある曲がありません。\nExcelから読み込んだ曲だけが対象です。"); return; }
-    const data = await zip(files);
-    downloadBlob(`${showName() || "公演"}_チェック.zip`, new Blob([data], { type: "application/zip" }));
-    U.busy = ""; render();
-    if (skipped) alert(`${n}曲を書き出しました。\n${skipped}曲は元のExcelが無いため除きました。`);
-  } catch (e) {
-    U.busy = ""; render();
-    alert("作れませんでした。\n" + e.message);
-  }
-}
 
 /* ---- 欠席verのExcelを書き出す ---- */
 // 変更のある行だけを、セル番地→新しい名前の形にする
@@ -2329,6 +2301,7 @@ function fitPrintDOM() {
     const inner = sec.querySelector(".prin");
     const body = sec.querySelector(".prbody");
     if (!box || !inner) return;
+    box.style.height = "";                 // いったん元の高さ（上限）に戻す
     const bw = box.clientWidth, bh = box.clientHeight;
     if (!bw || !bh) return;
     // 幅を広げると折り返しが変わるので、収まるまで測り直す
@@ -2362,6 +2335,9 @@ function fitPrintDOM() {
     inner.style.transformOrigin = "top left";
     inner.style.width = (bw / k) + "px";
     inner.style.transform = "scale(" + k + ")";
+    // 縮めても元の高さのまま場所を取るので、箱の高さを見た目に合わせる。
+    // これで短い曲のときに白紙が次のページへ溢れない。
+    box.style.height = Math.min(bh, Math.ceil(inner.scrollHeight * k) + 2) + "px";
   });
   // 画面では紙全体が見えるように縮める。印刷時は等倍に戻る。
   const sc = app.querySelector(".scroll");
@@ -2408,7 +2384,11 @@ function viewPrint() {
 
     // 元のExcelの列の並びを再現する
     const ref = (x) => { const m = /^([A-Z]+)(\d+)$/.exec(x || ""); return m ? { c: m[1], r: Number(m[2]) } : null; };
-    const hasGrid = so.lines.some((l) => ref(l.cell) || ref(l.lcell));
+    // 歌詞の番地まで揃っている曲だけ、元のExcelの並びを再現する。
+    // 古い取り込みでは番地が無いので、その場合は縦に並べる。
+    const withT = so.lines.filter((l) => l.t);
+    const withBoth = withT.filter((l) => ref(l.cell) && ref(l.lcell));
+    const hasGrid = withT.length > 0 && withBoth.length >= withT.length * 0.8;
     let inner;
 
     if (hasGrid) {
@@ -2580,12 +2560,10 @@ function viewSetup() {
       <button data-act="songmenu" data-i="${i}" style="padding:4px 8px;color:var(--dim)">…</button>
     </div>`;
   }).join("");
-  const bar = `<div class="row" style="margin-bottom:10px">
+  const bar = `<div class="chips" style="margin-bottom:10px">
       <button class="chip sm" data-act="pickall">${U.pick.length === cur.length && cur.length ? "選択を解除" : "すべて選ぶ"}</button>
-      <button class="chip sm" data-act="sorttitle">曲名順に並べる</button>
-      <span class="grow"></span>
+      <button class="chip sm" data-act="sorttitle">曲名順</button>
       ${U.pick.length ? `<button class="chip sm" data-act="pdfpicked" style="background:var(--accent);color:#0A0A0A">${U.pick.length}曲をPDF</button>
-      <button class="chip sm" data-act="chkxls">チェックExcel</button>
       <button class="chip sm" data-act="picktake">テイク</button>
       <button class="chip sm" data-act="clearpicked">記録を消す</button>
       <button class="chip sm" data-act="pickgroup">グループ</button>
@@ -2828,7 +2806,6 @@ document.addEventListener("click", (e) => {
       U.pick = U.pick.length === cur2.length ? [] : cur2;
       render(); break;
     }
-    case "chkxls": exportAllCheckXlsx(); break;
     case "picktake": {
       const ids = U.pick.slice();
       if (!ids.length) break;
@@ -2872,7 +2849,10 @@ document.addEventListener("click", (e) => {
     case "m-chk": { const q = U.menu.id; U.menu = null; exportCheckXlsx(q); render(); break; }
     case "m-pdf": {
       const q = U.menu.id; U.menu = null;
-      printNow([q]);
+      commitFields();
+      U.printPick = [q];
+      U.view = "print";
+      render();
       break;
     }
     case "m-setgroup": {
@@ -2980,7 +2960,11 @@ document.addEventListener("click", (e) => {
     }
     case "pickfile": document.getElementById("file").click(); break;
     case "pdfpicked": {
-      if (U.pick.length) printNow(U.pick.slice());
+      if (!U.pick.length) break;
+      commitFields();
+      U.printPick = U.pick.slice();
+      U.view = "print";
+      render();
       break;
     }
     case "goabsent": commitFields(); U.view = "absent"; render(); break;
