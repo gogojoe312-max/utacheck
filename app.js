@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "2026-08-04-30";
+const APP_VER = "2026-08-04-34";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -542,7 +542,7 @@ function buildSong(parsed) {
       (groups[k] || [addMember(k).id]).forEach((n) => { if (!exIds.includes(n)) exIds.push(n); });
     });
     if (label === "→") {
-      return { label: exRaw ? "　" + exRaw : "", raw: "", t,
+      return { label: exRaw ? "　" + exRaw : "", raw: "", labelRaw: "", extraRaw: r[7] || "", t,
         parts: carry.concat(exIds.filter((x) => !carry.includes(x))),
         main: carry.slice(), extra: exIds, cont: true, cell: r[2] || "", lcell: r[3] || "", extraCell: r[5] || "" };
     }
@@ -566,11 +566,11 @@ function buildSong(parsed) {
     });
     carry = parts.slice();
     const all2 = parts.concat(exIds.filter((x) => !parts.includes(x)));
-    return { label: label + (exRaw ? "　" + exRaw : ""), raw: label, t, parts: all2,
+    return { label: label + (exRaw ? "　" + exRaw : ""), raw: label, labelRaw: r[6] || label, extraRaw: r[7] || "", t, parts: all2,
       main: parts.slice(), extra: exIds, cell: r[2] || "", lcell: r[3] || "", extraCell: r[5] || "" };
   });
   const so = { id: uid(), title: parsed.title || "無題", credit: parsed.credit || "", lines,
-    roster, blocks: groups, blockCells: parsed.groupCells || {}, sheetName: parsed.sheetName || "" };
+    roster, blocks: groups, blockCells: parsed.groupCells || {}, blockRows: parsed.groupRows || [], sheetName: parsed.sheetName || "" };
   so.sig = songSig(so);
   return so;
 }
@@ -584,6 +584,15 @@ function cleanText(t) {
   t = t.replace(/\(cid:\d+\)/g, "");                  // 対応表のない文字
   t = t.replace(/[\uFFFD\u0000-\u001F\uE000-\uF8FF]/g, " "); // 化けた文字・外字
   return t.replace(/\s+/g, " ").trim();
+}
+
+// 歌詞は元の表記を保つ。直すのは部首だけの異体字と、化けた文字だけ。
+function softText(t) {
+  t = String(t == null ? "" : t);
+  t = t.replace(/[\u2E80-\u2FDF\uFF66-\uFF9F]/g, (ch) => (ch.normalize ? ch.normalize("NFKC") : ch));
+  t = t.replace(/\(cid:\d+\)/g, "");
+  t = t.replace(/[\uFFFD\u0000-\u001F\uE000-\uF8FF]/g, " ");
+  return t.replace(/[ \t\u00A0]+/g, " ").trim();
 }
 
 const NAMESEP = /[・、，,･\/／\s]+/;
@@ -1046,13 +1055,13 @@ async function parseXLSX(file, buf) {
   const wb = XLSX.read(buf || await file.arrayBuffer(), { type: "array" });
   const sh = wb.Sheets[wb.SheetNames[0]];
   const grid = XLSX.utils.sheet_to_json(sh, { header: 1, blankrows: true, defval: "" })
-    .map((r) => (r || []).map((v) => cleanText(String(v == null ? "" : v).replace(/\s*\n\s*/g, " "))));
+    .map((r) => (r || []).map((v) => String(v == null ? "" : v).replace(/\s*\n\s*/g, " ")));
   const w = grid.reduce((m, r) => Math.max(m, r.length), 0);
   grid.forEach((r) => { while (r.length < w) r.push(""); });
 
   const kind = [];
   for (let c = 0; c < w; c++) {
-    const vals = grid.map((r) => r[c]).filter(Boolean);
+    const vals = grid.map((r) => cleanText(r[c])).filter(Boolean);
     if (vals.length < 3) { kind.push("."); continue; }
     kind.push(vals.filter(looksName).length / vals.length >= 0.6 ? "N" : "L");
   }
@@ -1086,30 +1095,31 @@ async function parseXLSX(file, buf) {
   let lead = [];              // 作家名より前の、名前の付いていない行（題名・副題）
   blocks.forEach(([nc, lc], bi) => {
     grid.forEach((r, ri) => {
-      let nv = r[nc] || "";
-      const lv = r[lc] || "";
+      let nv = cleanText(r[nc] || "");
+      let nvRaw = softText(r[nc] || "");
+      const lv = softText(r[lc] || "");
       // 「（空欄） A  吉田・服部…」のように、間の列にブロック名が書かれていることがある
       if (!nv && lv) {
         for (let c = nc + 1; c < lc; c++) {
-          const v2 = (r[c] || "").trim();
-          if (v2 && v2.length <= 2) { nv = v2; break; }
+          const v2 = cleanText(r[c] || "");
+          if (v2 && v2.length <= 2) { nv = v2; nvRaw = softText(r[c] || ""); break; }
         }
       }
-      const ac = annex[bi].find((c) => (r[c] || "").trim());
-      const extraRaw = ac != null ? (r[ac] || "").trim() : "";
+      const ac = annex[bi].find((c) => cleanText(r[c] || ""));
+      const extraRaw = ac != null ? cleanText(r[ac] || "") : "";
       const extraCell = ac != null ? col(ac) + (ri + 1) : "";
       if (!nv && !lv) {
         const last = rows[rows.length - 1];
         if (rows.length && (last[0] || last[1])) rows.push(["", ""]);
         return;
       }
-      if (!nv && CREDIT.test(lv)) { head.push(lv); lead.forEach((x) => head.unshift(x)); lead = []; return; }
-      if (!nv && !rows.length && lead.length < 3) { lead.push(lv); return; }
-      rows.push([nv || "→", lv, col(nc) + (ri + 1), col(lc) + (ri + 1), extraRaw, extraCell]);
+      if (!nv && CREDIT.test(lv)) { head.push(lv); lead.forEach((x) => head.unshift(x[1])); lead = []; return; }
+      if (!nv && !rows.length && lead.length < 3) { lead.push(["→", lv, col(nc) + (ri + 1), col(lc) + (ri + 1), "", "", "", ""]); return; }
+      rows.push([nv || "→", lv, col(nc) + (ri + 1), col(lc) + (ri + 1), extraRaw, extraCell, nvRaw, softText(ac != null ? (r[ac] || "") : "")]);
     });
   });
   // 作家名が見つからなかった場合、拾っておいた行は歌詞に戻す
-  lead.forEach((x) => rows.unshift(["→", x, "", ""]));
+  lead.reverse().forEach((x) => rows.unshift(x));
   // 一番左のシートを読んでいる
   const sheetName = wb.SheetNames[0];
   const parsed0 = finalize(cleanName(file.name), head.join("　"), rows);
@@ -1133,6 +1143,7 @@ function finalize(title, credit, rows) {
   // 「A ＝ 小野田・植村・島川・相馬」のようなブロック定義行を拾って、歌詞から外す
   const groups = {};
   const groupCells = {};
+  const groupRows = [];
   rows = rows.filter((r) => {
     const toks = splitNames(r[1]);
     if (!r[0] || r[0] === "→" || r[0].length > 2 || toks.length < 2) return true;
@@ -1147,6 +1158,7 @@ function finalize(title, credit, rows) {
     }
     groups[r[0]] = toks;
     groupCells[r[0]] = r[3] || "";
+    groupRows.push({ b: r[0], ncell: r[2] || "", lcell: r[3] || "" });
     return false;
   });
 
@@ -1159,7 +1171,7 @@ function finalize(title, credit, rows) {
     });
   });
 
-  return { title: (title || "").trim() || "無題", credit: (credit || "").trim(), groups, groupCells, order, lines: rows };
+  return { title: (title || "").trim() || "無題", credit: (credit || "").trim(), groups, groupCells, groupRows, order, lines: rows };
 }
 
 /* ---------------- ピアノ ---------------- */
@@ -2318,24 +2330,38 @@ function fitPrintDOM() {
     const body = sec.querySelector(".prbody");
     if (!box || !inner) return;
     const bw = box.clientWidth, bh = box.clientHeight;
-    const fit = () => {
-      inner.style.transform = "none";
-      inner.style.width = bw + "px";
-      const k = Math.min(1, bh / Math.max(1, inner.scrollHeight), bw / Math.max(1, inner.scrollWidth));
+    if (!bw || !bh) return;
+    // 幅を広げると折り返しが変わるので、収まるまで測り直す
+    const solve = () => {
+      let k = 1;
+      for (let n = 0; n < 8; n++) {
+        inner.style.transform = "none";
+        inner.style.width = (bw / k) + "px";
+        const hh = Math.max(1, inner.scrollHeight);
+        const need = Math.min(1, bh / (hh * k));
+        if (need >= 0.995) break;
+        k = k * need * 0.995;
+        if (k < 0.15) break;
+      }
+      // 念のため最後に確認して、はみ出していれば追い込む
+      for (let n = 0; n < 6; n++) {
+        inner.style.transform = "none";
+        inner.style.width = (bw / k) + "px";
+        if (inner.scrollHeight * k <= bh) break;
+        k *= 0.94;
+      }
       return k;
     };
-    let cols = 1, k = fit();
-    if (k < 0.72 && body && !sec.querySelector(".prg")) {          // 小さくなりすぎるなら2段組を試す
-      cols = 2;
+    let k = solve();
+    if (k < 0.72 && body && !sec.querySelector(".prg")) {   // 小さくなりすぎるなら2段組を試す
       body.style.columnCount = 2;
       body.style.columnGap = "14px";
-      const k2 = fit();
-      if (k2 <= k) { cols = 1; body.style.columnCount = 1; k = fit(); }
-      else k = k2;
+      const k2 = solve();
+      if (k2 <= k) { body.style.columnCount = 1; k = solve(); } else k = k2;
     }
     inner.style.transformOrigin = "top left";
-    inner.style.transform = "scale(" + k + ")";
     inner.style.width = (bw / k) + "px";
+    inner.style.transform = "scale(" + k + ")";
   });
   // 画面では紙全体が見えるように縮める。印刷時は等倍に戻る。
   const sc = app.querySelector(".scroll");
@@ -2375,7 +2401,9 @@ function viewPrint() {
     };
     const nameHTML = (l, i) => {
       const st = lineStatus(so, i);
-      return `<span${st ? ' style="font-weight:700;text-decoration:underline"' : ""}>${h(labelOf(so, i))}</span>`;
+      const sub = subOf(so.id, i);
+      const txt = sub ? labelOf(so, i) : (l.labelRaw || l.raw || l.label || "");
+      return `<span${st ? ' style="font-weight:700;text-decoration:underline"' : ""}>${h(txt)}</span>`;
     };
 
     // 元のExcelの列の並びを再現する
@@ -2384,29 +2412,67 @@ function viewPrint() {
     let inner;
 
     if (hasGrid) {
-      const colOrder = [];
-      const put = (c) => { if (c && !colOrder.includes(c)) colOrder.push(c); };
-      so.lines.forEach((l) => { const a = ref(l.cell); if (a) put(a.c); });
-      colOrder.sort((a, b) => (a.length - b.length) || (a < b ? -1 : 1));
+      const colNum = (t) => { let n = 0; for (let i = 0; i < t.length; i++) n = n * 26 + (t.charCodeAt(i) - 64); return n; };
+      // 元のExcelにあった列を、そのままの並びで使う
+      const spec = [];
+      const put = (c, kind) => { if (c && !spec.some((x) => x.c === c)) spec.push({ c, kind }); };
+      so.lines.forEach((l) => {
+        const a = ref(l.cell), b = ref(l.lcell), e = ref(l.extraCell);
+        if (a) put(a.c, "name");
+        if (b) put(b.c, "lyric");
+        if (e) put(e.c, "extra");
+      });
+      (so.blockRows || []).forEach((br) => {
+        const a = ref(br.ncell), b = ref(br.lcell);
+        if (a) put(a.c, "name");
+        if (b) put(b.c, "lyric");
+      });
+      spec.sort((x, y) => colNum(x.c) - colNum(y.c));
+
+      let minR = Infinity, maxR = 0;
+      const byName = {}, byLyric = {}, byExtra = {}, bat = {};
+      so.lines.forEach((l, i) => {
+        const a = ref(l.cell), b = ref(l.lcell), x = ref(l.extraCell);
+        const any = a || b;
+        if (!any) return;
+        if (any.r < minR) minR = any.r;
+        if (any.r > maxR) maxR = any.r;
+        if (a) byName[a.c + ":" + a.r] = { l, i };
+        if (b) byLyric[b.c + ":" + b.r] = { l, i };
+        if (x) byExtra[x.c + ":" + x.r] = { l, i };
+      });
+      (so.blockRows || []).forEach((br) => {
+        const a = ref(br.ncell), b = ref(br.lcell);
+        const any = a || b;
+        if (!any) return;
+        if (a) bat[a.c + ":" + a.r] = { br, kind: "name" };
+        if (b) bat[b.c + ":" + b.r] = { br, kind: "lyric" };
+        if (any.r < minR) minR = any.r;
+        if (any.r > maxR) maxR = any.r;
+      });
+
       const rowsSet = [];
-      so.lines.forEach((l, i) => {
-        const a = ref(l.cell) || ref(l.lcell);
-        if (a && !rowsSet.includes(a.r)) rowsSet.push(a.r);
-      });
-      rowsSet.sort((a, b) => a - b);
-      const at = {};
-      so.lines.forEach((l, i) => {
-        const a = ref(l.cell) || ref(l.lcell);
-        if (!a) return;
-        at[a.c + ":" + a.r] = { l, i };
-      });
+      for (let r = minR; r <= maxR; r++) rowsSet.push(r);
       const trs = rowsSet.map((rn) => {
-        const tds = colOrder.map((c) => {
-          const e = at[c + ":" + rn];
-          if (!e || !e.l.t) return `<td class="prn"></td><td class="prx"></td>`;
-          return `<td class="prn">${nameHTML(e.l, e.i)}</td><td class="prx">${cellHTML(e.l, e.i)}</td>`;
+        let has = false;
+        const tds = spec.map((sp) => {
+          const key = sp.c + ":" + rn;
+          const cls = sp.kind === "lyric" ? "prx" : "prn";
+          const bb = bat[key];
+          if (bb) {
+            has = true;
+            const st = blockStatus(so, bb.br.b);
+            return bb.kind === "name"
+              ? `<td class="prn"><b>${h(bb.br.b)}</b></td>`
+              : `<td class="prx"${st ? ' style="font-weight:700;text-decoration:underline"' : ""}>${h(names(blockParts(so, bb.br.b)) || "—")}</td>`;
+          }
+          const en = byName[key], el = byLyric[key], ex = byExtra[key];
+          if (el && el.l.t) { has = true; return `<td class="prx">${cellHTML(el.l, el.i)}</td>`; }
+          if (en && en.l.t) { has = true; return `<td class="prn">${nameHTML(en.l, en.i)}</td>`; }
+          if (ex && ex.l.extraRaw) { has = true; return `<td class="prn">${h(ex.l.extraRaw)}</td>`; }
+          return `<td class="${cls}"></td>`;
         }).join("");
-        return `<tr>${tds}</tr>`;
+        return `<tr${has ? "" : ' class="prz"'}>${tds}</tr>`;
       }).join("");
       inner = `<table class="prg">${trs}</table>`;
     } else {
@@ -2418,7 +2484,7 @@ function viewPrint() {
 
     return `<section class="prs"><div class="prbox"><div class="prin">
       <h3>${h(songName(so))}<span class="prc">　${h((S.groups.find((x) => x.id === so.groupId) || {}).name || "")}　${h(showName())}　${ns0.length}件</span></h3>
-      ${blocksOf(so).length ? `<div class="prb">${blocksOf(so).map((b) => `<span><b>${h(b)}</b> ${h(names(blockParts(so, b)) || "—")}</span>`).join("　")}</div>` : ""}
+      ${blocksOf(so).length && !(hasGrid && (so.blockRows || []).length) ? `<div class="prb">${blocksOf(so).map((b) => `<span><b>${h(b)}</b> ${h(names(blockParts(so, b)) || "—")}</span>`).join("　")}</div>` : ""}
       ${inner}
       ${mm ? `<div class="prm"><b>総括</b>　${h(mm)}</div>` : ""}
     </div></div></section>`;
@@ -2468,6 +2534,9 @@ function viewSetup() {
     ${metroHTML()}
     <h4 class="head">歌割をPDFにする</h4>
     <div class="card"><button class="primary" data-act="gopdf">PDFにする</button></div>
+    <div style="text-align:center;color:var(--dim);font-size:11px;letter-spacing:.04em;margin:26px 0 10px">
+      Created by Joe Takasaki
+    </div>
     <div style="height:40px"></div></div>`;
   }
 
@@ -2658,6 +2727,9 @@ function viewSetup() {
     <h4 class="head">歌割をPDFにする</h4>
     <div class="card"><button class="primary" data-act="gopdf">PDFにする</button></div>
 
+    <div style="text-align:center;color:var(--dim);font-size:11px;letter-spacing:.04em;margin:26px 0 10px">
+      Created by Joe Takasaki
+    </div>
     <div style="height:40px"></div>
   </div>`;
 }
