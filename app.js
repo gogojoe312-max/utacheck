@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "2026-08-04-23";
+const APP_VER = "2026-08-04-24";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1722,10 +1722,6 @@ function renderSheet() {
           .map((m) => `<button class="chip sm" data-act="focus" data-id="${m.id}"
             style="${U.focus === m.id ? "background:#4C9BFF;color:#0A0A0A" : ""}">${h(m.name)}</button>`).join("")}
       </div></div>` : ""}
-      ${changedCount() || needCount() ? `<div class="sec">
-        <button class="ghost" data-act="goabsent" style="text-align:left">
-          歌割の変更 ${changedCount()}件${needCount() ? `　<span style="color:var(--bad)">未決 ${needCount()}</span>` : ""}</button>
-      </div>` : ""}
       ${(changedCount() || needCount()) ? `<div class="sec">
         <button class="ghost" data-act="goabsent" style="text-align:left">
           歌割の変更 ${changedCount()}件${needCount() ? `　<span style="color:var(--bad)">未決 ${needCount()}</span>` : ""}</button>
