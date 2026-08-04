@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "2026-08-04-02";
+const APP_VER = "2026-08-04-03";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1205,12 +1205,13 @@ function viewLive() {
   ${U.draw && !VIEW() ? `<div class="aubar">
     <button data-act="pen" class="aub" style="${U.erase ? "" : "background:var(--bad);color:#0A0A0A"}">✎</button>
     <button data-act="eraser" class="aub" style="${U.erase ? "background:var(--accent);color:#0A0A0A" : ""}">
-      <svg viewBox="0 0 24 24" width="19" height="19" style="pointer-events:none">
+      <svg viewBox="0 0 24 24" width="15" height="15" style="pointer-events:none">
         <path d="M4 16.5 12.5 8l5 5L11 19.5H6.5z" fill="currentColor" opacity=".95"/>
         <path d="M12.5 8 16 4.5a2 2 0 0 1 2.8 0l2.7 2.7a2 2 0 0 1 0 2.8L17.5 13z" fill="currentColor" opacity=".55"/>
         <path d="M4 20.5h16" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/>
       </svg></button>
     <span class="grow" style="font-size:11px;color:var(--dim)">なぞって書く。書いている間は画面が動きません</span>
+    <button data-act="inkundo" class="aub" style="font-size:16px;${(S.draws[drawKey()] || []).length ? "" : "opacity:.3"}">↩</button>
     <button data-act="clearink" class="aub" style="font-size:12px;color:var(--dim)">全消</button>
   </div>` : ""}
   ${s && !VIEW() && !U.draw ? `<div class="aubar">
@@ -1357,7 +1358,7 @@ function renderSheet() {
       <button data-act="cancel" style="width:36px;height:36px;border-radius:10px;background:var(--panel2);font-size:17px">✕</button></div>
       ${S.members.length ? `<div class="sec"><h4>注目するメンバー</h4><div class="chips">
         <button class="chip sm" data-act="focus" data-id="" style="${!U.focus ? "background:var(--accent);color:#0A0A0A" : ""}">なし</button>
-        ${S.members.filter((m) => SONGS().some((so) => so.lines.some((l) => (l.parts || []).includes(m.id))))
+        ${S.members.filter((m) => (song() ? song().lines : []).some((l) => (l.parts || []).includes(m.id)))
           .map((m) => `<button class="chip sm" data-act="focus" data-id="${m.id}"
             style="${U.focus === m.id ? "background:#4C9BFF;color:#0A0A0A" : ""}">${h(m.name)}</button>`).join("")}
       </div></div>` : ""}
@@ -1771,30 +1772,6 @@ function viewSetup() {
       <span class="grow"></span>
       <span style="font-size:11px;color:var(--dim)">${APP_VER}</span></div>
     <div class="scroll pad"><div style="height:6px"></div>${list}
-    <h4 class="head">欠席対応</h4>
-    <div class="card">
-      <button class="primary" data-act="goabsent">${absentIds().length
-        ? `${h(absentIds().map((x) => (member(x) || {}).name).join("・"))} が欠席${needCount() ? `　未決 ${needCount()}` : "　完了"}`
-        : "欠席者を設定する"}</button>
-    </div>
-
-    <h4 class="head">バックアップ</h4>
-    <div class="card">
-      <div class="row" style="margin-bottom:10px">
-        <span class="grow" style="font-size:13px">${S.bkAt ? "最終 " + new Date(S.bkAt).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "まだ取っていません"}</span>
-        <span style="font-size:11px;color:${bkSignature() === S.bkHash ? "var(--good)" : "var(--dim)"}">${bkSignature() === S.bkHash ? "最新" : "未反映あり"}</span>
-      </div>
-      <button class="primary" data-act="bknow" style="margin-bottom:8px">今すぐバックアップ</button>
-      <button class="ghost" data-act="bkfile" style="margin-bottom:8px">ファイルに書き出す</button>
-      <button class="ghost" data-act="bkrestore" style="color:var(--bad)">バックアップから戻す</button>
-      <div class="row" style="margin-top:12px">
-        <span style="font-size:11px;color:var(--dim);width:52px">合言葉</span>
-        <input class="field grow" id="bkkey" placeholder="未設定（暗号化しません）" value="${h(S.bkKey || "")}">
-        <button class="chip sm" data-act="setbkkey">保存</button>
-      </div>
-      <div style="font-size:11px;color:var(--dim);margin-top:6px">公演・曲・記録・総括・手書きをすべて保存します。録音とトークンは含みません。10分ごとに自動で更新されます。</div>
-    </div>
-
     <h4 class="head">音を確かめる</h4>
     <div class="card">${pianoHTML(null)}</div>
     <div style="height:40px"></div></div>`;
@@ -1910,6 +1887,13 @@ function viewSetup() {
       <button class="chip" data-act="addgroup">追加</button>
     </div>
 
+    <h4 class="head">欠席対応</h4>
+    <div class="card">
+      <button class="primary" data-act="goabsent">${absentIds().length
+        ? `${h(absentIds().map((x) => (member(x) || {}).name).join("・"))} が欠席${needCount() ? `　未決 ${needCount()}` : "　完了"}`
+        : "欠席者を設定する"}</button>
+    </div>
+
     <h4 class="head">自動公開</h4>
     <div class="card">
       ${S.ghToken ? `<div class="row" style="margin-bottom:10px">
@@ -1925,13 +1909,6 @@ function viewSetup() {
             <button class="chip" data-act="ghtoken">確認して保存</button>
           </div>
           <div style="font-size:11px;color:var(--dim);margin-top:6px">Tokens (classic) / gist</div>`}
-    </div>
-
-    <h4 class="head">欠席対応</h4>
-    <div class="card">
-      <button class="primary" data-act="goabsent">${absentIds().length
-        ? `${h(absentIds().map((x) => (member(x) || {}).name).join("・"))} が欠席${needCount() ? `　未決 ${needCount()}` : "　完了"}`
-        : "欠席者を設定する"}</button>
     </div>
 
     <h4 class="head">バックアップ</h4>
@@ -2042,6 +2019,12 @@ document.addEventListener("click", (e) => {
     case "draw": U.draw = !U.draw; U.erase = false; render(); break;
     case "pen": U.erase = false; render(); break;
     case "eraser": U.erase = true; render(); break;
+    case "inkundo": {
+      const k = drawKey();
+      const arr = S.draws[k] || [];
+      if (arr.length) { arr.pop(); if (!arr.length) delete S.draws[k]; save(); paintInk(); render(); }
+      break;
+    }
     case "clearink":
       if (confirm("この曲の手書きをすべて消しますか？")) { delete S.draws[drawKey()]; save(); render(); }
       break;
@@ -2212,6 +2195,32 @@ document.addEventListener("click", (e) => {
       if (U.pick.length) printNow(U.pick.slice());
       break;
     }
+    case "goabsent": commitFields(); U.view = "absent"; render(); break;
+    case "toggleabsent": {
+      const sw = S.shows.find((x) => x.id === S.showId);
+      if (!sw) break;
+      sw.absent = (sw.absent || []).includes(id) ? sw.absent.filter((x) => x !== id) : (sw.absent || []).concat(id);
+      autoSubs();
+      save(); schedulePush(); render();
+      break;
+    }
+    case "resetsubs":
+      if (confirm("この公演の振り替えをすべてやり直しますか？")) {
+        SONGS().forEach((so) => { delete S.subs[subKey(so.id)]; });
+        autoSubs(); save(); render();
+      }
+      break;
+    case "assign": U.menu = { kind: "assign", id, i }; renderSheet(); break;
+    case "setassign": {
+      const sid = U.menu.id, li = U.menu.i;
+      const k = subKey(sid);
+      S.subs[k] = S.subs[k] || {};
+      const cur6 = S.subs[k][li] || [];
+      S.subs[k][li] = cur6.includes(id) ? cur6.filter((x) => x !== id) : cur6.concat(id);
+      save(); schedulePush(); renderSheet(); render();
+      break;
+    }
+    case "xlsout": exportAbsentXlsx(id); break;
     case "printpick": {
       const ids = SONGS().map((x) => x.id);
       const cur3 = U.printPick || ids.slice();
