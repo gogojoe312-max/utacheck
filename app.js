@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "2026-08-04-41";
+const APP_VER = "2026-08-04-43";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -3656,16 +3656,18 @@ function publicationData(gid) {
       return o;
     };
     const entry = (x) => {
-      const lines = x.lines.map((l) => (l.gap ? ["", "", "", "", ""]
-        : [l.cont ? "→" : (l.raw != null ? l.raw : l.label), l.t, "", "",
-           (l.extra || []).length ? "ハモ " + (l.extra || []).map((m) => (member(m) || {}).name).filter(Boolean).join("・") : ""]));
+      const lines = x.lines.map((l) => (l.gap ? ["", "", "", "", "", "", "", ""]
+        : [l.cont ? "→" : (l.raw != null ? l.raw : l.label), l.t, l.cell || "", l.lcell || "",
+           (l.extra || []).length ? "ハモ " + (l.extra || []).map((m) => (member(m) || {}).name).filter(Boolean).join("・") : "",
+           l.extraCell || "", l.labelRaw || l.raw || "", l.extraRaw || ""]));
       const key = x.title + "\u0001" + JSON.stringify(lines);
       if (libKey.has(key)) return libKey.get(key);
       const gs = {};
       Object.keys(x.blocks || {}).forEach((b) => {
         gs[b] = (x.blocks[b] || []).map((mid) => (member(mid) || {}).name).filter(Boolean);
       });
-      lib.push({ title: x.title, credit: x.credit, groups: gs, order: orderOf(x), lines });
+      lib.push({ title: x.title, credit: x.credit, groups: gs, order: orderOf(x), lines,
+        groupRows: (x.blockRows || []).map((br) => ({ b: br.b, ncell: br.ncell || "", lcell: br.lcell || "" })) });
       libKey.set(key, lib.length - 1);
       return lib.length - 1;
     };
