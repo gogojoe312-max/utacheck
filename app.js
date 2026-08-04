@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "2026-08-04-03";
+const APP_VER = "2026-08-04-04";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1210,8 +1210,8 @@ function viewLive() {
         <path d="M12.5 8 16 4.5a2 2 0 0 1 2.8 0l2.7 2.7a2 2 0 0 1 0 2.8L17.5 13z" fill="currentColor" opacity=".55"/>
         <path d="M4 20.5h16" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/>
       </svg></button>
-    <span class="grow" style="font-size:11px;color:var(--dim)">なぞって書く。書いている間は画面が動きません</span>
-    <button data-act="inkundo" class="aub" style="font-size:16px;${(S.draws[drawKey()] || []).length ? "" : "opacity:.3"}">↩</button>
+    <span class="grow"></span>
+    <button data-act="inkundo" class="aub" style="font-size:12px;width:auto;padding:0 12px;${(S.draws[drawKey()] || []).length ? "" : "opacity:.3"}">取消</button>
     <button data-act="clearink" class="aub" style="font-size:12px;color:var(--dim)">全消</button>
   </div>` : ""}
   ${s && !VIEW() && !U.draw ? `<div class="aubar">
@@ -1225,7 +1225,7 @@ function viewLive() {
            <span id="autime" style="font-size:11px;color:var(--dim);min-width:74px;text-align:right">0:00 / ${mmss(S.recs[recKeyOf(s)].dur)}</span>
            <button data-act="delrec" class="aub" style="font-size:13px;color:var(--dim)">✕</button>`
         : `<button data-act="recstart" class="aub" style="color:var(--bad)">●</button>
-           <span class="grow" style="font-size:11px;color:var(--dim)">この曲を録音（リハの聴き返し用・端末内のみ）</span>`}
+           <span class="grow" style="font-size:11px;color:var(--dim)">録音</span>`}
   </div>` : ""}
   <div class="bottom">
     <button data-act="prev" class="${U.songIdx <= 0 ? "off" : ""}">‹</button>
@@ -1295,10 +1295,11 @@ function renderSheet() {
     overlay = document.createElement("div");
     overlay.className = "mask";
     overlay.innerHTML = `<button class="sp" data-act="closemenu"></button><div class="sheet">
-      <div class="row" style="margin-bottom:10px"><span class="grow trunc" style="font-size:13px">${h(l ? l.t : "")}</span>
+      <div class="row" style="margin-bottom:10px"><span class="grow trunc" style="font-size:13px">${h((U.menu.idx || [U.menu.i]).map((x) => (so.lines[x] || {}).t).join(" / "))}</span>
       <button data-act="closemenu" style="width:36px;height:36px;border-radius:10px;background:var(--panel2);font-size:17px">✕</button></div>
-      <div class="sec"><h4>${h((l && l.label) || "続き")} を誰が歌いますか</h4>
-        <div class="chips">${S.members.map((m) => `<button class="chip sm" data-act="setassign" data-id="${m.id}"
+      <div class="sec"><h4>${h((l && l.label) || "続き")}${(U.menu.idx || []).length > 1 ? `（${U.menu.idx.length}行まとめて）` : ""}</h4>
+        <div class="chips">${S.members.filter((m) => SONGS().some((so2) => so2.lines.some((l2) => (l2.parts || []).includes(m.id))))
+          .map((m) => `<button class="chip sm" data-act="setassign" data-id="${m.id}"
           style="${cur5.includes(m.id) ? "background:var(--accent);color:#0A0A0A" : ab2.includes(m.id) ? "color:var(--bad);opacity:.5" : ""}">${h(m.name)}</button>`).join("")}</div>
       </div></div>`;
     document.body.appendChild(overlay);
@@ -1616,16 +1617,26 @@ function viewAbsent() {
 
   const body = !ab.length ? `<p style="padding:40px;text-align:center;color:var(--dim);font-size:14px">上から欠席者を選んでください</p>`
     : SONGS().map((so) => {
-      const rows = so.lines.map((l, i) => {
+      // 同じ歌割が続く行はひとまとめにして、一度で直せるようにする
+      const runs = [];
+      so.lines.forEach((l, i) => {
         const st2 = lineStatus(so, i);
-        if (st2 !== "need" && st2 !== "changed") return "";
-        const col = st2 === "need" ? "var(--bad)" : "#F0B23C";
-        const now = names(partsOf(so, i)) || "—";
-        return `<button class="row" data-act="assign" data-id="${so.id}" data-i="${i}"
+        if (st2 !== "need" && st2 !== "changed") return;
+        const sig = (l.parts || []).join(",") + "|" + st2;
+        const last = runs[runs.length - 1];
+        if (last && last.sig === sig && i === last.idx[last.idx.length - 1] + 1) last.idx.push(i);
+        else runs.push({ sig, st: st2, idx: [i] });
+      });
+      const rows = runs.map((r) => {
+        const col = r.st === "need" ? "var(--bad)" : "#F0B23C";
+        const i0 = r.idx[0];
+        const now = names(partsOf(so, i0)) || "—";
+        const txt = r.idx.map((i) => so.lines[i].t).join(" / ");
+        return `<button class="row" data-act="assign" data-id="${so.id}" data-i="${i0}" data-idx="${r.idx.join(",")}"
           style="width:100%;text-align:left;padding:8px 10px;margin-bottom:6px;border-radius:10px;
                  background:color-mix(in srgb,${col} 16%,transparent);box-shadow:inset 2px 0 0 ${col}">
-          <span style="flex:0 0 96px;font-size:11px;color:${col};text-align:right">${h(l.label || "続き")} → ${h(now)}</span>
-          <span class="grow trunc" style="font-size:13px">${h(l.t)}</span>
+          <span style="flex:0 0 100px;font-size:11px;color:${col};text-align:right">${h(so.lines[i0].label || "続き")}${r.idx.length > 1 ? `<br>${r.idx.length}行` : ""} → ${h(now)}</span>
+          <span class="grow trunc" style="font-size:13px">${h(txt)}</span>
         </button>`;
       }).join("");
       if (!rows) return "";
@@ -1644,7 +1655,7 @@ function viewAbsent() {
     <span style="font-size:11px;color:var(--dim)" class="trunc">${h(showName())}</span></div>
   <div class="scroll pad">
     <div class="card"><h4 style="font-size:11px;color:var(--dim);margin-bottom:8px">欠席するメンバー</h4>
-      <div class="chips">${chips || `<span style="font-size:12px;color:var(--dim)">曲を読み込むと出ます</span>`}</div>
+      <div class="chips">${chips || ``}</div>
       ${ab.length ? `<div class="row" style="margin-top:10px;font-size:12px">
         <span class="grow"><b style="color:var(--bad)">未決 ${needCount()}</b>　<b style="color:#F0B23C">変更済 ${changedCount()}</b></span>
         <button class="chip sm" data-act="resetsubs" style="color:var(--dim)">やり直す</button></div>` : ""}
@@ -1903,7 +1914,7 @@ function viewSetup() {
         <button class="ghost" data-act="ghpush" style="margin-bottom:8px">今すぐ送信</button>
         <button class="ghost" data-act="ghverify" style="margin-bottom:8px">トークンを確認する</button>
         <button class="ghost" data-act="ghclear" style="color:var(--bad)">トークンを入れ直す</button>
-        <p class="note" style="margin-top:8px">配信中：${S.groups.filter((x) => x.gistId).map((x) => h(x.name)).join("、") || "なし"}</p>`
+        `
         : `<div class="row" style="margin-bottom:8px">
             <input class="field grow" id="ghtoken" type="password" placeholder="ghp_ で始まる文字列" value="">
             <button class="chip" data-act="ghtoken">確認して保存</button>
@@ -2210,13 +2221,19 @@ document.addEventListener("click", (e) => {
         autoSubs(); save(); render();
       }
       break;
-    case "assign": U.menu = { kind: "assign", id, i }; renderSheet(); break;
+    case "assign": {
+      const el2 = e.target.closest("[data-idx]");
+      const list = el2 && el2.dataset.idx ? el2.dataset.idx.split(",").map(Number) : [i];
+      U.menu = { kind: "assign", id, i, idx: list };
+      renderSheet(); break;
+    }
     case "setassign": {
-      const sid = U.menu.id, li = U.menu.i;
+      const sid = U.menu.id, list = U.menu.idx || [U.menu.i];
       const k = subKey(sid);
       S.subs[k] = S.subs[k] || {};
-      const cur6 = S.subs[k][li] || [];
-      S.subs[k][li] = cur6.includes(id) ? cur6.filter((x) => x !== id) : cur6.concat(id);
+      const cur6 = S.subs[k][list[0]] || [];
+      const next = cur6.includes(id) ? cur6.filter((x) => x !== id) : cur6.concat(id);
+      list.forEach((li) => { S.subs[k][li] = next.slice(); });   // 続く行もまとめて
       save(); schedulePush(); renderSheet(); render();
       break;
     }
