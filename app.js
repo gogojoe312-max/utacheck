@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "2026-08-04-40";
+const APP_VER = "2026-08-04-41";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -2311,13 +2311,15 @@ function fitPrintDOM() {
     // 幅を広げると折り返しが変わるので、収まるまで測り直す
     const solve = () => {
       let k = 1;
+      // 最後の行が欠けないよう、少し余裕を持たせた大きさに収める
+      const bh2 = bh - 10, bw2 = bw - 2;
       const over = () => {
         inner.style.transform = "none";
         inner.style.width = (bw / k) + "px";
-        const w = Math.max(1, inner.scrollWidth) * k;
-        const hgt = Math.max(1, inner.scrollHeight) * k;
+        const w = Math.max(1, inner.scrollWidth, inner.offsetWidth) * k;
+        const hgt = Math.max(1, inner.scrollHeight, inner.offsetHeight) * k;
         // 縦と横の両方を見る（2段組では横にはみ出すことがある）
-        return Math.max(hgt / bh, w / bw);
+        return Math.max(hgt / bh2, w / bw2);
       };
       for (let n = 0; n < 10; n++) {
         const o = over();
@@ -2343,7 +2345,8 @@ function fitPrintDOM() {
     inner.style.transform = "scale(" + k + ")";
     // 縮めても元の高さのまま場所を取るので、箱の高さを見た目に合わせる。
     // これで短い曲のときに白紙が次のページへ溢れない。
-    box.style.height = Math.min(bh, Math.ceil(Math.max(1, inner.scrollHeight) * k) + 2) + "px";
+    const ih = Math.max(1, inner.scrollHeight, inner.offsetHeight);
+    box.style.height = Math.min(bh, Math.ceil(ih * k) + 10) + "px";
   });
   // 画面では紙全体が見えるように縮める。印刷時は等倍に戻る。
   const sc = app.querySelector(".scroll");
