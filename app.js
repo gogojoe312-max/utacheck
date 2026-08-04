@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "2026-08-04-37";
+const APP_VER = "2026-08-04-40";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1521,6 +1521,10 @@ function render() {
   renderSheet();
   if (U.view === "live" && !U.overview) setTimeout(paintInk, 0);
   if (U.view === "print") setTimeout(fitPrintDOM, 0);
+  // PDFの名前を「公演名 歌チェック」にする
+  try {
+    document.title = U.view === "print" ? ((showName() || "歌割") + " 歌チェック") : "歌チェック";
+  } catch (e) { /* 名前を変えられない場合は既定のまま */ }
   if (U.view === "setup") setTimeout(() => showPianoAtC4(app), 0);
 }
 
@@ -2307,20 +2311,22 @@ function fitPrintDOM() {
     // 幅を広げると折り返しが変わるので、収まるまで測り直す
     const solve = () => {
       let k = 1;
-      for (let n = 0; n < 8; n++) {
+      const over = () => {
         inner.style.transform = "none";
         inner.style.width = (bw / k) + "px";
-        const hh = Math.max(1, inner.scrollHeight);
-        const need = Math.min(1, bh / (hh * k));
-        if (need >= 0.995) break;
-        k = k * need * 0.995;
-        if (k < 0.15) break;
+        const w = Math.max(1, inner.scrollWidth) * k;
+        const hgt = Math.max(1, inner.scrollHeight) * k;
+        // 縦と横の両方を見る（2段組では横にはみ出すことがある）
+        return Math.max(hgt / bh, w / bw);
+      };
+      for (let n = 0; n < 10; n++) {
+        const o = over();
+        if (o <= 1.005) break;
+        k = k / o * 0.995;
+        if (k < 0.12) break;
       }
-      // 念のため最後に確認して、はみ出していれば追い込む
-      for (let n = 0; n < 6; n++) {
-        inner.style.transform = "none";
-        inner.style.width = (bw / k) + "px";
-        if (inner.scrollHeight * k <= bh) break;
+      for (let n = 0; n < 8; n++) {
+        if (over() <= 1.001) break;
         k *= 0.94;
       }
       return k;
@@ -2337,7 +2343,7 @@ function fitPrintDOM() {
     inner.style.transform = "scale(" + k + ")";
     // 縮めても元の高さのまま場所を取るので、箱の高さを見た目に合わせる。
     // これで短い曲のときに白紙が次のページへ溢れない。
-    box.style.height = Math.min(bh, Math.ceil(inner.scrollHeight * k) + 2) + "px";
+    box.style.height = Math.min(bh, Math.ceil(Math.max(1, inner.scrollHeight) * k) + 2) + "px";
   });
   // 画面では紙全体が見えるように縮める。印刷時は等倍に戻る。
   const sc = app.querySelector(".scroll");
@@ -2470,6 +2476,12 @@ function viewPrint() {
     </div></div></section>`;
   }).join("");
 
+  const noGrid = picked.filter((x) => {
+    const withT = x.lines.filter((l) => l.t);
+    const ok = withT.filter((l) => /^[A-Z]+\d+$/.test(l.cell || "") && /^[A-Z]+\d+$/.test(l.lcell || ""));
+    return withT.length && ok.length < withT.length * 0.8;
+  });
+
   const chips = all.map((x) => {
     const on = !U.printPick || U.printPick.includes(x.id);
     const cnt = NOTES().filter((n) => n.songId === x.id && n.showId === S.showId).length;
@@ -2487,11 +2499,13 @@ function viewPrint() {
       <button class="chip sm" data-act="printall">${picked.length === all.length ? "すべて外す" : "すべて選ぶ"}</button>
     </div>
     <div class="chips" style="margin-bottom:10px">${chips || `<span style="font-size:12px;color:var(--dim)">この公演には曲がありません</span>`}</div>
+    ${noGrid.length ? `<div style="font-size:11px;color:var(--bad);margin-bottom:10px">
+      ${h(noGrid.map((x) => songName(x)).join("、"))} は元の並びを再現できません。Excelから読み込み直すと同じ並びになります。</div>` : ""}
   </div>
   <div class="scroll">
     <div class="pr" id="prpage">${body}</div>
     ${body ? "" : `<p class="noprint" style="padding:30px;text-align:center;color:var(--dim);font-size:13px">上の曲名を押して選んでください</p>`}
-    <div style="height:40px"></div>
+    <div class="noprint" style="height:40px"></div>
   </div>`;
 }
 

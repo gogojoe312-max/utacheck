@@ -145,8 +145,8 @@ button{cursor:pointer}
 
 
 
-.prs{break-after:page;page-break-after:always;break-inside:avoid;page-break-inside:avoid}
-.prs:last-child{break-after:auto;page-break-after:auto}
+.prs{break-inside:avoid;page-break-inside:avoid}
+.prs + .prs{break-before:page;page-break-before:always}
 .prbox{width:170mm;height:222mm;overflow:hidden;position:relative}
 .prin{transform-origin:top left}
 .prs h3{font-size:1.35em;border-left:4px solid #111;padding-left:7px;margin-bottom:8px}
@@ -168,7 +168,8 @@ button{cursor:pointer}
   .pr{transform:none!important;margin-bottom:0!important;width:170mm!important;margin:0!important}
   #app{height:auto;display:block;overflow:visible}
   .noprint,.bottom,.hd{display:none!important}
-  .scroll{overflow:visible!important;flex:none}
+  .scroll{overflow:visible!important;flex:none;padding:0!important;margin:0!important}
+  .pr *{orphans:1;widows:1}
 
   @page{size:A4;margin:8mm}
   /* 箱そのものが用紙より大きくならないよう、印刷時も高さを固定する */
@@ -181,6 +182,6 @@ button{cursor:pointer}
 <div id="app"></div>
 <script src="vendor/pdf.min.js"></script>
 <script src="vendor/xlsx.full.min.js"></script>
-<script src="app.js?v=2026-08-04-37"></script>
+<script src="app.js?v=2026-08-04-40"></script>
 </body>
 </html>
