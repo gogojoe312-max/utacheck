@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "2026-08-04-04";
+const APP_VER = "2026-08-04-07";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -70,7 +70,7 @@ let S = {
   groups: [], groupId: "",
   src: "", key: "", keyInLink: true,
   memos: {}, recs: {}, kbps: 128, preroll: 5, viewer: false, srcGroup: "",
-  draws: {}, showFilter: "", folders: {}, subs: {},
+  draws: {}, showFilter: "", folders: {}, subs: {}, subsMan: {},
   size: 19,
 };
 let U = { view: "live", songIdx: 0, sheet: null, mode: "member", allShows: false, picker: false, overview: false, ovSize: 9, draw: false, erase: false, pick: [], menu: null, printPick: null, focus: "", busy: "", allShowList: false };
@@ -93,6 +93,9 @@ function load() {
   if (!S.draws) S.draws = {};
   if (!S.folders) S.folders = {};
   if (!S.subs) S.subs = {};
+  if (!S.subsMan) S.subsMan = {};
+  // 古いデータにも、その曲に出てくる人の名簿を持たせる
+  S.songs.forEach((so) => { if (!so.roster || !so.roster.length) so.roster = songRoster(so); });
   S.kbps = 128;
   if (S.preroll == null || S.preroll > 10) S.preroll = 5;
   // 旧データの引き継ぎ：グループが無ければ1つ作り、既存の曲と配信設定を移す
@@ -132,6 +135,23 @@ function todayLabel() {
 const VIEW = () => !!S.viewer && !S.groups.some((g) => g.gistId);
 const group = (id) => S.groups.find((g) => g.id === (id || S.groupId)) || S.groups[0] || {};
 // 選んだグループの曲がある公演だけを出す（曲がまだ無い公演と、今開いている公演は常に出す）
+// その曲に出てくる人
+function songRoster(so) {
+  if (!so) return [];
+  if (so.roster && so.roster.length) return so.roster;
+  const out = [];
+  so.lines.forEach((l) => {
+    if (/^全/.test(l.label || "")) return;      // 「全」の行は全員が入っているので数えない
+    (l.parts || []).forEach((p) => { if (!out.includes(p)) out.push(p); });
+  });
+  return out;
+}
+const showRoster = () => {
+  const out = [];
+  SONGS().forEach((so) => songRoster(so).forEach((p) => { if (!out.includes(p)) out.push(p); }));
+  return out;
+};
+
 const folderOf = (sw) => (sw && sw.folder) ? sw.folder : "";
 function groupShows(list) {
   const map = new Map();
@@ -213,6 +233,7 @@ const partsOf = (so, i) => {
 function lineStatus(so, i) {
   const l = so.lines[i] || {};
   if (l.gap) return "";
+  if (/^全/.test(l.label || "")) return "";   // 「全」は見れば分かるので触らない
   if (subOf(so.id, i)) return "changed";
   const ab = absentIds();
   if (!ab.length) return "";
@@ -227,6 +248,7 @@ function autoSubs() {
     const k = subKey(so.id);
     so.lines.forEach((l, i) => {
       if (l.gap || !l.parts || !l.parts.length) return;
+      if (/^全/.test(l.label || "")) return;   // 「全」は触らない
       if (S.subs[k] && S.subs[k][i]) return;
       if (!l.parts.some((p) => ab.includes(p))) return;
       const rest = l.parts.filter((p) => !ab.includes(p));
@@ -240,6 +262,28 @@ function autoSubs() {
   if (n) save();
   return n;
 }
+// 欠席が変わった時に組み直す。自分で決めた分は、まだ必要なときだけ残す。
+function rebuildSubs() {
+  const ab = absentIds();
+  SONGS().forEach((so) => {
+    const k = subKey(so.id);
+    const m = S.subs[k];
+    if (!m) return;
+    Object.keys(m).forEach((i) => {
+      const l = so.lines[i] || {};
+      const still = ab.length && (l.parts || []).some((p) => ab.includes(p));
+      const manual = S.subsMan[k] && S.subsMan[k][i];
+      if (!still || !manual) {
+        delete m[i];
+        if (S.subsMan[k]) delete S.subsMan[k][i];
+      }
+    });
+    if (!Object.keys(m).length) delete S.subs[k];
+    if (S.subsMan[k] && !Object.keys(S.subsMan[k]).length) delete S.subsMan[k];
+  });
+  autoSubs();
+}
+
 const needCount = () => SONGS().reduce((a, so) => a + so.lines.filter((l, i) => lineStatus(so, i) === "need").length, 0);
 const changedCount = () => SONGS().reduce((a, so) => a + so.lines.filter((l, i) => lineStatus(so, i) === "changed").length, 0);
 
@@ -338,24 +382,37 @@ function addMember(name) {
 /* ---------------- 歌割データ → 曲 ---------------- */
 // rows: [[label, text], ...]  label "→" は上の行の続き、["",""] は段落の切れ目
 function buildSong(parsed) {
-  const groups = parsed.groups || {};
-  (parsed.order || []).forEach(addMember);
+  const groups = {};
+  Object.keys(parsed.groups || {}).forEach((k) => { groups[k] = (parsed.groups[k] || []).map((n) => addMember(n).id); });
+
+  // この曲に出てくる人だけを名簿にする。他の曲・他のグループの人は入れない。
+  const roster = [];
+  const put = (id) => { if (id && !roster.includes(id)) roster.push(id); };
+  (parsed.order || []).forEach((n) => put(addMember(n).id));
+  Object.keys(groups).forEach((k) => groups[k].forEach(put));
+  (parsed.lines || []).forEach((r) => {
+    const label = (r[0] || "").trim();
+    if (!label || label === "→" || /^全/.test(label)) return;
+    splitNames(label).forEach((k) => { if (!groups[k]) put(addMember(k).id); });
+  });
+
   let carry = [];
   const lines = (parsed.lines || []).map((r) => {
-    const label = (r[0] || "").trim(), t = (r[1] || "").trim();
+    const label = (r[0] || "").trim();
+    const t = (r[1] || "").trim();
     if (!label && !t) return { gap: true, label: "", t: "", parts: [], cell: "" };
     if (label === "→") return { label: "", t, parts: carry.slice(), cont: true, cell: r[2] || "" };
     let parts = [];
-    if (/^全/.test(label)) parts = S.members.map((m) => m.id);
+    if (/^全/.test(label)) parts = roster.slice();
     else splitNames(label).forEach((k) => {
-      if (groups[k]) groups[k].forEach((n) => parts.push(addMember(n).id));
+      if (groups[k]) groups[k].forEach((n) => parts.push(n));
       else parts.push(addMember(k).id);
     });
-    parts = [...new Set(parts)];
-    carry = parts;
+    carry = parts.slice();
     return { label, t, parts, cell: r[2] || "" };
   });
-  return { id: uid(), title: parsed.title || "無題", credit: parsed.credit || "", lines, sheetName: parsed.sheetName || "" };
+  return { id: uid(), title: parsed.title || "無題", credit: parsed.credit || "", lines,
+    roster, sheetName: parsed.sheetName || "" };
 }
 
 // 拡張子が二重についていても落とす
@@ -1298,7 +1355,7 @@ function renderSheet() {
       <div class="row" style="margin-bottom:10px"><span class="grow trunc" style="font-size:13px">${h((U.menu.idx || [U.menu.i]).map((x) => (so.lines[x] || {}).t).join(" / "))}</span>
       <button data-act="closemenu" style="width:36px;height:36px;border-radius:10px;background:var(--panel2);font-size:17px">✕</button></div>
       <div class="sec"><h4>${h((l && l.label) || "続き")}${(U.menu.idx || []).length > 1 ? `（${U.menu.idx.length}行まとめて）` : ""}</h4>
-        <div class="chips">${S.members.filter((m) => SONGS().some((so2) => so2.lines.some((l2) => (l2.parts || []).includes(m.id))))
+        <div class="chips">${(so ? songRoster(so) : showRoster()).map((mid) => member(mid)).filter(Boolean)
           .map((m) => `<button class="chip sm" data-act="setassign" data-id="${m.id}"
           style="${cur5.includes(m.id) ? "background:var(--accent);color:#0A0A0A" : ab2.includes(m.id) ? "color:var(--bad);opacity:.5" : ""}">${h(m.name)}</button>`).join("")}</div>
       </div></div>`;
@@ -1359,7 +1416,7 @@ function renderSheet() {
       <button data-act="cancel" style="width:36px;height:36px;border-radius:10px;background:var(--panel2);font-size:17px">✕</button></div>
       ${S.members.length ? `<div class="sec"><h4>注目するメンバー</h4><div class="chips">
         <button class="chip sm" data-act="focus" data-id="" style="${!U.focus ? "background:var(--accent);color:#0A0A0A" : ""}">なし</button>
-        ${S.members.filter((m) => (song() ? song().lines : []).some((l) => (l.parts || []).includes(m.id)))
+        ${songRoster(song()).map((mid) => member(mid)).filter(Boolean)
           .map((m) => `<button class="chip sm" data-act="focus" data-id="${m.id}"
             style="${U.focus === m.id ? "background:#4C9BFF;color:#0A0A0A" : ""}">${h(m.name)}</button>`).join("")}
       </div></div>` : ""}
@@ -1611,7 +1668,7 @@ async function exportAbsentXlsx(songId) {
 /* ---- 欠席対応 ---- */
 function viewAbsent() {
   const ab = absentIds();
-  const chips = S.members.filter((m) => SONGS().some((so) => so.lines.some((l) => (l.parts || []).includes(m.id))))
+  const chips = showRoster().map((mid) => member(mid)).filter(Boolean)
     .map((m) => `<button class="chip sm" data-act="toggleabsent" data-id="${m.id}"
       style="${ab.includes(m.id) ? "background:var(--bad);color:#0A0A0A" : ""}">${h(m.name)}</button>`).join("");
 
@@ -2211,13 +2268,13 @@ document.addEventListener("click", (e) => {
       const sw = S.shows.find((x) => x.id === S.showId);
       if (!sw) break;
       sw.absent = (sw.absent || []).includes(id) ? sw.absent.filter((x) => x !== id) : (sw.absent || []).concat(id);
-      autoSubs();
+      rebuildSubs();
       save(); schedulePush(); render();
       break;
     }
     case "resetsubs":
       if (confirm("この公演の振り替えをすべてやり直しますか？")) {
-        SONGS().forEach((so) => { delete S.subs[subKey(so.id)]; });
+        SONGS().forEach((so) => { delete S.subs[subKey(so.id)]; delete S.subsMan[subKey(so.id)]; });
         autoSubs(); save(); render();
       }
       break;
@@ -2233,7 +2290,8 @@ document.addEventListener("click", (e) => {
       S.subs[k] = S.subs[k] || {};
       const cur6 = S.subs[k][list[0]] || [];
       const next = cur6.includes(id) ? cur6.filter((x) => x !== id) : cur6.concat(id);
-      list.forEach((li) => { S.subs[k][li] = next.slice(); });   // 続く行もまとめて
+      S.subsMan[k] = S.subsMan[k] || {};
+      list.forEach((li) => { S.subs[k][li] = next.slice(); S.subsMan[k][li] = 1; });   // 続く行もまとめて
       save(); schedulePush(); renderSheet(); render();
       break;
     }
