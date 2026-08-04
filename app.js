@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "2026-08-04-28";
+const APP_VER = "2026-08-04-30";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -2325,7 +2325,7 @@ function fitPrintDOM() {
       return k;
     };
     let cols = 1, k = fit();
-    if (k < 0.72 && body) {          // 小さくなりすぎるなら2段組を試す
+    if (k < 0.72 && body && !sec.querySelector(".prg")) {          // 小さくなりすぎるなら2段組を試す
       cols = 2;
       body.style.columnCount = 2;
       body.style.columnGap = "14px";
@@ -2355,8 +2355,8 @@ function viewPrint() {
     const ns0 = NOTES().filter((n) => n.songId === so.id && n.showId === S.showId);
     const mm = songMemo(so.id);
 
-    const rows = so.lines.map((l, i) => {
-      if (l.gap) return `<div style="height:0.5em"></div>`;
+    // 1行ぶんの歌詞を、指摘の印つきで組み立てる
+    const cellHTML = (l, i) => {
       const ns = ns0.filter((n) => covers(n, i));
       const chars = Array.from(l.t);
       const mark = (n) => {
@@ -2371,14 +2371,55 @@ function viewPrint() {
       cells += ns.filter((n) => n.from == null && n.lineIdx === i).map((n) => `<b class="prt">${h(mark(n))}</b>`).join("");
       const past = pastHits(so.id, i);
       if (past.count) cells += `<span class="prp">（前${past.count}）</span>`;
-      const pst = lineStatus(so, i);
-      return `<div class="prl"><span class="prn"${pst ? ' style="color:#111;font-weight:700;text-decoration:underline"' : ""}>${h(labelOf(so, i))}</span><span class="prx">${cells}</span></div>`;
-    }).join("");
+      return cells;
+    };
+    const nameHTML = (l, i) => {
+      const st = lineStatus(so, i);
+      return `<span${st ? ' style="font-weight:700;text-decoration:underline"' : ""}>${h(labelOf(so, i))}</span>`;
+    };
+
+    // 元のExcelの列の並びを再現する
+    const ref = (x) => { const m = /^([A-Z]+)(\d+)$/.exec(x || ""); return m ? { c: m[1], r: Number(m[2]) } : null; };
+    const hasGrid = so.lines.some((l) => ref(l.cell) || ref(l.lcell));
+    let inner;
+
+    if (hasGrid) {
+      const colOrder = [];
+      const put = (c) => { if (c && !colOrder.includes(c)) colOrder.push(c); };
+      so.lines.forEach((l) => { const a = ref(l.cell); if (a) put(a.c); });
+      colOrder.sort((a, b) => (a.length - b.length) || (a < b ? -1 : 1));
+      const rowsSet = [];
+      so.lines.forEach((l, i) => {
+        const a = ref(l.cell) || ref(l.lcell);
+        if (a && !rowsSet.includes(a.r)) rowsSet.push(a.r);
+      });
+      rowsSet.sort((a, b) => a - b);
+      const at = {};
+      so.lines.forEach((l, i) => {
+        const a = ref(l.cell) || ref(l.lcell);
+        if (!a) return;
+        at[a.c + ":" + a.r] = { l, i };
+      });
+      const trs = rowsSet.map((rn) => {
+        const tds = colOrder.map((c) => {
+          const e = at[c + ":" + rn];
+          if (!e || !e.l.t) return `<td class="prn"></td><td class="prx"></td>`;
+          return `<td class="prn">${nameHTML(e.l, e.i)}</td><td class="prx">${cellHTML(e.l, e.i)}</td>`;
+        }).join("");
+        return `<tr>${tds}</tr>`;
+      }).join("");
+      inner = `<table class="prg">${trs}</table>`;
+    } else {
+      inner = `<div class="prbody">${so.lines.map((l, i) => {
+        if (l.gap) return `<div style="height:0.5em"></div>`;
+        return `<div class="prl"><span class="prn">${nameHTML(l, i)}</span><span class="prx">${cellHTML(l, i)}</span></div>`;
+      }).join("")}</div>`;
+    }
 
     return `<section class="prs"><div class="prbox"><div class="prin">
       <h3>${h(songName(so))}<span class="prc">　${h((S.groups.find((x) => x.id === so.groupId) || {}).name || "")}　${h(showName())}　${ns0.length}件</span></h3>
       ${blocksOf(so).length ? `<div class="prb">${blocksOf(so).map((b) => `<span><b>${h(b)}</b> ${h(names(blockParts(so, b)) || "—")}</span>`).join("　")}</div>` : ""}
-      <div class="prbody">${rows}</div>
+      ${inner}
       ${mm ? `<div class="prm"><b>総括</b>　${h(mm)}</div>` : ""}
     </div></div></section>`;
   }).join("");

@@ -140,13 +140,13 @@ button{cursor:pointer}
 .head{font-size:11px;color:var(--dim);font-weight:400;margin:18px 0 8px;letter-spacing:.08em}
 
 /* 紙・PDF用 */
-.pr{background:#fff;color:#111;padding:0;width:180mm;margin:0 auto}
+.pr{background:#fff;color:#111;padding:0;width:170mm;margin:0 auto}
 
 
 
 .prs{break-after:page;page-break-after:always;break-inside:avoid;page-break-inside:avoid}
 .prs:last-child{break-after:auto;page-break-after:auto}
-.prbox{width:180mm;height:250mm;overflow:hidden;position:relative}
+.prbox{width:170mm;height:222mm;overflow:hidden;position:relative}
 .prin{transform-origin:top left}
 .prs h3{font-size:1.35em;border-left:4px solid #111;padding-left:7px;margin-bottom:8px}
 .prc{font-size:.62em;color:#666;font-weight:400}
@@ -156,15 +156,22 @@ button{cursor:pointer}
 .prx u{text-decoration:underline;text-decoration-thickness:2px;text-underline-offset:2px}
 .prt{font-size:.85em;font-weight:700;margin-left:3px;white-space:nowrap}
 .prp{font-size:.8em;color:#666;margin-left:3px}
+.prg{width:100%;border-collapse:collapse;table-layout:fixed}
+.prg td{vertical-align:baseline;padding:1px 3px;line-height:1.7}
+.prg td.prn{width:15%;text-align:right;color:#555;font-size:.85em;word-break:break-word;max-width:none}
+.prg td.prx{width:35%;word-break:break-word}
 .prm{margin-top:10px;padding:7px 9px;border:1px solid #999;border-radius:4px;font-size:1em;white-space:pre-wrap;break-inside:avoid}
 @media print{
   html,body{height:auto;overflow:visible;background:#fff}
-  .pr{transform:none!important;margin-bottom:0!important;width:180mm!important;margin:0!important}
+  .pr{transform:none!important;margin-bottom:0!important;width:170mm!important;margin:0!important}
   #app{height:auto;display:block;overflow:visible}
   .noprint,.bottom,.hd{display:none!important}
   .scroll{overflow:visible!important;flex:none}
 
-  @page{size:A4;margin:10mm}
+  @page{size:A4;margin:8mm}
+  /* 箱そのものが用紙より大きくならないよう、印刷時も高さを固定する */
+  .prbox{width:170mm!important;height:222mm!important;overflow:hidden!important}
+  .prs{margin:0!important;padding:0!important}
 }
 </style>
 </head>
@@ -172,6 +179,6 @@ button{cursor:pointer}
 <div id="app"></div>
 <script src="vendor/pdf.min.js"></script>
 <script src="vendor/xlsx.full.min.js"></script>
-<script src="app.js?v=2026-08-04-28"></script>
+<script src="app.js?v=2026-08-04-30"></script>
 </body>
 </html>
