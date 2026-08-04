@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "2026-08-04-14";
+const APP_VER = "2026-08-04-20";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -70,7 +70,7 @@ let S = {
   groups: [], groupId: "",
   src: "", key: "", keyInLink: true,
   memos: {}, recs: {}, kbps: 128, preroll: 5, viewer: false, srcGroup: "",
-  draws: {}, showFilter: "", folders: {}, subs: {}, subsMan: {}, subLib: {},
+  draws: {}, showFilter: "", folders: {}, subs: {}, subsMan: {}, subLib: {}, gsubs: {},
   size: 19,
 };
 let U = { view: "live", songIdx: 0, sheet: null, mode: "member", allShows: false, picker: false, overview: false, ovSize: 9, draw: false, erase: false, pick: [], menu: null, printPick: null, focus: "", busy: "", allShowList: false };
@@ -95,6 +95,7 @@ function load() {
   if (!S.subs) S.subs = {};
   if (!S.subsMan) S.subsMan = {};
   if (!S.subLib) S.subLib = {};
+  if (!S.gsubs) S.gsubs = {};
   // 古いデータにも、その曲に出てくる人の名簿を持たせる
   S.songs.forEach((so) => {
     if (!so.roster || !so.roster.length) so.roster = songRoster(so);
@@ -193,6 +194,17 @@ const NOTES = () => S.notes.concat(S.pubNotes);
 /* ---- 欠席対応 ---- */
 const absentIds = (showId) => ((S.shows.find((x) => x.id === (showId || S.showId)) || {}).absent || []);
 const subKey = (songId) => S.showId + "|" + songId;
+// A/B などのブロックは、ブロックの中身から欠席者を抜く（行ごとには触らない）
+const blockOf = (so, i) => {
+  const l = so.lines[i] || {};
+  const lb = (l.label || "").trim();
+  return (so.blocks && so.blocks[lb]) ? lb : "";
+};
+const gsubOf = (songId, b) => {
+  const m = S.gsubs[subKey(songId)];
+  return m && m[b] ? m[b] : null;
+};
+const blockParts = (so, b) => gsubOf(so.id, b) || (so.blocks ? so.blocks[b] : []) || [];
 const subOf = (songId, i) => {
   const m = S.subs[subKey(songId)];
   return m && m[i] ? m[i] : null;
@@ -200,8 +212,42 @@ const subOf = (songId, i) => {
 // その行を実際に歌う人
 const partsOf = (so, i) => {
   const sub = subOf(so.id, i);
-  return sub ? sub : ((so.lines[i] || {}).parts || []);
+  if (sub) return sub;
+  const b = blockOf(so, i);
+  if (b) return blockParts(so, b);
+  return (so.lines[i] || {}).parts || [];
 };
+// 画面に出す名前。差し替えがあればその名前を出す。
+// 差し替え後の顔ぶれを、本編とハモに振り分ける。
+// 欠けたのがハモ側だけなら、補充した人もハモ側に置く。
+function splitAssign(so, i) {
+  const l = so.lines[i] || {};
+  const now = partsOf(so, i);
+  const oldMain = l.main || l.parts || [];
+  const oldExtra = l.extra || [];
+  if (!oldExtra.length) return { main: now, extra: [] };
+  const ab = absentIds();
+  const lostMain = oldMain.filter((p) => ab.includes(p)).length;
+  const lostExtra = oldExtra.filter((p) => ab.includes(p)).length;
+  const keepMain = now.filter((p) => oldMain.includes(p));
+  const keepExtra = now.filter((p) => oldExtra.includes(p));
+  const added = now.filter((p) => !oldMain.includes(p) && !oldExtra.includes(p));
+  const toExtra = (lostExtra && !lostMain);
+  return {
+    main: toExtra ? keepMain : keepMain.concat(added),
+    extra: toExtra ? keepExtra.concat(added) : keepExtra,
+  };
+}
+
+function labelOf(so, i) {
+  const l = so.lines[i] || {};
+  if (subOf(so.id, i)) {
+    const sp = splitAssign(so, i);
+    return (names(sp.main) || "—") + (sp.extra.length ? "　ハモ " + names(sp.extra) : "");
+  }
+  return l.label || "";
+}
+
 // 赤＝まだ決まっていない、黄＝変更済み
 function lineStatus(so, i) {
   const l = so.lines[i] || {};
@@ -210,7 +256,28 @@ function lineStatus(so, i) {
   if (subOf(so.id, i)) return "changed";
   const ab = absentIds();
   if (!ab.length) return "";
+  const b = blockOf(so, i);
+  if (b) return blockStatus(so, b);
   return (l.parts || []).some((p) => ab.includes(p)) ? "need" : "";
+}
+// ブロックの状態
+function blockStatus(so, b) {
+  const ab = absentIds();
+  if (!ab.length) return "";
+  if (gsubOf(so.id, b)) return "changed";
+  return ((so.blocks && so.blocks[b]) || []).some((p) => ab.includes(p)) ? "need" : "";
+}
+const blocksOf = (so) => Object.keys((so && so.blocks) || {});
+// A / B などのブロックの中身を、歌詞の上に細く出す
+function blockBar(so) {
+  const bs = blocksOf(so);
+  if (!bs.length) return "";
+  return `<div class="blk">${bs.map((b) => {
+    const st = blockStatus(so, b);
+    const col = st === "need" ? "var(--bad)" : st === "changed" ? "#F0B23C" : "var(--dim)";
+    return `<button class="blkc" ${VIEW() ? "" : `data-act="assignblock" data-id="${so.id}" data-b="${h(b)}"`}
+      style="color:${col}"><b style="color:${st ? col : "var(--text)"}">${h(b)}</b> ${h(names(blockParts(so, b)) || "—")}</button>`;
+  }).join("")}</div>`;
 }
 // 2人以上の行から欠席者を抜く。ソロと全員欠席の行は赤のまま残す。
 function autoSubs() {
@@ -219,9 +286,22 @@ function autoSubs() {
   let n = 0;
   SONGS().forEach((so) => {
     const k = subKey(so.id);
+    // まずブロックの中身から欠席者を抜く
+    blocksOf(so).forEach((b) => {
+      const g = S.gsubs[k];
+      if (g && g[b]) return;
+      const cur = so.blocks[b] || [];
+      if (!cur.some((p) => ab.includes(p))) return;
+      const rest = cur.filter((p) => !ab.includes(p));
+      if (!rest.length) return;                // 全員抜けたら赤のまま
+      S.gsubs[k] = S.gsubs[k] || {};
+      S.gsubs[k][b] = rest;
+      n++;
+    });
     so.lines.forEach((l, i) => {
       if (l.gap || !l.parts || !l.parts.length) return;
       if (/^全/.test(l.label || "")) return;   // 「全」は触らない
+      if (blockOf(so, i)) return;              // ブロックの行はブロック側で扱う
       if (S.subs[k] && S.subs[k][i]) return;
       if (!l.parts.some((p) => ab.includes(p))) return;
       const rest = l.parts.filter((p) => !ab.includes(p));
@@ -278,6 +358,14 @@ function rebuildSubs() {
   const ab = absentIds();
   SONGS().forEach((so) => {
     const k = subKey(so.id);
+    // ブロックは自動で作り直すので、いったん全部捨てる
+    if (S.gsubs[k]) {
+      Object.keys(S.gsubs[k]).forEach((b) => {
+        const cur = (so.blocks && so.blocks[b]) || [];
+        if (!ab.length || !cur.some((p) => ab.includes(p))) delete S.gsubs[k][b];
+      });
+      if (!Object.keys(S.gsubs[k]).length) delete S.gsubs[k];
+    }
     const m = S.subs[k];
     if (!m) return;
     Object.keys(m).forEach((i) => {
@@ -308,8 +396,12 @@ function runAt(so, i) {
   return idx;
 }
 
-const needCount = () => SONGS().reduce((a, so) => a + so.lines.filter((l, i) => lineStatus(so, i) === "need").length, 0);
-const changedCount = () => SONGS().reduce((a, so) => a + so.lines.filter((l, i) => lineStatus(so, i) === "changed").length, 0);
+const needCount = () => SONGS().reduce((a, so) => a
+  + so.lines.filter((l, i) => lineStatus(so, i) === "need" && !blockOf(so, i)).length
+  + blocksOf(so).filter((b) => blockStatus(so, b) === "need").length, 0);
+const changedCount = () => SONGS().reduce((a, so) => a
+  + so.lines.filter((l, i) => lineStatus(so, i) === "changed" && !blockOf(so, i)).length
+  + blocksOf(so).filter((b) => blockStatus(so, b) === "changed").length, 0);
 
 const covers = (n, i) => i >= n.lineIdx && i <= (n.lineEnd != null ? n.lineEnd : n.lineIdx);
 // 同じ曲の同じ行に、過去の公演でも指摘があったか
@@ -425,18 +517,40 @@ function buildSong(parsed) {
     const label = (r[0] || "").trim();
     const t = (r[1] || "").trim();
     if (!label && !t) return { gap: true, label: "", t: "", parts: [], cell: "" };
-    if (label === "→") return { label: "", t, parts: carry.slice(), cont: true, cell: r[2] || "" };
+    const exRaw = r[4] || "";
+    const exIds = [];
+    if (exRaw) splitNames(exRaw.replace(/(ハモ|ハーモニー|コーラス|ｺｰﾗｽ|Cho|cho)/gi, " ")).forEach((k) => {
+      (groups[k] || [addMember(k).id]).forEach((n) => { if (!exIds.includes(n)) exIds.push(n); });
+    });
+    if (label === "→") {
+      return { label: exRaw ? "　" + exRaw : "", t, parts: carry.concat(exIds.filter((x) => !carry.includes(x))),
+        main: carry.slice(), extra: exIds, cont: true, cell: r[2] || "", extraCell: r[5] || "" };
+    }
     let parts = [];
-    if (/^全/.test(label)) parts = roster.slice();
+    if (/^全/.test(label)) {
+      parts = roster.slice();
+      // 「全（広本以外）」のような書き方は、その人を外す
+      const ex = label.match(/[（(]([^）)]*)以外[）)]/);
+      if (ex) {
+        const out2 = splitNames(ex[1]).map((n) => addMember(n).id);
+        parts = parts.filter((p) => !out2.includes(p));
+      }
+      // 「全（広本以外）・広本」のように後ろに名前が続く場合（ハモなど）は足す
+      splitNames(label).filter((n) => !/^全/.test(n)).forEach((k) => {
+        (groups[k] || [addMember(k).id]).forEach((n) => { if (!parts.includes(n)) parts.push(n); });
+      });
+    }
     else splitNames(label).forEach((k) => {
       if (groups[k]) groups[k].forEach((n) => parts.push(n));
       else parts.push(addMember(k).id);
     });
     carry = parts.slice();
-    return { label, t, parts, cell: r[2] || "" };
+    const all2 = parts.concat(exIds.filter((x) => !parts.includes(x)));
+    return { label: label + (exRaw ? "　" + exRaw : ""), t, parts: all2,
+      main: parts.slice(), extra: exIds, cell: r[2] || "", extraCell: r[5] || "" };
   });
   const so = { id: uid(), title: parsed.title || "無題", credit: parsed.credit || "", lines,
-    roster, sheetName: parsed.sheetName || "" };
+    roster, blocks: groups, blockCells: parsed.groupCells || {}, sheetName: parsed.sheetName || "" };
   so.sig = songSig(so);
   return so;
 }
@@ -460,7 +574,7 @@ function stripParens(t) {
 function splitNames(label) {
   return label.split(NAMESEP)
     .map((t) => stripParens(t).trim())
-    .filter((t) => t && t.length < 6 && !/[（()）]/.test(t)); // 長いもの・括弧の残りは名前ではない
+    .filter((t) => t && t.length < 6 && !/[（()）※★☆]/.test(t)); // 長いもの・括弧や記号は名前ではない
 }
 
 const cleanName = (n) => String(n || "").replace(/(\.(pdf|xlsx|xlsm|xls|csv|json))+$/i, "").trim() || "無題";
@@ -876,31 +990,55 @@ async function parseXLSX(file, buf) {
     const L = kind.indexOf("L");
     if (L >= 0) blocks.push([Math.max(0, L - 2), L]);
   }
+  // 歌詞列のすぐ右にある「名前だけの列」は、ハモなどの追加担当とみなす
+  const inBlock = new Set();
+  blocks.forEach(([a, b]) => { inBlock.add(a); inBlock.add(b); });
+  const annex = blocks.map(() => []);
+  blocks.forEach(([nc, lc], bi) => {
+    for (let c = lc + 1; c < Math.min(lc + 3, w); c++) {
+      if (inBlock.has(c) || kind[c] !== "N") continue;
+      annex[bi].push(c);
+      inBlock.add(c);
+    }
+  });
+  const HAMO = /(ハモ|ハーモニー|コーラス|ｺｰﾗｽ|Cho|cho)/gi;
 
   const CREDIT = /作詞|作曲|編曲|訳詞|Words|Music|Arr/i;
   const col = (n) => { let t = ""; n++; while (n > 0) { const m = (n - 1) % 26; t = String.fromCharCode(65 + m) + t; n = (n - m - 1) / 26; } return t; };
   const head = [];
   const rows = [];
-  blocks.forEach(([nc, lc]) => {
+  let lead = [];              // 作家名より前の、名前の付いていない行（題名・副題）
+  blocks.forEach(([nc, lc], bi) => {
     grid.forEach((r, ri) => {
-      const nv = r[nc] || "", lv = r[lc] || "";
+      let nv = r[nc] || "";
+      const lv = r[lc] || "";
+      // 「（空欄） A  吉田・服部…」のように、間の列にブロック名が書かれていることがある
+      if (!nv && lv) {
+        for (let c = nc + 1; c < lc; c++) {
+          const v2 = (r[c] || "").trim();
+          if (v2 && v2.length <= 2) { nv = v2; break; }
+        }
+      }
+      const ac = annex[bi].find((c) => (r[c] || "").trim());
+      const extraRaw = ac != null ? (r[ac] || "").trim() : "";
+      const extraCell = ac != null ? col(ac) + (ri + 1) : "";
       if (!nv && !lv) {
         const last = rows[rows.length - 1];
         if (rows.length && (last[0] || last[1])) rows.push(["", ""]);
         return;
       }
-      if (!nv && CREDIT.test(lv)) { head.push(lv); return; }
-      if (!nv && !rows.length && /[／/]/.test(lv)) { head.unshift(lv); return; }
-      rows.push([nv || "→", lv, col(nc) + (ri + 1)]);
+      if (!nv && CREDIT.test(lv)) { head.push(lv); lead.forEach((x) => head.unshift(x)); lead = []; return; }
+      if (!nv && !rows.length && lead.length < 3) { lead.push(lv); return; }
+      rows.push([nv || "→", lv, col(nc) + (ri + 1), col(lc) + (ri + 1), extraRaw, extraCell]);
     });
   });
-  // 題名に「／」が無い資料では、クレジットの直前の行が題名
-  if (rows.length && rows[0][0] === "→" && head.length === 1 && CREDIT.test(head[0])) {
-    head.unshift(rows.shift()[1]);
-  }
+  // 作家名が見つからなかった場合、拾っておいた行は歌詞に戻す
+  lead.forEach((x) => rows.unshift(["→", x, "", ""]));
   // 一番左のシートを読んでいる
   const sheetName = wb.SheetNames[0];
-  return finalize(cleanName(file.name), head.join("　"), rows);
+  const parsed0 = finalize(cleanName(file.name), head.join("　"), rows);
+  parsed0.sheetName = sheetName;
+  return parsed0;
 }
 
 /* ---------------- A/B などのブロック定義を拾う ---------------- */
@@ -909,17 +1047,30 @@ function finalize(title, credit, rows) {
   while (rows.length && !rows[rows.length - 1][0] && !rows[rows.length - 1][1]) rows.pop();
 
   const labelNames = new Set();
-  rows.forEach((r) => splitNames(r[0]).forEach((t) => labelNames.add(t)));
+  const labelUse = {};
+  rows.forEach((r) => {
+    const lb = (r[0] || "").trim();
+    if (lb && lb !== "→") labelUse[lb] = (labelUse[lb] || 0) + 1;
+    splitNames(lb).forEach((t) => labelNames.add(t));
+  });
 
   // 「A ＝ 小野田・植村・島川・相馬」のようなブロック定義行を拾って、歌詞から外す
   const groups = {};
+  const groupCells = {};
   rows = rows.filter((r) => {
     const toks = splitNames(r[1]);
     if (!r[0] || r[0] === "→" || r[0].length > 2 || toks.length < 2) return true;
     if (!toks.every((t) => t.length <= 5 && !/[。、！？「」ぁ-ん]{3,}/.test(t))) return true;
     const known = toks.filter((t) => labelNames.has(t)).length;
-    if (known / toks.length < 0.5) return true;
+    if (known / toks.length < 0.5) {
+      // 「B ＝ 坂本・大野・樋口・染谷」のように、その4人が他で歌っていない場合もある。
+      // 記号1文字の見出し＋中黒で区切られた短い名前が3つ以上、なら定義行とみなす。
+      const isTag = /^[A-Za-zＡ-Ｚａ-ｚ]$/.test(r[0]) && (labelUse[r[0]] || 0) >= 2;
+      const listy = /[・、]/.test(r[1]) && toks.length >= 3 && toks.every((t) => t.length <= 4);
+      if (!(isTag && listy)) return true;
+    }
     groups[r[0]] = toks;
+    groupCells[r[0]] = r[3] || "";
     return false;
   });
 
@@ -932,7 +1083,7 @@ function finalize(title, credit, rows) {
     });
   });
 
-  return { title: (title || "").trim() || "無題", credit: (credit || "").trim(), groups, order, lines: rows };
+  return { title: (title || "").trim() || "無題", credit: (credit || "").trim(), groups, groupCells, order, lines: rows };
 }
 
 /* ---------------- ピアノ ---------------- */
@@ -1336,7 +1487,7 @@ function viewLive() {
       const strength = (st2 || foc) ? 18 : 9;
       return `<div class="ln" style="${tint ? `background:color-mix(in srgb,${tint} ${strength}%,transparent)` : ""}">
         <button class="lbl" data-act="${st2 ? "assignline" : "noteblock"}" data-i="${i}"
-          style="${st2 ? `color:${st2 === "need" ? "var(--bad)" : "#F0B23C"}` : ""}">${h(subOf(s.id, i) ? names(partsOf(s, i)) || "—" : l.label)}</button>
+          style="${st2 ? `color:${st2 === "need" ? "var(--bad)" : "#F0B23C"}` : ""}">${h(labelOf(s, i))}</button>
         <div class="brk ${gp[i]}"></div>
         <div class="grow" style="min-width:0">
           <div class="txt" data-l="${i}" style="font-size:${S.size}px">${cells}</div>${pills}
@@ -1354,6 +1505,7 @@ function viewLive() {
   </div>
   ${saveErr ? `<div class="banner">保存できませんでした。端末の空き容量を確認してください。</div>` : ""}
 
+  ${s ? blockBar(s) : ""}
   <div class="scroll" style="position:relative">
     <canvas id="ink" class="ink" style="pointer-events:${U.draw && !VIEW() ? "auto" : "none"};touch-action:${U.draw ? "none" : "auto"}"></canvas>
     ${body}
@@ -1425,8 +1577,11 @@ function viewOverview(s) {
     }).join("");
     const past = pastHits(s.id, i);
     const pb = past.count ? `<b class="mk ovm pastmk">前${past.count}</b>` : "";
-    return `<button class="ovl" data-act="jumpline" data-i="${i}">
-      <span class="ovn">${h(l.label)}</span><span class="ovb ${gp[i]}"></span><span class="ovt">${cells}${tail}${pb}</span></button>`;
+    const ost = lineStatus(s, i);
+    const oc = ost === "need" ? "var(--bad)" : ost === "changed" ? "#F0B23C" : "";
+    return `<button class="ovl" data-act="jumpline" data-i="${i}"
+      style="${oc ? `background:color-mix(in srgb,${oc} 16%,transparent);border-radius:4px` : ""}">
+      <span class="ovn" style="${oc ? `color:${oc}` : ""}">${h(labelOf(s, i))}</span><span class="ovb ${gp[i]}"></span><span class="ovt">${cells}${tail}${pb}</span></button>`;
   }).join("");
 
   return `
@@ -1435,6 +1590,7 @@ function viewOverview(s) {
       <div class="t2 trunc">${h(songName(s))}</div></div>
     <button class="ic" data-act="ovsize">${U.ovSize}px</button>
   </div>
+  ${blockBar(s)}
   <div class="scroll" style="padding:8px 10px"><div class="ovcols" style="font-size:${U.ovSize}px">${rows}</div>
     ${songMemo(s.id) ? `<div class="card" style="margin-top:12px">
       <h4 style="font-size:11px;color:var(--dim);margin-bottom:6px">総括</h4>
@@ -1451,6 +1607,24 @@ function viewOverview(s) {
 /* ---- sheet ---- */
 function renderSheet() {
   if (overlay) { overlay.remove(); overlay = null; }
+
+  if (U.menu && U.menu.kind === "block") {
+    const so = S.songs.find((x) => x.id === U.menu.id);
+    const b = U.menu.b;
+    const cur7 = so ? blockParts(so, b) : [];
+    const ab3 = absentIds();
+    overlay = document.createElement("div");
+    overlay.className = "mask";
+    overlay.innerHTML = `<button class="sp" data-act="closemenu"></button><div class="sheet">
+      <div class="row" style="margin-bottom:10px"><span class="grow trunc" style="font-size:13px">${h(songName(so))}</span>
+      <button data-act="closemenu" style="width:36px;height:36px;border-radius:10px;background:var(--panel2);font-size:17px">✕</button></div>
+      <div class="sec"><h4>ブロック ${h(b)} は誰ですか</h4>
+        <div class="chips">${songRoster(so).map((mid) => member(mid)).filter(Boolean).map((m) => `<button class="chip sm" data-act="setblock" data-id="${m.id}"
+          style="${cur7.includes(m.id) ? "background:var(--accent);color:#0A0A0A" : ab3.includes(m.id) ? "color:var(--bad);opacity:.5" : ""}">${h(m.name)}</button>`).join("")}</div>
+      </div></div>`;
+    document.body.appendChild(overlay);
+    return;
+  }
 
   if (U.menu && U.menu.kind === "assign") {
     const so = S.songs.find((x) => x.id === U.menu.id);
@@ -1532,6 +1706,10 @@ function renderSheet() {
         <button class="ghost" data-act="goabsent" style="text-align:left">
           歌割の変更 ${changedCount()}件${needCount() ? `　<span style="color:var(--bad)">未決 ${needCount()}</span>` : ""}</button>
       </div>` : ""}
+      ${(changedCount() || needCount()) ? `<div class="sec">
+        <button class="ghost" data-act="goabsent" style="text-align:left">
+          歌割の変更 ${changedCount()}件${needCount() ? `　<span style="color:var(--bad)">未決 ${needCount()}</span>` : ""}</button>
+      </div>` : ""}
       <div class="sec"><h4>公演</h4>${gfil}<div class="chips">${shows}</div>
         ${VIEW() ? "" : `<button class="ghost" data-act="dupshow" style="margin-top:8px">今のセットリストを複製して新しい公演にする</button>`}
 
@@ -1559,7 +1737,7 @@ function renderSheet() {
 
   const inner = `
     <div class="row" style="margin-bottom:12px">
-      <span class="grow" style="font-size:11px;color:var(--dim)">${h(l.label || "続き")} · ${sh.lineEnd ? `${sh.lineIdx + 1}〜${sh.lineEnd + 1}行目（まとめて）` : `${sh.lineIdx + 1}行目`}</span>
+      <span class="grow" style="font-size:11px;color:var(--dim)">${h(labelOf(s, sh.lineIdx) || "続き")} · ${sh.lineEnd ? `${sh.lineIdx + 1}〜${sh.lineEnd + 1}行目（まとめて）` : `${sh.lineIdx + 1}行目`}</span>
       <button data-act="cancel" style="width:36px;height:36px;border-radius:10px;background:var(--panel2);font-size:17px">✕</button>
     </div>
     <div class="sec"><h4>${sh.lineEnd ? "この歌割り全体につきます" : "文字をタップすると一部だけ指定できます"}</h4>
@@ -1779,13 +1957,32 @@ function copyRecords(oldSo, newSo) {
 // 変更のある行だけを、セル番地→新しい名前の形にする
 function absentEdits(so) {
   const edits = {};
+  // ブロックは定義の行だけを書き換える（Aの行そのものは触らない）
+  blocksOf(so).forEach((b) => {
+    const cell = (so.blockCells || {})[b];
+    if (!cell) return;
+    const g = gsubOf(so.id, b);
+    if (!g) return;
+    const before = ((so.blocks || {})[b] || []).map((x) => (member(x) || {}).name).filter(Boolean).join("・");
+    const after = g.map((x) => (member(x) || {}).name).filter(Boolean).join("・");
+    if (before !== after) edits[cell] = after;
+  });
   so.lines.forEach((l, i) => {
+    if (blockOf(so, i)) return;   // ブロックの行は書き換えない
     if (!l.cell) return;
     const sub = subOf(so.id, i);
     if (!sub) return;
-    const before = (l.parts || []).map((x) => (member(x) || {}).name).filter(Boolean).join("・");
-    const after = sub.map((x) => (member(x) || {}).name).filter(Boolean).join("・");
-    if (before !== after) edits[l.cell] = after;
+    const nm = (a) => a.map((x) => (member(x) || {}).name).filter(Boolean).join("・");
+    if (l.extraCell && (l.extra || []).length) {
+      // ハモは別のセルなので分けて書き戻す
+      const sp = splitAssign(so, i);
+      if (nm(sp.main) !== nm(l.main || [])) edits[l.cell] = nm(sp.main);
+      if (nm(sp.extra) !== nm(l.extra || [])) edits[l.extraCell] = sp.extra.length ? "ハモ " + nm(sp.extra) : "";
+    } else {
+      const before = nm(l.main || l.parts || []);
+      const after = nm(sub);
+      if (before !== after) edits[l.cell] = after;
+    }
   });
   return edits;
 }
@@ -1860,6 +2057,19 @@ function viewAbsent() {
   const body = !ab.length ? `<p style="padding:40px;text-align:center;color:var(--dim);font-size:14px">${VIEW() ? "歌割の変更はありません" : "上から欠席者を選んでください"}</p>`
     : SONGS().map((so) => {
       // 同じ歌割が続く行はひとまとめにして、一度で直せるようにする
+      // ブロックの変更を先に出す
+      const brows = blocksOf(so).map((b) => {
+        const st3 = blockStatus(so, b);
+        if (st3 !== "need" && st3 !== "changed") return "";
+        const col = st3 === "need" ? "var(--bad)" : "#F0B23C";
+        return `<button class="row" ${VIEW() ? "" : `data-act="assignblock" data-id="${so.id}" data-b="${h(b)}"`}
+          style="width:100%;text-align:left;padding:8px 10px;margin-bottom:6px;border-radius:10px;
+                 background:color-mix(in srgb,${col} 16%,transparent);box-shadow:inset 2px 0 0 ${col}">
+          <span style="flex:0 0 100px;font-size:11px;color:${col};text-align:right">ブロック ${h(b)}</span>
+          <span class="grow trunc" style="font-size:13px">${h(names((so.blocks || {})[b] || []))} → <b>${h(names(blockParts(so, b)) || "—")}</b></span>
+        </button>`;
+      }).join("");
+
       const runs = [];
       const seen2 = new Set();
       so.lines.forEach((l, i) => {
@@ -1881,14 +2091,15 @@ function viewAbsent() {
           <span class="grow trunc" style="font-size:13px">${h(txt)}</span>
         </button>`;
       }).join("");
-      if (!rows) return "";
-      const need = so.lines.filter((l, i) => lineStatus(so, i) === "need").length;
+      if (!rows && !brows) return "";
+      const need = so.lines.filter((l, i) => lineStatus(so, i) === "need").length
+        + blocksOf(so).filter((b) => blockStatus(so, b) === "need").length;
       return `<div class="card"><div class="row" style="margin-bottom:8px">
           <b class="grow trunc">${h(songName(so))}</b>
           ${need ? `<span style="font-size:11px;color:var(--bad)">未決 ${need}</span>`
                  : `<span style="font-size:11px;color:var(--good)">完了</span>`}
           ${so.xls && !VIEW() ? `<button class="chip sm" data-act="xlsout" data-id="${so.id}">Excel</button>` : ""}
-        </div>${rows}</div>`;
+        </div>${brows}${rows}</div>`;
     }).join("");
 
   return `
@@ -1979,11 +2190,13 @@ function viewPrint() {
       cells += ns.filter((n) => n.from == null && n.lineIdx === i).map((n) => `<b class="prt">${h(mark(n))}</b>`).join("");
       const past = pastHits(so.id, i);
       if (past.count) cells += `<span class="prp">（前${past.count}）</span>`;
-      return `<div class="prl"><span class="prn">${h(l.label)}</span><span class="prx">${cells}</span></div>`;
+      const pst = lineStatus(so, i);
+      return `<div class="prl"><span class="prn"${pst ? ' style="color:#111;font-weight:700;text-decoration:underline"' : ""}>${h(labelOf(so, i))}</span><span class="prx">${cells}</span></div>`;
     }).join("");
 
     return `<section class="prs">
       <h3>${h(songName(so))}<span class="prc">　${h((S.groups.find((x) => x.id === so.groupId) || {}).name || "")}　${h(showName())}　${ns0.length}件</span></h3>
+      ${blocksOf(so).length ? `<div class="prb">${blocksOf(so).map((b) => `<span><b>${h(b)}</b> ${h(names(blockParts(so, b)) || "—")}</span>`).join("　")}</div>` : ""}
       <div class="prbody">${rows}</div>
       ${mm ? `<div class="prm"><b>総括</b>　${h(mm)}</div>` : ""}
     </section>`;
@@ -2261,6 +2474,8 @@ document.addEventListener("click", (e) => {
     case "assignline": {
       if (VIEW()) break;
       const so2 = song(); if (!so2) break;
+      const bb = blockOf(so2, i);
+      if (bb) { U.menu = { kind: "block", id: so2.id, b: bb }; renderSheet(); break; }
       U.menu = { kind: "assign", id: so2.id, i, idx: runAt(so2, i) };
       renderSheet(); break;
     }
@@ -2485,6 +2700,20 @@ document.addEventListener("click", (e) => {
         libFrom = ""; autoSubs(); save(); render();
       }
       break;
+    case "assignblock": {
+      const el3 = e.target.closest("[data-b]");
+      U.menu = { kind: "block", id, b: el3 ? el3.dataset.b : "" };
+      renderSheet(); break;
+    }
+    case "setblock": {
+      const so5 = S.songs.find((x) => x.id === U.menu.id);
+      const b = U.menu.b, k = subKey(U.menu.id);
+      const cur8 = blockParts(so5, b);
+      S.gsubs[k] = S.gsubs[k] || {};
+      S.gsubs[k][b] = cur8.includes(id) ? cur8.filter((x) => x !== id) : cur8.concat(id);
+      save(); schedulePush(); renderSheet(); render();
+      break;
+    }
     case "assign": {
       const el2 = e.target.closest("[data-idx]");
       const list = el2 && el2.dataset.idx ? el2.dataset.idx.split(",").map(Number) : [i];
@@ -2718,7 +2947,7 @@ function openSheet(lineIdx, range, lineEnd) {
   // 誰が歌う行かは歌割から自明なので、その行の担当をそのまま記録に入れる
   U.sheet = { lineIdx, lineEnd: (lineEnd != null && lineEnd > lineIdx) ? lineEnd : null,
     range: range || null, anchor: null, tags: [], memo: "", seq: [], rec: false,
-    sel: (l.parts || []).slice() };
+    sel: partsOf(s, lineIdx).slice() };
   renderSheet();
 }
 
@@ -3115,7 +3344,11 @@ function publicationData(gid) {
       const lines = x.lines.map((l) => (l.gap ? ["", ""] : [l.cont ? "→" : l.label, l.t]));
       const key = x.title + "\u0001" + JSON.stringify(lines);
       if (libKey.has(key)) return libKey.get(key);
-      lib.push({ title: x.title, credit: x.credit, groups: {}, order: used, lines });
+      const gs = {};
+      Object.keys(x.blocks || {}).forEach((b) => {
+        gs[b] = (x.blocks[b] || []).map((mid) => (member(mid) || {}).name).filter(Boolean);
+      });
+      lib.push({ title: x.title, credit: x.credit, groups: gs, order: used, lines });
       libKey.set(key, lib.length - 1);
       return lib.length - 1;
     };
@@ -3130,6 +3363,21 @@ function publicationData(gid) {
       shows: S.shows.filter((x) => showIds.includes(x.id)).map((x) => Object.assign({}, x, {
         absent: (x.absent || []).map((mid) => (member(mid) || {}).name).filter(Boolean),
       })),
+      gsubs: (() => {
+        const arr = [];
+        showIds.forEach((sid) => {
+          songs.forEach((x) => {
+            if (x.showId !== sid) return;
+            const m = S.gsubs[sid + "|" + x.id];
+            if (!m) return;
+            Object.keys(m).forEach((b) => {
+              arr.push({ showId: sid, songIdx: idx.get(x.id), block: b,
+                names: (m[b] || []).map((mid) => (member(mid) || {}).name).filter(Boolean) });
+            });
+          });
+        });
+        return arr;
+      })(),
       subs: (() => {
         const arr = [];
         showIds.forEach((sid) => {
@@ -3508,6 +3756,14 @@ function applySetlist(d) {
         absent: (x.absent || []).map((nm) => addMember(nm).id),
       }));
     }
+    S.gsubs = {};
+    (d.gsubs || []).forEach((x) => {
+      const so = S.songs[x.songIdx];
+      if (!so) return;
+      const k = x.showId + "|" + so.id;
+      S.gsubs[k] = S.gsubs[k] || {};
+      S.gsubs[k][x.block] = (x.names || []).map((nm) => addMember(nm).id);
+    });
     S.subs = {};
     (d.subs || []).forEach((x) => {
       const so = S.songs[x.songIdx];
