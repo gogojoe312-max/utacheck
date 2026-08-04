@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "2026-08-03-62";
+const APP_VER = "2026-08-04-02";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -65,14 +65,15 @@ let S = {
   shows: [], showId: "",
   src: "", setlistVer: 0,
   deviceId: "", pubNotes: [],
+  bkGistId: "", bkAt: 0, bkKey: "", bkHash: 0,
   ghToken: "", autoPub: true,
   groups: [], groupId: "",
   src: "", key: "", keyInLink: true,
   memos: {}, recs: {}, kbps: 128, preroll: 5, viewer: false, srcGroup: "",
-  draws: {}, showFilter: "", folders: {},
+  draws: {}, showFilter: "", folders: {}, subs: {},
   size: 19,
 };
-let U = { view: "live", songIdx: 0, sheet: null, mode: "member", allShows: false, picker: false, overview: false, ovSize: 9, draw: false, erase: false, pick: [], menu: null, printPick: null, busy: "", allShowList: false };
+let U = { view: "live", songIdx: 0, sheet: null, mode: "member", allShows: false, picker: false, overview: false, ovSize: 9, draw: false, erase: false, pick: [], menu: null, printPick: null, focus: "", busy: "", allShowList: false };
 
 function load() {
   try {
@@ -91,6 +92,7 @@ function load() {
   if (!S.recs) S.recs = {};
   if (!S.draws) S.draws = {};
   if (!S.folders) S.folders = {};
+  if (!S.subs) S.subs = {};
   S.kbps = 128;
   if (S.preroll == null || S.preroll > 10) S.preroll = 5;
   // 旧データの引き継ぎ：グループが無ければ1つ作り、既存の曲と配信設定を移す
@@ -155,6 +157,92 @@ function showsFor() {
 const showsNewestFirst = () => S.shows.slice().sort((a, b) => (b.ts || 0) - (a.ts || 0));
 const showName = (id) => (S.shows.find((x) => x.id === (id || S.showId)) || {}).name || "";
 const NOTES = () => S.notes.concat(S.pubNotes);
+/* ---- 欠席verのExcelを書き出す ---- */
+async function exportAbsentXlsx(songId) {
+  const so = S.songs.find((x) => x.id === songId);
+  if (!so) return;
+  const ab = absentIds();
+  if (!ab.length) { alert("欠席者が設定されていません。"); return; }
+  const blob = await getClip("xls:" + so.id).catch(() => null);
+  if (!blob) { alert("この曲の元のExcelが見つかりません。\nExcelから読み込み直してください。"); return; }
+
+  const edits = {};
+  let changed = 0;
+  so.lines.forEach((l, i) => {
+    if (!l.cell) return;
+    const sub = subOf(so.id, i);
+    if (!sub) return;
+    const before = (l.parts || []).map((x) => (member(x) || {}).name).filter(Boolean).join("・");
+    const after = sub.map((x) => (member(x) || {}).name).filter(Boolean).join("・");
+    if (before === after) return;
+    edits[l.cell] = after;
+    changed++;
+  });
+  if (!changed) { alert("変更された行がありません。"); return; }
+
+  const tab = ab.map((x) => (member(x) || {}).name).filter(Boolean).join("・") + "欠席ver";
+  try {
+    U.busy = "Excelを作成中…"; render();
+    const buf = new Uint8Array(await blob.arrayBuffer());
+    const res = await addVersionTab(buf, tab, edits);
+    const url = URL.createObjectURL(new Blob([res.data], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+    const a = document.createElement("a");
+    a.href = url; a.download = `${so.title}_${tab}.xlsx`;
+    document.body.appendChild(a); a.click();
+    setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 800);
+    U.busy = ""; render();
+  } catch (e) {
+    U.busy = ""; render();
+    alert("Excelを作れませんでした。\n" + e.message);
+  }
+}
+
+/* ---- 欠席対応 ---- */
+const absentIds = (showId) => ((S.shows.find((x) => x.id === (showId || S.showId)) || {}).absent || []);
+const subKey = (songId) => S.showId + "|" + songId;
+const subOf = (songId, i) => {
+  const m = S.subs[subKey(songId)];
+  return m && m[i] ? m[i] : null;
+};
+// その行を実際に歌う人
+const partsOf = (so, i) => {
+  const sub = subOf(so.id, i);
+  return sub ? sub : ((so.lines[i] || {}).parts || []);
+};
+// 赤＝まだ決まっていない、黄＝変更済み
+function lineStatus(so, i) {
+  const l = so.lines[i] || {};
+  if (l.gap) return "";
+  if (subOf(so.id, i)) return "changed";
+  const ab = absentIds();
+  if (!ab.length) return "";
+  return (l.parts || []).some((p) => ab.includes(p)) ? "need" : "";
+}
+// 2人以上の行から欠席者を抜く。ソロと全員欠席の行は赤のまま残す。
+function autoSubs() {
+  const ab = absentIds();
+  if (!ab.length) return 0;
+  let n = 0;
+  SONGS().forEach((so) => {
+    const k = subKey(so.id);
+    so.lines.forEach((l, i) => {
+      if (l.gap || !l.parts || !l.parts.length) return;
+      if (S.subs[k] && S.subs[k][i]) return;
+      if (!l.parts.some((p) => ab.includes(p))) return;
+      const rest = l.parts.filter((p) => !ab.includes(p));
+      if (l.parts.length > 1 && rest.length) {
+        S.subs[k] = S.subs[k] || {};
+        S.subs[k][i] = rest;
+        n++;
+      }
+    });
+  });
+  if (n) save();
+  return n;
+}
+const needCount = () => SONGS().reduce((a, so) => a + so.lines.filter((l, i) => lineStatus(so, i) === "need").length, 0);
+const changedCount = () => SONGS().reduce((a, so) => a + so.lines.filter((l, i) => lineStatus(so, i) === "changed").length, 0);
+
 const covers = (n, i) => i >= n.lineIdx && i <= (n.lineEnd != null ? n.lineEnd : n.lineIdx);
 // 同じ曲の同じ行に、過去の公演でも指摘があったか
 function pastHits(songId, lineIdx) {
@@ -255,8 +343,8 @@ function buildSong(parsed) {
   let carry = [];
   const lines = (parsed.lines || []).map((r) => {
     const label = (r[0] || "").trim(), t = (r[1] || "").trim();
-    if (!label && !t) return { gap: true, label: "", t: "", parts: [] };
-    if (label === "→") return { label: "", t, parts: carry.slice(), cont: true };
+    if (!label && !t) return { gap: true, label: "", t: "", parts: [], cell: "" };
+    if (label === "→") return { label: "", t, parts: carry.slice(), cont: true, cell: r[2] || "" };
     let parts = [];
     if (/^全/.test(label)) parts = S.members.map((m) => m.id);
     else splitNames(label).forEach((k) => {
@@ -265,9 +353,9 @@ function buildSong(parsed) {
     });
     parts = [...new Set(parts)];
     carry = parts;
-    return { label, t, parts };
+    return { label, t, parts, cell: r[2] || "" };
   });
-  return { id: uid(), title: parsed.title || "無題", credit: parsed.credit || "", lines };
+  return { id: uid(), title: parsed.title || "無題", credit: parsed.credit || "", lines, sheetName: parsed.sheetName || "" };
 }
 
 // 拡張子が二重についていても落とす
@@ -289,7 +377,7 @@ function stripParens(t) {
 function splitNames(label) {
   return label.split(NAMESEP)
     .map((t) => stripParens(t).trim())
-    .filter((t) => t && t.length < 6); // 長いものは名前ではなく注記とみなす
+    .filter((t) => t && t.length < 6 && !/[（()）]/.test(t)); // 長いもの・括弧の残りは名前ではない
 }
 
 const cleanName = (n) => String(n || "").replace(/(\.(pdf|xlsx|xlsm|xls|csv|json))+$/i, "").trim() || "無題";
@@ -465,14 +553,224 @@ function parsePage(items, isFirstPage, pageH) {
   return { title: head[0] || "", credit: head.slice(1).join(" "), rows: out };
 }
 
+/* ---------------- Excel の書き換え ---------------- */
+// ZIP の読み書き。圧縮はブラウザ標準の deflate-raw を使う。
+const CRCT = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; }
+  return t;
+})();
+function crc32(u8) {
+  let c = 0xFFFFFFFF;
+  for (let i = 0; i < u8.length; i++) c = CRCT[(c ^ u8[i]) & 0xFF] ^ (c >>> 8);
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+async function inflateRaw(u8) {
+  const ds = new DecompressionStream("deflate-raw");
+  const w = ds.writable.getWriter(); w.write(u8); w.close();
+  return new Uint8Array(await new Response(ds.readable).arrayBuffer());
+}
+async function deflateRaw(u8) {
+  const cs = new CompressionStream("deflate-raw");
+  const w = cs.writable.getWriter(); w.write(u8); w.close();
+  return new Uint8Array(await new Response(cs.readable).arrayBuffer());
+}
+async function unzip(buf) {
+  const u8 = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+  const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+  let eocd = -1;
+  for (let i = u8.length - 22; i >= 0 && i > u8.length - 66000; i--) {
+    if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+  }
+  if (eocd < 0) throw new Error("Excelのファイルとして読めません。");
+  const n = dv.getUint16(eocd + 10, true);
+  let off = dv.getUint32(eocd + 16, true);
+  const out = {}, order = [];
+  for (let i = 0; i < n; i++) {
+    const method = dv.getUint16(off + 10, true);
+    const csize = dv.getUint32(off + 20, true);
+    const nameLen = dv.getUint16(off + 28, true);
+    const extraLen = dv.getUint16(off + 30, true);
+    const cmtLen = dv.getUint16(off + 32, true);
+    const lho = dv.getUint32(off + 42, true);
+    const name = new TextDecoder().decode(u8.subarray(off + 46, off + 46 + nameLen));
+    const lnl = dv.getUint16(lho + 26, true), lel = dv.getUint16(lho + 28, true);
+    const start = lho + 30 + lnl + lel;
+    const raw = u8.subarray(start, start + csize);
+    out[name] = method === 0 ? raw : await inflateRaw(raw);
+    order.push(name);
+    off += 46 + nameLen + extraLen + cmtLen;
+  }
+  return { files: out, order };
+}
+async function zip(files, order) {
+  const names = order || Object.keys(files);
+  const chunks = [], central = [];
+  let off = 0;
+  for (const name of names) {
+    const raw = files[name];
+    if (!raw) continue;
+    const comp = await deflateRaw(raw);
+    const use = comp.length < raw.length ? comp : raw;
+    const method = use === comp ? 8 : 0;
+    const crc = crc32(raw);
+    const nb = new TextEncoder().encode(name);
+    const lh = new Uint8Array(30 + nb.length);
+    const lv = new DataView(lh.buffer);
+    lv.setUint32(0, 0x04034b50, true); lv.setUint16(4, 20, true);
+    lv.setUint16(6, 0x0800, true); lv.setUint16(8, method, true);
+    lv.setUint32(14, crc, true); lv.setUint32(18, use.length, true); lv.setUint32(22, raw.length, true);
+    lv.setUint16(26, nb.length, true);
+    lh.set(nb, 30);
+    chunks.push(lh, use);
+    const ch = new Uint8Array(46 + nb.length);
+    const cv = new DataView(ch.buffer);
+    cv.setUint32(0, 0x02014b50, true); cv.setUint16(4, 20, true); cv.setUint16(6, 20, true);
+    cv.setUint16(8, 0x0800, true); cv.setUint16(10, method, true);
+    cv.setUint32(16, crc, true); cv.setUint32(20, use.length, true); cv.setUint32(24, raw.length, true);
+    cv.setUint16(28, nb.length, true);
+    cv.setUint32(42, off, true);
+    ch.set(nb, 46);
+    central.push(ch);
+    off += lh.length + use.length;
+  }
+  const cdSize = central.reduce((a, c) => a + c.length, 0);
+  const end = new Uint8Array(22);
+  const ev = new DataView(end.buffer);
+  ev.setUint32(0, 0x06054b50, true);
+  ev.setUint16(8, central.length, true); ev.setUint16(10, central.length, true);
+  ev.setUint32(12, cdSize, true); ev.setUint32(16, off, true);
+  const all = chunks.concat(central, [end]);
+  const total = all.reduce((a, c) => a + c.length, 0);
+  const res = new Uint8Array(total);
+  let p = 0;
+  for (const c of all) { res.set(c, p); p += c.length; }
+  return res;
+}
+
+
+
+const dec = (u8) => new TextDecoder().decode(u8);
+const enc = (s) => new TextEncoder().encode(s);
+const esc = (s) => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+// 元のExcelに「○○欠席ver」タブを一番左に足す。元のタブと書式には一切触らない。
+// edits: { "A7": "島川", "E12": "" } セル番地 → 新しい名前
+async function addVersionTab(buf, tabName, edits) {
+  const { files, order } = await unzip(buf);
+  const names = order.slice();
+  const wbxml = dec(files['xl/workbook.xml']);
+  const rels  = dec(files['xl/_rels/workbook.xml.rels']);
+  const ct    = dec(files['[Content_Types].xml']);
+
+  // 一番左のシートが元ネタ
+  const first = wbxml.match(/<sheet [^>]*r:id="([^"]+)"/);
+  if (!first) throw new Error('シートが見つかりません。');
+  const relm = new RegExp('Id="' + first[1] + '"[^>]*Target="([^"]+)"').exec(rels);
+  const srcPath = 'xl/' + relm[1].replace(/^\/?xl\//, '');
+  let sheet = dec(files[srcPath]);
+
+  // 共有文字列に新しい名前を足す
+  let ss = files['xl/sharedStrings.xml'] ? dec(files['xl/sharedStrings.xml']) : null;
+  if (!ss) {
+    ss = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="0" uniqueCount="0"></sst>';
+    names.push('xl/sharedStrings.xml');
+  }
+  let count = (ss.match(/<si>/g) || []).length;
+  const add = [];
+  const idxOf = {};
+  Object.keys(edits).forEach((ref) => {
+    const v = edits[ref];
+    if (v === '') return;
+    if (idxOf[v] == null) { idxOf[v] = count + add.length; add.push('<si><t xml:space="preserve">' + esc(v) + '</t></si>'); }
+  });
+  if (add.length) {
+    ss = ss.replace('</sst>', add.join('') + '</sst>');
+    const total = count + add.length;
+    ss = ss.replace(/count="\d+"/, 'count="' + total + '"').replace(/uniqueCount="\d+"/, 'uniqueCount="' + total + '"');
+  }
+
+  // 黄色の塗りを「追加」する（既存の書式番号はずらさない）
+  let st = dec(files['xl/styles.xml']);
+  const fillsM = /<fills count="(\d+)">([\s\S]*?)<\/fills>/.exec(st);
+  const xfsM   = /<cellXfs count="(\d+)">([\s\S]*?)<\/cellXfs>/.exec(st);
+  const fillId = Number(fillsM[1]);
+  st = st.replace(/<fills count="\d+">/, '<fills count="' + (fillId + 1) + '">')
+         .replace('</fills>', '<fill><patternFill patternType="solid"><fgColor rgb="FFFFF3B0"/><bgColor indexed="64"/></patternFill></fill></fills>');
+  const xfList = xfsM[2].match(/<xf [^>]*\/>|<xf [^>]*>[\s\S]*?<\/xf>/g) || [];
+  const baseXfCount = xfList.length;
+  const yellowOf = {};          // 元の書式番号 → 黄色を足した新しい書式番号
+  const newXfs = [];
+  const ensureYellow = (base) => {
+    if (yellowOf[base] != null) return yellowOf[base];
+    let x = xfList[base] || '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>';
+    x = /fillId="\d+"/.test(x) ? x.replace(/fillId="\d+"/, 'fillId="' + fillId + '"')
+                              : x.replace('<xf ', '<xf fillId="' + fillId + '" ');
+    x = /applyFill=/.test(x) ? x.replace(/applyFill="\d"/, 'applyFill="1"') : x.replace('<xf ', '<xf applyFill="1" ');
+    const id = baseXfCount + newXfs.length;
+    newXfs.push(x);
+    yellowOf[base] = id;
+    return id;
+  };
+
+  // セルを差し替える
+  let changed = 0;
+  Object.keys(edits).forEach((ref) => {
+    const v = edits[ref];
+    const re = new RegExp('<c r="' + ref + '"([^>]*?)(/>|>([\\s\\S]*?)</c>)');
+    const m = re.exec(sheet);
+    let attr = m ? m[1] : '';
+    const sm = /s="(\d+)"/.exec(attr);
+    const yid = ensureYellow(sm ? Number(sm[1]) : 0);
+    attr = attr.replace(/\s*s="\d+"/, '').replace(/\s*t="\w+"/, '');
+    const body = v === '' ? '' : '<v>' + idxOf[v] + '</v>';
+    const cell = '<c r="' + ref + '"' + attr + ' s="' + yid + '"' + (v === '' ? '' : ' t="s"') + '>' + body + '</c>';
+    if (m) sheet = sheet.slice(0, m.index) + cell + sheet.slice(m.index + m[0].length);
+    else {
+      // セルが存在しない行に足す
+      const row = ref.match(/\d+$/)[0];
+      const rre = new RegExp('(<row r="' + row + '"[^>]*>)');
+      if (rre.test(sheet)) sheet = sheet.replace(rre, '$1' + cell);
+    }
+    changed++;
+  });
+  if (newXfs.length) {
+    st = st.replace(/<cellXfs count="\d+">/, '<cellXfs count="' + (baseXfCount + newXfs.length) + '">')
+           .replace('</cellXfs>', newXfs.join('') + '</cellXfs>');
+  }
+  sheet = sheet.replace(/<drawing[^>]*\/>/g, '').replace(/<legacyDrawing[^>]*\/>/g, '');
+
+  // 新しいシートを登録して一番左に置く
+  const nums = names.map((n) => (/xl\/worksheets\/sheet(\d+)\.xml/.exec(n) || [])[1]).filter(Boolean).map(Number);
+  const newNum = (nums.length ? Math.max.apply(null, nums) : 0) + 1;
+  const rids = (rels.match(/Id="rId(\d+)"/g) || []).map((x) => Number(x.replace(/\D/g, '')));
+  const newRid = 'rId' + ((rids.length ? Math.max.apply(null, rids) : 0) + 1);
+  const sids = (wbxml.match(/sheetId="(\d+)"/g) || []).map((x) => Number(x.replace(/\D/g, '')));
+  const newSid = (sids.length ? Math.max.apply(null, sids) : 0) + 1;
+  const safe = tabName.replace(/[\\\/\?\*\[\]:]/g, '').slice(0, 31);
+
+  files['xl/workbook.xml'] = enc(wbxml.replace('<sheets>', '<sheets><sheet name="' + esc(safe) + '" sheetId="' + newSid + '" r:id="' + newRid + '"/>'));
+  files['xl/_rels/workbook.xml.rels'] = enc(rels.replace('</Relationships>',
+    '<Relationship Id="' + newRid + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet' + newNum + '.xml"/></Relationships>'));
+  files['[Content_Types].xml'] = enc(ct.replace('</Types>',
+    '<Override PartName="/xl/worksheets/sheet' + newNum + '.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>'));
+  files['xl/styles.xml'] = enc(st);
+  files['xl/sharedStrings.xml'] = enc(ss);
+  const newPath = 'xl/worksheets/sheet' + newNum + '.xml';
+  files[newPath] = enc(sheet);
+  if (names.indexOf(newPath) < 0) names.push(newPath);
+  return { data: await zip(files, names), changed };
+}
+
+
 /* ---------------- Excel 取り込み ---------------- */
 // 社内の歌割は「名前・空白・歌詞」の3列を1組として、横に2〜3組並ぶ形。
 // 列位置は資料ごとに違うので、中身から名前列と歌詞列を見分ける。
 const NAMECELL = /^[^\s、,，・･\/／]{1,4}([\s、,，・･\/／]+[^\s、,，・･\/／]{1,4})*$/;
 const looksName = (v) => !!v && v.length <= 12 && NAMECELL.test(v);
 
-async function parseXLSX(file) {
-  const wb = XLSX.read(await file.arrayBuffer(), { type: "array" });
+async function parseXLSX(file, buf) {
+  const wb = XLSX.read(buf || await file.arrayBuffer(), { type: "array" });
   const sh = wb.Sheets[wb.SheetNames[0]];
   const grid = XLSX.utils.sheet_to_json(sh, { header: 1, blankrows: true, defval: "" })
     .map((r) => (r || []).map((v) => cleanText(String(v == null ? "" : v).replace(/\s*\n\s*/g, " "))));
@@ -497,10 +795,11 @@ async function parseXLSX(file) {
   }
 
   const CREDIT = /作詞|作曲|編曲|訳詞|Words|Music|Arr/i;
+  const col = (n) => { let t = ""; n++; while (n > 0) { const m = (n - 1) % 26; t = String.fromCharCode(65 + m) + t; n = (n - m - 1) / 26; } return t; };
   const head = [];
   const rows = [];
   blocks.forEach(([nc, lc]) => {
-    grid.forEach((r) => {
+    grid.forEach((r, ri) => {
       const nv = r[nc] || "", lv = r[lc] || "";
       if (!nv && !lv) {
         const last = rows[rows.length - 1];
@@ -509,13 +808,15 @@ async function parseXLSX(file) {
       }
       if (!nv && CREDIT.test(lv)) { head.push(lv); return; }
       if (!nv && !rows.length && /[／/]/.test(lv)) { head.unshift(lv); return; }
-      rows.push([nv || "→", lv]);
+      rows.push([nv || "→", lv, col(nc) + (ri + 1)]);
     });
   });
   // 題名に「／」が無い資料では、クレジットの直前の行が題名
   if (rows.length && rows[0][0] === "→" && head.length === 1 && CREDIT.test(head[0])) {
     head.unshift(rows.shift()[1]);
   }
+  // 一番左のシートを読んでいる
+  const sheetName = wb.SheetNames[0];
   return finalize(cleanName(file.name), head.join("　"), rows);
 }
 
@@ -582,6 +883,19 @@ function unlockAudio() {
   } catch (e) { /* 音を出せない端末 */ }
 }
 document.addEventListener("pointerdown", unlockAudio, true);
+
+// 使っている間は画面を消させない
+let wakeLock = null;
+async function keepAwake() {
+  try {
+    if (!navigator.wakeLock || document.hidden) return;
+    if (wakeLock && !wakeLock.released) return;
+    wakeLock = await navigator.wakeLock.request("screen");
+    wakeLock.addEventListener("release", () => { wakeLock = null; });
+  } catch (e) { /* 対応していない端末では何もしない */ }
+}
+document.addEventListener("visibilitychange", () => { if (!document.hidden) keepAwake(); });
+document.addEventListener("pointerdown", keepAwake, true);
 
 function tone(id) {
   try {
@@ -775,7 +1089,8 @@ function render() {
   const sameView = app.dataset.view === sig;
   app.dataset.view = sig;
 
-  if (U.view === "print") app.innerHTML = viewPrint();
+  if (U.view === "absent") app.innerHTML = viewAbsent();
+  else if (U.view === "print") app.innerHTML = viewPrint();
   else if (U.view === "live") app.innerHTML = viewLive();
   else if (U.view === "summary") app.innerHTML = viewSummary();
   else app.innerHTML = viewSetup();
@@ -850,9 +1165,13 @@ function viewLive() {
         ${n.at != null && hasRec(s) ? `<button class="tagpill" data-act="playfrom" data-id="${n.id}"
             style="color:var(--good)">🔊 ${mmss(n.at)}</button>` : ""}
         ${n.memo ? `<button class="tagpill" data-act="note" data-i="${i}" style="color:var(--dim)">${n.from != null ? `「${h(chars.slice(n.from, n.to + 1).join(""))}」 ` : ""}${h(n.memo)}</button>` : ""}`).join("");
-      const tint = ns.length ? noteColor(ns[0]) : "";
-      return `<div class="ln" style="${tint ? `background:color-mix(in srgb,${tint} 9%,transparent)` : ""}">
-        <button class="lbl" data-act="noteblock" data-i="${i}">${h(l.label)}</button>
+      const st2 = lineStatus(s, i);
+      const foc = U.focus && partsOf(s, i).includes(U.focus);
+      const tint = st2 === "need" ? "var(--bad)" : st2 === "changed" ? "#F0B23C"
+        : foc ? "#4C9BFF" : (ns.length ? noteColor(ns[0]) : "");
+      const strength = (st2 || foc) ? 18 : 9;
+      return `<div class="ln" style="${tint ? `background:color-mix(in srgb,${tint} ${strength}%,transparent)` : ""}">
+        <button class="lbl" data-act="noteblock" data-i="${i}">${h(subOf(s.id, i) ? names(partsOf(s, i)) || "—" : l.label)}</button>
         <div class="brk ${gp[i]}"></div>
         <div class="grow" style="min-width:0">
           <div class="txt" data-l="${i}" style="font-size:${S.size}px">${cells}</div>${pills}
@@ -885,7 +1204,12 @@ function viewLive() {
     </div>` : `<div style="height:120px"></div>`}</div>
   ${U.draw && !VIEW() ? `<div class="aubar">
     <button data-act="pen" class="aub" style="${U.erase ? "" : "background:var(--bad);color:#0A0A0A"}">✎</button>
-    <button data-act="eraser" class="aub" style="${U.erase ? "background:var(--accent);color:#0A0A0A" : ""}">消</button>
+    <button data-act="eraser" class="aub" style="${U.erase ? "background:var(--accent);color:#0A0A0A" : ""}">
+      <svg viewBox="0 0 24 24" width="19" height="19" style="pointer-events:none">
+        <path d="M4 16.5 12.5 8l5 5L11 19.5H6.5z" fill="currentColor" opacity=".95"/>
+        <path d="M12.5 8 16 4.5a2 2 0 0 1 2.8 0l2.7 2.7a2 2 0 0 1 0 2.8L17.5 13z" fill="currentColor" opacity=".55"/>
+        <path d="M4 20.5h16" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/>
+      </svg></button>
     <span class="grow" style="font-size:11px;color:var(--dim)">なぞって書く。書いている間は画面が動きません</span>
     <button data-act="clearink" class="aub" style="font-size:12px;color:var(--dim)">全消</button>
   </div>` : ""}
@@ -962,6 +1286,24 @@ function viewOverview(s) {
 function renderSheet() {
   if (overlay) { overlay.remove(); overlay = null; }
 
+  if (U.menu && U.menu.kind === "assign") {
+    const so = S.songs.find((x) => x.id === U.menu.id);
+    const l = so ? so.lines[U.menu.i] : null;
+    const cur5 = so ? partsOf(so, U.menu.i) : [];
+    const ab2 = absentIds();
+    overlay = document.createElement("div");
+    overlay.className = "mask";
+    overlay.innerHTML = `<button class="sp" data-act="closemenu"></button><div class="sheet">
+      <div class="row" style="margin-bottom:10px"><span class="grow trunc" style="font-size:13px">${h(l ? l.t : "")}</span>
+      <button data-act="closemenu" style="width:36px;height:36px;border-radius:10px;background:var(--panel2);font-size:17px">✕</button></div>
+      <div class="sec"><h4>${h((l && l.label) || "続き")} を誰が歌いますか</h4>
+        <div class="chips">${S.members.map((m) => `<button class="chip sm" data-act="setassign" data-id="${m.id}"
+          style="${cur5.includes(m.id) ? "background:var(--accent);color:#0A0A0A" : ab2.includes(m.id) ? "color:var(--bad);opacity:.5" : ""}">${h(m.name)}</button>`).join("")}</div>
+      </div></div>`;
+    document.body.appendChild(overlay);
+    return;
+  }
+
   if (U.menu) {
     const many = U.menu.ids && U.menu.ids.length;
     const x = S.songs.find((y) => y.id === (many ? U.menu.ids[0] : U.menu.id));
@@ -969,7 +1311,8 @@ function renderSheet() {
     const inner = U.menu.kind === "group"
       ? `<div class="sec"><h4>どのグループにしますか</h4>
           ${S.groups.map((g) => `<button class="ghost" data-act="m-setgroup" data-id="${g.id}"
-            style="text-align:left;margin-bottom:8px;${!many && x && x.groupId === g.id ? "background:var(--accent);color:#0A0A0A" : ""}">${h(g.name)}</button>`).join("")}</div>`
+            style="text-align:left;margin-bottom:8px;${!many && x && x.groupId === g.id ? "background:var(--accent);color:#0A0A0A" : ""}">${h(g.name)}</button>`).join("")}
+          <button class="ghost" data-act="m-setgroup" data-id="" style="text-align:left;color:var(--dim);${!many && x && !x.groupId ? "background:var(--accent);color:#0A0A0A" : ""}">なし（配信しない）</button></div>`
       : `<div class="sec">
           ${B("m-rename", "曲名を変える")}
           ${B("m-take", "テイクを増やす")}
@@ -1012,6 +1355,12 @@ function renderSheet() {
     overlay.innerHTML = `<button class="sp" data-act="close"></button><div class="sheet">
       <div class="row" style="margin-bottom:12px"><span class="grow" style="font-size:11px;color:var(--dim)">公演と曲を選ぶ</span>
       <button data-act="cancel" style="width:36px;height:36px;border-radius:10px;background:var(--panel2);font-size:17px">✕</button></div>
+      ${S.members.length ? `<div class="sec"><h4>注目するメンバー</h4><div class="chips">
+        <button class="chip sm" data-act="focus" data-id="" style="${!U.focus ? "background:var(--accent);color:#0A0A0A" : ""}">なし</button>
+        ${S.members.filter((m) => SONGS().some((so) => so.lines.some((l) => (l.parts || []).includes(m.id))))
+          .map((m) => `<button class="chip sm" data-act="focus" data-id="${m.id}"
+            style="${U.focus === m.id ? "background:#4C9BFF;color:#0A0A0A" : ""}">${h(m.name)}</button>`).join("")}
+      </div></div>` : ""}
       <div class="sec"><h4>公演</h4>${gfil}<div class="chips">${shows}</div>
         ${VIEW() ? "" : `<button class="ghost" data-act="dupshow" style="margin-top:8px">今のセットリストを複製して新しい公演にする</button>`}
 
@@ -1217,6 +1566,93 @@ function viewDiff() {
     <div style="height:40px"></div></div>`;
 }
 
+/* ---- 欠席verのExcelを書き出す ---- */
+async function exportAbsentXlsx(songId) {
+  const so = S.songs.find((x) => x.id === songId);
+  if (!so) return;
+  const ab = absentIds();
+  if (!ab.length) { alert("欠席者が設定されていません。"); return; }
+  const blob = await getClip("xls:" + so.id).catch(() => null);
+  if (!blob) { alert("この曲の元のExcelが見つかりません。\nExcelから読み込み直してください。"); return; }
+
+  const edits = {};
+  let changed = 0;
+  so.lines.forEach((l, i) => {
+    if (!l.cell) return;
+    const sub = subOf(so.id, i);
+    if (!sub) return;
+    const before = (l.parts || []).map((x) => (member(x) || {}).name).filter(Boolean).join("・");
+    const after = sub.map((x) => (member(x) || {}).name).filter(Boolean).join("・");
+    if (before === after) return;
+    edits[l.cell] = after;
+    changed++;
+  });
+  if (!changed) { alert("変更された行がありません。"); return; }
+
+  const tab = ab.map((x) => (member(x) || {}).name).filter(Boolean).join("・") + "欠席ver";
+  try {
+    U.busy = "Excelを作成中…"; render();
+    const buf = new Uint8Array(await blob.arrayBuffer());
+    const res = await addVersionTab(buf, tab, edits);
+    const url = URL.createObjectURL(new Blob([res.data], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+    const a = document.createElement("a");
+    a.href = url; a.download = `${so.title}_${tab}.xlsx`;
+    document.body.appendChild(a); a.click();
+    setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 800);
+    U.busy = ""; render();
+  } catch (e) {
+    U.busy = ""; render();
+    alert("Excelを作れませんでした。\n" + e.message);
+  }
+}
+
+/* ---- 欠席対応 ---- */
+function viewAbsent() {
+  const ab = absentIds();
+  const chips = S.members.filter((m) => SONGS().some((so) => so.lines.some((l) => (l.parts || []).includes(m.id))))
+    .map((m) => `<button class="chip sm" data-act="toggleabsent" data-id="${m.id}"
+      style="${ab.includes(m.id) ? "background:var(--bad);color:#0A0A0A" : ""}">${h(m.name)}</button>`).join("");
+
+  const body = !ab.length ? `<p style="padding:40px;text-align:center;color:var(--dim);font-size:14px">上から欠席者を選んでください</p>`
+    : SONGS().map((so) => {
+      const rows = so.lines.map((l, i) => {
+        const st2 = lineStatus(so, i);
+        if (st2 !== "need" && st2 !== "changed") return "";
+        const col = st2 === "need" ? "var(--bad)" : "#F0B23C";
+        const now = names(partsOf(so, i)) || "—";
+        return `<button class="row" data-act="assign" data-id="${so.id}" data-i="${i}"
+          style="width:100%;text-align:left;padding:8px 10px;margin-bottom:6px;border-radius:10px;
+                 background:color-mix(in srgb,${col} 16%,transparent);box-shadow:inset 2px 0 0 ${col}">
+          <span style="flex:0 0 96px;font-size:11px;color:${col};text-align:right">${h(l.label || "続き")} → ${h(now)}</span>
+          <span class="grow trunc" style="font-size:13px">${h(l.t)}</span>
+        </button>`;
+      }).join("");
+      if (!rows) return "";
+      const need = so.lines.filter((l, i) => lineStatus(so, i) === "need").length;
+      return `<div class="card"><div class="row" style="margin-bottom:8px">
+          <b class="grow trunc">${h(songName(so))}</b>
+          ${need ? `<span style="font-size:11px;color:var(--bad)">未決 ${need}</span>`
+                 : `<span style="font-size:11px;color:var(--good)">完了</span>`}
+          ${so.xls ? `<button class="chip sm" data-act="xlsout" data-id="${so.id}">Excel</button>` : ""}
+        </div>${rows}</div>`;
+    }).join("");
+
+  return `
+  <div class="hd"><button class="ic" data-act="go-live">‹</button><b>欠席対応</b>
+    <span class="grow"></span>
+    <span style="font-size:11px;color:var(--dim)" class="trunc">${h(showName())}</span></div>
+  <div class="scroll pad">
+    <div class="card"><h4 style="font-size:11px;color:var(--dim);margin-bottom:8px">欠席するメンバー</h4>
+      <div class="chips">${chips || `<span style="font-size:12px;color:var(--dim)">曲を読み込むと出ます</span>`}</div>
+      ${ab.length ? `<div class="row" style="margin-top:10px;font-size:12px">
+        <span class="grow"><b style="color:var(--bad)">未決 ${needCount()}</b>　<b style="color:#F0B23C">変更済 ${changedCount()}</b></span>
+        <button class="chip sm" data-act="resetsubs" style="color:var(--dim)">やり直す</button></div>` : ""}
+    </div>
+    ${body}
+    <div style="height:40px"></div>
+  </div>`;
+}
+
 /* ---- 紙／PDF ---- */
 // 実際に描いてから高さを測り、A4縦1枚に収まるまで縮める。
 // 折り返しや行間まで含めた本当の高さで判断するので、はみ出さない。
@@ -1335,6 +1771,30 @@ function viewSetup() {
       <span class="grow"></span>
       <span style="font-size:11px;color:var(--dim)">${APP_VER}</span></div>
     <div class="scroll pad"><div style="height:6px"></div>${list}
+    <h4 class="head">欠席対応</h4>
+    <div class="card">
+      <button class="primary" data-act="goabsent">${absentIds().length
+        ? `${h(absentIds().map((x) => (member(x) || {}).name).join("・"))} が欠席${needCount() ? `　未決 ${needCount()}` : "　完了"}`
+        : "欠席者を設定する"}</button>
+    </div>
+
+    <h4 class="head">バックアップ</h4>
+    <div class="card">
+      <div class="row" style="margin-bottom:10px">
+        <span class="grow" style="font-size:13px">${S.bkAt ? "最終 " + new Date(S.bkAt).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "まだ取っていません"}</span>
+        <span style="font-size:11px;color:${bkSignature() === S.bkHash ? "var(--good)" : "var(--dim)"}">${bkSignature() === S.bkHash ? "最新" : "未反映あり"}</span>
+      </div>
+      <button class="primary" data-act="bknow" style="margin-bottom:8px">今すぐバックアップ</button>
+      <button class="ghost" data-act="bkfile" style="margin-bottom:8px">ファイルに書き出す</button>
+      <button class="ghost" data-act="bkrestore" style="color:var(--bad)">バックアップから戻す</button>
+      <div class="row" style="margin-top:12px">
+        <span style="font-size:11px;color:var(--dim);width:52px">合言葉</span>
+        <input class="field grow" id="bkkey" placeholder="未設定（暗号化しません）" value="${h(S.bkKey || "")}">
+        <button class="chip sm" data-act="setbkkey">保存</button>
+      </div>
+      <div style="font-size:11px;color:var(--dim);margin-top:6px">公演・曲・記録・総括・手書きをすべて保存します。録音とトークンは含みません。10分ごとに自動で更新されます。</div>
+    </div>
+
     <h4 class="head">音を確かめる</h4>
     <div class="card">${pianoHTML(null)}</div>
     <div style="height:40px"></div></div>`;
@@ -1343,7 +1803,7 @@ function viewSetup() {
   const allShows = showsFor();
   const curFolder = folderOf(S.shows.find((x) => x.id === S.showId));
   const showRow = (sw) => `<div class="row card" data-drop="s:${sw.id}" style="margin-bottom:8px;padding:10px 12px;${sw.id === S.showId ? "outline:1px solid var(--accent)" : ""}">
-      <span class="grip" data-drag="${sw.id}">⣿</span>
+      <span class="grip" data-drag="show:${sw.id}">⣿</span>
       <button class="grow" style="text-align:left;min-width:0" data-act="useshow" data-id="${sw.id}">
         <div class="trunc" style="${sw.id === S.showId ? "color:var(--accent)" : ""}">${h(sw.name)}</div>
         <div style="font-size:11px;color:var(--dim)">${S.songs.filter((x) => x.showId === sw.id).length}曲 ・ ${NOTES().filter((n) => n.showId === sw.id).length}件${sw.id === S.showId ? " ・ 記録中" : ""}</div>
@@ -1368,11 +1828,12 @@ function viewSetup() {
   const cur = SONGS();
   const songs = cur.map((x, i) => {
     const on = U.pick.includes(x.id);
-    return `<div class="row card" style="margin-bottom:8px;${on ? "outline:1px solid var(--accent)" : ""}">
+    return `<div class="row card" data-drop="g:${x.id}" style="margin-bottom:8px;${on ? "outline:1px solid var(--accent)" : ""}">
+      <span class="grip" data-drag="song:${x.id}">⣿</span>
       <button data-act="picksong" data-id="${x.id}" style="width:26px;flex:0 0 26px;font-size:15px;color:${on ? "var(--accent)" : "var(--dim)"}">${on ? "☑" : "☐"}</button>
       <button class="grow" style="text-align:left;min-width:0" data-act="opensong" data-i="${i}">
         <div class="trunc">${h(songName(x))}</div>
-        <div class="trunc" style="font-size:11px;color:var(--dim)">${h((S.groups.find((g) => g.id === x.groupId) || {}).name || "—")}</div>
+        <div class="trunc" style="font-size:11px;color:var(--dim)">${x.groupId ? h((S.groups.find((g) => g.id === x.groupId) || {}).name || "—") : "配信しない"}</div>
       </button>
       <button data-act="up" data-i="${i}" style="padding:4px 5px;color:var(--dim)">↑</button>
       <button data-act="down" data-i="${i}" style="padding:4px 5px;color:var(--dim)">↓</button>
@@ -1464,6 +1925,30 @@ function viewSetup() {
             <button class="chip" data-act="ghtoken">確認して保存</button>
           </div>
           <div style="font-size:11px;color:var(--dim);margin-top:6px">Tokens (classic) / gist</div>`}
+    </div>
+
+    <h4 class="head">欠席対応</h4>
+    <div class="card">
+      <button class="primary" data-act="goabsent">${absentIds().length
+        ? `${h(absentIds().map((x) => (member(x) || {}).name).join("・"))} が欠席${needCount() ? `　未決 ${needCount()}` : "　完了"}`
+        : "欠席者を設定する"}</button>
+    </div>
+
+    <h4 class="head">バックアップ</h4>
+    <div class="card">
+      <div class="row" style="margin-bottom:10px">
+        <span class="grow" style="font-size:13px">${S.bkAt ? "最終 " + new Date(S.bkAt).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "まだ取っていません"}</span>
+        <span style="font-size:11px;color:${bkSignature() === S.bkHash ? "var(--good)" : "var(--dim)"}">${bkSignature() === S.bkHash ? "最新" : "未反映あり"}</span>
+      </div>
+      <button class="primary" data-act="bknow" style="margin-bottom:8px">今すぐバックアップ</button>
+      <button class="ghost" data-act="bkfile" style="margin-bottom:8px">ファイルに書き出す</button>
+      <button class="ghost" data-act="bkrestore" style="color:var(--bad)">バックアップから戻す</button>
+      <div class="row" style="margin-top:12px">
+        <span style="font-size:11px;color:var(--dim);width:52px">合言葉</span>
+        <input class="field grow" id="bkkey" placeholder="未設定（暗号化しません）" value="${h(S.bkKey || "")}">
+        <button class="chip sm" data-act="setbkkey">保存</button>
+      </div>
+      <div style="font-size:11px;color:var(--dim);margin-top:6px">公演・曲・記録・総括・手書きをすべて保存します。録音とトークンは含みません。10分ごとに自動で更新されます。</div>
     </div>
 
     <h4 class="head">音を確かめる</h4>
@@ -1651,6 +2136,7 @@ document.addEventListener("click", (e) => {
       render(); break;
     }
     case "dupshow": { U.picker = false; dupShow(S.showId); break; }
+    case "focus": U.focus = id; U.picker = false; render(); break;
     case "jumpshow": S.showId = id; U.songIdx = 0; save(); renderSheet(); render(); break;
 
     case "key": {
@@ -1742,6 +2228,19 @@ document.addEventListener("click", (e) => {
     case "ghstart": gistStart(id); break;
     case "ghpush": doPush("force"); break;
     case "ghverify": verifyToken(); break;
+    case "bknow": doBackup(false); break;
+    case "bkfile": backupToFile(); break;
+    case "bkrestore": restoreBackup(); break;
+    case "setbkkey": {
+      const el = document.getElementById("bkkey");
+      if (!el) break;
+      S.bkKey = el.value.trim();
+      S.bkHash = 0;
+      save();
+      alert(S.bkKey ? "バックアップを暗号化します。\nこの合言葉を忘れると戻せなくなります。控えておいてください。" : "暗号化しません。");
+      doBackup(false);
+      break;
+    }
     case "ghclear":
       if (confirm("トークンを消して入れ直します。\n配信先の設定は残ります。")) { S.ghToken = ""; save(); render(); }
       break;
@@ -1981,8 +2480,26 @@ document.addEventListener("pointerup", (e) => {
   const el = document.elementFromPoint(e.clientX, e.clientY);
   const tgt = el && el.closest && el.closest("[data-drop]");
   if (!tgt || tgt === d.el) return;
-  dropShow(d.id, tgt.dataset.drop);
+  onDrop(d.id, tgt.dataset.drop);
 });
+
+function onDrop(from, target) {
+  if (!from || !target) return;
+  if (from.slice(0, 5) === "song:" && target.slice(0, 2) === "g:") return moveSong(from.slice(5), target.slice(2));
+  if (from.slice(0, 5) === "show:") return dropShow(from.slice(5), target);
+}
+// 曲を別の曲の位置へ移す
+function moveSong(id, toId) {
+  if (id === toId) return;
+  const cur = SONGS();
+  const a = cur.findIndex((x) => x.id === id), b = cur.findIndex((x) => x.id === toId);
+  if (a < 0 || b < 0) return;
+  const order = cur.slice();
+  order.splice(b, 0, order.splice(a, 1)[0]);
+  const slots = cur.map((x) => S.songs.indexOf(x)).sort((p, q) => p - q);
+  slots.forEach((pos, i) => { S.songs[pos] = order[i]; });
+  save(); schedulePush(); render();
+}
 
 function dropShow(id, target) {
   const sw = S.shows.find((x) => x.id === id);
@@ -2092,17 +2609,32 @@ function eraseAt(e) {
   if (keep.length !== arr.length) { S.draws[drawKey()] = keep; save(); paintInk(); }
 }
 
+// 指の数を数える。2本になったら書くのをやめて、画面を動かす。
+const inkPts = new Map();
 document.addEventListener("pointerdown", (e) => {
   if (!U.draw || VIEW()) return;
   const cv = e.target.closest && e.target.closest("#ink");
   if (!cv) return;
   e.preventDefault();
+  inkPts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (inkPts.size >= 2) { inkPath = null; paintInk(); return; }   // 2本目が触れたら、書きかけの線は捨てる
   if (U.erase) { eraseAt(e); inkPath = "erasing"; return; }
   inkPath = { c: "#FF5C42", w: 3, p: inkPos(e) };
 }, { passive: false });
 
 document.addEventListener("pointermove", (e) => {
-  if (!U.draw || !inkPath) return;
+  if (!U.draw) return;
+  // 2本指のときは自分で画面を動かす
+  if (inkPts.size >= 2 && inkPts.has(e.pointerId)) {
+    e.preventDefault();
+    const prev = inkPts.get(e.pointerId);
+    const dy = e.clientY - prev.y;
+    inkPts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const sc = app.querySelector(".scroll");
+    if (sc) sc.scrollTop -= dy / inkPts.size;
+    return;
+  }
+  if (!inkPath) return;
   e.preventDefault();
   if (inkPath === "erasing") { eraseAt(e); return; }
   const q = inkPos(e);
@@ -2113,7 +2645,8 @@ document.addEventListener("pointermove", (e) => {
   }
 }, { passive: false });
 
-document.addEventListener("pointerup", () => {
+document.addEventListener("pointerup", (e) => {
+  inkPts.delete(e.pointerId);
   if (!U.draw || !inkPath) return;
   if (inkPath !== "erasing" && inkPath.p.length >= 4) {
     const k = drawKey();
@@ -2123,6 +2656,7 @@ document.addEventListener("pointerup", () => {
   inkPath = null;
   paintInk();
 });
+document.addEventListener("pointercancel", (e) => { inkPts.delete(e.pointerId); inkPath = null; });
 
 /* ---- なぞって範囲指定 ---- */
 let org = null, dragOn = false;
@@ -2211,7 +2745,10 @@ async function handleFiles(files) {
       } else if (ext === "pdf") {
         S.songs.push(Object.assign(buildSong(await parsePDF(f)), { groupId: S.groupId, showId: S.showId }));
       } else {
-        S.songs.push(Object.assign(buildSong(await parseXLSX(f)), { groupId: S.groupId, showId: S.showId }));
+        const buf = await f.arrayBuffer();
+        const so = Object.assign(buildSong(await parseXLSX(f, buf)), { groupId: S.groupId, showId: S.showId });
+        S.songs.push(so);
+        try { await putClip("xls:" + so.id, new Blob([buf])); so.xls = 1; so.xlsAt = Date.now(); } catch (e) { /* 保管できなくても取り込みは続ける */ }
       }
       save();
     } catch (err) {
@@ -2470,7 +3007,113 @@ setInterval(() => {
   } else if (S.src) {
     syncSetlist(false);
   }
+  // 変わっていて、前回から10分たっていれば自動でバックアップ
+  if (S.ghToken && Date.now() - (S.bkAt || 0) > 600000 && bkSignature() !== S.bkHash) doBackup(true);
 }, 60000);
+
+/* ---- バックアップ ---- */
+const hash32 = (str) => { let h = 0; for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) | 0; return h; };
+
+async function squeeze(u8) {
+  if (typeof CompressionStream === "undefined") return null;
+  const cs = new CompressionStream("deflate-raw");
+  const w = cs.writable.getWriter(); w.write(u8); w.close();
+  return new Uint8Array(await new Response(cs.readable).arrayBuffer());
+}
+async function unsqueeze(u8) {
+  const ds = new DecompressionStream("deflate-raw");
+  const w = ds.writable.getWriter(); w.write(u8); w.close();
+  return new Uint8Array(await new Response(ds.readable).arrayBuffer());
+}
+
+// トークンは入れない。それ以外の全部（公演・曲・記録・総括・手書き・設定）を1つにまとめる。
+function backupState() {
+  const c = JSON.parse(JSON.stringify(S));
+  delete c.ghToken;
+  return c;
+}
+// 署名に自分の値（前回時刻・前回署名）が混ざると毎回変わるので外す
+const bkSignature = () => {
+  const c = backupState();
+  delete c.bkAt; delete c.bkHash;
+  return hash32(JSON.stringify(c));
+};
+
+async function packBackup() {
+  const raw = new TextEncoder().encode(JSON.stringify({ app: "utacheck", ver: APP_VER, at: Date.now(), state: backupState() }));
+  const z = await squeeze(raw);
+  const body = { bk: 1, z: !!z, data: b64e(z || raw) };
+  return S.bkKey ? await sealJSON(body, S.bkKey) : body;
+}
+async function unpackBackup(o) {
+  let b = o;
+  if (o && o.enc) b = await openJSON(o, S.bkKey);
+  if (!b || !b.bk) throw new Error("バックアップの形式ではありません。");
+  let u8 = b64d(b.data);
+  if (b.z) u8 = await unsqueeze(u8);
+  return JSON.parse(new TextDecoder().decode(u8));
+}
+
+async function doBackup(silent) {
+  if (!S.ghToken) { if (!silent) alert("先に自動公開のトークンを入れてください。"); return; }
+  try {
+    const content = JSON.stringify(await packBackup());
+    if (content.length > 950000) {
+      if (!silent) alert("データが大きすぎてバックアップできません。古い公演を減らしてください。");
+      return;
+    }
+    const files = { "utacheck-backup.json": { content } };
+    if (S.bkGistId) {
+      try { await gh("/gists/" + S.bkGistId, { method: "PATCH", body: JSON.stringify({ files }) }); }
+      catch (e) { if (e.status === 404) S.bkGistId = ""; else throw e; }
+    }
+    if (!S.bkGistId) {
+      const g = await gh("/gists", { method: "POST",
+        body: JSON.stringify({ description: "歌チェック バックアップ", public: false, files }) });
+      S.bkGistId = g.id;
+    }
+    S.bkAt = Date.now();
+    S.bkHash = bkSignature();
+    save();
+    if (!silent) { alert("バックアップしました。"); render(); }
+  } catch (e) {
+    if (!silent) alert("バックアップできませんでした。\n" + e.message);
+  }
+}
+
+async function restoreBackup() {
+  if (!S.ghToken || !S.bkGistId) { alert("バックアップがありません。"); return; }
+  try {
+    const g = await gh("/gists/" + S.bkGistId);
+    const f = g.files && g.files["utacheck-backup.json"];
+    if (!f) throw new Error("中身が見つかりません。");
+    const obj = await unpackBackup(JSON.parse(f.content));
+    const st = obj.state || {};
+    const when = new Date(obj.at || 0).toLocaleString("ja-JP");
+    if (!confirm(`${when} のバックアップから戻します。\n公演${(st.shows || []).length}件・曲${(st.songs || []).length}件・記録${(st.notes || []).length}件\n\n今この端末にある内容は置き換わります。よろしいですか？`)) return;
+    const tk = S.ghToken;
+    Object.keys(S).forEach((k) => { delete S[k]; });
+    Object.assign(S, st);
+    S.ghToken = tk;
+    save();
+    alert("戻しました。");
+    location.reload();
+  } catch (e) {
+    alert("戻せませんでした。\n" + e.message);
+  }
+}
+
+function download(name, text, type) {
+  const url = URL.createObjectURL(new Blob([text], { type: (type || "text/plain") + ";charset=utf-8" }));
+  const a = document.createElement("a");
+  a.href = url; a.download = name; document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 500);
+}
+async function backupToFile() {
+  const d = new Date();
+  const nm = `歌チェック_${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}.json`;
+  download(nm, JSON.stringify(await packBackup()), "application/json");
+}
 
 /* ---- 受け取り：配信されたものを取り込む ---- */
 const srcUrl = () => S.src || "./setlist.json";
