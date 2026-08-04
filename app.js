@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "2026-08-04-22";
+const APP_VER = "2026-08-04-23";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -3757,11 +3757,26 @@ function applySetlist(d) {
   if (!S.groups.some((g) => g.gistId)) { S.songs = []; S.memos = {}; S.pubNotes = []; }
   S.songs = [];
   (d.members || []).forEach((x) => addMember(x.name));
+  // 受け取った名簿に、その曲に出てこない人が混ざっていたら削る（古い配信への備え）
+  const trimRoster = (o) => {
+    const used = [];
+    Object.keys(o.blocks || {}).forEach((b) => (o.blocks[b] || []).forEach((x) => { if (!used.includes(x)) used.push(x); }));
+    o.lines.forEach((l) => {
+      if (/^全/.test(l.label || "")) return;
+      (l.parts || []).forEach((x) => { if (!used.includes(x)) used.push(x); });
+    });
+    if (!used.length || used.length >= (o.roster || []).length) return;
+    o.roster = used;
+    o.lines.forEach((l) => { if (/^全/.test(l.label || "")) l.parts = used.slice(); });
+    o.sig = songSig(o);
+  };
+
   const added = [];
   const lib = Array.isArray(d.lib) ? d.lib : null;
   (d.songs || []).forEach((sg) => {
     const src = lib ? (lib[sg.libIdx] || { lines: [] }) : sg;
     const o = Object.assign(buildSong(src), { groupId: S.groupId, showId: sg.showId || S.showId, take: sg.take || 1 });
+    trimRoster(o);
     S.songs.push(o); added.push(o);
   });
   (d.songs || []).forEach((sg, i) => { if (sg.fromIdx != null && added[sg.fromIdx]) added[i].from = added[sg.fromIdx].id; });
