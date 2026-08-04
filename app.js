@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "2026-08-04-24";
+const APP_VER = "2026-08-04-25";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -257,8 +257,7 @@ function lineStatus(so, i) {
   if (subOf(so.id, i)) return "changed";
   const ab = absentIds();
   if (!ab.length) return "";
-  const b = blockOf(so, i);
-  if (b) return blockStatus(so, b);
+  if (blockOf(so, i)) return "";   // A/B の行は「全」と同じ。ブロックの中身の方を直す。
   return (l.parts || []).some((p) => ab.includes(p)) ? "need" : "";
 }
 // ブロックの状態
@@ -502,6 +501,7 @@ function dupSong(id) {
   S.songs.splice(at + 1, 0, copy);
   U.songIdx = SONGS().indexOf(copy);
   U.picker = false;
+  autoSubs();
   save(); schedulePush(); render();
 }
 const song = () => { const a = SONGS(); return a[Math.min(U.songIdx, a.length - 1)] || null; };
@@ -2961,6 +2961,7 @@ function dupShow(fromId) {
       lines: x.lines.map((l) => Object.assign({}, l, { parts: (l.parts || []).slice() })) });
   });
   S.showId = nid; U.songIdx = 0; U.picker = false;
+  autoSubs();
   save(); schedulePush(); render();
 }
 
@@ -3314,6 +3315,8 @@ async function handleFiles(files) {
       failed.push(f.name + (err && err.unreadable ? "（文字を取り出せません）" : ""));
     }
   }
+  // 読み込んだ曲にも、設定済みの欠席を反映させる
+  autoSubs();
   // 入れ替えたら曲名順に並べ直す
   sortSongsByTitle();
   U.busy = ""; render();
