@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "2026-08-04-07";
+const APP_VER = "2026-08-04-08";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -177,45 +177,6 @@ function showsFor() {
 const showsNewestFirst = () => S.shows.slice().sort((a, b) => (b.ts || 0) - (a.ts || 0));
 const showName = (id) => (S.shows.find((x) => x.id === (id || S.showId)) || {}).name || "";
 const NOTES = () => S.notes.concat(S.pubNotes);
-/* ---- 欠席verのExcelを書き出す ---- */
-async function exportAbsentXlsx(songId) {
-  const so = S.songs.find((x) => x.id === songId);
-  if (!so) return;
-  const ab = absentIds();
-  if (!ab.length) { alert("欠席者が設定されていません。"); return; }
-  const blob = await getClip("xls:" + so.id).catch(() => null);
-  if (!blob) { alert("この曲の元のExcelが見つかりません。\nExcelから読み込み直してください。"); return; }
-
-  const edits = {};
-  let changed = 0;
-  so.lines.forEach((l, i) => {
-    if (!l.cell) return;
-    const sub = subOf(so.id, i);
-    if (!sub) return;
-    const before = (l.parts || []).map((x) => (member(x) || {}).name).filter(Boolean).join("・");
-    const after = sub.map((x) => (member(x) || {}).name).filter(Boolean).join("・");
-    if (before === after) return;
-    edits[l.cell] = after;
-    changed++;
-  });
-  if (!changed) { alert("変更された行がありません。"); return; }
-
-  const tab = ab.map((x) => (member(x) || {}).name).filter(Boolean).join("・") + "欠席ver";
-  try {
-    U.busy = "Excelを作成中…"; render();
-    const buf = new Uint8Array(await blob.arrayBuffer());
-    const res = await addVersionTab(buf, tab, edits);
-    const url = URL.createObjectURL(new Blob([res.data], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
-    const a = document.createElement("a");
-    a.href = url; a.download = `${so.title}_${tab}.xlsx`;
-    document.body.appendChild(a); a.click();
-    setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 800);
-    U.busy = ""; render();
-  } catch (e) {
-    U.busy = ""; render();
-    alert("Excelを作れませんでした。\n" + e.message);
-  }
-}
 
 /* ---- 欠席対応 ---- */
 const absentIds = (showId) => ((S.shows.find((x) => x.id === (showId || S.showId)) || {}).absent || []);
@@ -282,6 +243,18 @@ function rebuildSubs() {
     if (S.subsMan[k] && !Object.keys(S.subsMan[k]).length) delete S.subsMan[k];
   });
   autoSubs();
+}
+
+// 同じ歌割が続く行のまとまりを返す
+function runAt(so, i) {
+  const st = lineStatus(so, i);
+  if (!st) return [i];
+  const sig = (j) => ((so.lines[j] || {}).parts || []).join(",") + "|" + lineStatus(so, j);
+  const base = sig(i);
+  const idx = [i];
+  for (let j = i - 1; j >= 0 && sig(j) === base; j--) idx.unshift(j);
+  for (let j = i + 1; j < so.lines.length && sig(j) === base; j++) idx.push(j);
+  return idx;
 }
 
 const needCount = () => SONGS().reduce((a, so) => a + so.lines.filter((l, i) => lineStatus(so, i) === "need").length, 0);
@@ -1228,7 +1201,8 @@ function viewLive() {
         : foc ? "#4C9BFF" : (ns.length ? noteColor(ns[0]) : "");
       const strength = (st2 || foc) ? 18 : 9;
       return `<div class="ln" style="${tint ? `background:color-mix(in srgb,${tint} ${strength}%,transparent)` : ""}">
-        <button class="lbl" data-act="noteblock" data-i="${i}">${h(subOf(s.id, i) ? names(partsOf(s, i)) || "—" : l.label)}</button>
+        <button class="lbl" data-act="${st2 ? "assignline" : "noteblock"}" data-i="${i}"
+          style="${st2 ? `color:${st2 === "need" ? "var(--bad)" : "#F0B23C"}` : ""}">${h(subOf(s.id, i) ? names(partsOf(s, i)) || "—" : l.label)}</button>
         <div class="brk ${gp[i]}"></div>
         <div class="grow" style="min-width:0">
           <div class="txt" data-l="${i}" style="font-size:${S.size}px">${cells}</div>${pills}
@@ -1626,6 +1600,57 @@ function viewDiff() {
 }
 
 /* ---- 欠席verのExcelを書き出す ---- */
+// 変更のある行だけを、セル番地→新しい名前の形にする
+function absentEdits(so) {
+  const edits = {};
+  so.lines.forEach((l, i) => {
+    if (!l.cell) return;
+    const sub = subOf(so.id, i);
+    if (!sub) return;
+    const before = (l.parts || []).map((x) => (member(x) || {}).name).filter(Boolean).join("・");
+    const after = sub.map((x) => (member(x) || {}).name).filter(Boolean).join("・");
+    if (before !== after) edits[l.cell] = after;
+  });
+  return edits;
+}
+const absentTab = () => absentIds().map((x) => (member(x) || {}).name).filter(Boolean).join("・") + "欠席ver";
+function downloadBlob(name, blob) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 800);
+}
+
+// この公演の曲をまとめて1つのzipにする
+async function exportAllAbsentXlsx() {
+  if (!absentIds().length) { alert("欠席者が設定されていません。"); return; }
+  const tab = absentTab();
+  const files = {};
+  let skipped = 0;
+  U.busy = "Excelを作成中…"; render();
+  try {
+    for (const so of SONGS()) {
+      const edits = absentEdits(so);
+      if (!Object.keys(edits).length) continue;
+      if (!so.xls) { skipped++; continue; }
+      const blob = await getClip("xls:" + so.id).catch(() => null);
+      if (!blob) { skipped++; continue; }
+      const res = await addVersionTab(new Uint8Array(await blob.arrayBuffer()), tab, edits);
+      files[`${so.title}_${tab}.xlsx`] = res.data;
+    }
+    const n = Object.keys(files).length;
+    if (!n) { U.busy = ""; render(); alert("書き出せる曲がありません。\nExcelから読み込んだ曲だけが対象です。"); return; }
+    const data = await zip(files);
+    downloadBlob(`${showName() || "公演"}_${tab}.zip`, new Blob([data], { type: "application/zip" }));
+    U.busy = ""; render();
+    if (skipped) alert(`${n}曲を書き出しました。\n${skipped}曲は元のExcelが無いため除きました。`);
+  } catch (e) {
+    U.busy = ""; render();
+    alert("作れませんでした。\n" + e.message);
+  }
+}
+
 async function exportAbsentXlsx(songId) {
   const so = S.songs.find((x) => x.id === songId);
   if (!so) return;
@@ -1634,30 +1659,14 @@ async function exportAbsentXlsx(songId) {
   const blob = await getClip("xls:" + so.id).catch(() => null);
   if (!blob) { alert("この曲の元のExcelが見つかりません。\nExcelから読み込み直してください。"); return; }
 
-  const edits = {};
-  let changed = 0;
-  so.lines.forEach((l, i) => {
-    if (!l.cell) return;
-    const sub = subOf(so.id, i);
-    if (!sub) return;
-    const before = (l.parts || []).map((x) => (member(x) || {}).name).filter(Boolean).join("・");
-    const after = sub.map((x) => (member(x) || {}).name).filter(Boolean).join("・");
-    if (before === after) return;
-    edits[l.cell] = after;
-    changed++;
-  });
-  if (!changed) { alert("変更された行がありません。"); return; }
-
-  const tab = ab.map((x) => (member(x) || {}).name).filter(Boolean).join("・") + "欠席ver";
+  const edits = absentEdits(so);
+  if (!Object.keys(edits).length) { alert("変更された行がありません。"); return; }
+  const tab = absentTab();
   try {
     U.busy = "Excelを作成中…"; render();
     const buf = new Uint8Array(await blob.arrayBuffer());
     const res = await addVersionTab(buf, tab, edits);
-    const url = URL.createObjectURL(new Blob([res.data], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
-    const a = document.createElement("a");
-    a.href = url; a.download = `${so.title}_${tab}.xlsx`;
-    document.body.appendChild(a); a.click();
-    setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 800);
+    downloadBlob(`${so.title}_${tab}.xlsx`, new Blob([res.data], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
     U.busy = ""; render();
   } catch (e) {
     U.busy = ""; render();
@@ -1676,13 +1685,13 @@ function viewAbsent() {
     : SONGS().map((so) => {
       // 同じ歌割が続く行はひとまとめにして、一度で直せるようにする
       const runs = [];
+      const seen2 = new Set();
       so.lines.forEach((l, i) => {
         const st2 = lineStatus(so, i);
-        if (st2 !== "need" && st2 !== "changed") return;
-        const sig = (l.parts || []).join(",") + "|" + st2;
-        const last = runs[runs.length - 1];
-        if (last && last.sig === sig && i === last.idx[last.idx.length - 1] + 1) last.idx.push(i);
-        else runs.push({ sig, st: st2, idx: [i] });
+        if ((st2 !== "need" && st2 !== "changed") || seen2.has(i)) return;
+        const idx = runAt(so, i);
+        idx.forEach((j) => seen2.add(j));
+        runs.push({ st: st2, idx });
       });
       const rows = runs.map((r) => {
         const col = r.st === "need" ? "var(--bad)" : "#F0B23C";
@@ -1715,6 +1724,7 @@ function viewAbsent() {
       <div class="chips">${chips || ``}</div>
       ${ab.length ? `<div class="row" style="margin-top:10px;font-size:12px">
         <span class="grow"><b style="color:var(--bad)">未決 ${needCount()}</b>　<b style="color:#F0B23C">変更済 ${changedCount()}</b></span>
+        <button class="chip sm" data-act="xlsall">まとめてExcel</button>
         <button class="chip sm" data-act="resetsubs" style="color:var(--dim)">やり直す</button></div>` : ""}
     </div>
     ${body}
@@ -2066,6 +2076,11 @@ document.addEventListener("click", (e) => {
     case "go-setup": commitFields(); U.view = "setup"; render(); break;
     case "go-live": commitFields(); U.view = "live"; render(); break;
     case "note": openSheet(i, null); break;
+    case "assignline": {
+      const so2 = song(); if (!so2) break;
+      U.menu = { kind: "assign", id: so2.id, i, idx: runAt(so2, i) };
+      renderSheet(); break;
+    }
     case "noteblock": {
       // その行が属する歌割りのかたまり（名前が付いた行＋続きの行）をまとめて選ぶ
       const so = song(); if (!so) break;
@@ -2296,6 +2311,7 @@ document.addEventListener("click", (e) => {
       break;
     }
     case "xlsout": exportAbsentXlsx(id); break;
+    case "xlsall": exportAllAbsentXlsx(); break;
     case "printpick": {
       const ids = SONGS().map((x) => x.id);
       const cur3 = U.printPick || ids.slice();
