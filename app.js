@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "2026-08-04-44";
+const APP_VER = "2026-08-05-03";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -71,6 +71,8 @@ let S = {
   src: "", key: "", keyInLink: true,
   memos: {}, recs: {}, kbps: 128, preroll: 5, viewer: false, srcGroup: "",
   draws: {}, showFilter: "", folders: {}, subs: {}, subsMan: {}, subLib: {}, gsubs: {},
+  recMode: false, rsongs: [], rsongId: "", recBars: true,
+  plan: { start: "10:00", slots: [] },
   size: 19,
 };
 let U = { view: "live", songIdx: 0, sheet: null, mode: "member", allShows: false, picker: false, overview: false, ovSize: 9, draw: false, erase: false, pick: [], menu: null, printPick: null, focus: "", busy: "", allShowList: false };
@@ -96,6 +98,10 @@ function load() {
   if (!S.subsMan) S.subsMan = {};
   if (!S.subLib) S.subLib = {};
   if (!S.gsubs) S.gsubs = {};
+  if (!S.rsongs) S.rsongs = [];
+  if (!S.plan) S.plan = { start: "10:00", slots: [] };
+  if (!S.plan.slots) S.plan.slots = [];
+  if (S.recBars == null) S.recBars = true;
   // 古いデータにも、その曲に出てくる人の名簿を持たせる
   S.songs.forEach((so) => {
     if (!so.roster || !so.roster.length) so.roster = songRoster(so);
@@ -1291,6 +1297,60 @@ function pianoHTML(sel) {
   return `<div class="pno" id="pno"><div class="pnoin" style="width:${i * 34}px">${white}${black}</div></div>`;
 }
 
+/* ---------------- レコーディング：Wordの歌詞 ---------------- */
+// .docx は zip の中の XML。既に持っている zip の読み書きをそのまま使う。
+async function parseDocx(file, buf) {
+  const { files } = await unzip(buf || new Uint8Array(await file.arrayBuffer()));
+  const dec2 = (u8) => new TextDecoder().decode(u8);
+  const doc = files["word/document.xml"];
+  if (!doc) throw new Error("Wordの中身が見つかりません。");
+  const xml = dec2(doc);
+
+  const unesc = (t) => t.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'").replace(/&#(\d+);/g, (m, n) => String.fromCharCode(Number(n))).replace(/&amp;/g, "&");
+  const textOf = (p) => {
+    const q = p.replace(/<w:rPr>[\s\S]*?<\/w:rPr>/g, "");
+    const parts = [];
+    q.replace(/<w:t[^>]*>([\s\S]*?)<\/w:t>/g, (m, t) => { parts.push(t); return ""; });
+    return softText(unesc(parts.join("")));
+  };
+  const paras = xml.match(/<w:p[ >][\s\S]*?<\/w:p>|<w:p\/>/g) || [];
+
+  // 空段落が続いても、区切りは1つにまとめる
+  const lines = [];
+  paras.forEach((p) => {
+    const t = textOf(p);
+    if (t) lines.push({ t, bars: 4 });
+    else if (lines.length && !lines[lines.length - 1].gap) lines.push({ gap: true, t: "" });
+  });
+  while (lines.length && lines[lines.length - 1].gap) lines.pop();
+  while (lines.length && lines[0].gap) lines.shift();
+
+  // 曲名と作家名はヘッダに入っていることが多い
+  let head = "";
+  Object.keys(files).forEach((n) => {
+    if (/^word\/header\d+\.xml$/.test(n)) head += textOf(dec2(files[n]));
+  });
+  const m = head.match(/[「『]([^」』]+)[」』]/);
+  const title = m ? m[1] : cleanName(file.name);
+  const credit = head.replace(/^.*?[」』]/, "").trim() || head.trim();
+
+  return { id: uid(), title, credit, intro: 8, lines, at: Date.now() };
+}
+
+// 1行4小節を基本に、直した行を基点にして振り直す
+function barsOf(so) {
+  let b = Number(so.intro || 0) + 1;
+  return (so.lines || []).map((l) => {
+    if (l.gap) return null;
+    if (l.at != null) b = Number(l.at);
+    const cur = b;
+    b += Number(l.bars || 4);
+    return cur;
+  });
+}
+const recSong = () => S.rsongs.find((x) => x.id === S.rsongId) || S.rsongs[0] || null;
+
 /* ---------------- メトロノーム ---------------- */
 // 鳴らす時刻をあらかじめ音の仕組みに渡すので、画面の重さに影響されず正確に刻む。
 // 1小節を4拍とし、2＝2分音符 / 4＝4分音符 / 8＝8分音符 / 16＝16分音符 で刻む。
@@ -1510,7 +1570,10 @@ function render() {
   const sameView = app.dataset.view === sig;
   app.dataset.view = sig;
 
-  if (U.view === "absent") app.innerHTML = viewAbsent();
+  if (S.recMode && U.view === "recplan") app.innerHTML = viewPlan();
+  else if (S.recMode && U.view === "recprint") app.innerHTML = viewRecPrint();
+  else if (S.recMode && U.view !== "setup") app.innerHTML = viewRec();
+  else if (U.view === "absent") app.innerHTML = viewAbsent();
   else if (U.view === "print") app.innerHTML = viewPrint();
   else if (U.view === "live") app.innerHTML = viewLive();
   else if (U.view === "summary") app.innerHTML = viewSummary();
@@ -1520,10 +1583,11 @@ function render() {
   if (sc && sameView) sc.scrollTop = st;
   renderSheet();
   if (U.view === "live" && !U.overview) setTimeout(paintInk, 0);
-  if (U.view === "print") setTimeout(fitPrintDOM, 0);
+  if (U.view === "print" || U.view === "recprint") setTimeout(fitPrintDOM, 0);
   // PDFの名前を「公演名 歌チェック」にする
   try {
-    document.title = U.view === "print" ? ((showName() || "歌割") + " 歌チェック") : "歌チェック";
+    document.title = U.view === "recprint" ? ((recSong() || {}).title || "歌詞")
+      : U.view === "print" ? ((showName() || "歌割") + " 歌チェック") : "歌チェック";
   } catch (e) { /* 名前を変えられない場合は既定のまま */ }
   if (U.view === "setup") setTimeout(() => showPianoAtC4(app), 0);
 }
@@ -1794,6 +1858,78 @@ function viewOverview(s) {
 function renderSheet() {
   if (overlay) { overlay.remove(); overlay = null; }
 
+  if (U.menu && U.menu.kind === "pedit") {
+    const s2 = S.plan.slots.find((x) => x.id === U.menu.id) || {};
+    overlay = document.createElement("div");
+    overlay.className = "mask";
+    overlay.innerHTML = `<button class="sp" data-act="closemenu"></button><div class="sheet">
+      <div class="row" style="margin-bottom:12px"><span class="grow trunc" style="font-size:13px">${h(s2.name || "")}</span>
+      <button data-act="closemenu" style="width:36px;height:36px;border-radius:10px;background:var(--panel2);font-size:17px">✕</button></div>
+      <div style="text-align:center;font-size:40px;font-weight:700;line-height:1;margin-bottom:14px">${s2.min}<span style="font-size:13px;font-weight:400;color:var(--dim)">分</span></div>
+      <div class="row" style="margin-bottom:10px">
+        ${[-30, -15, -5, 5, 15, 30].map((v) => `<button class="chip grow" data-act="pset" data-id="${v}">${v > 0 ? "＋" + v : v}</button>`).join("")}
+      </div>
+      <div class="row" style="margin-bottom:10px">
+        <input class="field grow" id="pnamev" value="${h(s2.name || "")}">
+        <input class="field" id="pminv" type="number" inputmode="numeric" value="${s2.min}" style="width:74px">
+        <button class="chip sm" data-act="psetv">決定</button>
+      </div>
+      <button class="ghost" data-act="pdel" style="color:var(--bad)">この枠を消す</button>
+    </div>`;
+    document.body.appendChild(overlay);
+    return;
+  }
+
+  if (U.menu && U.menu.kind === "rlist") {
+    overlay = document.createElement("div");
+    overlay.className = "mask";
+    overlay.innerHTML = `<button class="sp" data-act="closemenu"></button><div class="sheet">
+      <div class="row" style="margin-bottom:12px"><span class="grow" style="font-size:13px">曲</span>
+      <button data-act="closemenu" style="width:36px;height:36px;border-radius:10px;background:var(--panel2);font-size:17px">✕</button></div>
+      <div class="sec">
+        ${S.rsongs.map((x) => `<div class="row card" style="margin-bottom:8px;padding:10px 12px;${x.id === S.rsongId ? "outline:1px solid var(--accent)" : ""}">
+          <button class="grow trunc" style="text-align:left" data-act="ruse" data-id="${x.id}">${h(x.title)}</button>
+          <button data-act="rdel" data-id="${x.id}" style="padding:4px 6px;color:var(--bad)">✕</button>
+        </div>`).join("") || `<p class="note">曲がありません</p>`}
+        <button class="primary" data-act="rpick">歌詞のWordを読み込む（複数可）</button>
+      </div></div>`;
+    document.body.appendChild(overlay);
+    return;
+  }
+
+  if (U.menu && U.menu.kind === "rbar") {
+    const so = recSong();
+    const l = so ? so.lines[U.menu.i] : null;
+    const cur = so ? barsOf(so)[U.menu.i] : 0;
+    overlay = document.createElement("div");
+    overlay.className = "mask";
+    overlay.innerHTML = `<button class="sp" data-act="closemenu"></button><div class="sheet">
+      <div class="row" style="margin-bottom:12px"><span class="grow trunc" style="font-size:13px">${h(l ? l.t : "")}</span>
+      <button data-act="closemenu" style="width:36px;height:36px;border-radius:10px;background:var(--panel2);font-size:17px">✕</button></div>
+      <div style="text-align:center;font-size:44px;font-weight:700;line-height:1;margin-bottom:14px">${cur}</div>
+      <div class="row" style="margin-bottom:10px">
+        <button class="chip grow" data-act="rbarset" data-id="-4">−4</button>
+        <button class="chip grow" data-act="rbarset" data-id="-2">−2</button>
+        <button class="chip grow" data-act="rbarset" data-id="-1">−1</button>
+        <button class="chip grow" data-act="rbarset" data-id="1">＋1</button>
+        <button class="chip grow" data-act="rbarset" data-id="2">＋2</button>
+        <button class="chip grow" data-act="rbarset" data-id="4">＋4</button>
+      </div>
+      <div class="row" style="margin-bottom:12px">
+        <input class="field grow" id="rbarnum" type="number" inputmode="numeric" placeholder="番号を直接入れる" value="${cur}">
+        <button class="chip sm" data-act="rbarnum">決定</button>
+      </div>
+      <div class="row" style="margin-bottom:10px">
+        <span style="font-size:11px;color:var(--dim);width:52px">この行</span>
+        ${[1, 2, 4, 8].map((b) => `<button class="chip sm grow" data-act="rlen" data-id="${b}"
+          style="${Number((l || {}).bars || 4) === b ? "background:var(--accent);color:#0A0A0A" : ""}">${b}小節</button>`).join("")}
+      </div>
+      ${l && l.at != null ? `<button class="ghost" data-act="rbarclear" style="color:var(--dim)">手直しを取り消す</button>` : ""}
+    </div>`;
+    document.body.appendChild(overlay);
+    return;
+  }
+
   if (U.menu && U.menu.kind === "block") {
     const so = S.songs.find((x) => x.id === U.menu.id);
     const b = U.menu.b;
@@ -1895,8 +2031,7 @@ function renderSheet() {
           歌割の変更 ${changedCount()}件${needCount() ? `　<span style="color:var(--bad)">未決 ${needCount()}</span>` : ""}</button>
       </div>` : ""}
       <div class="sec"><h4>公演</h4>${gfil}<div class="chips">
-        <button class="chip sm" data-act="jumpshow" data-id="" style="${!S.showId ? "background:var(--accent);color:#0A0A0A" : "color:var(--dim)"}">表示しない</button>
-        ${shows}</div>
+${shows}</div>
         ${VIEW() ? "" : `<button class="ghost" data-act="dupshow" style="margin-top:8px">今のセットリストを複製して新しい公演にする</button>`}
 
       </div>
@@ -2370,6 +2505,166 @@ function viewAbsent() {
   </div>`;
 }
 
+/* ---- 進行表 ---- */
+const hm2min = (t) => { const m = /^(\d{1,2})[:：]?(\d{2})$/.exec(String(t || "").trim()); return m ? Number(m[1]) * 60 + Number(m[2]) : 600; };
+const min2hm = (v) => { const x = ((Math.round(v) % 1440) + 1440) % 1440; return String(Math.floor(x / 60)).padStart(2, "0") + ":" + String(x % 60).padStart(2, "0"); };
+const nowMin = () => { const d = new Date(); return d.getHours() * 60 + d.getMinutes(); };
+const dmin = (v) => (v > 0 ? "+" + v : String(v)) + "分";
+
+// 予定と、実際の進み具合から見込みを出す
+function planRows() {
+  const p = S.plan || { slots: [] };
+  const slots = p.slots || [];
+  const start = hm2min(p.start);
+  const now = nowMin();
+  let plan = start, cursor = start;
+  return slots.map((s) => {
+    const pS = plan, pE = plan + Number(s.min || 0);
+    plan = pE;
+    const r = { s, pS, pE };
+    if (s.a0 != null && s.a1 != null) { r.aS = s.a0; r.aE = s.a1; cursor = s.a1; r.done = true; }
+    else if (s.a0 != null) {
+      r.aS = s.a0;
+      r.aE = s.a0 + Number(s.min || 0);       // 表示は予定の終わり
+      cursor = Math.max(r.aE, now);           // 後ろは実際の時刻に押される
+      r.live = true;
+    }
+    else { r.aS = cursor; r.aE = cursor + Number(s.min || 0); cursor = r.aE; }
+    return r;
+  });
+}
+
+function viewPlan() {
+  const rows = planRows();
+  const now = nowMin();
+  const liveIdx = rows.findIndex((r) => r.live);
+  const nextIdx = rows.findIndex((r) => !r.done && !r.live);
+  const last = rows[rows.length - 1];
+  const gap = last ? last.aE - last.pE : 0;
+
+  const list = rows.map((r, i) => {
+    const s = r.s;
+    const isBreak = s.kind === "break";
+    const col = r.live ? "var(--accent)" : r.done ? "var(--dim)" : isBreak ? "#7FB3FF" : "var(--text)";
+    const diff = r.done ? (r.aE - r.aS) - Number(s.min || 0) : 0;
+    const rest = r.live ? r.aE - now : 0;
+    return `<div class="row card" data-drop="p:${s.id}" style="margin-bottom:8px;padding:11px 12px;${r.live ? "outline:1px solid var(--accent)" : ""}">
+      <span class="grip" data-drag="plan:${s.id}">⣿</span>
+      <button class="grow" style="text-align:left;min-width:0" data-act="pedit" data-id="${s.id}">
+        <div class="row" style="gap:8px">
+          <span style="font-size:12px;color:var(--dim);font-variant-numeric:tabular-nums">${min2hm(r.aS)}–${min2hm(r.aE)}</span>
+          <span class="trunc" style="color:${col};font-weight:${r.live ? 700 : 400}">${h(s.name || (isBreak ? "休憩" : "—"))}</span>
+        </div>
+        <div style="font-size:11px;color:var(--dim);margin-top:2px">
+          ${s.min}分
+          ${r.done ? `　実際 ${r.aE - r.aS}分 <span style="color:${diff > 0 ? "var(--bad)" : diff < 0 ? "var(--good)" : "var(--dim)"}">${diff ? dmin(diff) : "ぴったり"}</span>` : ""}
+          ${r.live ? `　<b style="color:${rest < 0 ? "var(--bad)" : "var(--accent)"}">${rest >= 0 ? "残り " + rest + "分" : "超過 " + (-rest) + "分"}</b>` : ""}
+          ${!r.done && !r.live && i === nextIdx ? `　<span style="color:var(--accent)">次</span>` : ""}
+        </div>
+      </button>
+      ${r.live ? `<button class="chip sm" data-act="pnext" data-id="${s.id}" style="background:var(--accent);color:#0A0A0A">次へ</button>`
+        : !r.done && i === nextIdx ? `<button class="chip sm" data-act="pstart" data-id="${s.id}">開始</button>`
+        : r.done ? `<button class="chip sm" data-act="pundo" data-id="${s.id}" style="color:var(--dim)">戻す</button>` : ""}
+    </div>`;
+  }).join("");
+
+  return `
+  <div class="hd"><button class="ic" data-act="recback">‹</button><b>進行</b>
+    <span class="grow"></span>
+    <span style="font-size:12px;color:${gap > 0 ? "var(--bad)" : gap < 0 ? "var(--good)" : "var(--dim)"}">
+      ${last ? (gap ? dmin(gap) : "予定どおり") : ""}</span></div>
+  <div class="scroll pad">
+    <div class="card">
+      <div class="row" style="gap:10px">
+        <span style="font-size:11px;color:var(--dim);width:52px">開始</span>
+        <input class="field grow" id="pstarttime" value="${h(S.plan.start)}" placeholder="10:00">
+        <button class="chip sm" data-act="psetstart">決定</button>
+      </div>
+      ${last ? `<div style="font-size:12px;color:var(--dim);margin-top:8px">
+        予定 ${min2hm(hm2min(S.plan.start))} – ${min2hm(last.pE)}　／　見込み <b style="color:${gap > 0 ? "var(--bad)" : "var(--text)"}">${min2hm(last.aE)}</b></div>` : ""}
+    </div>
+    ${list || `<p class="note">まだ誰も入っていません</p>`}
+    <div class="card">
+      <div class="row" style="gap:8px;margin-bottom:8px">
+        <input class="field grow" id="pname" placeholder="メンバー名">
+        <input class="field" id="pmin" type="number" inputmode="numeric" placeholder="分" style="width:74px">
+        <button class="chip sm" data-act="padd">追加</button>
+      </div>
+      <button class="ghost" data-act="pbreak">休憩を入れる</button>
+    </div>
+    <div style="height:40px"></div>
+  </div>`;
+}
+
+/* ---- レコーディングの歌詞をPDFにする ---- */
+function viewRecPrint() {
+  const so = recSong();
+  if (!so) return `<div class="hd"><button class="ic" data-act="recback">‹</button><b>PDF</b></div>`;
+  const bars = barsOf(so);
+  const trs = so.lines.map((l, i) => {
+    if (l.gap) return `<tr class="prz"><td class="prn"></td><td class="prx"></td></tr>`;
+    return `<tr><td class="prn">${S.recBars ? bars[i] : ""}</td><td class="prx">${h(l.t)}</td></tr>`;
+  }).join("");
+  return `
+  <div class="hd noprint"><button class="ic" data-act="recback">‹</button><b>PDF・印刷</b>
+    <span class="grow"></span>
+    <button class="chip sm" data-act="rbars" style="${S.recBars ? "background:var(--accent);color:#0A0A0A" : ""}">番号</button>
+    <button class="chip sm" data-act="doprint" style="background:var(--accent);color:#0A0A0A">PDFで保存</button></div>
+  <div class="scroll">
+    <div class="pr" id="prpage"><section class="prs"><div class="prbox"><div class="prin">
+      <h3>${h(so.title)}<span class="prc">　${h(so.credit)}</span></h3>
+      <table class="prg" style="table-layout:auto">${trs}</table>
+    </div></div></section></div>
+    <div class="noprint" style="height:40px"></div>
+  </div>`;
+}
+
+/* ---- レコーディング画面 ---- */
+function viewRec() {
+  const so = recSong();
+  if (!so) {
+    return `
+    <div class="hd"><button class="ic" data-act="recoff">‹</button><b>レコーディング</b></div>
+    <div class="scroll pad">
+      <div class="card">
+        <button class="primary" data-act="rpick">歌詞のWordを読み込む（複数可）</button>
+      </div>
+      <p class="note">曲がありません</p>
+    </div>`;
+  }
+  const bars = barsOf(so);
+  const rows = so.lines.map((l, i) => {
+    if (l.gap) return `<div style="height:14px"></div>`;
+    const edited = l.at != null;
+    return `<button class="rline" data-act="rbar" data-i="${i}">
+      ${S.recBars ? `<span class="rnum" style="${edited ? "color:var(--accent);font-weight:700" : ""}">${bars[i]}</span>` : ""}
+      <span class="rtx">${h(l.t)}</span></button>`;
+  }).join("");
+
+  return `
+  <div class="hd">
+    <button class="ic" data-act="recoff">‹</button>
+    <div class="grow" style="min-width:0">
+      <div class="t1 trunc">${h(so.title)}</div>
+      <div class="t2 trunc">${h(so.credit)}</div>
+    </div>
+    <button class="ic" data-act="goplan">進行</button>
+    <button class="ic" data-act="rlist">曲</button>
+  </div>
+  <div class="row" style="padding:8px 12px;border-bottom:1px solid var(--line);gap:8px">
+    <span style="font-size:11px;color:var(--dim)">イントロ</span>
+    <button class="chip sm" data-act="rintro" data-id="-4">−4</button>
+    <button class="chip sm" data-act="rintro" data-id="-1">−1</button>
+    <b style="min-width:34px;text-align:center">${so.intro}</b>
+    <button class="chip sm" data-act="rintro" data-id="1">＋1</button>
+    <button class="chip sm" data-act="rintro" data-id="4">＋4</button>
+    <span class="grow"></span>
+    <button class="chip sm" data-act="rbars" style="${S.recBars ? "background:var(--accent);color:#0A0A0A" : ""}">番号</button>
+    <button class="chip sm" data-act="rpdf">PDF</button>
+  </div>
+  <div class="scroll" style="padding:10px 12px">${rows}<div style="height:40px"></div></div>`;
+}
+
 /* ---- 紙／PDF ---- */
 // 1曲を「A4より一回り小さい箱」に入れ、中身をその箱に収まる倍率まで縮める。
 // 紙のサイズはmmで指定するので、端末や印刷時の拡大縮小に左右されない。
@@ -2607,6 +2902,12 @@ function viewSetup() {
     <div class="card">${pianoHTML(null)}</div>
     <h4 class="head">メトロノーム</h4>
     ${metroHTML()}
+    <h4 class="head">レコーディング</h4>
+    <div class="card">
+      <button class="primary" data-act="recon">${S.recMode ? "レコーディングモード（使用中）" : "レコーディングモードにする"}</button>
+      ${S.recMode ? `<div style="font-size:11px;color:var(--dim);margin-top:8px">歌詞のWordを読み込んで、小節番号を振ります。</div>` : ""}
+    </div>
+
     <h4 class="head">歌割をPDFにする</h4>
     <div class="card"><button class="primary" data-act="gopdf">PDFにする</button></div>
     <div style="text-align:center;color:var(--dim);font-size:11px;letter-spacing:.04em;margin:26px 0 10px">
@@ -2703,7 +3004,6 @@ function viewSetup() {
             <div style="${cur ? "color:var(--accent)" : ""}">${h(g.name)}</div>
             <div style="font-size:11px;color:var(--dim)">${n}曲 ・ ${g.gistId ? "配信中" : "未接続"}${cur ? " ・ 取り込み先" : ""}</div>
           </button>
-          <button data-act="nopub" data-id="${g.id}" style="padding:4px 8px;color:${g.nopub ? "var(--accent)" : "var(--dim)"};font-size:12px">${g.nopub ? "配信しない" : "配信する"}</button>
           <button data-act="renamegroup" data-id="${g.id}" style="padding:4px 8px;color:var(--dim)">名前</button>
         </div>
         ${g.nopub ? `<div style="font-size:11px;color:var(--dim)">このグループは配信されません</div>` : g.gistId ? `
@@ -2721,6 +3021,9 @@ function viewSetup() {
     <div class="row" style="margin-bottom:22px">
       <input class="field grow" id="newgroup" placeholder="グループ名">
       <button class="chip" data-act="addgroup">追加</button>
+    </div>
+    <div class="row" style="margin-top:8px">
+      ${S.groups.some((g) => g.nopub) ? "" : `<button class="chip sm" data-act="addnopub">「配信しない」グループを作る</button>`}
     </div>
 
     <h4 class="head">欠席対応</h4>
@@ -2794,6 +3097,12 @@ function viewSetup() {
         }).join("");
         return `<div style="font-size:13px;margin-bottom:6px">${ks.length}件　合計 ${(total / 1048576).toFixed(1)}MB</div>${rows}`;
       })()}
+    </div>
+
+    <h4 class="head">レコーディング</h4>
+    <div class="card">
+      <button class="primary" data-act="recon">${S.recMode ? "レコーディングモード（使用中）" : "レコーディングモードにする"}</button>
+      ${S.recMode ? `<div style="font-size:11px;color:var(--dim);margin-top:8px">歌詞のWordを読み込んで、小節番号を振ります。</div>` : ""}
     </div>
 
     <h4 class="head">歌割をPDFにする</h4>
@@ -2982,7 +3291,7 @@ document.addEventListener("click", (e) => {
     case "bpm": metSet(metBpm() + Number(id)); break;
     case "metsub": S.sub = Number(id); save(); render(); break;
     case "focus": U.focus = id; U.picker = false; render(); break;
-    case "jumpshow": S.showId = id; U.songIdx = 0; save(); renderSheet(); render(); break;
+    case "jumpshow": S.showId = (S.showId === id ? "" : id); U.songIdx = 0; save(); renderSheet(); render(); break;
 
     case "key": {
       tone(id);
@@ -3118,6 +3427,135 @@ document.addEventListener("click", (e) => {
     }
     case "xlsout": exportAbsentXlsx(id); break;
     case "xlsall": exportAllAbsentXlsx(); break;
+    case "recon": S.recMode = !S.recMode; U.view = S.recMode ? "live" : "setup"; save(); render(); break;
+    case "recoff": U.view = "setup"; render(); break;
+    case "recback": U.view = "live"; render(); break;
+    case "rbars": S.recBars = !S.recBars; save(); render(); break;
+    case "rintro": {
+      const so = recSong(); if (!so) break;
+      so.intro = Math.max(0, Number(so.intro || 0) + Number(id));
+      save(); render(); break;
+    }
+    case "rbar": U.menu = { kind: "rbar", i }; renderSheet(); break;
+    case "rbarset": {
+      const so = recSong(); if (!so) break;
+      const li = U.menu.i;
+      const cur = barsOf(so)[li];
+      so.lines[li].at = Math.max(1, cur + Number(id));
+      save(); renderSheet(); render(); break;
+    }
+    case "rbarclear": {
+      const so = recSong(); if (!so) break;
+      delete so.lines[U.menu.i].at;
+      save(); renderSheet(); render(); break;
+    }
+    case "rbarnum": {
+      const so = recSong(); if (!so) break;
+      const el = document.getElementById("rbarnum");
+      const v = el && Number(el.value);
+      if (v > 0) { so.lines[U.menu.i].at = Math.round(v); save(); U.menu = null; renderSheet(); render(); }
+      break;
+    }
+    case "rlen": {
+      const so = recSong(); if (!so) break;
+      so.lines[U.menu.i].bars = Number(id);
+      save(); renderSheet(); render(); break;
+    }
+    case "rpdf": {
+      const so = recSong(); if (!so) break;
+      U.view = "recprint"; render();
+      break;
+    }
+    case "goplan": U.view = "recplan"; render(); break;
+    case "psetstart": {
+      const el = document.getElementById("pstarttime");
+      if (el && el.value.trim()) { S.plan.start = min2hm(hm2min(el.value)); save(); render(); }
+      break;
+    }
+    case "padd": {
+      const n = document.getElementById("pname"), m = document.getElementById("pmin");
+      const nm = n && n.value.trim();
+      const mi = m && Number(m.value);
+      if (!nm) break;
+      S.plan.slots.push({ id: uid(), name: nm, min: mi > 0 ? Math.round(mi) : 30, kind: "member" });
+      save(); render(); break;
+    }
+    case "pbreak":
+      S.plan.slots.push({ id: uid(), name: "休憩", min: 30, kind: "break" });
+      save(); render(); break;
+    case "pstart": {
+      const s2 = S.plan.slots.find((x) => x.id === id);
+      if (s2) { s2.a0 = nowMin(); delete s2.a1; save(); render(); }
+      break;
+    }
+    case "pnext": {
+      const i2 = S.plan.slots.findIndex((x) => x.id === id);
+      const s2 = S.plan.slots[i2];
+      if (s2) {
+        s2.a1 = nowMin();
+        const nx = S.plan.slots[i2 + 1];
+        if (nx && nx.a0 == null) nx.a0 = s2.a1;
+        save(); render();
+      }
+      break;
+    }
+    case "pundo": {
+      const i2 = S.plan.slots.findIndex((x) => x.id === id);
+      const s2 = S.plan.slots[i2];
+      if (s2) {
+        delete s2.a1;
+        const nx = S.plan.slots[i2 + 1];
+        if (nx) { delete nx.a0; delete nx.a1; }
+        save(); render();
+      }
+      break;
+    }
+    case "pedit": U.menu = { kind: "pedit", id }; renderSheet(); break;
+    case "pset": {
+      const s2 = S.plan.slots.find((x) => x.id === U.menu.id);
+      if (s2) { s2.min = Math.max(1, Number(s2.min || 0) + Number(id)); save(); renderSheet(); render(); }
+      break;
+    }
+    case "psetv": {
+      const s2 = S.plan.slots.find((x) => x.id === U.menu.id);
+      const el = document.getElementById("pminv"), en = document.getElementById("pnamev");
+      if (s2) {
+        if (el && Number(el.value) > 0) s2.min = Math.round(Number(el.value));
+        if (en && en.value.trim()) s2.name = en.value.trim();
+        save(); U.menu = null; renderSheet(); render();
+      }
+      break;
+    }
+    case "pdel": {
+      S.plan.slots = S.plan.slots.filter((x) => x.id !== U.menu.id);
+      U.menu = null; save(); renderSheet(); render(); break;
+    }
+    case "rlist": U.menu = { kind: "rlist" }; renderSheet(); break;
+    case "ruse": S.rsongId = id; U.menu = null; save(); render(); break;
+    case "rdel": {
+      if (confirm("この曲を消しますか？")) {
+        S.rsongs = S.rsongs.filter((x) => x.id !== id);
+        if (S.rsongId === id) S.rsongId = (S.rsongs[0] || {}).id || "";
+        save(); renderSheet(); render();
+      }
+      break;
+    }
+    case "rpick": {
+      const inp = document.createElement("input");
+      inp.type = "file"; inp.accept = ".docx"; inp.multiple = true;
+      inp.onchange = async () => {
+        for (const f of inp.files) {
+          try {
+            const so = await parseDocx(f);
+            S.rsongs.push(so);
+            S.rsongId = so.id;
+          } catch (e) { alert(f.name + " を読めませんでした。\n" + e.message); }
+        }
+        save(); U.menu = null; render();
+      };
+      inp.click();
+      break;
+    }
     case "gopdf": commitFields(); U.picker = false; U.printPick = null; U.view = "print"; render(); break;
     case "printpick": {
       const ids = SONGS().map((x) => x.id);
@@ -3213,11 +3651,11 @@ document.addEventListener("click", (e) => {
       }
       break;
     }
-    case "nopub": {
-      const g = group(id);
-      g.nopub = !g.nopub;
-      if (g.nopub) { g.gistId = ""; g.lastKey = ""; }
-      save(); render();
+    case "addnopub": {
+      if (S.groups.some((g) => g.nopub)) break;
+      const ngid = uid();
+      S.groups.push({ id: ngid, name: "配信しない", gistId: "", src: "", key: "", keyInLink: true, nopub: true });
+      S.groupId = ngid; save(); render();
       break;
     }
     case "usegroup": S.groupId = id; save(); render(); break;
@@ -3247,7 +3685,13 @@ document.addEventListener("click", (e) => {
       if (nm) { const nid = uid(); S.shows.push({ id: nid, name: nm, ts: Date.now() }); S.showId = nid; U.songIdx = 0; save(); render(); }
       break;
     }
-    case "useshow": S.showId = id; save(); U.view = "live"; render(); break;
+    case "useshow": {
+      const off = S.showId === id;
+      S.showId = off ? "" : id;
+      U.songIdx = 0; save();
+      if (!off) U.view = "live";
+      render(); break;
+    }
     case "copyshow": { dupShow(id); break; }
     case "renameshow": {
       const sw = S.shows.find((x) => x.id === id);
@@ -3400,6 +3844,14 @@ document.addEventListener("pointerup", (e) => {
 
 function onDrop(from, target) {
   if (!from || !target) return;
+  if (from.slice(0, 5) === "plan:" && target.slice(0, 2) === "p:") {
+    const a = S.plan.slots.findIndex((x) => x.id === from.slice(5));
+    const b = S.plan.slots.findIndex((x) => x.id === target.slice(2));
+    if (a < 0 || b < 0 || a === b) return;
+    S.plan.slots.splice(b, 0, S.plan.slots.splice(a, 1)[0]);
+    save(); render();
+    return;
+  }
   if (from.slice(0, 5) === "song:" && target.slice(0, 2) === "g:") return moveSong(from.slice(5), target.slice(2));
   if (from.slice(0, 5) === "show:") return dropShow(from.slice(5), target);
 }
