@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "2026-08-04-43";
+const APP_VER = "2026-08-04-44";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1692,7 +1692,83 @@ function viewOverview(s) {
     return `<button class="ovl" data-act="jumpline" data-i="${i}"
       style="${oc ? `background:color-mix(in srgb,${oc} 16%,transparent);border-radius:4px` : ""}">
       <span class="ovn" style="${oc ? `color:${oc}` : ""}">${h(labelOf(s, i))}</span><span class="ovb ${gp[i]}"></span><span class="ovt">${cells}${tail}${pb}</span></button>`;
-  }).join("");
+  });
+
+  // 元のExcelの並びを再現できるなら、そちらで出す
+  const ref = (x) => { const m = /^([A-Z]+)(\d+)$/.exec(x || ""); return m ? { c: m[1], r: Number(m[2]) } : null; };
+  const withT = s.lines.filter((l) => l.t);
+  const withBoth = withT.filter((l) => ref(l.cell) && ref(l.lcell));
+  const useGrid = withT.length > 0 && withBoth.length >= withT.length * 0.8;
+  let bodyHTML;
+  if (useGrid) {
+    const colNum = (t) => { let n = 0; for (let i = 0; i < t.length; i++) n = n * 26 + (t.charCodeAt(i) - 64); return n; };
+    const spec = [];
+    const put = (c, kind) => { if (c && !spec.some((x) => x.c === c)) spec.push({ c, kind }); };
+    s.lines.forEach((l) => {
+      const a = ref(l.cell), b = ref(l.lcell), e = ref(l.extraCell);
+      if (a) put(a.c, "name"); if (b) put(b.c, "lyric"); if (e) put(e.c, "extra");
+    });
+    (s.blockRows || []).forEach((br) => {
+      const a = ref(br.ncell), b = ref(br.lcell);
+      if (a) put(a.c, "name"); if (b) put(b.c, "lyric");
+    });
+    spec.sort((x, y) => colNum(x.c) - colNum(y.c));
+    let minR = Infinity, maxR = 0;
+    const byName = {}, byLyric = {}, byExtra = {}, bat = {};
+    s.lines.forEach((l, i) => {
+      const a = ref(l.cell), b = ref(l.lcell), x = ref(l.extraCell);
+      const any = a || b; if (!any) return;
+      if (any.r < minR) minR = any.r;
+      if (any.r > maxR) maxR = any.r;
+      if (a) byName[a.c + ":" + a.r] = { l, i };
+      if (b) byLyric[b.c + ":" + b.r] = { l, i };
+      if (x) byExtra[x.c + ":" + x.r] = { l, i };
+    });
+    (s.blockRows || []).forEach((br) => {
+      const a = ref(br.ncell), b = ref(br.lcell);
+      const any = a || b; if (!any) return;
+      if (a) bat[a.c + ":" + a.r] = { br, kind: "name" };
+      if (b) bat[b.c + ":" + b.r] = { br, kind: "lyric" };
+      if (any.r < minR) minR = any.r;
+      if (any.r > maxR) maxR = any.r;
+    });
+    const trs = [];
+    for (let rn = minR; rn <= maxR; rn++) {
+      let has = false;
+      const tds = spec.map((sp) => {
+        const key = sp.c + ":" + rn;
+        const bb = bat[key];
+        if (bb) {
+          has = true;
+          const st3 = blockStatus(s, bb.br.b);
+          const col3 = st3 === "need" ? "var(--bad)" : st3 === "changed" ? "#F0B23C" : "";
+          return bb.kind === "name"
+            ? `<td class="ogn"><b>${h(bb.br.b)}</b></td>`
+            : `<td class="ogx"${col3 ? ` style="color:${col3}"` : ""}>${h(names(blockParts(s, bb.br.b)) || "—")}</td>`;
+        }
+        const en = byName[key], el = byLyric[key], ex = byExtra[key];
+        if (el && el.l.t) {
+          has = true;
+          const st4 = lineStatus(s, el.i);
+          const c4 = st4 === "need" ? "var(--bad)" : st4 === "changed" ? "#F0B23C" : "";
+          return `<td class="ogx"><button data-act="jumpline" data-i="${el.i}"
+            style="text-align:left;${c4 ? `background:color-mix(in srgb,${c4} 16%,transparent);border-radius:4px` : ""}">${rows[el.i].replace(/^[\s\S]*?<span class="ovt">/, "").replace(/<\/span><\/button>$/, "")}</button></td>`;
+        }
+        if (en && en.l.t) {
+          has = true;
+          const st5 = lineStatus(s, en.i);
+          const c5 = st5 === "need" ? "var(--bad)" : st5 === "changed" ? "#F0B23C" : "";
+          return `<td class="ogn"${c5 ? ` style="color:${c5}"` : ""}>${h(labelOf(s, en.i))}</td>`;
+        }
+        if (ex && ex.l.extraRaw) { has = true; return `<td class="ogn">${h(ex.l.extraRaw)}</td>`; }
+        return `<td class="${sp.kind === "lyric" ? "ogx" : "ogn"}"></td>`;
+      }).join("");
+      trs.push(`<tr${has ? "" : ' class="ogz"'}>${tds}</tr>`);
+    }
+    bodyHTML = `<table class="ogrid" style="font-size:${U.ovSize}px">${trs.join("")}</table>`;
+  } else {
+    bodyHTML = `<div class="ovcols" style="font-size:${U.ovSize}px">${rows.join("")}</div>`;
+  }
 
   return `
   <div class="hd">
@@ -1701,7 +1777,7 @@ function viewOverview(s) {
     <button class="ic" data-act="ovsize">${U.ovSize}px</button>
   </div>
   ${blockBar(s)}
-  <div class="scroll" style="padding:8px 10px"><div class="ovcols" style="font-size:${U.ovSize}px">${rows}</div>
+  <div class="scroll" style="padding:8px 10px">${bodyHTML}
     ${songMemo(s.id) ? `<div class="card" style="margin-top:12px">
       <h4 style="font-size:11px;color:var(--dim);margin-bottom:6px">総括</h4>
       <div style="font-size:13px;white-space:pre-wrap">${h(songMemo(s.id))}</div></div>` : ""}
@@ -1818,7 +1894,9 @@ function renderSheet() {
         <button class="ghost" data-act="goabsent" style="text-align:left">
           歌割の変更 ${changedCount()}件${needCount() ? `　<span style="color:var(--bad)">未決 ${needCount()}</span>` : ""}</button>
       </div>` : ""}
-      <div class="sec"><h4>公演</h4>${gfil}<div class="chips">${shows}</div>
+      <div class="sec"><h4>公演</h4>${gfil}<div class="chips">
+        <button class="chip sm" data-act="jumpshow" data-id="" style="${!S.showId ? "background:var(--accent);color:#0A0A0A" : "color:var(--dim)"}">表示しない</button>
+        ${shows}</div>
         ${VIEW() ? "" : `<button class="ghost" data-act="dupshow" style="margin-top:8px">今のセットリストを複製して新しい公演にする</button>`}
 
       </div>
@@ -2545,14 +2623,13 @@ function viewSetup() {
         <div class="trunc" style="${sw.id === S.showId ? "color:var(--accent)" : ""}">${h(sw.name)}</div>
         <div style="font-size:11px;color:var(--dim)">${S.songs.filter((x) => x.showId === sw.id).length}曲 ・ ${NOTES().filter((n) => n.showId === sw.id).length}件${sw.id === S.showId ? " ・ 記録中" : ""}</div>
       </button>
-      <button data-act="showfolder" data-id="${sw.id}" style="padding:4px 6px;color:var(--dim);font-size:12px">箱</button>
       <button data-act="copyshow" data-id="${sw.id}" style="padding:4px 6px;color:var(--dim);font-size:12px">複製</button>
       <button data-act="renameshow" data-id="${sw.id}" style="padding:4px 6px;color:var(--dim);font-size:12px">名前</button>
       <button data-act="delshow" data-id="${sw.id}" style="padding:4px 6px;color:var(--bad)">✕</button>
     </div>`;
   const shows = groupShows(U.allShowList ? allShows : allShows.slice(0, 12)).map(([fname, list]) => {
     if (!fname) return list.map(showRow).join("");
-    const open = S.folders[fname] !== false || fname === curFolder;
+    const open = S.folders[fname] === true || fname === curFolder;
     return `<button class="row card" data-act="folder" data-id="${h(fname)}" data-drop="f:${h(fname)}"
         style="width:100%;margin-bottom:8px;padding:11px 12px;text-align:left">
         <span style="width:18px;color:var(--dim)">${open ? "▾" : "▸"}</span>
@@ -2626,10 +2703,10 @@ function viewSetup() {
             <div style="${cur ? "color:var(--accent)" : ""}">${h(g.name)}</div>
             <div style="font-size:11px;color:var(--dim)">${n}曲 ・ ${g.gistId ? "配信中" : "未接続"}${cur ? " ・ 取り込み先" : ""}</div>
           </button>
+          <button data-act="nopub" data-id="${g.id}" style="padding:4px 8px;color:${g.nopub ? "var(--accent)" : "var(--dim)"};font-size:12px">${g.nopub ? "配信しない" : "配信する"}</button>
           <button data-act="renamegroup" data-id="${g.id}" style="padding:4px 8px;color:var(--dim)">名前</button>
-          <button data-act="delgroup" data-id="${g.id}" style="padding:4px 6px;color:var(--bad)">✕</button>
         </div>
-        ${g.gistId ? `
+        ${g.nopub ? `<div style="font-size:11px;color:var(--dim)">このグループは配信されません</div>` : g.gistId ? `
           <button class="primary" data-act="connectlink" data-id="${g.id}" style="margin-bottom:10px">${h(g.name)} の接続リンクを作る</button>
           <div class="row" style="margin-bottom:6px">
             <span style="font-size:11px;color:var(--dim);width:52px">合言葉</span>
@@ -3102,7 +3179,7 @@ document.addEventListener("click", (e) => {
       render();
       break;
     }
-    case "folder": S.folders[id] = !(S.folders[id] !== false); save(); render(); break;
+    case "folder": S.folders[id] = !(S.folders[id] === true); save(); render(); break;
     case "showfolder": {
       const sw = S.shows.find((x) => x.id === id);
       if (!sw) break;
@@ -3134,6 +3211,13 @@ document.addEventListener("click", (e) => {
         S.groups.push({ id: ngid, name: nm, gistId: "", src: "", key: "", keyInLink: true });
         S.groupId = ngid; save(); render();
       }
+      break;
+    }
+    case "nopub": {
+      const g = group(id);
+      g.nopub = !g.nopub;
+      if (g.nopub) { g.gistId = ""; g.lastKey = ""; }
+      save(); render();
       break;
     }
     case "usegroup": S.groupId = id; save(); render(); break;
@@ -3830,7 +3914,7 @@ function schedulePush() {
 }
 
 async function doPush(silent) {
-  const live = S.groups.filter((g) => g.gistId);
+  const live = S.groups.filter((g) => g.gistId && !g.nopub);
   if (!S.ghToken || !live.length) return;
   pushState = "送信中"; render();
   lastPushAt = Date.now();
@@ -3884,7 +3968,7 @@ window.addEventListener("online", () => { if (pushState === "未送信") doPush(
 // 変わっていない相手には送らない
 function hasPending() {
   return S.groups.some((g) => {
-    if (!g.gistId) return false;
+    if (!g.gistId || g.nopub) return false;
     try { return payloadKey(publicationData(g.id)) !== g.lastKey; } catch (e) { return false; }
   });
 }

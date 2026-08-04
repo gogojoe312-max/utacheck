@@ -33,6 +33,12 @@ button{cursor:pointer}
 .hd .t1{font-size:11px;color:var(--dim)}
 .hd .t2{font-size:16px;font-weight:600}
 .ic{width:38px;height:38px;border-radius:10px;background:var(--panel);display:flex;align-items:center;justify-content:center;font-size:16px;flex:0 0 auto}
+.ogrid{width:100%;border-collapse:collapse;table-layout:fixed}
+.ogrid td{vertical-align:baseline;padding:1px 3px;line-height:1.6;word-break:break-word}
+.ogrid td.ogn{width:14%;text-align:right;color:var(--dim);font-size:.85em}
+.ogrid td.ogx{width:36%}
+.ogrid td.ogx button{width:100%;text-align:left;font-size:inherit;color:inherit}
+.ogrid tr.ogz td{height:.5em;line-height:.5em;padding:0}
 .ovcols{font-size:9px}
 .scroll{flex:1;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
 .aubar{flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:8px 12px;
@@ -77,6 +83,12 @@ button{cursor:pointer}
 .brk.last::after{bottom:9px}
 
 /* 全体表示 */
+.ogrid{width:100%;border-collapse:collapse;table-layout:fixed}
+.ogrid td{vertical-align:baseline;padding:1px 3px;line-height:1.6;word-break:break-word}
+.ogrid td.ogn{width:14%;text-align:right;color:var(--dim);font-size:.85em}
+.ogrid td.ogx{width:36%}
+.ogrid td.ogx button{width:100%;text-align:left;font-size:inherit;color:inherit}
+.ogrid tr.ogz td{height:.5em;line-height:.5em;padding:0}
 .ovcols{column-count:2;column-gap:12px}
 .ovl{display:flex;width:100%;text-align:left;gap:4px;padding:1px 0;break-inside:avoid;align-items:stretch}
 .ovn{flex:0 0 52px;text-align:right;color:var(--dim);font-size:.8em;padding-top:1px;line-height:1.3;word-break:break-word}
@@ -182,6 +194,6 @@ button{cursor:pointer}
 <div id="app"></div>
 <script src="vendor/pdf.min.js"></script>
 <script src="vendor/xlsx.full.min.js"></script>
-<script src="app.js?v=2026-08-04-43"></script>
+<script src="app.js?v=2026-08-04-44"></script>
 </body>
 </html>
