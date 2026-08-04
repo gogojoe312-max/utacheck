@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "2026-08-04-27";
+const APP_VER = "2026-08-04-28";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1784,9 +1784,6 @@ function renderSheet() {
         <button class="ghost" data-act="goabsent" style="text-align:left">
           歌割の変更 ${changedCount()}件${needCount() ? `　<span style="color:var(--bad)">未決 ${needCount()}</span>` : ""}</button>
       </div>` : ""}
-      ${SONGS().length ? `<div class="sec">
-        <button class="ghost" data-act="gopdf" style="text-align:left">歌割をPDFにする</button>
-      </div>` : ""}
       <div class="sec"><h4>公演</h4>${gfil}<div class="chips">${shows}</div>
         ${VIEW() ? "" : `<button class="ghost" data-act="dupshow" style="margin-top:8px">今のセットリストを複製して新しい公演にする</button>`}
 
@@ -2308,48 +2305,45 @@ function viewAbsent() {
 }
 
 /* ---- 紙／PDF ---- */
-// 実際に描いてから高さを測り、A4縦1枚に収まるまで縮める。
-// 折り返しや行間まで含めた本当の高さで判断するので、はみ出さない。
-const A4_W = 688, A4_H = 1016;   // 余白14mmのA4（1px = 1/96インチ）
+// 1曲を「A4より一回り小さい箱」に入れ、中身をその箱に収まる倍率まで縮める。
+// 紙のサイズはmmで指定するので、端末や印刷時の拡大縮小に左右されない。
+// 箱からはみ出た分は切り取られるため、2ページ目が発生しない。
 function fitPrintDOM() {
   const pr = document.getElementById("prpage");
   if (!pr) return;
   pr.style.transform = "none";
   pr.querySelectorAll(".prs").forEach((sec) => {
+    const box = sec.querySelector(".prbox");
+    const inner = sec.querySelector(".prin");
     const body = sec.querySelector(".prbody");
-    if (!body) return;
-    let cols = 1, fs = 12, guard = 0;
-    const apply = () => {
-      sec.style.fontSize = fs + "px";
-      body.style.columnCount = cols;
-      body.style.columnGap = "14px";
+    if (!box || !inner) return;
+    const bw = box.clientWidth, bh = box.clientHeight;
+    const fit = () => {
+      inner.style.transform = "none";
+      inner.style.width = bw + "px";
+      const k = Math.min(1, bh / Math.max(1, inner.scrollHeight), bw / Math.max(1, inner.scrollWidth));
+      return k;
     };
-    apply();
-    while (sec.offsetHeight > A4_H && guard++ < 90) {
-      if (cols === 1 && fs > 8.5) fs -= 0.5;
-      else if (cols === 1) { cols = 2; fs = 12; }
-      else if (fs > 4) fs -= 0.5;
-      else break;
-      apply();
+    let cols = 1, k = fit();
+    if (k < 0.72 && body) {          // 小さくなりすぎるなら2段組を試す
+      cols = 2;
+      body.style.columnCount = 2;
+      body.style.columnGap = "14px";
+      const k2 = fit();
+      if (k2 <= k) { cols = 1; body.style.columnCount = 1; k = fit(); }
+      else k = k2;
     }
+    inner.style.transformOrigin = "top left";
+    inner.style.transform = "scale(" + k + ")";
+    inner.style.width = (bw / k) + "px";
   });
-  // 画面では縮めて全体を見せる。印刷時は等倍に戻る。
+  // 画面では紙全体が見えるように縮める。印刷時は等倍に戻る。
   const sc = app.querySelector(".scroll");
-  const w = (sc ? sc.clientWidth : A4_W) - 10;
-  const k = Math.min(1, w / A4_W);
+  const w = (sc ? sc.clientWidth : 700) - 10;
+  const k2 = Math.min(1, w / Math.max(1, pr.offsetWidth));
   pr.style.transformOrigin = "top left";
-  pr.style.transform = "scale(" + k + ")";
-  pr.style.marginBottom = (-(1 - k) * pr.offsetHeight) + "px";
-}
-
-// 選んだ曲をその場でPDFにする。描画と高さ合わせを同じ操作の中で終わらせてから印刷する。
-function printNow(ids) {
-  commitFields();
-  U.printPick = ids && ids.length ? ids : null;
-  U.view = "print";
-  render();
-  fitPrintDOM();
-  try { window.print(); } catch (e) { /* 印刷できない環境 */ }
+  pr.style.transform = "scale(" + k2 + ")";
+  pr.style.marginBottom = (-(1 - k2) * pr.offsetHeight) + "px";
 }
 
 function viewPrint() {
@@ -2381,12 +2375,12 @@ function viewPrint() {
       return `<div class="prl"><span class="prn"${pst ? ' style="color:#111;font-weight:700;text-decoration:underline"' : ""}>${h(labelOf(so, i))}</span><span class="prx">${cells}</span></div>`;
     }).join("");
 
-    return `<section class="prs">
+    return `<section class="prs"><div class="prbox"><div class="prin">
       <h3>${h(songName(so))}<span class="prc">　${h((S.groups.find((x) => x.id === so.groupId) || {}).name || "")}　${h(showName())}　${ns0.length}件</span></h3>
       ${blocksOf(so).length ? `<div class="prb">${blocksOf(so).map((b) => `<span><b>${h(b)}</b> ${h(names(blockParts(so, b)) || "—")}</span>`).join("　")}</div>` : ""}
       <div class="prbody">${rows}</div>
       ${mm ? `<div class="prm"><b>総括</b>　${h(mm)}</div>` : ""}
-    </section>`;
+    </div></div></section>`;
   }).join("");
 
   const chips = all.map((x) => {
@@ -2431,6 +2425,8 @@ function viewSetup() {
     <div class="card">${pianoHTML(null)}</div>
     <h4 class="head">メトロノーム</h4>
     ${metroHTML()}
+    <h4 class="head">歌割をPDFにする</h4>
+    <div class="card"><button class="primary" data-act="gopdf">PDFにする</button></div>
     <div style="height:40px"></div></div>`;
   }
 
@@ -2617,6 +2613,9 @@ function viewSetup() {
         return `<div style="font-size:13px;margin-bottom:6px">${ks.length}件　合計 ${(total / 1048576).toFixed(1)}MB</div>${rows}`;
       })()}
     </div>
+
+    <h4 class="head">歌割をPDFにする</h4>
+    <div class="card"><button class="primary" data-act="gopdf">PDFにする</button></div>
 
     <div style="height:40px"></div>
   </div>`;
