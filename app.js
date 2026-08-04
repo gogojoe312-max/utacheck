@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "2026-08-04-20";
+const APP_VER = "2026-08-04-22";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -101,6 +101,7 @@ function load() {
     if (!so.roster || !so.roster.length) so.roster = songRoster(so);
     if (!so.sig) so.sig = songSig(so);
   });
+  sweep();
   S.kbps = 128;
   if (S.preroll == null || S.preroll > 10) S.preroll = 5;
   // 旧データの引き継ぎ：グループが無ければ1つ作り、既存の曲と配信設定を移す
@@ -403,6 +404,24 @@ const changedCount = () => SONGS().reduce((a, so) => a
   + so.lines.filter((l, i) => lineStatus(so, i) === "changed" && !blockOf(so, i)).length
   + blocksOf(so).filter((b) => blockStatus(so, b) === "changed").length, 0);
 
+// 曲や公演を消したときに残る、行き場のないデータを片付ける
+function sweep() {
+  const songIds = S.songs.map((x) => x.id);
+  const showIds = S.shows.map((x) => x.id);
+  const alive = (k) => {
+    const p = String(k).split("|");
+    return showIds.includes(p[0]) && (p.length < 2 || songIds.includes(p[1]));
+  };
+  ["subs", "subsMan", "gsubs", "memos", "draws"].forEach((name) => {
+    Object.keys(S[name] || {}).forEach((k) => { if (!alive(k)) delete S[name][k]; });
+  });
+  Object.keys(S.recs || {}).forEach((k) => {
+    if (!alive(k)) { delClip(k); delete S.recs[k]; }
+  });
+  songIds.forEach(() => {});
+  S.notes = S.notes.filter((n) => songIds.includes(n.songId) && showIds.includes(n.showId));
+}
+
 const covers = (n, i) => i >= n.lineIdx && i <= (n.lineEnd != null ? n.lineEnd : n.lineIdx);
 // 同じ曲の同じ行に、過去の公演でも指摘があったか
 function pastHits(songId, lineIdx) {
@@ -523,7 +542,8 @@ function buildSong(parsed) {
       (groups[k] || [addMember(k).id]).forEach((n) => { if (!exIds.includes(n)) exIds.push(n); });
     });
     if (label === "→") {
-      return { label: exRaw ? "　" + exRaw : "", t, parts: carry.concat(exIds.filter((x) => !carry.includes(x))),
+      return { label: exRaw ? "　" + exRaw : "", raw: "", t,
+        parts: carry.concat(exIds.filter((x) => !carry.includes(x))),
         main: carry.slice(), extra: exIds, cont: true, cell: r[2] || "", extraCell: r[5] || "" };
     }
     let parts = [];
@@ -546,7 +566,7 @@ function buildSong(parsed) {
     });
     carry = parts.slice();
     const all2 = parts.concat(exIds.filter((x) => !parts.includes(x)));
-    return { label: label + (exRaw ? "　" + exRaw : ""), t, parts: all2,
+    return { label: label + (exRaw ? "　" + exRaw : ""), raw: label, t, parts: all2,
       main: parts.slice(), extra: exIds, cell: r[2] || "", extraCell: r[5] || "" };
   });
   const so = { id: uid(), title: parsed.title || "無題", credit: parsed.credit || "", lines,
@@ -1942,6 +1962,14 @@ function copyRecords(oldSo, newSo) {
     if (gid === oldSo.id) S.memos[sid + "|" + newSo.id] = S.memos[k];
   });
 
+  Object.keys(S.gsubs || {}).forEach((k) => {
+    const [sid, gid] = k.split("|");
+    if (gid !== oldSo.id) return;
+    const src = S.gsubs[k], dst = {};
+    Object.keys(src).forEach((b) => { if ((newSo.blocks || {})[b]) dst[b] = src[b].slice(); });
+    if (Object.keys(dst).length) S.gsubs[sid + "|" + newSo.id] = dst;
+  });
+
   Object.keys(S.subs || {}).forEach((k) => {
     const [sid, gid] = k.split("|");
     if (gid !== oldSo.id) return;
@@ -2553,9 +2581,9 @@ document.addEventListener("click", (e) => {
     case "delpicked": {
       const n = U.pick.length;
       if (n && confirm(`${n}曲 をこの公演から削除しますか？\n記録も一緒に消えます。`)) {
+        U.pick.forEach((sid) => delClip("xls:" + sid));
         S.songs = S.songs.filter((x) => !U.pick.includes(x.id));
-        S.notes = S.notes.filter((x) => !U.pick.includes(x.songId));
-        U.pick = []; U.songIdx = 0; save(); schedulePush(); render();
+        U.pick = []; U.songIdx = 0; sweep(); save(); schedulePush(); render();
       }
       break;
     }
@@ -2594,8 +2622,8 @@ document.addEventListener("click", (e) => {
       U.menu = null;
       if (x && confirm(`「${songName(x)}」を削除しますか？`)) {
         S.songs = S.songs.filter((y) => y.id !== x.id);
-        S.notes = S.notes.filter((n2) => n2.songId !== x.id);
-        save(); schedulePush();
+        delClip("xls:" + x.id);
+        sweep(); save(); schedulePush();
       }
       render(); break;
     }
@@ -2844,10 +2872,10 @@ document.addEventListener("click", (e) => {
       const g = group(id);
       const cnt = S.songs.filter((x) => x.groupId === id).length;
       if (confirm(`「${g.name}」を削除しますか？\nこのグループの ${cnt}曲 と、その記録も消えます。\nGist自体はGitHub側に残るので、不要なら別途削除してください。`)) {
-        const sids = S.songs.filter((x) => x.groupId === id).map((x) => x.id);
+        S.songs.filter((x) => x.groupId === id).forEach((x) => delClip("xls:" + x.id));
         S.songs = S.songs.filter((x) => x.groupId !== id);
-        S.notes = S.notes.filter((n) => !sids.includes(n.songId));
         S.groups = S.groups.filter((x) => x.id !== id);
+        sweep();
         if (S.groupId === id) S.groupId = S.groups[0].id;
         save(); render();
       }
@@ -2873,10 +2901,10 @@ document.addEventListener("click", (e) => {
       const cnt = S.notes.filter((n) => n.showId === id).length;
       const scnt = S.songs.filter((x) => x.showId === id).length;
       if (confirm(`「${sw.name}」を削除しますか？\nこの公演の ${scnt}曲 と 記録 ${cnt}件 が消えます。`)) {
-        const sids = S.songs.filter((x) => x.showId === id).map((x) => x.id);
+        S.songs.filter((x) => x.showId === id).forEach((x) => delClip("xls:" + x.id));
         S.songs = S.songs.filter((x) => x.showId !== id);
         S.shows = S.shows.filter((x) => x.id !== id);
-        S.notes = S.notes.filter((n) => n.showId !== id && !sids.includes(n.songId));
+        sweep();
         if (S.showId === id) S.showId = S.shows[0].id;
         save(); render();
       }
@@ -3340,15 +3368,25 @@ function publicationData(gid) {
       const nm = (member(pid) || {}).name;
       if (nm && !used.includes(nm)) used.push(nm);
     })));
+    // その曲に出てくる人だけを、その曲の名簿として送る
+    const orderOf = (x) => {
+      const o = [];
+      const put = (id) => { const nm = (member(id) || {}).name; if (nm && !o.includes(nm)) o.push(nm); };
+      Object.keys(x.blocks || {}).forEach((b) => (x.blocks[b] || []).forEach(put));
+      (x.roster || []).forEach(put);
+      return o;
+    };
     const entry = (x) => {
-      const lines = x.lines.map((l) => (l.gap ? ["", ""] : [l.cont ? "→" : l.label, l.t]));
+      const lines = x.lines.map((l) => (l.gap ? ["", "", "", "", ""]
+        : [l.cont ? "→" : (l.raw != null ? l.raw : l.label), l.t, "", "",
+           (l.extra || []).length ? "ハモ " + (l.extra || []).map((m) => (member(m) || {}).name).filter(Boolean).join("・") : ""]));
       const key = x.title + "\u0001" + JSON.stringify(lines);
       if (libKey.has(key)) return libKey.get(key);
       const gs = {};
       Object.keys(x.blocks || {}).forEach((b) => {
         gs[b] = (x.blocks[b] || []).map((mid) => (member(mid) || {}).name).filter(Boolean);
       });
-      lib.push({ title: x.title, credit: x.credit, groups: gs, order: used, lines });
+      lib.push({ title: x.title, credit: x.credit, groups: gs, order: orderOf(x), lines });
       libKey.set(key, lib.length - 1);
       return lib.length - 1;
     };
