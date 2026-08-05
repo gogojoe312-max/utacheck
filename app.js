@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "2026-08-05-38";
+const APP_VER = "2026-08-05-41";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -328,6 +328,17 @@ function freshLine() {
   return un
     ? `<span style="color:var(--accent);font-weight:700">未読 ${un}曲</span><span style="color:var(--dim)">　${stamp} の歌割</span>${stale}`
     : `<span style="color:var(--good)">すべて確認済み</span><span style="color:var(--dim)">　${stamp} の歌割</span>${stale}`;
+}
+
+// 注目するメンバーは、その曲のグループの名簿にいる人だけ
+function focusList() {
+  const so = song();
+  if (!so) return [];
+  const gn = (S.groups.find((g) => g.id === so.groupId) || {}).name || "";
+  const ros = (S.rosters || {})[gn];
+  const inSong = songRoster(so).map((mid) => member(mid)).filter(Boolean);
+  if (!ros || !ros.length) return inSong;
+  return ros.map((nm) => inSong.find((m) => m.name === nm)).filter(Boolean);
 }
 
 function labelOf(so, i) {
@@ -1405,7 +1416,7 @@ async function keepAwake() {
   } catch (e) { /* 対応していない端末では何もしない */ }
 }
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden) return;
+  if (document.hidden) { if (VIEW()) markRead(song()); return; }
   keepAwake();
   // ホーム画面から開き直した時に、待たずに最新を取りに行く
   if (S.src && !S.groups.some((g) => g.gistId)) syncSetlist(false);
@@ -1591,6 +1602,237 @@ function barsOf(so) {
   });
 }
 const recSong = () => (S.recMode ? (SONGS()[U.songIdx] || S.rsongs.find((x) => x.id === S.rsongId) || S.rsongs[0] || null) : null);
+
+/* ---------------- ピッチを見る ---------------- */
+const PT = { on: false, rec: null, chunks: [], buf: null, notes: [], t0: 0, playing: false, sel: -1, dur: 0 };
+
+const hzToMidi = (hz) => 69 + 12 * Math.log2(hz / 440);
+const midiToHz = (m) => 440 * Math.pow(2, (m - 69) / 12);
+const NOTE_JP = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+const midiName = (m) => {
+  const r = Math.round(m);
+  return NOTE_JP[((r % 12) + 12) % 12] + (Math.floor(r / 12) - 1);
+};
+
+// 1フレームぶんの基本周波数を求める（YINを簡略にしたもの）
+function detectHz(buf, rate) {
+  const n = buf.length;
+  const maxLag = Math.min(Math.floor(rate / 65), n - 1);     // 65Hzまで
+  const minLag = Math.max(2, Math.floor(rate / 1200));       // 1200Hzまで
+  let rms = 0;
+  for (let i = 0; i < n; i++) rms += buf[i] * buf[i];
+  rms = Math.sqrt(rms / n);
+  if (rms < 0.008) return 0;                                 // 無音
+
+  const d = new Float32Array(maxLag + 1);
+  for (let lag = minLag; lag <= maxLag; lag++) {
+    let sum = 0;
+    for (let i = 0; i + lag < n; i++) { const x = buf[i] - buf[i + lag]; sum += x * x; }
+    d[lag] = sum;
+  }
+  const cum = new Float32Array(maxLag + 1);
+  let run = 0;
+  cum[0] = 1;
+  for (let lag = 1; lag <= maxLag; lag++) { run += d[lag]; cum[lag] = run ? d[lag] * lag / run : 1; }
+
+  let best = -1;
+  for (let lag = minLag; lag <= maxLag; lag++) {
+    if (cum[lag] < 0.15) {
+      while (lag + 1 <= maxLag && cum[lag + 1] < cum[lag]) lag++;
+      best = lag; break;
+    }
+  }
+  if (best < 0) {
+    let mn = Infinity;
+    for (let lag = minLag; lag <= maxLag; lag++) if (cum[lag] < mn) { mn = cum[lag]; best = lag; }
+    if (mn > 0.5) return 0;
+  }
+  // 山の頂点を放物線で補う
+  const a = cum[best - 1], b2 = cum[best], c = cum[best + 1];
+  const shift = (a + c - 2 * b2) ? (a - c) / (2 * (a + c - 2 * b2)) : 0;
+  return rate / (best + shift);
+}
+
+// 録音全体を音高の並びにして、言葉のかたまりに分ける
+function analyzePitch(chan, rate) {
+  const hop = Math.floor(rate * 0.01);          // 10ms
+  const win = Math.floor(rate * 0.046);         // 46ms
+  const pts = [];
+  for (let i = 0; i + win < chan.length; i += hop) {
+    const hz = detectHz(chan.subarray(i, i + win), rate);
+    pts.push({ t: i / rate, hz, m: hz ? hzToMidi(hz) : 0 });
+  }
+  // 前後と大きく外れた点を均す（オクターブの取り違えを減らす）
+  for (let i = 1; i < pts.length - 1; i++) {
+    if (!pts[i].m) continue;
+    const a = pts[i - 1].m, b = pts[i + 1].m;
+    if (a && b && Math.abs(pts[i].m - a) > 6 && Math.abs(pts[i].m - b) > 6 && Math.abs(a - b) < 3) {
+      pts[i].m = (a + b) / 2; pts[i].hz = midiToHz(pts[i].m);
+    }
+  }
+  // つながっているところをひとかたまりにする
+  const notes = [];
+  let cur = null;
+  pts.forEach((p) => {
+    if (!p.m) { if (cur && cur.pts.length >= 4) notes.push(cur); cur = null; return; }
+    if (!cur) { cur = { pts: [p], pend: [] }; return; }
+    // 今の音の中央値から半音の7割以上ずれた点が2つ続いたら、そこから別の音
+    const ms2 = cur.pts.map((x) => x.m).sort((x, y) => x - y);
+    const med = ms2[Math.floor(ms2.length / 2)];
+    if (Math.abs(p.m - med) < 0.7) { cur.pts = cur.pts.concat(cur.pend, [p]); cur.pend = []; return; }
+    cur.pend.push(p);
+    if (cur.pend.length >= 2) {
+      if (cur.pts.length >= 4) notes.push(cur);
+      cur = { pts: cur.pend.slice(), pend: [] };
+    }
+  });
+  if (cur) { cur.pts = cur.pts.concat(cur.pend || []); if (cur.pts.length >= 4) notes.push(cur); }
+
+  return notes.map((nt) => {
+    const ms = nt.pts.map((x) => x.m).sort((a, b) => a - b);
+    const mid = ms[Math.floor(ms.length / 2)];               // 中央値（揺れに強い）
+    return {
+      t0: nt.pts[0].t, t1: nt.pts[nt.pts.length - 1].t + 0.01,
+      m: mid, shift: 0, pts: nt.pts,
+    };
+  });
+}
+
+// 音の高さを変えて鳴らす。声の周期に合わせて切り貼りする（PSOLA）。
+function shiftSeg(src, rate, from, to, semi, hz) {
+  const a = Math.max(0, Math.floor(from * rate));
+  const b = Math.min(src.length, Math.ceil(to * rate));
+  const seg = src.subarray(a, b);
+  if (!semi || !hz || hz < 50) return seg.slice();
+  const ratio = Math.pow(2, semi / 12);
+  const P = Math.max(16, Math.round(rate / hz));       // 元の1周期
+  const Pout = Math.max(8, Math.round(P / ratio));     // 変えた後の1周期
+  const out = new Float32Array(seg.length);
+  const win = P * 2;
+  const w = new Float32Array(win);
+  for (let i2 = 0; i2 < win; i2++) w[i2] = 0.5 - 0.5 * Math.cos((2 * Math.PI * i2) / (win - 1));
+
+  for (let sp = 0; sp < seg.length; sp += Pout) {
+    // 出す位置に対応する、元の側の切り出し位置（時間の進みは変えない）
+    const ap = Math.round(Math.round(sp / P) * P);
+    const start = ap - P;
+    for (let i2 = 0; i2 < win; i2++) {
+      const k = start + i2, o = sp - P + i2;
+      if (k < 0 || k >= seg.length || o < 0 || o >= out.length) continue;
+      out[o] += seg[k] * w[i2];
+    }
+  }
+  return out;
+}
+
+async function playPitch(only) {
+  if (!PT.buf) return;
+  unlockAudio();
+  if (!AC) return;
+  const rate = PT.buf.sampleRate;
+  const src = PT.buf.getChannelData(0);
+  const t0 = only != null ? PT.notes[only].t0 : 0;
+  const total = only != null ? (PT.notes[only].t1 - PT.notes[only].t0) : PT.dur;
+  const off = AC.createBuffer(1, Math.max(1, Math.ceil(total * rate)), rate);
+  const dst = off.getChannelData(0);
+  if (only == null) dst.set(src.subarray(0, Math.min(src.length, dst.length)));
+  PT.notes.forEach((nt, i) => {
+    if (only != null && i !== only) return;
+    if (!nt.shift && only == null) return;
+    const seg = shiftSeg(src, rate, nt.t0, nt.t1, nt.shift, midiToHz(nt.m));
+    const at = Math.floor((nt.t0 - t0) * rate);
+    for (let k = 0; k < seg.length && at + k < dst.length; k++) if (at + k >= 0) dst[at + k] = seg[k];
+  });
+  if (PT.src) { try { PT.src.stop(); } catch (e) {} }
+  const node = AC.createBufferSource();
+  node.buffer = off;
+  node.connect(AC.destination);
+  node.onended = () => { PT.playing = false; render(); };
+  node.start();
+  PT.src = node; PT.playing = true; render();
+}
+
+async function startPitch() {
+  try {
+    unlockAudio();
+    const st = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+    const mr = new MediaRecorder(st);
+    PT.chunks = [];
+    mr.ondataavailable = (e) => { if (e.data.size) PT.chunks.push(e.data); };
+    mr.onstop = async () => {
+      st.getTracks().forEach((t2) => t2.stop());
+      PT.on = false;
+      U.busy = "調べています…"; render();
+      try {
+        const blob = new Blob(PT.chunks, { type: mr.mimeType || "audio/webm" });
+        PT.buf = await AC.decodeAudioData(await blob.arrayBuffer());
+        PT.dur = PT.buf.duration;
+        PT.notes = analyzePitch(PT.buf.getChannelData(0), PT.buf.sampleRate);
+        PT.sel = -1;
+      } catch (e) { alert("うまく調べられませんでした。\n" + e.message); }
+      U.busy = ""; render();
+    };
+    mr.start();
+    PT.rec = mr; PT.on = true; PT.t0 = Date.now(); render();
+    setTimeout(() => { if (PT.on) stopPitch(); }, 10000);
+  } catch (e) {
+    alert("マイクを使えませんでした。\n設定でマイクを許可してください。");
+  }
+}
+function stopPitch() { try { if (PT.rec && PT.rec.state === "recording") PT.rec.stop(); } catch (e) {} }
+
+function pitchHTML() {
+  if (PT.on) {
+    return `<div class="card"><div class="row">
+      <b class="grow" style="color:var(--bad)">録音中…（10秒で止まります）</b>
+      <button class="chip sm" data-act="ptstop">止める</button></div></div>`;
+  }
+  if (!PT.notes.length) {
+    return `<div class="card">
+      <button class="primary" data-act="ptstart">10秒 録って調べる</button>
+      <div style="font-size:11px;color:var(--dim);margin-top:8px">マイクに向かって歌うと、どの音を出していたかが見えます。</div>
+    </div>`;
+  }
+  const ms = PT.notes.map((n) => n.m + n.shift);
+  const lo = Math.floor(Math.min.apply(null, ms)) - 2;
+  const hi = Math.ceil(Math.max.apply(null, ms)) + 2;
+  const rows = [];
+  for (let m = hi; m >= lo; m--) {
+    const black = [1, 3, 6, 8, 10].indexOf(((m % 12) + 12) % 12) >= 0;
+    rows.push(`<div class="ptrow${black ? " blk" : ""}"><span class="ptlbl">${midiName(m)}</span></div>`);
+  }
+  const H = (hi - lo + 1) * 14;
+  const bars = PT.notes.map((n, i) => {
+    const y = (hi - (n.m + n.shift)) * 14;
+    const x = (n.t0 / PT.dur) * 100, w = Math.max(1.2, ((n.t1 - n.t0) / PT.dur) * 100);
+    const cents = Math.round(((n.m + n.shift) - Math.round(n.m + n.shift)) * 100);
+    return `<button class="ptbar${i === PT.sel ? " on" : ""}" data-act="ptsel" data-i="${i}"
+      style="left:${x}%;width:${w}%;top:${y}px"><span>${midiName(n.m + n.shift)}${cents ? (cents > 0 ? "+" : "") + cents : ""}</span></button>`;
+  }).join("");
+  const sel = PT.sel >= 0 ? PT.notes[PT.sel] : null;
+  return `<div class="card">
+    <div class="ptbox" style="height:${H}px">${rows.join("")}<div class="ptlay">${bars}</div></div>
+    <div class="row" style="margin-top:10px">
+      <button class="chip sm" data-act="ptplay" style="background:var(--accent);color:#0A0A0A">${PT.playing ? "■ 止める" : "▶ 全部聴く"}</button>
+      <span class="grow"></span>
+      <button class="chip sm" data-act="ptreset" style="color:var(--dim)">やり直す</button>
+    </div>
+    ${sel ? `<div class="card" style="margin-top:10px;padding:10px 12px">
+      <div class="row" style="margin-bottom:8px">
+        <b class="grow">${midiName(sel.m + sel.shift)}</b>
+        <span style="font-size:11px;color:var(--dim)">${(sel.t1 - sel.t0).toFixed(2)}秒　元 ${midiName(sel.m)}</span>
+      </div>
+      <div class="row" style="margin-bottom:8px">
+        ${[-12, -1, -0.5, 0.5, 1, 12].map((v) => `<button class="chip sm grow" data-act="ptshift" data-id="${v}">${Math.abs(v) === 0.5 ? (v > 0 ? "＋半" : "−半") : (v > 0 ? "＋" + v : v)}</button>`).join("")}
+      </div>
+      <div class="row">
+        <button class="chip sm grow" data-act="ptsnap">近い音に合わせる</button>
+        <button class="chip sm grow" data-act="ptplay1">▶ この音だけ</button>
+        <button class="chip sm" data-act="ptclear" style="color:var(--dim)">戻す</button>
+      </div>
+    </div>` : `<div style="font-size:11px;color:var(--dim);margin-top:8px">音を押すと、上げ下げできます。</div>`}
+  </div>`;
+}
 
 /* ---------------- メトロノーム ---------------- */
 // 鳴らす時刻をあらかじめ音の仕組みに渡すので、画面の重さに影響されず正確に刻む。
@@ -1840,12 +2082,12 @@ function render() {
   if (U.view === "live" && !U.overview) setTimeout(paintInk, 0);
   if (U.view === "print" || U.view === "recprint") setTimeout(fitPrintDOM, 0);
   if (S.recMode) setTimeout(() => { tickPlan(); scrollTab(); }, 0);
-  if (VIEW() && U.view === "live" && !U.overview) {
+  if (VIEW() && (U.view === "live" || U.view === "print")) {
     const cur = song();
     clearTimeout(readTimer);
     if (cur && isUnread(cur)) readTimer = setTimeout(() => {
-      if (U.view === "live" && !U.overview && song() && song().id === cur.id) { markRead(cur); render(); }
-    }, 1500);
+      if (song() && song().id === cur.id) { markRead(cur); render(); }
+    }, 700);
   }
   // PDFの名前を「公演名 歌チェック」にする
   try {
@@ -1937,7 +2179,7 @@ function viewLive() {
   const noSong = VIEW() && !SONGS().length;
   return `
   ${preview ? `<div class="noprint" style="padding:10px 12px;background:#1F2E24;color:#8FD9A8;font-size:12px">
-      メンバーの見え方を確認中（手元のデータは変わりません）
+      メンバーの見え方を確認中（手元のデータは変わりません／既読も残りません）
       <button data-act="endpv" style="float:right;color:#8FD9A8;font-weight:700">終わる</button></div>` : ""}
   ${otherAt ? `<div class="noprint" style="padding:10px 12px;background:#2A2118;color:#F0C089;font-size:12px;line-height:1.7">
       別の端末で更新されています（${new Date(otherAt).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}）。この端末にも変更があります。
@@ -2411,6 +2653,14 @@ function renderSheet() {
           style="text-align:left;margin-bottom:8px;${i === U.songIdx ? "background:var(--accent);color:#0A0A0A" : ""}">${i + 1}. ${h(x.title)}</button>`).join("") || `<p class="note">曲がありません</p>`}
       </div>
       <div class="sec"><button class="primary" data-act="goplan">進行表</button></div>
+      ${VIEW() && unreadSongs().length ? `<div class="sec">
+        <button class="ghost" data-act="readall" style="text-align:left;color:var(--accent)">未読 ${unreadSongs().length}曲 をすべて既読にする</button>
+      </div>` : ""}
+      ${S.members.length ? `<div class="sec"><h4>注目するメンバー</h4><div class="chips">
+        <button class="chip sm" data-act="focus" data-id="" style="${!U.focus ? "background:var(--accent);color:#0A0A0A" : ""}">なし</button>
+        ${focusList().map((m) => `<button class="chip sm" data-act="focus" data-id="${m.id}"
+            style="${U.focus === m.id ? "background:#4C9BFF;color:#0A0A0A" : ""}">${h(m.name)}</button>`).join("")}
+      </div></div>` : ""}
     </div>`;
     document.body.appendChild(overlay);
     return;
@@ -2439,12 +2689,6 @@ function renderSheet() {
     overlay.innerHTML = `<button class="sp" data-act="close"></button><div class="sheet">
       <div class="row" style="margin-bottom:12px"><span class="grow" style="font-size:11px;color:var(--dim)">公演と曲を選ぶ</span>
       <button data-act="cancel" style="width:36px;height:36px;border-radius:10px;background:var(--panel2);font-size:17px">✕</button></div>
-      ${S.members.length ? `<div class="sec"><h4>注目するメンバー</h4><div class="chips">
-        <button class="chip sm" data-act="focus" data-id="" style="${!U.focus ? "background:var(--accent);color:#0A0A0A" : ""}">なし</button>
-        ${songRoster(song()).map((mid) => member(mid)).filter(Boolean)
-          .map((m) => `<button class="chip sm" data-act="focus" data-id="${m.id}"
-            style="${U.focus === m.id ? "background:#4C9BFF;color:#0A0A0A" : ""}">${h(m.name)}</button>`).join("")}
-      </div></div>` : ""}
       ${(changedCount() || needCount()) ? `<div class="sec">
         <button class="ghost" data-act="goabsent" style="text-align:left">
           歌割の変更 ${changedCount()}件${needCount() ? `　<span style="color:var(--bad)">未決 ${needCount()}</span>` : ""}</button>
@@ -2458,7 +2702,16 @@ ${shows}</div>
         ${song() && !VIEW() ? `<button class="ghost" data-act="dupsong" data-id="${song().id}" style="margin-top:8px">
           テイク${nextTake(song())} を作る</button>
   ` : ""}
-      </div></div>`;
+      </div>
+      ${VIEW() && unreadSongs().length ? `<div class="sec">
+        <button class="ghost" data-act="readall" style="text-align:left;color:var(--accent)">未読 ${unreadSongs().length}曲 をすべて既読にする</button>
+      </div>` : ""}
+      ${S.members.length ? `<div class="sec"><h4>注目するメンバー</h4><div class="chips">
+        <button class="chip sm" data-act="focus" data-id="" style="${!U.focus ? "background:var(--accent);color:#0A0A0A" : ""}">なし</button>
+        ${focusList().map((m) => `<button class="chip sm" data-act="focus" data-id="${m.id}"
+            style="${U.focus === m.id ? "background:#4C9BFF;color:#0A0A0A" : ""}">${h(m.name)}</button>`).join("")}
+      </div></div>` : ""}
+      </div>`;
     document.body.appendChild(overlay);
     return;
   }
@@ -2991,6 +3244,9 @@ function viewSetupRec() {
 
     <h4 class="head">音を確かめる</h4>
     <div class="card">${pianoHTML(null)}</div>
+
+    <h4 class="head">ピッチを見る</h4>
+    ${pitchHTML()}
 
     <h4 class="head">メトロノーム</h4>
     ${metroHTML()}
@@ -3695,6 +3951,9 @@ function viewSetup() {
     <h4 class="head">音を確かめる</h4>
     <div class="card">${pianoHTML(null)}</div>
 
+    <h4 class="head">ピッチを見る</h4>
+    ${pitchHTML()}
+
     <h4 class="head">メトロノーム</h4>
     ${metroHTML()}
 
@@ -3801,8 +4060,8 @@ document.addEventListener("click", (e) => {
 
   switch (a) {
     case "size": S.size = S.size >= 26 ? 15 : S.size + 2; save(); render(); break;
-    case "prev": if (U.songIdx > 0) { commitFields(); U.songIdx--; render(); } break;
-    case "next": if (U.songIdx < SONGS().length - 1) { commitFields(); U.songIdx++; render(); } break;
+    case "prev": if (U.songIdx > 0) { commitFields(); markRead(song()); U.songIdx--; render(); } break;
+    case "next": if (U.songIdx < SONGS().length - 1) { commitFields(); markRead(song()); U.songIdx++; render(); } break;
     case "go-summary": commitFields(); U.view = "summary"; render(); break;
     case "go-setup": commitFields(); U.view = "setup"; render(); break;
     case "go-live": commitFields(); U.view = "live"; render(); break;
@@ -3864,7 +4123,7 @@ document.addEventListener("click", (e) => {
         save(); schedulePush(); render();
       }
       break;
-    case "jump": U.picker = false; U.songIdx = i; render(); break;
+    case "jump": markRead(song()); U.picker = false; U.songIdx = i; render(); break;
     case "dupsong": dupSong(id); break;
     case "picksong": U.pick = U.pick.includes(id) ? U.pick.filter((x) => x !== id) : U.pick.concat(id); render(); break;
     case "pickall": {
@@ -4140,6 +4399,23 @@ document.addEventListener("click", (e) => {
         if (isUnread(list[k2])) { U.songIdx = k2; render(); return; }
       }
       break;
+    }
+    case "ptstart": startPitch(); break;
+    case "ptstop": stopPitch(); break;
+    case "ptreset": PT.notes = []; PT.buf = null; PT.sel = -1; render(); break;
+    case "ptsel": PT.sel = (PT.sel === i ? -1 : i); render(); break;
+    case "ptshift": { const n2 = PT.notes[PT.sel]; if (n2) { n2.shift = Math.max(-24, Math.min(24, n2.shift + Number(id))); render(); } break; }
+    case "ptsnap": { const n2 = PT.notes[PT.sel]; if (n2) { n2.shift = Math.round(n2.m) - n2.m; render(); } break; }
+    case "ptclear": { const n2 = PT.notes[PT.sel]; if (n2) { n2.shift = 0; render(); } break; }
+    case "ptplay": {
+      if (PT.playing) { try { PT.src.stop(); } catch (e) {} PT.playing = false; render(); }
+      else playPitch(null);
+      break;
+    }
+    case "ptplay1": playPitch(PT.sel); break;
+    case "readall": {
+      SONGS().forEach((x) => { S.seen = S.seen || {}; S.seen[seenKey(x)] = noteSig(x); });
+      save(); U.picker = false; renderSheet(); render(); break;
     }
     case "sumopen": U.sumOpen = (U.sumOpen === id ? "" : id); render(); break;
     case "gotrash": U.menu = { kind: "trash" }; renderSheet(); break;
