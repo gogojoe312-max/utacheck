@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "2026-08-05-29";
+const APP_VER = "2026-08-05-30";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -613,10 +613,13 @@ function prevSongOf(so) {
   return pid ? S.songs.find((x) => x.showId === pid && sigOf(x) === sigOf(so) && x.groupId === so.groupId) : null;
 }
 // この曲をもう1回ぶん複製する（歌割りだけ引き継ぎ、記録は空）
-const nextTake = (so) => so
-  ? Math.max(...S.songs.filter((x) => x.showId === so.showId && x.title === so.title && x.groupId === so.groupId)
-      .map((x) => x.take || 1)) + 1
-  : 2;
+const nextTake = (so) => {
+  if (!so) return 2;
+  if (S.recMode) return Number(so.take || 1) + 1;          // レコーディングは曲ごとの通し番号
+  const same = S.songs.filter((x) => x.showId === so.showId && x.title === so.title && x.groupId === so.groupId);
+  if (!same.length) return Number(so.take || 1) + 1;
+  return Math.max.apply(null, same.map((x) => Number(x.take || 1))) + 1;
+};
 
 // この公演の曲を曲名順に並べ替える（数字は数として扱う）
 function sortSongsByTitle() {
@@ -1924,8 +1927,11 @@ function viewLive() {
            <span class="grow" style="font-size:11px;color:var(--dim)">録音</span>`}
   </div>` : "")}
   <div class="bottom">
-    <button data-act="prev" class="${U.songIdx <= 0 ? "off" : ""}">‹</button>
-    <button data-act="next" class="${U.songIdx >= SONGS().length - 1 ? "off" : ""}">›</button>
+    ${S.recMode
+      ? `<button data-act="rtakedn" class="${Number((s || {}).take || 1) <= 1 ? "off" : ""}">‹</button>
+         <button data-act="rtakeup">›</button>`
+      : `<button data-act="prev" class="${U.songIdx <= 0 ? "off" : ""}">‹</button>
+         <button data-act="next" class="${U.songIdx >= SONGS().length - 1 ? "off" : ""}">›</button>`}
     ${VIEW() ? "" : `<button data-act="draw" class="${U.draw ? "on" : ""}">${U.draw ? "✎中" : "✎"}</button>`}
     <button data-act="overview" class="wide">全体</button>
     ${undoStack.length && !VIEW() ? `<button data-act="undo" style="color:var(--accent)">取消</button>` : ""}
@@ -2443,8 +2449,30 @@ function viewSummary() {
   let body = "";
   if (!ns0.length) body = `<p style="padding:40px;text-align:center;color:var(--dim);font-size:14px">この公演の記録はまだありません。</p>`;
   else if (U.mode === "member") {
-    body = S.members.map((m) => {
-      const ns = ns0.filter((n) => n.memberIds.includes(m.id));
+    // 登録した名簿の順（＝年齢順）に並べ、グループごとに見出しを付ける
+    const gorder = S.groups.map((g) => g.name).filter(Boolean);
+    const gnames = Object.keys(S.rosters || {}).filter((k) => (S.rosters[k] || []).length)
+      .sort((a, b) => {
+        const ia = gorder.indexOf(a), ib = gorder.indexOf(b);
+        return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+      });
+    const seen = new Set();
+    const ordered = [];
+    gnames.forEach((gn) => {
+      const list = (S.rosters[gn] || []).map((nm) => S.members.find((m) => m.name === nm)).filter(Boolean);
+      if (list.length) ordered.push({ gn, list });
+      list.forEach((m) => seen.add(m.id));
+    });
+    const rest = S.members.filter((m) => !seen.has(m.id));
+    if (rest.length) ordered.push({ gn: gnames.length ? "その他" : "", list: rest });
+
+    const card = (m) => {
+      const takeOf = (n) => {
+        const so2 = S.songs.find((x) => x.id === n.songId);
+        return so2 ? Number(so2.take || 1) : 1;
+      };
+      const ns = ns0.filter((n) => n.memberIds.includes(m.id))
+        .sort((a, b) => (takeOf(b) - takeOf(a)) || (a.lineIdx - b.lineIdx));
       if (!ns.length) return "";
       const open = U.sumOpen === m.id;
       const counts = TAGS.map((t) => ({ l: t.l, id: t.id, n: ns.filter((x) => x.tags.includes(t.id)).length })).filter((c) => c.n);
@@ -2456,6 +2484,11 @@ function viewSummary() {
         </button>
         ${open ? `<div style="margin-bottom:6px">${counts.map((c) => `<span class="tagpill" style="color:${c.id === "good" ? "var(--good)" : "var(--text)"}">${c.l} ${c.n}</span>`).join("")}</div>
         ${ns.map((n) => detail(n, U.allShows)).join("")}` : ""}</div>`;
+    };
+    body = ordered.map((sec) => {
+      const inner = sec.list.map(card).join("");
+      if (!inner) return "";
+      return `${sec.gn ? `<div style="font-size:11px;color:var(--dim);margin:14px 2px 6px">${h(sec.gn)}</div>` : ""}${inner}`;
     }).join("");
   } else if (U.mode === "song") {
     body = (U.allShows ? S.songs : SONGS()).map((so) => {
@@ -3105,7 +3138,13 @@ function viewPlan() {
   const rosters = {};
   Object.keys(S.rosters || {}).forEach((k) => { if ((S.rosters[k] || []).length) rosters[k] = S.rosters[k]; });
   const used = new Set(S.plan.slots.map((x) => x.name));
-  const memberPick = Object.keys(rosters).map((gn) => `
+  const gorder2 = S.groups.map((g) => g.name).filter(Boolean);
+  const memberPick = Object.keys(rosters)
+    .sort((x, y) => {
+      const ix = gorder2.indexOf(x), iy = gorder2.indexOf(y);
+      return (ix < 0 ? 99 : ix) - (iy < 0 ? 99 : iy);
+    })
+    .map((gn) => `
     <div class="row" style="margin:10px 0 4px">
       <span class="grow" style="font-size:10px;color:var(--dim)">${h(gn)}　${rosters[gn].length}人</span>
       <button data-act="proster" data-id="${h(gn)}" style="font-size:11px;color:var(--dim);padding:2px 6px">直す</button>
@@ -3980,6 +4019,8 @@ document.addEventListener("click", (e) => {
       save(); U.menu = null; renderSheet(); render();
       break;
     }
+    case "rtakeup": { const so = recSong(); if (so) { pushUndo(); so.take = Number(so.take || 1) + 1; save(); render(); } break; }
+    case "rtakedn": { const so = recSong(); if (so) { pushUndo(); so.take = Math.max(1, Number(so.take || 1) - 1); save(); render(); } break; }
     case "sumopen": U.sumOpen = (U.sumOpen === id ? "" : id); render(); break;
     case "gotrash": U.menu = { kind: "trash" }; renderSheet(); break;
     case "trashback": { fromTrash(id); renderSheet(); render(); break; }
