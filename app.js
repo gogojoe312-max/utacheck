@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "2026-08-05-11";
+const APP_VER = "2026-08-05-13";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -71,7 +71,7 @@ let S = {
   src: "", key: "", keyInLink: true,
   memos: {}, recs: {}, kbps: 128, preroll: 5, viewer: false, srcGroup: "",
   draws: {}, showFilter: "", folders: {}, subs: {}, subsMan: {}, subLib: {}, gsubs: {},
-  recMode: false, rsongs: [], rsongId: "", recBars: true, liveShow: "", recEdit: false, rgFilter: "", planMin: 90, rosters: {},
+  recMode: false, rsongs: [], rsongId: "", recBars: true, liveShow: "", recEdit: false, rgFilter: "", planMin: 90, planPrep: 10, rosters: {},
   plan: { start: "10:00", slots: [] },
   size: 19,
 };
@@ -101,6 +101,7 @@ function load() {
   if (!S.rsongs) S.rsongs = [];
   if (!S.plan) S.plan = { start: "10:00", slots: [] };
   if (!S.planMin) S.planMin = 90;
+  if (S.planPrep == null) S.planPrep = 10;
   if (!S.rosters) S.rosters = {};
   if (!S.plan.slots) S.plan.slots = [];
   if (S.recBars == null) S.recBars = true;
@@ -1600,7 +1601,7 @@ function render() {
   renderSheet();
   if (U.view === "live" && !U.overview) setTimeout(paintInk, 0);
   if (U.view === "print" || U.view === "recprint") setTimeout(fitPrintDOM, 0);
-  if (S.recMode) setTimeout(tickPlan, 0);
+  if (S.recMode) setTimeout(() => { tickPlan(); scrollTab(); }, 0);
   // PDFの名前を「公演名 歌チェック」にする
   try {
     document.title = U.view === "recprint" ? ((recSong() || {}).title || "歌詞")
@@ -1680,7 +1681,7 @@ function viewLive() {
       return `${newSec ? `<div class="secdiv" id="sec-${h(l.sec)}"><span>${h(l.sec)}</span></div>` : ""}
       <div class="ln${S.recMode && l.add ? " lnadd" : ""}" style="${tint ? `background:color-mix(in srgb,${tint} ${strength}%,transparent)` : ""}">
         <button class="lbl" data-act="${S.recMode ? "rbar" : (st2 ? "assignline" : "noteblock")}" data-i="${i}"
-          style="${st2 ? `color:${st2 === "need" ? "var(--bad)" : "#F0B23C"}` : ""}">${h(labelOf(s, i))}</button>
+          style="${st2 ? `color:${st2 === "need" ? "var(--bad)" : "#F0B23C"}` : ""}">${S.recMode && l.solo ? `<b class="solomk">ソロ</b>` : ""}${h(labelOf(s, i))}</button>
         <div class="brk ${gp[i]}"></div>
         <div class="grow" style="min-width:0">
           <div class="txt" data-l="${i}" style="font-size:${S.size}px">${cells}</div>${pills}
@@ -1793,7 +1794,7 @@ function viewOverview(s) {
       const newSec = l.sec && l.sec !== (s.lines[i - 1] || {}).sec;
       return `${newSec ? `<div class="secdiv" id="sec-${h(l.sec)}"><span>${h(l.sec)}</span></div>` : ""}
         <button class="ovw${l.add ? " lnadd" : ""}" data-act="jumpline" data-i="${i}">
-          <span class="ovwn">${S.recBars && bars[i] != null ? bars[i] : ""}</span>
+          <span class="ovwn">${l.solo ? `<b class="solomk">ソロ</b>` : ""}${S.recBars && bars[i] != null ? bars[i] : ""}</span>
           <span>${h(l.add ? "（" + l.t + "）" : l.t)}</span></button>`;
     }).join("")}</div>`;
   } else if (useGrid) {
@@ -1950,6 +1951,11 @@ function renderSheet() {
       <div class="row" style="margin-bottom:12px">
         <input class="field grow" id="rbarnum" type="number" inputmode="numeric" placeholder="番号を直接入れる" value="${cur}">
         <button class="chip sm" data-act="rbarnum">決定</button>
+      </div>
+      <div class="row" style="margin-bottom:10px">
+        <span style="font-size:11px;color:var(--dim);width:52px">想定</span>
+        <button class="chip sm grow" data-act="rsolo"
+          style="${(l || {}).solo ? "background:var(--accent);color:#0A0A0A;font-weight:700" : ""}">ソロ想定</button>
       </div>
       <div class="row" style="margin-bottom:10px">
         <span style="font-size:11px;color:var(--dim);width:52px">この行</span>
@@ -2639,10 +2645,10 @@ function recBar() {
   const secs = live ? sectionsOf(live.s) : [];
   const cur = secs.find((x) => x.live);
 
-  const tabs = sectionOrder().map((nm) => {
-    const e = secs.find((x) => x.name === nm);
-    const cls = e && e.live ? "on" : e && e.done ? "dn" : "";
-    return `<button class="sectab ${cls}" data-act="jumpsec" data-id="${h(nm)}">${e && e.done ? "✓" : ""}${h(nm)}${e ? `<i>${e.done ? e.used : e.min}</i>` : ""}</button>`;
+  const tabList = secs.length ? secs : sectionOrder().map((nm) => ({ name: nm }));
+  const tabs = tabList.map((e) => {
+    const cls = e.live ? "on" : e.done ? "dn" : "";
+    return `<button class="sectab ${cls}" id="tab-${h(e.name)}" data-act="jumpsec" data-id="${h(e.name)}">${e.done ? "✓" : ""}${h(e.name)}${e.min != null ? `<i>${e.done ? e.used : e.min}</i>` : ""}</button>`;
   }).join("");
 
   return `${tabs ? `<div class="sectabs">${tabs}</div>` : ""}
@@ -2661,6 +2667,17 @@ function recBar() {
 }
 
 // 秒でカウントダウンする
+// 進行中の区切りのタブを、見える位置まで横に送る
+function scrollTab() {
+  const live = planRows().find((r) => r.live);
+  if (!live || !live.s.secCur) return;
+  const el = document.getElementById("tab-" + live.s.secCur);
+  const box = el && el.parentNode;
+  if (!el || !box) return;
+  const x = (el.offsetLeft || 0) - Math.max(0, ((box.clientWidth || 0) - (el.offsetWidth || 0)) / 2);
+  try { box.scrollTo({ left: Math.max(0, x), behavior: "smooth" }); } catch (e) { box.scrollLeft = Math.max(0, x); }
+}
+
 function fmtLeft(sec) {
   const neg = sec < 0, v = Math.abs(Math.round(sec));
   return (neg ? "−" : "") + Math.floor(v / 60) + ":" + String(v % 60).padStart(2, "0");
@@ -2714,22 +2731,27 @@ const secLineIdx = (nm) => {
   return so.lines.findIndex((l) => !l.gap && l.sec === nm);
 };
 // 区切りごとの持ち時間。既定は均等割り、直した分だけ覚える。
+const PREP = "準備";
 function sectionsOf(slot) {
+  if (!slot) return [];
   const names2 = sectionOrder();
-  if (!names2.length || !slot) return [];
+  const log = slot.secLog || {};
   const adj = slot.sec || {};
+  const prep = adj[PREP] != null ? Number(adj[PREP]) : (slot.prep != null ? Number(slot.prep) : Number(S.planPrep || 0));
+  const budget = Math.max(0, Number(slot.min || 0) - prep);   // 準備の分は配分から抜く
   const fixed = names2.filter((n) => adj[n] != null);
   const fixedSum = fixed.reduce((a, n) => a + Number(adj[n]), 0);
   const rest = names2.length - fixed.length;
-  const each = rest > 0 ? Math.max(1, Math.round((Number(slot.min || 0) - fixedSum) / rest)) : 0;
-  const log = slot.secLog || {};
-  return names2.map((nm) => ({
-    name: nm,
-    min: adj[nm] != null ? Number(adj[nm]) : each,
+  const each = rest > 0 ? Math.max(1, Math.round((budget - fixedSum) / rest)) : 0;
+  const mk = (nm, mi, isPrep) => ({
+    name: nm, min: mi, prep: !!isPrep,
     live: slot.secCur === nm,
     done: log[nm] != null,
     used: log[nm] != null ? Number(log[nm]) : 0,
-  }));
+  });
+  const out = prep > 0 ? [mk(PREP, prep, true)] : [];
+  names2.forEach((nm) => out.push(mk(nm, adj[nm] != null ? Number(adj[nm]) : each)));
+  return out;
 }
 // 録り終わった区切りの、予定と実際の差（−なら巻き）
 function slotGap(slot) {
@@ -2862,6 +2884,10 @@ function viewPlan() {
         <button class="chip sm" data-act="psetdef" data-id="-15">−15</button>
         <b style="min-width:38px;text-align:center">${S.planMin}分</b>
         <button class="chip sm" data-act="psetdef" data-id="15">＋15</button>
+        <span style="font-size:11px;color:var(--dim)">準備</span>
+        <button class="chip sm" data-act="psetprep" data-id="-5">−5</button>
+        <b style="min-width:34px;text-align:center">${S.planPrep}分</b>
+        <button class="chip sm" data-act="psetprep" data-id="5">＋5</button>
       </div>
       <div class="row" style="gap:14px;flex-wrap:wrap">
         <div><div style="font-size:10px;color:var(--dim)">終わり</div>
@@ -2898,7 +2924,7 @@ function viewRecPrint() {
   const bars = barsOf(so);
   const trs = so.lines.map((l, i) => {
     if (l.gap) return `<tr class="prz"><td class="prn"></td><td class="prx"></td></tr>`;
-    return `<tr><td class="prn">${l.sec ? h(l.sec) + " " : ""}${S.recBars ? bars[i] : ""}</td><td class="prx">${h(l.t)}</td></tr>`;
+    return `<tr><td class="prn">${l.solo ? "◆ " : ""}${l.sec ? h(l.sec) + " " : ""}${S.recBars && bars[i] != null ? bars[i] : ""}</td><td class="prx">${h(l.add ? "（" + l.t + "）" : l.t)}</td></tr>`;
   }).join("");
   return `
   <div class="hd noprint"><button class="ic" data-act="recback">‹</button><b>PDF・印刷</b>
@@ -3762,13 +3788,13 @@ document.addEventListener("click", (e) => {
     case "raddline": {
       const so = recSong(); if (!so) break;
       pushUndo();
-      so.lines.splice(U.menu.i + 1, 0, { t: id, add: 1, bars: 0 });
+      so.lines.splice(U.menu.i + 1, 0, { t: id, add: 1, bars: 0, sec: id });
       save(); U.menu = null; renderSheet(); render(); break;
     }
     case "raddfree": {
       const so = recSong(); if (!so) break;
       const v = prompt("足す文字", "");
-      if (v && v.trim()) { pushUndo(); so.lines.splice(U.menu.i + 1, 0, { t: v.trim(), add: 1, bars: 0 }); save(); U.menu = null; renderSheet(); render(); }
+      if (v && v.trim()) { pushUndo(); so.lines.splice(U.menu.i + 1, 0, { t: v.trim(), add: 1, bars: 0, sec: v.trim() }); save(); U.menu = null; renderSheet(); render(); }
       break;
     }
     case "rdelline": {
@@ -3776,6 +3802,13 @@ document.addEventListener("click", (e) => {
       pushUndo();
       so.lines.splice(U.menu.i, 1);
       save(); U.menu = null; renderSheet(); render(); break;
+    }
+    case "rsolo": {
+      const so = recSong(); if (!so) break;
+      pushUndo();
+      const l2 = so.lines[U.menu.i];
+      if (l2.solo) delete l2.solo; else l2.solo = 1;
+      save(); renderSheet(); render(); break;
     }
     case "rsecset": {
       const so = recSong(); if (!so) break;
@@ -3846,7 +3879,7 @@ document.addEventListener("click", (e) => {
       const nn = S.plan.slots[i3 + 1];
       if (nn && nn.a0 == null) {
         nn.a0 = live.s.a1; nn.startAt = Date.now(); nn.secStart = Date.now();
-        const first = sectionOrder()[0];
+        const first = (sectionsOf(nn)[0] || {}).name;
         if (first) nn.secCur = first;
       }
       save(); render(); break;
@@ -3896,6 +3929,10 @@ document.addEventListener("click", (e) => {
       S.plan.slots.push({ id: uid(), name: id, min: S.planMin || 90, kind: "member" });
       save(); render(); break;
     }
+    case "psetprep": {
+      S.planPrep = Math.max(0, Number(S.planPrep || 0) + Number(id));
+      save(); render(); break;
+    }
     case "psetdef": {
       const v = Number(id);
       S.planMin = Math.max(5, (S.planMin || 90) + v);
@@ -3908,7 +3945,7 @@ document.addEventListener("click", (e) => {
       const s2 = S.plan.slots.find((x) => x.id === id);
       if (s2) {
         s2.a0 = nowMin(); delete s2.a1; s2.startAt = Date.now(); s2.secStart = Date.now();
-        s2.secLog = {}; s2.secCur = sectionOrder()[0] || "";
+        s2.secLog = {}; s2.secCur = (sectionsOf(s2)[0] || {}).name || "";
         save(); render();
       }
       break;
