@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "2026-08-05-22";
+const APP_VER = "2026-08-05-27";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -65,7 +65,7 @@ let S = {
   shows: [], showId: "",
   src: "", setlistVer: 0,
   deviceId: "", pubNotes: [],
-  bkGistId: "", bkAt: 0, bkKey: "", bkHash: 0,
+  bkGistId: "", bkAt: 0, bkKey: "", bkHash: 0, bkSeen: 0, editPass: "",
   ghToken: "", autoPub: true,
   groups: [], groupId: "",
   src: "", key: "", keyInLink: true,
@@ -584,7 +584,9 @@ function pushUndo() {
   if (undoStack.length > 40) undoStack.shift();
 }
 let saveErr = false;
+let preview = null;                    // メンバーの見え方を確認中は、手元に保存しない
 function save() {
+  if (preview) return;
   try { localStorage.setItem(KEY, JSON.stringify(S)); saveErr = false; }
   catch (e) { saveErr = true; }
 }
@@ -1390,6 +1392,7 @@ window.addEventListener("unhandledrejection", (e) => {
 
 window.addEventListener("pageshow", () => {
   keepLinkInURL();
+  if (S.ghToken && S.bkGistId) checkOther();
   if (S.src && !S.groups.some((g) => g.gistId)) syncSetlist(false);
 });
 document.addEventListener("pointerdown", keepAwake, true);
@@ -1847,6 +1850,16 @@ function viewLive() {
 
   const noSong = VIEW() && !SONGS().length;
   return `
+  ${preview ? `<div class="noprint" style="padding:10px 12px;background:#1F2E24;color:#8FD9A8;font-size:12px">
+      メンバーの見え方を確認中（手元のデータは変わりません）
+      <button data-act="endpv" style="float:right;color:#8FD9A8;font-weight:700">終わる</button></div>` : ""}
+  ${otherAt ? `<div class="noprint" style="padding:10px 12px;background:#2A2118;color:#F0C089;font-size:12px;line-height:1.7">
+      別の端末で更新されています（${new Date(otherAt).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}）。この端末にも変更があります。
+      <div class="row" style="margin-top:8px">
+        <button class="chip sm" data-act="takeother" style="background:var(--accent);color:#0A0A0A">別の端末の内容にする</button>
+        <button class="chip sm" data-act="keepmine">この端末の内容を送る</button>
+      </div>
+    </div>` : ""}
   ${bootErr ? `<div style="padding:10px 12px;background:#3A2420;color:#FFB4A2;font-size:12px;white-space:pre-wrap">${h(bootErr)}<button data-act="bootok" style="float:right;color:#FFB4A2">✕</button></div>` : ""}
   ${noSong ? `<div style="padding:12px;background:#2A2118;color:#F0C089;font-size:12px;line-height:1.7">
       ${h(syncErr || (S.src ? "まだ受け取れていません。" : "接続リンクから開いてください。"))}
@@ -1861,7 +1874,7 @@ function viewLive() {
       <div class="t1 trunc">${S.recMode
         ? `<b style="color:var(--accent)">レコーディングモード</b>${s && s.grp ? " ・ " + h(s.grp) : ""}`
         : `<b style="color:var(--accent)">ライブモード</b>${s ? " ・ " + h((S.groups.find((x) => x.id === s.groupId) || {}).name || "") : ""} ・ ${h(showName() || "公演名未設定")}`}${SONGS().length ? ` ・ ${U.songIdx + 1}/${SONGS().length}` : ""}${pushState ? ` ・ <span style="color:${pushState === "未送信" ? "var(--bad)" : "var(--dim)"}">${h(pushState)}</span>` : ""}</div>
-      <div class="t2 trunc">${h(s ? songName(s) : "曲がありません")}</div>
+      <div class="t2 trunc">${s && Number(s.take || 1) > 1 ? `<b class="tkmk">T${Number(s.take)}</b>` : ""}${h(s ? s.title : "曲がありません")}</div>
     </button>
     ${S.recMode ? `<span id="pcd2" style="font-size:12px;color:var(--dim);font-variant-numeric:tabular-nums;margin-right:4px"></span>` : ""}
     <button class="ic" data-act="size">A</button>
@@ -2824,6 +2837,7 @@ function viewSetupRec() {
       </div>
       <button class="primary" data-act="bknow" style="margin-bottom:8px">今すぐバックアップ</button>
       <button class="ghost" data-act="bkfile">ファイルに書き出す</button>
+
     </div>
 
     ${(S.trash || []).length ? `<h4 class="head">ゴミ箱</h4>
@@ -2926,11 +2940,6 @@ function sectionOrder() {
   const rest = withKey.filter((v) => !v.k);
   return named.concat(rest).map((v) => v.x);
 }
-const secLineIdx = (nm) => {
-  const so = recSong();
-  if (!so) return -1;
-  return so.lines.findIndex((l) => !l.gap && l.sec === nm);
-};
 // 区切りごとの持ち時間。既定は均等割り、直した分だけ覚える。
 const PREP = "準備";
 const SECDEF = ["1A", "1B", "1C", "2A", "2B", "2C", "D", "落ち", "大サビ", "間奏"];
@@ -3151,52 +3160,6 @@ function viewRecPrint() {
     </div></div></section></div>
     <div class="noprint" style="height:40px"></div>
   </div>`;
-}
-
-/* ---- レコーディング画面 ---- */
-function viewRec() {
-  const so = recSong();
-  if (!so) {
-    return `
-    <div class="hd"><button class="ic" data-act="recoff">‹</button><b>レコーディング</b></div>
-    <div class="scroll pad">
-      <div class="card">
-        <button class="primary" data-act="rpick">歌詞のWordを読み込む（複数可）</button>
-      </div>
-      <p class="note">曲がありません</p>
-    </div>`;
-  }
-  const bars = barsOf(so);
-  const rows = so.lines.map((l, i) => {
-    if (l.gap) return `<div style="height:14px"></div>`;
-    const edited = l.at != null;
-    return `<button class="rline" data-act="rbar" data-i="${i}">
-      ${S.recBars ? `<span class="rnum" style="${edited ? "color:var(--accent);font-weight:700" : ""}">${bars[i]}</span>` : ""}
-      <span class="rtx">${h(l.t)}</span></button>`;
-  }).join("");
-
-  return `
-  <div class="hd">
-    <button class="ic" data-act="recoff">‹</button>
-    <div class="grow" style="min-width:0">
-      <div class="t1 trunc">${h(so.title)}</div>
-      <div class="t2 trunc">${h(so.credit)}</div>
-    </div>
-    <button class="ic" data-act="goplan">進行</button>
-    <button class="ic" data-act="rlist">曲</button>
-  </div>
-  <div class="row" style="padding:8px 12px;border-bottom:1px solid var(--line);gap:8px">
-    <span style="font-size:11px;color:var(--dim)">イントロ</span>
-    <button class="chip sm" data-act="rintro" data-id="-4">−4</button>
-    <button class="chip sm" data-act="rintro" data-id="-1">−1</button>
-    <b style="min-width:34px;text-align:center">${so.intro}</b>
-    <button class="chip sm" data-act="rintro" data-id="1">＋1</button>
-    <button class="chip sm" data-act="rintro" data-id="4">＋4</button>
-    <span class="grow"></span>
-    <button class="chip sm" data-act="rbars" style="${S.recBars ? "background:var(--accent);color:#0A0A0A" : ""}">番号</button>
-    <button class="chip sm" data-act="rpdf">PDF</button>
-  </div>
-  <div class="scroll" style="padding:10px 12px">${rows}<div style="height:40px"></div></div>`;
 }
 
 /* ---- 紙／PDF ---- */
@@ -3541,6 +3504,7 @@ function viewSetup() {
         </div>
         ${g.nopub ? `<div style="font-size:11px;color:var(--dim)">このグループは配信されません</div>` : g.gistId ? `
           <button class="primary" data-act="connectlink" data-id="${g.id}" style="margin-bottom:10px">${h(g.name)} の接続リンクを作る</button>
+          <button class="ghost" data-act="pvnow" data-id="${g.id}" style="margin-bottom:10px">メンバーの見え方を確認</button>
           <div class="row" style="margin-bottom:6px">
             <span style="font-size:11px;color:var(--dim);width:52px">合言葉</span>
             <input class="field grow" id="key-${g.id}" placeholder="未設定（誰でも開けます）" value="${h(g.key || "")}">
@@ -3596,7 +3560,10 @@ function viewSetup() {
         <span style="font-size:11px;color:var(--dim);width:52px">合言葉</span>
         <input class="field grow" id="bkkey" placeholder="未設定（暗号化しません）" value="${h(S.bkKey || "")}">
         <button class="chip sm" data-act="setbkkey">保存</button>
-      </div>
+      
+      <button class="primary" data-act="editlink" style="margin-top:10px">自分用リンクを作る</button>
+      <div style="font-size:11px;color:var(--dim);margin-top:6px">MacやiPadでこのリンクを開き、合言葉を入れれば編集できます。以後は自動で揃います。</div>
+    </div>
       <div style="font-size:11px;color:var(--dim);margin-top:6px">公演・曲・記録・総括・手書きをすべて保存します。録音とトークンは含みません。10分ごとに自動で更新されます。</div>
     </div>
 
@@ -3981,6 +3948,16 @@ document.addEventListener("click", (e) => {
     case "xlsout": exportAbsentXlsx(id); break;
     case "xlsall": exportAllAbsentXlsx(); break;
     case "bootok": bootErr = ""; render(); break;
+    case "endpv": endPreview(); break;
+    case "takeother": takeOther(); break;
+    case "keepmine": { otherAt = 0; S.bkSeen = Date.now(); doBackup(true); render(); break; }
+    case "editlink": editLink(); break;
+    case "pvnow": {
+      const g = group(id) || group(S.groupId);
+      if (!g || !g.src) { alert("先にこのグループの自動公開を始めてください。"); break; }
+      startPreview(g.src, g.key || "");
+      break;
+    }
     case "synow": syncSetlist(true); break;
     case "mylink": {
       const u = myLink();
@@ -4398,13 +4375,6 @@ document.addEventListener("click", (e) => {
       break;
     }
     case "folder": S.folders[id] = !(S.folders[id] === true); save(); render(); break;
-    case "showfolder": {
-      const sw = S.shows.find((x) => x.id === id);
-      if (!sw) break;
-      const nm = prompt("フォルダ名（空にすると外に出ます）", sw.folder || "");
-      if (nm != null) { sw.folder = nm.trim(); save(); render(); }
-      break;
-    }
     case "showfilter": {
       S.showFilter = id;
       // 絞り込みの対象外の公演を開いていたら、対象の中で一番新しいものに移る
@@ -4443,20 +4413,6 @@ document.addEventListener("click", (e) => {
       const g = group(id);
       const nm = prompt("グループ名", g.name);
       if (nm != null && nm.trim()) { g.name = nm.trim(); save(); render(); }
-      break;
-    }
-    case "delgroup": {
-      if (S.groups.length <= 1) { alert("グループは1つ以上必要です。"); break; }
-      const g = group(id);
-      const cnt = S.songs.filter((x) => x.groupId === id).length;
-      if (confirm(`「${g.name}」を削除しますか？\nこのグループの ${cnt}曲 と、その記録も消えます。\nGist自体はGitHub側に残るので、不要なら別途削除してください。`)) {
-        S.songs.filter((x) => x.groupId === id).forEach((x) => delClip("xls:" + x.id));
-        S.songs = S.songs.filter((x) => x.groupId !== id);
-        S.groups = S.groups.filter((x) => x.id !== id);
-        sweep();
-        if (S.groupId === id) S.groupId = S.groups[0].id;
-        save(); render();
-      }
       break;
     }
     case "addshow": {
@@ -5150,7 +5106,7 @@ function schedulePush() {
   if (!S.ghToken || !S.autoPub || !S.groups.some((g) => g.gistId)) return;
   pushState = "未送信";
   clearTimeout(pushTimer);
-  const wait = Math.max(30000 - (Date.now() - lastPushAt), 8000);
+  const wait = Math.max(12000 - (Date.now() - lastPushAt), 4000);
   pushTimer = setTimeout(() => doPush(true), wait);
 }
 
@@ -5216,15 +5172,21 @@ function hasPending() {
 
 // アプリを開いている間、1分ごとに自動でやりとりする
 setInterval(() => {
-  if (document.hidden) return;
+  if (document.hidden || preview) return;
   if (S.ghToken && S.groups.some((g) => g.gistId)) {
     if (hasPending()) doPush(true);
   } else if (S.src) {
+    if (syncBackoff && Date.now() < syncBackoff) return;
     syncSetlist(false);
   }
-  // 変わっていて、前回から10分たっていれば自動でバックアップ
-  if (S.ghToken && Date.now() - (S.bkAt || 0) > 600000 && bkSignature() !== S.bkHash) doBackup(true);
-}, 60000);
+}, 15000);
+
+setInterval(() => {
+  if (document.hidden || preview) return;
+  // 変わっていれば送る（別の端末とすぐ揃うように）
+  if (S.ghToken && bkSignature() !== S.bkHash && Date.now() - (S.bkAt || 0) > 20000) doBackup(true);
+  else checkOther();
+}, 30000);
 
 /* ---- バックアップ ---- */
 const hash32 = (str) => { let h = 0; for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) | 0; return h; };
@@ -5250,7 +5212,7 @@ function backupState() {
 // 署名に自分の値（前回時刻・前回署名）が混ざると毎回変わるので外す
 const bkSignature = () => {
   const c = backupState();
-  delete c.bkAt; delete c.bkHash;
+  delete c.bkAt; delete c.bkHash; delete c.bkSeen; delete c.editPass;
   return hash32(JSON.stringify(c));
 };
 
@@ -5288,6 +5250,7 @@ async function doBackup(silent) {
       S.bkGistId = g.id;
     }
     S.bkAt = Date.now();
+    S.bkSeen = S.bkAt;
     S.bkHash = bkSignature();
     save();
     if (!silent) { alert("バックアップしました。"); render(); }
@@ -5296,7 +5259,7 @@ async function doBackup(silent) {
   }
 }
 
-async function restoreBackup() {
+async function restoreBackup(silent) {
   if (!S.ghToken || !S.bkGistId) { alert("バックアップがありません。"); return; }
   try {
     const g = await gh("/gists/" + S.bkGistId);
@@ -5305,13 +5268,15 @@ async function restoreBackup() {
     const obj = await unpackBackup(JSON.parse(f.content));
     const st = obj.state || {};
     const when = new Date(obj.at || 0).toLocaleString("ja-JP");
-    if (!confirm(`${when} のバックアップから戻します。\n公演${(st.shows || []).length}件・曲${(st.songs || []).length}件・記録${(st.notes || []).length}件\n\n今この端末にある内容は置き換わります。よろしいですか？`)) return;
-    const tk = S.ghToken;
+    if (!silent && !confirm(`${when} のバックアップから戻します。\n公演${(st.shows || []).length}件・曲${(st.songs || []).length}件・記録${(st.notes || []).length}件\n\n今この端末にある内容は置き換わります。よろしいですか？`)) return;
+    const tk = S.ghToken, bk = S.bkGistId, bkk = S.bkKey;
     Object.keys(S).forEach((k) => { delete S[k]; });
     Object.assign(S, st);
-    S.ghToken = tk;
+    S.ghToken = tk; S.bkGistId = bk; if (bkk) S.bkKey = bkk;
     save();
-    alert("戻しました。");
+    alert(silent
+      ? `${when} の内容を取り込みました。\nこの端末でも編集できます。\n\n※ 同時に2台で書き換えると、あとから送った方で上書きされます。`
+      : "戻しました。");
     location.reload();
   } catch (e) {
     alert("戻せませんでした。\n" + e.message);
@@ -5333,7 +5298,7 @@ async function backupToFile() {
 /* ---- 受け取り：配信されたものを取り込む ---- */
 const srcUrl = () => S.src || "./setlist.json";
 
-let syncErr = "", syncAt = 0;
+let syncErr = "", syncAt = 0, syncBackoff = 0;
 async function fetchSetlist() {
   const u = srcUrl();
   if (!u) { syncErr = "つなぎ先がありません。接続リンクを開き直してください。"; return null; }
@@ -5341,6 +5306,7 @@ async function fetchSetlist() {
   try {
     const r = await fetch(url, { cache: "no-store" });
     if (!r.ok) {
+      if (r.status === 403 || r.status === 429) syncBackoff = Date.now() + 120000;
       syncErr = r.status === 404
         ? "配信元が見つかりません（404）。リンクが古いかもしれません。"
         : r.status === 403 ? "取得を断られました（403）。少し待つと直ることがあります。"
@@ -5354,7 +5320,7 @@ async function fetchSetlist() {
       try { d = await openJSON(d, S.key); } catch (e) { syncErr = "合言葉が違います。"; return "badkey"; }
     }
     if (!(d && Array.isArray(d.songs))) { syncErr = "配信の中身が空です。配信元で「今すぐ送信」を押してもらってください。"; return null; }
-    syncErr = ""; syncAt = Date.now();
+    syncErr = ""; syncAt = Date.now(); syncBackoff = 0;
     return d;
   } catch (e) {
     syncErr = "通信できませんでした。電波とネットワークの制限を確認してください。";
@@ -5524,6 +5490,106 @@ function keepLinkInURL() {
   } catch (e) { /* 付けられなくても動く */ }
 }
 
+// メンバーの見え方を確かめる。手元のデータには一切触らない。
+async function startPreview(src, key) {
+  if (preview) return;
+  preview = JSON.stringify(S);
+  const keep = { src: S.src, key: S.key };
+  S.src = src; S.key = key || "";
+  const d = await fetchSetlist();
+  if (!d || typeof d === "string" || !d.songs || !d.songs.length) {
+    S.src = keep.src; S.key = keep.key;
+    preview = null;
+    alert(syncErr || "配信の中身を受け取れませんでした。");
+    render();
+    return;
+  }
+  S.groups = [{ id: uid(), name: d.groupName || "", gistId: "", src, key: key || "" }];
+  S.groupId = S.groups[0].id;
+  S.songs = []; S.notes = []; S.pubNotes = []; S.memos = {}; S.shows = []; S.members = [];
+  S.subs = {}; S.subsMan = {}; S.gsubs = {}; S.draws = {}; S.recs = {};
+  S.viewer = true; S.recMode = false;
+  applySetlist(d);
+  U.view = "live"; U.songIdx = 0;
+  render();
+}
+function endPreview() {
+  if (!preview) return;
+  const back = JSON.parse(preview);
+  preview = null;
+  Object.keys(S).forEach((k) => { delete S[k]; });
+  Object.assign(S, back);
+  U.view = "setup"; U.songIdx = 0;
+  render();
+}
+
+// 別の端末で更新されていないか見に行く。
+// 手元に変更が無ければそのまま取り込み、両方変わっていれば選んでもらう。
+let otherAt = 0, syncing = false;
+async function checkOther() {
+  if (syncing || preview) return;
+  if (!S.ghToken || !S.bkGistId) return;
+  syncing = true;
+  try {
+    const g = await gh("/gists/" + S.bkGistId);
+    const f = g.files && g.files["utacheck-backup.json"];
+    if (!f) return;
+    const obj = await unpackBackup(JSON.parse(f.content));
+    const at = Number(obj.at || 0);
+    if (at <= (S.bkSeen || 0)) { otherAt = 0; return; }
+    const dirty = bkSignature() !== S.bkHash;
+    if (!dirty) {
+      const tk = S.ghToken, bk = S.bkGistId, bkk = S.bkKey, ep = S.editPass;
+      Object.keys(S).forEach((k) => { delete S[k]; });
+      Object.assign(S, obj.state || {});
+      S.ghToken = tk; S.bkGistId = bk; S.bkKey = bkk; S.editPass = ep;
+      S.bkSeen = at; S.bkAt = at; S.bkHash = bkSignature();
+      save(); otherAt = 0; render();
+      return;
+    }
+    otherAt = at;
+    render();
+  } catch (e) { /* 取れない時は次の機会に */ }
+  finally { syncing = false; }
+}
+async function takeOther() {
+  S.bkHash = bkSignature();
+  S.bkSeen = 0;
+  otherAt = 0;
+  await checkOther();
+}
+
+/* ---- 自分用リンク：合言葉を入れれば、どの端末でも編集できる ---- */
+async function editLink() {
+  if (!S.ghToken) { alert("先にGitHubのトークンを入れてください。"); return; }
+  if (!S.bkGistId) { await doBackup(true); }
+  if (!S.bkGistId) { alert("先に「今すぐバックアップ」を押してください。"); return; }
+  const pass = prompt("この端末用の合言葉を決めてください。\nリンクを開いた時にこれを聞かれます。", S.editPass || "");
+  if (!pass || !pass.trim()) return;
+  S.editPass = pass.trim(); save();
+  const sealed = await sealJSON({ t: S.ghToken, b: S.bkGistId, k: S.bkKey || "" }, pass.trim());
+  const url = location.origin + location.pathname + "#e=" +
+    b64e(new TextEncoder().encode(JSON.stringify(sealed)));
+  copyText(url, "自分用のリンクをコピーしました。\n\nMacやiPadで開いて、合言葉を入れれば編集できます。\n合言葉：" + pass.trim() + "\n\n※ 人には渡さないでください。");
+}
+
+async function openEditLink(raw) {
+  let sealed;
+  try { sealed = JSON.parse(new TextDecoder().decode(b64d(raw))); } catch (e) { alert("リンクを読めませんでした。"); return; }
+  for (let i = 0; i < 3; i++) {
+    const pass = prompt(i ? "合言葉が違います。もう一度入れてください。" : "合言葉を入れてください。", "");
+    if (!pass) return;
+    try {
+      const o = await openJSON(sealed, pass.trim());
+      if (!o.t || !o.b) throw new Error("形式");
+      S.ghToken = o.t; S.bkGistId = o.b; S.bkKey = o.k || ""; S.editPass = pass.trim();
+      save();
+      await restoreBackup(true);
+      return;
+    } catch (e) { /* もう一度 */ }
+  }
+}
+
 function myLink() {
   if (!S.linkSrc) return "";
   return location.origin + location.pathname + "#g=" +
@@ -5531,6 +5597,8 @@ function myLink() {
 }
 
 async function importFromLink() {
+  const e = location.hash.match(/^#e=(.+)$/);
+  if (e) { await openEditLink(e[1]); return; }
   const g = location.hash.match(/^#g=(.+)$/);
   if (!g) return;
   // URLから消さない。消すと「Safariで開く」に接続情報が渡らない。
@@ -5545,6 +5613,13 @@ async function importFromLink() {
       if (key && !S.key) { S.key = key; save(); }
       keepLinkInURL();
       await syncSetlist(false);
+      return;
+    }
+    if (S.groups.some((x) => x.gistId)) {
+      // この端末は配信元。手元を壊さないよう、確認モードで開く。
+      if (confirm("この端末は配信元です。\nメンバーの見え方を確かめますか？\n\n手元のデータは変わりません。")) {
+        await startPreview(src, key);
+      }
       return;
     }
     const changed = S.linkSrc && S.linkSrc !== src;
