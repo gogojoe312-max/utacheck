@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "2026-08-05-36";
+const APP_VER = "2026-08-05-38";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -71,7 +71,7 @@ let S = {
   src: "", key: "", keyInLink: true,
   memos: {}, recs: {}, kbps: 128, preroll: 5, viewer: false, srcGroup: "",
   draws: {}, showFilter: "", folders: {}, subs: {}, subsMan: {}, subLib: {}, gsubs: {},
-  recMode: false, recOvSize: 14, rsongs: [], rsongId: "", recBars: true, liveShow: "", recEdit: false, rgFilter: "", linkSrc: "", groupOrder: [], planMin: 90, planPrep: 10, rosters: {}, secWords: [], trash: [],
+  recMode: false, recOvSize: 14, rsongs: [], rsongId: "", recBars: true, liveShow: "", recEdit: false, rgFilter: "", linkSrc: "", groupOrder: [], pubAt: 0, syncAt: 0, seen: {}, planMin: 90, planPrep: 10, rosters: {}, secWords: [], trash: [],
   plan: { start: "10:00", slots: [] },
   size: 19,
 };
@@ -126,6 +126,7 @@ function migrate() {
   if (!S.trash) S.trash = [];
   purgeTrash();
   if (!S.rosters) S.rosters = {};
+  if (!S.seen) S.seen = {};
   if (!S.plan.slots) S.plan.slots = [];
   if (S.recBars == null) S.recBars = true;
   // 古いデータにも、その曲に出てくる人の名簿を持たせる
@@ -289,6 +290,44 @@ function splitAssign(so, i) {
     main: toExtra ? keepMain : keepMain.concat(added),
     extra: toExtra ? keepExtra.concat(added) : keepExtra,
   };
+}
+
+// その曲の指摘の中身をひとまとめにした印。変わったかどうかの判定に使う。
+function noteSig(so) {
+  if (!so) return 0;
+  const ns = NOTES().filter((n) => n.songId === so.id)
+    .map((n) => [n.lineIdx, n.lineEnd, n.from, n.to, (n.tags || []).join(","), n.memo, n.pitch,
+      (n.memberIds || []).map((m) => (member(m) || {}).name).sort().join("・")].join(":"))
+    .sort().join("|");
+  return hash32(ns + "//" + (songMemo(so.id) || ""));
+}
+const seenKey = (so) => so ? (so.showId + "|" + so.title + "|" + (so.take || 1)) : "";
+const isUnread = (so) => VIEW() && so && noteSig(so) !== (S.seen || {})[seenKey(so)];
+const unreadSongs = () => (VIEW() ? SONGS().filter(isUnread) : []);
+function markRead(so) {
+  if (!VIEW() || !so) return;
+  const k = seenKey(so), sig = noteSig(so);
+  if ((S.seen || {})[k] === sig) return;
+  S.seen = S.seen || {};
+  S.seen[k] = sig;
+  // もう無い曲の分は捨てる
+  const alive = SONGS().map(seenKey);
+  Object.keys(S.seen).forEach((x) => { if (!alive.includes(x)) delete S.seen[x]; });
+  save();
+}
+
+// メンバーが「最新を見ているか」を一目で分かるようにする
+function freshLine() {
+  if (!VIEW() || !S.pubAt) return "";
+  const when = new Date(S.pubAt);
+  const stamp = `${when.getMonth() + 1}/${when.getDate()} ${String(when.getHours()).padStart(2, "0")}:${String(when.getMinutes()).padStart(2, "0")}`;
+  const last = S.syncAt || syncAt || 0;
+  const late = last ? Math.floor((Date.now() - last) / 60000) : 999;
+  const un = unreadSongs().length;
+  const stale = late >= 3 ? `<span style="color:var(--bad)">　${late > 60 ? "1時間以上" : late + "分"}前から未接続</span>` : "";
+  return un
+    ? `<span style="color:var(--accent);font-weight:700">未読 ${un}曲</span><span style="color:var(--dim)">　${stamp} の歌割</span>${stale}`
+    : `<span style="color:var(--good)">すべて確認済み</span><span style="color:var(--dim)">　${stamp} の歌割</span>${stale}`;
 }
 
 function labelOf(so, i) {
@@ -580,6 +619,7 @@ const songMemo = (songId) => (S.memos || {})[memoKey(songId)] || "";
 const shownNotes = () => (U.allShows ? NOTES() : NOTES().filter((n) => n.showId === S.showId));
 let pushTimer = null, pushState = "";
 let undoStack = [];
+let readTimer = null;
 function pushUndo() {
   undoStack.push(JSON.stringify({ notes: S.notes, rsongs: S.rsongs, plan: S.plan }));
   if (undoStack.length > 40) undoStack.shift();
@@ -1800,6 +1840,13 @@ function render() {
   if (U.view === "live" && !U.overview) setTimeout(paintInk, 0);
   if (U.view === "print" || U.view === "recprint") setTimeout(fitPrintDOM, 0);
   if (S.recMode) setTimeout(() => { tickPlan(); scrollTab(); }, 0);
+  if (VIEW() && U.view === "live" && !U.overview) {
+    const cur = song();
+    clearTimeout(readTimer);
+    if (cur && isUnread(cur)) readTimer = setTimeout(() => {
+      if (U.view === "live" && !U.overview && song() && song().id === cur.id) { markRead(cur); render(); }
+    }, 1500);
+  }
   // PDFの名前を「公演名 歌チェック」にする
   try {
     document.title = U.view === "recprint" ? ((recSong() || {}).title || "歌詞")
@@ -1913,6 +1960,7 @@ function viewLive() {
       <div class="t1 trunc">${S.recMode
         ? `<b style="color:var(--accent)">レコーディングモード</b>${s && s.grp ? " ・ " + h(s.grp) : ""}`
         : `<b style="color:var(--accent)">ライブモード</b>${s ? " ・ " + h((S.groups.find((x) => x.id === s.groupId) || {}).name || "") : ""} ・ ${h(showName() || "公演名未設定")}`}${SONGS().length ? ` ・ ${U.songIdx + 1}/${SONGS().length}` : ""}${pushState ? ` ・ <span style="color:${pushState === "未送信" ? "var(--bad)" : "var(--dim)"}">${h(pushState)}</span>` : ""}</div>
+      ${VIEW() && S.pubAt ? `<div style="font-size:10px;line-height:1.4">${freshLine()}</div>` : ""}
       <div class="t2 trunc">${s && (S.recMode || Number(s.take || 1) > 1) ? `<b class="tkmk">テイク${Number(s.take || 1)}</b>` : ""}${h(s ? s.title : "曲がありません")}</div>
     </button>
     ${S.recMode ? `<span id="pcd2" style="font-size:12px;color:var(--dim);font-variant-numeric:tabular-nums;margin-right:4px"></span>` : ""}
@@ -1969,6 +2017,7 @@ function viewLive() {
       : `<button data-act="prev" class="${U.songIdx <= 0 ? "off" : ""}">‹</button>
          <button data-act="next" class="${U.songIdx >= SONGS().length - 1 ? "off" : ""}">›</button>`}
     ${VIEW() ? "" : `<button data-act="draw" class="${U.draw ? "on" : ""}">${U.draw ? "✎中" : "✎"}</button>`}
+    ${VIEW() && unreadSongs().length ? `<button data-act="nextunread" style="color:var(--accent);font-weight:700">未読${unreadSongs().length}</button>` : ""}
     <button data-act="overview" class="wide">全体</button>
     ${undoStack.length && !VIEW() ? `<button data-act="undo" style="color:var(--accent)">取消</button>` : ""}
     ${S.recMode ? "" : `<button data-act="go-summary">集計</button>`}
@@ -2382,7 +2431,7 @@ function renderSheet() {
       const cnt = NOTES().filter((n) => n.songId === x.id && n.showId === S.showId).length;
       return `<button class="ghost" data-act="jump" data-i="${i}"
         style="text-align:left;margin-bottom:6px;${i === U.songIdx ? "background:var(--accent);color:#0A0A0A" : ""}">
-        <span style="opacity:.6">${i + 1}.</span> ${h(songName(x))}
+        <span style="opacity:.6">${i + 1}.</span> ${isUnread(x) ? `<b class="newmk">新</b>` : ""}${h(songName(x))}
         <span style="font-size:11px;opacity:.7">　${h(gn)}${cnt ? " ・ " + cnt + "件" : ""}</span></button>`;
     }).join("") || `<p class="note">曲がありません</p>`;
     overlay = document.createElement("div");
@@ -4084,6 +4133,14 @@ document.addEventListener("click", (e) => {
     }
     case "rtakeup": { const so = recSong(); if (so) { pushUndo(); so.take = Number(so.take || 1) + 1; save(); render(); } break; }
     case "rtakedn": { const so = recSong(); if (so) { pushUndo(); so.take = Math.max(1, Number(so.take || 1) - 1); save(); render(); } break; }
+    case "nextunread": {
+      const list = SONGS();
+      for (let n2 = 1; n2 <= list.length; n2++) {
+        const k2 = (U.songIdx + n2) % list.length;
+        if (isUnread(list[k2])) { U.songIdx = k2; render(); return; }
+      }
+      break;
+    }
     case "sumopen": U.sumOpen = (U.sumOpen === id ? "" : id); render(); break;
     case "gotrash": U.menu = { kind: "trash" }; renderSheet(); break;
     case "trashback": { fromTrash(id); renderSheet(); render(); break; }
@@ -5290,6 +5347,11 @@ setInterval(() => {
 
 setInterval(() => {
   if (document.hidden || preview) return;
+  if (VIEW() && S.pubAt && U.view === "live") render();     // 「◯分前」の表示を進める
+}, 60000);
+
+setInterval(() => {
+  if (document.hidden || preview) return;
   // 変わっていれば送る（別の端末とすぐ揃うように）
   if (S.ghToken && bkSignature() !== S.bkHash && Date.now() - (S.bkAt || 0) > 20000) doBackup(true);
   else checkOther();
@@ -5405,7 +5467,7 @@ async function backupToFile() {
 /* ---- 受け取り：配信されたものを取り込む ---- */
 const srcUrl = () => S.src || "./setlist.json";
 
-let syncErr = "", syncAt = 0, syncBackoff = 0;
+let syncErr = "", syncAt = 0, syncBackoff = 0, justUpdated = 0;
 async function fetchSetlist() {
   const u = srcUrl();
   if (!u) { syncErr = "つなぎ先がありません。接続リンクを開き直してください。"; return null; }
@@ -5427,7 +5489,7 @@ async function fetchSetlist() {
       try { d = await openJSON(d, S.key); } catch (e) { syncErr = "合言葉が違います。"; return "badkey"; }
     }
     if (!(d && Array.isArray(d.songs))) { syncErr = "配信の中身が空です。配信元で「今すぐ送信」を押してもらってください。"; return null; }
-    syncErr = ""; syncAt = Date.now(); syncBackoff = 0;
+    syncErr = ""; syncAt = Date.now(); S.syncAt = syncAt; syncBackoff = 0;
     return d;
   } catch (e) {
     syncErr = "通信できませんでした。電波とネットワークの制限を確認してください。";
@@ -5449,6 +5511,10 @@ function applySetlist(d) {
   if (!S.groups.some((g) => g.gistId)) { S.songs = []; S.memos = {}; S.pubNotes = []; }
   S.songs = [];
   (d.members || []).forEach((x) => addMember(x.name));
+  if (d.version) {
+    if (S.pubAt && d.version !== S.pubAt) justUpdated = Date.now();   // 中身が変わった合図
+    S.pubAt = d.version;
+  }
   if (d.rosters && Object.keys(d.rosters).length) S.rosters = d.rosters;
   if (d.groupOrder && d.groupOrder.length) S.groupOrder = d.groupOrder;
   // 受け取った名簿に、その曲に出てこない人が混ざっていたら削る（古い配信への備え）
