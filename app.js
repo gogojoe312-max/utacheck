@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "2026-08-05-27";
+const APP_VER = "2026-08-05-28";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -5506,6 +5506,8 @@ async function startPreview(src, key) {
   }
   S.groups = [{ id: uid(), name: d.groupName || "", gistId: "", src, key: key || "" }];
   S.groupId = S.groups[0].id;
+  // 端末IDを変えておく。同じままだと「自分が書いたもの」と見なして記録が取り込まれない。
+  S.deviceId = "preview-" + uid();
   S.songs = []; S.notes = []; S.pubNotes = []; S.memos = {}; S.shows = []; S.members = [];
   S.subs = {}; S.subsMan = {}; S.gsubs = {}; S.draws = {}; S.recs = {};
   S.viewer = true; S.recMode = false;
