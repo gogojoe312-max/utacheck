@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "2026-08-05-28";
+const APP_VER = "2026-08-05-29";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -75,7 +75,7 @@ let S = {
   plan: { start: "10:00", slots: [] },
   size: 19,
 };
-let U = { view: "live", songIdx: 0, sheet: null, mode: "member", allShows: false, picker: false, overview: false, ovSize: 9, recPick: null, draw: false, erase: false, pick: [], menu: null, printPick: null, focus: "", busy: "", allShowList: false };
+let U = { view: "live", songIdx: 0, sheet: null, mode: "member", allShows: false, picker: false, overview: false, ovSize: 9, recPick: null, sumOpen: "", draw: false, erase: false, pick: [], menu: null, printPick: null, focus: "", busy: "", allShowList: false };
 
 const S0 = JSON.parse(JSON.stringify(S));
 
@@ -595,7 +595,7 @@ const REC_SHOW = "rec";
 const SONGS = () => (S.recMode
   ? S.rsongs.filter((x) => !S.rgFilter || (x.grp || "") === S.rgFilter)
   : S.songs.filter((x) => x.showId === S.showId));
-const songName = (x) => x ? (x.title + ((x.take || 1) > 1 ? `　テイク${x.take}` : "")) : "";
+const songName = (x) => x ? (((x.take || 1) > 1 ? `テイク${x.take}　` : "") + x.title) : "";
 function ancestorsOf(so) {
   const out = []; let cur = so;
   while (cur && cur.from) {
@@ -1874,7 +1874,7 @@ function viewLive() {
       <div class="t1 trunc">${S.recMode
         ? `<b style="color:var(--accent)">レコーディングモード</b>${s && s.grp ? " ・ " + h(s.grp) : ""}`
         : `<b style="color:var(--accent)">ライブモード</b>${s ? " ・ " + h((S.groups.find((x) => x.id === s.groupId) || {}).name || "") : ""} ・ ${h(showName() || "公演名未設定")}`}${SONGS().length ? ` ・ ${U.songIdx + 1}/${SONGS().length}` : ""}${pushState ? ` ・ <span style="color:${pushState === "未送信" ? "var(--bad)" : "var(--dim)"}">${h(pushState)}</span>` : ""}</div>
-      <div class="t2 trunc">${s && Number(s.take || 1) > 1 ? `<b class="tkmk">T${Number(s.take)}</b>` : ""}${h(s ? s.title : "曲がありません")}</div>
+      <div class="t2 trunc">${s && Number(s.take || 1) > 1 ? `<b class="tkmk">テイク${Number(s.take)}</b>` : ""}${h(s ? s.title : "曲がありません")}</div>
     </button>
     ${S.recMode ? `<span id="pcd2" style="font-size:12px;color:var(--dim);font-variant-numeric:tabular-nums;margin-right:4px"></span>` : ""}
     <button class="ic" data-act="size">A</button>
@@ -2090,6 +2090,33 @@ function renderSheet() {
         <button class="chip sm" data-act="psetv">決定</button>
       </div>
       <button class="ghost" data-act="pdel" style="color:var(--bad)">この枠を消す</button>
+    </div>`;
+    document.body.appendChild(overlay);
+    return;
+  }
+
+  if (U.menu && U.menu.kind === "gmenu") {
+    const g = group(U.menu.id) || {};
+    const B2 = (a, t2, st) => `<button class="ghost" data-act="${a}" data-id="${g.id}" style="text-align:left;margin-bottom:8px;${st || ""}">${t2}</button>`;
+    overlay = document.createElement("div");
+    overlay.className = "mask";
+    overlay.innerHTML = `<button class="sp" data-act="closemenu"></button><div class="sheet">
+      <div class="row" style="margin-bottom:12px"><span class="grow trunc" style="font-size:13px">${h(g.name || "")}</span>
+      <button data-act="closemenu" style="width:36px;height:36px;border-radius:10px;background:var(--panel2);font-size:17px">✕</button></div>
+      ${B2("renamegroup", "名前を変える")}
+      ${g.nopub ? `<div style="font-size:12px;color:var(--dim);padding:6px 2px">このグループは配信されません</div>`
+        : g.gistId ? `
+        ${B2("connectlink", "接続リンクを作る", "background:var(--accent);color:#0A0A0A;font-weight:700")}
+        ${B2("pvnow", "メンバーの見え方を確認")}
+        <div class="row" style="margin:10px 0 6px">
+          <span style="font-size:11px;color:var(--dim);width:52px">合言葉</span>
+          <input class="field grow" id="key-${g.id}" placeholder="未設定（誰でも開けます）" value="${h(g.key || "")}">
+          <button class="chip sm" data-act="setkey" data-id="${g.id}">保存</button>
+        </div>
+        <div style="font-size:11px;color:${g.key ? "var(--good)" : "var(--bad)"};margin-bottom:8px">${g.key ? "合言葉を入れないと開けません" : "リンクを知っていれば誰でも開けます"}</div>`
+        : (S.ghToken ? B2("ghstart", "自動公開を始める", "background:var(--accent);color:#0A0A0A;font-weight:700")
+                     : `<div style="font-size:12px;color:var(--dim);padding:6px 2px">先にGitHubのトークンを入れてください。</div>`)}
+      ${B2("nopubtoggle", g.nopub ? "配信するようにする" : "配信しないようにする", "color:var(--dim)")}
     </div>`;
     document.body.appendChild(overlay);
     return;
@@ -2419,12 +2446,16 @@ function viewSummary() {
     body = S.members.map((m) => {
       const ns = ns0.filter((n) => n.memberIds.includes(m.id));
       if (!ns.length) return "";
+      const open = U.sumOpen === m.id;
       const counts = TAGS.map((t) => ({ l: t.l, id: t.id, n: ns.filter((x) => x.tags.includes(t.id)).length })).filter((c) => c.n);
-      return `<div class="card">
-        <div class="row" style="margin-bottom:8px"><b class="grow">${h(m.name)}</b>
-          <span style="color:var(--dim);font-size:13px">${ns.length}件</span></div>
-        <div>${counts.map((c) => `<span class="tagpill" style="color:${c.id === "good" ? "var(--good)" : "var(--text)"}">${c.l} ${c.n}</span>`).join("")}</div>
-        ${ns.map((n) => detail(n, U.allShows)).join("")}</div>`;
+      return `<div class="card" style="padding:${open ? "12px" : "2px 12px"};margin-bottom:6px">
+        <button class="row" style="width:100%;padding:10px 0" data-act="sumopen" data-id="${m.id}">
+          <b class="grow" style="text-align:left;${open ? "color:var(--accent)" : ""}">${h(m.name)}</b>
+          <span style="color:var(--dim);font-size:13px">${ns.length}件</span>
+          <span style="color:var(--dim);font-size:12px;margin-left:10px">${open ? "▾" : "▸"}</span>
+        </button>
+        ${open ? `<div style="margin-bottom:6px">${counts.map((c) => `<span class="tagpill" style="color:${c.id === "good" ? "var(--good)" : "var(--text)"}">${c.l} ${c.n}</span>`).join("")}</div>
+        ${ns.map((n) => detail(n, U.allShows)).join("")}` : ""}</div>`;
     }).join("");
   } else if (U.mode === "song") {
     body = (U.allShows ? S.songs : SONGS()).map((so) => {
@@ -3395,11 +3426,7 @@ function viewSetup() {
       <span class="grow"></span>
       <span style="font-size:11px;color:var(--accent)">ライブモード</span></div>
     <div class="scroll pad"><div style="height:6px"></div>${list}
-    ${S.linkSrc ? `<h4 class="head">このアプリのリンク</h4>
-    <div class="card">
-      <button class="primary" data-act="mylink">リンクをコピー</button>
-      <div style="font-size:11px;color:var(--dim);margin-top:8px">別のブラウザやパソコンに貼れば、そちらでも同じ内容が見られます。</div>
-    </div>` : ""}
+
     <h4 class="head">音を確かめる</h4>
     <div class="card">${pianoHTML(null)}</div>
     <h4 class="head">メトロノーム</h4>
@@ -3467,7 +3494,7 @@ function viewSetup() {
     ${U.busy ? `<span style="font-size:12px;color:var(--accent)">${h(U.busy)}</span>`
              : `<span style="font-size:11px;color:var(--accent)">ライブモード</span>`}</div>
   <div class="scroll pad">
-    <h4 class="head">公演</h4>
+        <h4 class="head">公演</h4>
     ${S.groups.length > 1 ? `<div class="chips" style="margin-bottom:10px">
       <button class="chip sm" data-act="showfilter" data-id="" style="${!S.showFilter ? "background:var(--accent);color:#0A0A0A" : ""}">すべて</button>
       ${S.groups.map((g) => `<button class="chip sm" data-act="showfilter" data-id="${g.id}"
@@ -3494,25 +3521,12 @@ function viewSetup() {
     ${S.groups.map((g) => {
       const n = SONGS().filter((x) => x.groupId === g.id).length;
       const cur = g.id === S.groupId;
-      return `<div class="card" style="${cur ? "outline:1px solid var(--accent)" : ""}">
-        <div class="row" style="margin-bottom:8px">
-          <button class="grow" style="text-align:left" data-act="usegroup" data-id="${g.id}">
-            <div style="${cur ? "color:var(--accent)" : ""}">${h(g.name)}</div>
-            <div style="font-size:11px;color:var(--dim)">${n}曲 ・ ${g.gistId ? "配信中" : "未接続"}${cur ? " ・ 取り込み先" : ""}</div>
-          </button>
-          <button data-act="renamegroup" data-id="${g.id}" style="padding:4px 8px;color:var(--dim)">名前</button>
-        </div>
-        ${g.nopub ? `<div style="font-size:11px;color:var(--dim)">このグループは配信されません</div>` : g.gistId ? `
-          <button class="primary" data-act="connectlink" data-id="${g.id}" style="margin-bottom:10px">${h(g.name)} の接続リンクを作る</button>
-          <button class="ghost" data-act="pvnow" data-id="${g.id}" style="margin-bottom:10px">メンバーの見え方を確認</button>
-          <div class="row" style="margin-bottom:6px">
-            <span style="font-size:11px;color:var(--dim);width:52px">合言葉</span>
-            <input class="field grow" id="key-${g.id}" placeholder="未設定（誰でも開けます）" value="${h(g.key || "")}">
-            <button class="chip sm" data-act="setkey" data-id="${g.id}">保存</button>
-          </div>
-          <div style="font-size:11px;color:${g.key ? "var(--good)" : "var(--bad)"}">${g.key ? "合言葉を入れないと開けません" : "リンクを知っていれば誰でも開けます"}</div>
-        ` : (S.ghToken ? `<button class="primary" data-act="ghstart" data-id="${g.id}">${h(g.name)} の自動公開を始める</button>`
-                       : "")}
+      return `<div class="row card" style="padding:9px 12px;margin-bottom:6px;${cur ? "outline:1px solid var(--accent)" : ""}">
+        <button class="grow" style="text-align:left;min-width:0" data-act="usegroup" data-id="${g.id}">
+          <div class="trunc" style="font-size:14px;${cur ? "color:var(--accent)" : ""}">${h(g.name)}</div>
+          <div style="font-size:11px;color:var(--dim)">${n}曲 ・ ${g.nopub ? "配信しない" : g.gistId ? (g.key ? "配信中・合言葉あり" : "配信中") : "未接続"}${cur ? " ・ 取り込み先" : ""}</div>
+        </button>
+        <button data-act="gmenu" data-id="${g.id}" style="padding:6px 10px;color:var(--dim);font-size:17px">⋯</button>
       </div>`;
     }).join("")}
     <div class="row" style="margin-bottom:22px">
@@ -3528,43 +3542,6 @@ function viewSetup() {
       <button class="primary" data-act="goabsent">${absentIds().length
         ? `${h(absentIds().map((x) => (member(x) || {}).name).join("・"))} が欠席${needCount() ? `　未決 ${needCount()}` : "　完了"}`
         : "欠席者を設定する"}</button>
-    </div>
-
-    <h4 class="head">自動公開</h4>
-    <div class="card">
-      ${S.ghToken ? `<div class="row" style="margin-bottom:10px">
-          <span class="grow" style="font-size:13px">トークン設定済み　<span style="color:var(--dim)">${h(pushState || "待機中")}</span></span>
-          <button class="chip sm" data-act="autopub" style="${S.autoPub ? "background:var(--accent);color:#0A0A0A" : ""}">自動${S.autoPub ? "オン" : "オフ"}</button>
-        </div>
-        <button class="ghost" data-act="ghpush" style="margin-bottom:8px">今すぐ送信</button>
-        <button class="ghost" data-act="ghverify" style="margin-bottom:8px">トークンを確認する</button>
-        <button class="ghost" data-act="ghclear" style="color:var(--bad)">トークンを入れ直す</button>
-        `
-        : `<div class="row" style="margin-bottom:8px">
-            <input class="field grow" id="ghtoken" type="password" placeholder="ghp_ で始まる文字列" value="">
-            <button class="chip" data-act="ghtoken">確認して保存</button>
-          </div>
-          <div style="font-size:11px;color:var(--dim);margin-top:6px">Tokens (classic) / gist</div>`}
-    </div>
-
-    <h4 class="head">バックアップ</h4>
-    <div class="card">
-      <div class="row" style="margin-bottom:10px">
-        <span class="grow" style="font-size:13px">${S.bkAt ? "最終 " + new Date(S.bkAt).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "まだ取っていません"}</span>
-        <span style="font-size:11px;color:${bkSignature() === S.bkHash ? "var(--good)" : "var(--dim)"}">${bkSignature() === S.bkHash ? "最新" : "未反映あり"}</span>
-      </div>
-      <button class="primary" data-act="bknow" style="margin-bottom:8px">今すぐバックアップ</button>
-      <button class="ghost" data-act="bkfile" style="margin-bottom:8px">ファイルに書き出す</button>
-      <button class="ghost" data-act="bkrestore" style="color:var(--bad)">バックアップから戻す</button>
-      <div class="row" style="margin-top:12px">
-        <span style="font-size:11px;color:var(--dim);width:52px">合言葉</span>
-        <input class="field grow" id="bkkey" placeholder="未設定（暗号化しません）" value="${h(S.bkKey || "")}">
-        <button class="chip sm" data-act="setbkkey">保存</button>
-      
-      <button class="primary" data-act="editlink" style="margin-top:10px">自分用リンクを作る</button>
-      <div style="font-size:11px;color:var(--dim);margin-top:6px">MacやiPadでこのリンクを開き、合言葉を入れれば編集できます。以後は自動で揃います。</div>
-    </div>
-      <div style="font-size:11px;color:var(--dim);margin-top:6px">公演・曲・記録・総括・手書きをすべて保存します。録音とトークンは含みません。10分ごとに自動で更新されます。</div>
     </div>
 
     <h4 class="head">音を確かめる</h4>
@@ -3601,6 +3578,36 @@ function viewSetup() {
 
     <h4 class="head">歌割をPDFにする</h4>
     <div class="card"><button class="primary" data-act="gopdf">PDFにする</button></div>
+
+    <h4 class="head">自動公開</h4>
+    <div class="card">
+      ${S.ghToken ? `<div class="row" style="margin-bottom:10px">
+          <span class="grow" style="font-size:13px">トークン設定済み　<span style="color:var(--dim)">${h(pushState || "待機中")}</span></span>
+          <button class="chip sm" data-act="autopub" style="${S.autoPub ? "background:var(--accent);color:#0A0A0A" : ""}">自動${S.autoPub ? "オン" : "オフ"}</button>
+        </div>
+        <button class="ghost" data-act="ghpush" style="margin-bottom:8px">今すぐ送信</button>
+        <button class="ghost" data-act="ghverify" style="margin-bottom:8px">トークンを確認する</button>
+        <button class="ghost" data-act="ghclear" style="color:var(--bad)">トークンを入れ直す</button>
+        `
+        : `<div class="row" style="margin-bottom:8px">
+            <input class="field grow" id="ghtoken" type="password" placeholder="ghp_ で始まる文字列" value="">
+            <button class="chip" data-act="ghtoken">確認して保存</button>
+          </div>
+          <div style="font-size:11px;color:var(--dim);margin-top:6px">Tokens (classic) / gist</div>`}
+    </div>
+
+    <h4 class="head">バックアップ</h4>
+    <div class="card">
+      <div class="row" style="margin-bottom:10px">
+        <span class="grow" style="font-size:13px">${S.bkAt ? "最終 " + new Date(S.bkAt).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "まだ取っていません"}</span>
+        <span style="font-size:11px;color:${bkSignature() === S.bkHash ? "var(--good)" : "var(--dim)"}">${bkSignature() === S.bkHash ? "最新" : "未反映あり"}</span>
+      </div>
+      <button class="primary" data-act="bknow" style="margin-bottom:8px">今すぐバックアップ</button>
+      <button class="ghost" data-act="bkfile" style="margin-bottom:8px">ファイルに書き出す</button>
+      <button class="ghost" data-act="bkrestore" style="color:var(--bad);margin-bottom:10px">バックアップから戻す</button>
+      <button class="primary" data-act="editlink">自分用リンクを作る</button>
+      <div style="font-size:11px;color:var(--dim);margin-top:8px">公演・曲・記録・総括・手書きをすべて保存します。録音とトークンは含みません。</div>
+    </div>
 
     ${(S.trash || []).length ? `<h4 class="head">ゴミ箱</h4>
     <div class="card"><button class="primary" data-act="gotrash">ゴミ箱（${S.trash.length}件）</button>
@@ -3959,17 +3966,21 @@ document.addEventListener("click", (e) => {
       break;
     }
     case "synow": syncSetlist(true); break;
-    case "mylink": {
-      const u = myLink();
-      if (!u) { alert("まだどこにも繋がっていません。"); return; }
-      copyText(u, "このアプリのリンクをコピーしました。\n別のブラウザに貼れば、そちらでも同じ内容が見られます。");
-      break;
-    }
     case "askkey": {
       const pw = prompt("合言葉を入れてください。", S.key || "");
       if (pw != null) { S.key = pw.trim(); save(); keepLinkInURL(); syncSetlist(true); }
       break;
     }
+    case "gmenu": U.menu = { kind: "gmenu", id }; renderSheet(); break;
+    case "nopubtoggle": {
+      const g = group(id);
+      if (!g) break;
+      g.nopub = !g.nopub;
+      if (g.nopub) { g.gistId = ""; g.lastKey = ""; }
+      save(); U.menu = null; renderSheet(); render();
+      break;
+    }
+    case "sumopen": U.sumOpen = (U.sumOpen === id ? "" : id); render(); break;
     case "gotrash": U.menu = { kind: "trash" }; renderSheet(); break;
     case "trashback": { fromTrash(id); renderSheet(); render(); break; }
     case "trashdrop": {
@@ -4333,16 +4344,6 @@ document.addEventListener("click", (e) => {
     case "bknow": doBackup(false); break;
     case "bkfile": backupToFile(); break;
     case "bkrestore": restoreBackup(); break;
-    case "setbkkey": {
-      const el = document.getElementById("bkkey");
-      if (!el) break;
-      S.bkKey = el.value.trim();
-      S.bkHash = 0;
-      save();
-      alert(S.bkKey ? "バックアップを暗号化します。\nこの合言葉を忘れると戻せなくなります。控えておいてください。" : "暗号化しません。");
-      doBackup(false);
-      break;
-    }
     case "ghclear":
       if (confirm("トークンを消して入れ直します。\n配信先の設定は残ります。")) { S.ghToken = ""; save(); render(); }
       break;
@@ -5592,11 +5593,6 @@ async function openEditLink(raw) {
   }
 }
 
-function myLink() {
-  if (!S.linkSrc) return "";
-  return location.origin + location.pathname + "#g=" +
-    b64e(new TextEncoder().encode(JSON.stringify({ src: S.linkSrc, key: S.key || "" })));
-}
 
 async function importFromLink() {
   const e = location.hash.match(/^#e=(.+)$/);
