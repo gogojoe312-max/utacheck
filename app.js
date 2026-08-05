@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "2026-08-05-18";
+const APP_VER = "2026-08-05-22";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -71,17 +71,36 @@ let S = {
   src: "", key: "", keyInLink: true,
   memos: {}, recs: {}, kbps: 128, preroll: 5, viewer: false, srcGroup: "",
   draws: {}, showFilter: "", folders: {}, subs: {}, subsMan: {}, subLib: {}, gsubs: {},
-  recMode: false, rsongs: [], rsongId: "", recBars: true, liveShow: "", recEdit: false, rgFilter: "", planMin: 90, planPrep: 10, rosters: {}, secWords: [], trash: [],
+  recMode: false, rsongs: [], rsongId: "", recBars: true, liveShow: "", recEdit: false, rgFilter: "", linkSrc: "", planMin: 90, planPrep: 10, rosters: {}, secWords: [], trash: [],
   plan: { start: "10:00", slots: [] },
   size: 19,
 };
 let U = { view: "live", songIdx: 0, sheet: null, mode: "member", allShows: false, picker: false, overview: false, ovSize: 9, recPick: null, draw: false, erase: false, pick: [], menu: null, printPick: null, focus: "", busy: "", allShowList: false };
 
+const S0 = JSON.parse(JSON.stringify(S));
+
 function load() {
+  let raw = null;
   try {
-    const raw = localStorage.getItem(KEY);
+    raw = localStorage.getItem(KEY);
     if (raw) S = Object.assign(S, JSON.parse(raw));
-  } catch (e) { /* 初回 */ }
+  } catch (e) { /* 初回、または壊れている */ }
+  try {
+    migrate();
+  } catch (e) {
+    // 古いデータの変換でつまずいた場合。消さずに横に退避して、まっさらで開く。
+    try {
+      if (raw) localStorage.setItem(KEY + ":broken:" + Date.now(), raw);
+      localStorage.removeItem(KEY);
+    } catch (e2) { /* 保存できない場合は諦める */ }
+    S = JSON.parse(JSON.stringify(S0));
+    bootErr = "前のデータを読めなかったため、まっさらで開きました。\n古いデータは端末内に残してあります。";
+    try { migrate(); } catch (e3) { /* ここで転ぶなら何もできない */ }
+  }
+}
+
+let bootErr = "";
+function migrate() {
   // 旧データの引き継ぎ：公演名の文字列しか無かったものを公演として作り直す
   if (!S.shows || !S.shows.length) {
     const id = uid();
@@ -1348,7 +1367,29 @@ document.addEventListener("visibilitychange", () => {
     navigator.serviceWorker.getRegistration().then((r) => { if (r) r.update(); }).catch(() => {});
   }
 });
+// どこかで例外が出ても、真っ白のままにしない
+function showFatal(msg) {
+  try {
+    document.body.innerHTML = `<div style="padding:40px 24px;color:#EDEDED;font:15px/1.7 -apple-system,sans-serif">
+      <div style="font-size:17px;font-weight:700;margin-bottom:12px">うまく開けませんでした</div>
+      <div style="color:#9A9A9A;font-size:13px;white-space:pre-wrap;margin-bottom:20px">${String(msg || "").slice(0, 300)}</div>
+      <button onclick="location.reload()" style="width:100%;padding:14px;border-radius:12px;background:#D97757;color:#0A0A0A;font-weight:700;border:0;margin-bottom:10px">開き直す</button>
+      <button onclick="try{var k='utacheck.v1';localStorage.setItem(k+':broken:'+Date.now(),localStorage.getItem(k)||'');localStorage.removeItem(k);}catch(e){};location.reload()"
+        style="width:100%;padding:14px;border-radius:12px;background:#1C1C1C;color:#9A9A9A;border:0">データを退避してまっさらで開く</button>
+    </div>`;
+  } catch (e) { /* これ以上は打つ手なし */ }
+}
+window.addEventListener("error", (e) => {
+  if (document.getElementById("app") && document.getElementById("app").innerHTML) return;
+  showFatal((e && e.message) || "不明な理由");
+});
+window.addEventListener("unhandledrejection", (e) => {
+  if (document.getElementById("app") && document.getElementById("app").innerHTML) return;
+  showFatal((e && e.reason && e.reason.message) || "不明な理由");
+});
+
 window.addEventListener("pageshow", () => {
+  keepLinkInURL();
   if (S.src && !S.groups.some((g) => g.gistId)) syncSetlist(false);
 });
 document.addEventListener("pointerdown", keepAwake, true);
@@ -1804,7 +1845,17 @@ function viewLive() {
     }).join("");
   }
 
+  const noSong = VIEW() && !SONGS().length;
   return `
+  ${bootErr ? `<div style="padding:10px 12px;background:#3A2420;color:#FFB4A2;font-size:12px;white-space:pre-wrap">${h(bootErr)}<button data-act="bootok" style="float:right;color:#FFB4A2">✕</button></div>` : ""}
+  ${noSong ? `<div style="padding:12px;background:#2A2118;color:#F0C089;font-size:12px;line-height:1.7">
+      ${h(syncErr || (S.src ? "まだ受け取れていません。" : "接続リンクから開いてください。"))}
+      ${syncAt ? `<div style="color:var(--dim);font-size:11px;margin-top:4px">最後に受け取れたのは ${new Date(syncAt).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}</div>` : ""}
+      <div class="row" style="margin-top:8px">
+        <button class="chip sm" data-act="synow" style="background:var(--accent);color:#0A0A0A">今すぐ受け取る</button>
+        ${/合言葉/.test(syncErr) ? `<button class="chip sm" data-act="askkey">合言葉を入れる</button>` : ""}
+      </div>
+    </div>` : ""}
   <div class="hd">
     <button class="grow" style="text-align:left" data-act="picker">
       <div class="t1 trunc">${S.recMode
@@ -3378,8 +3429,14 @@ function viewSetup() {
       </button></div>`).join("");
     return `
     <div class="hd"><button class="ic" data-act="go-live">‹</button><b>設定</b>
-      <span class="grow"></span></div>
+      <span class="grow"></span>
+      <span style="font-size:11px;color:var(--accent)">ライブモード</span></div>
     <div class="scroll pad"><div style="height:6px"></div>${list}
+    ${S.linkSrc ? `<h4 class="head">このアプリのリンク</h4>
+    <div class="card">
+      <button class="primary" data-act="mylink">リンクをコピー</button>
+      <div style="font-size:11px;color:var(--dim);margin-top:8px">別のブラウザやパソコンに貼れば、そちらでも同じ内容が見られます。</div>
+    </div>` : ""}
     <h4 class="head">音を確かめる</h4>
     <div class="card">${pianoHTML(null)}</div>
     <h4 class="head">メトロノーム</h4>
@@ -3923,6 +3980,19 @@ document.addEventListener("click", (e) => {
     }
     case "xlsout": exportAbsentXlsx(id); break;
     case "xlsall": exportAllAbsentXlsx(); break;
+    case "bootok": bootErr = ""; render(); break;
+    case "synow": syncSetlist(true); break;
+    case "mylink": {
+      const u = myLink();
+      if (!u) { alert("まだどこにも繋がっていません。"); return; }
+      copyText(u, "このアプリのリンクをコピーしました。\n別のブラウザに貼れば、そちらでも同じ内容が見られます。");
+      break;
+    }
+    case "askkey": {
+      const pw = prompt("合言葉を入れてください。", S.key || "");
+      if (pw != null) { S.key = pw.trim(); save(); keepLinkInURL(); syncSetlist(true); }
+      break;
+    }
     case "gotrash": U.menu = { kind: "trash" }; renderSheet(); break;
     case "trashback": { fromTrash(id); renderSheet(); render(); break; }
     case "trashdrop": {
@@ -5263,20 +5333,33 @@ async function backupToFile() {
 /* ---- 受け取り：配信されたものを取り込む ---- */
 const srcUrl = () => S.src || "./setlist.json";
 
+let syncErr = "", syncAt = 0;
 async function fetchSetlist() {
   const u = srcUrl();
+  if (!u) { syncErr = "つなぎ先がありません。接続リンクを開き直してください。"; return null; }
   const url = u + (u.includes("?") ? "&" : "?") + "t=" + Date.now();
   try {
     const r = await fetch(url, { cache: "no-store" });
-    if (!r.ok) return null;
+    if (!r.ok) {
+      syncErr = r.status === 404
+        ? "配信元が見つかりません（404）。リンクが古いかもしれません。"
+        : r.status === 403 ? "取得を断られました（403）。少し待つと直ることがあります。"
+        : "取得できませんでした（" + r.status + "）。";
+      return null;
+    }
     let d = await r.json();
     if (d && d.enc) {
-      if (!S.key) return "nokey";
-      if (!crypto || !crypto.subtle) return "badkey";
-      try { d = await openJSON(d, S.key); } catch (e) { return "badkey"; }
+      if (!S.key) { syncErr = "合言葉が必要です。"; return "nokey"; }
+      if (!crypto || !crypto.subtle) { syncErr = "この端末では合言葉を解けません。"; return "badkey"; }
+      try { d = await openJSON(d, S.key); } catch (e) { syncErr = "合言葉が違います。"; return "badkey"; }
     }
-    return d && Array.isArray(d.songs) ? d : null;
-  } catch (e) { return null; }
+    if (!(d && Array.isArray(d.songs))) { syncErr = "配信の中身が空です。配信元で「今すぐ送信」を押してもらってください。"; return null; }
+    syncErr = ""; syncAt = Date.now();
+    return d;
+  } catch (e) {
+    syncErr = "通信できませんでした。電波とネットワークの制限を確認してください。";
+    return null;
+  }
 }
 
 // 受け取り専用の端末で、つなぎ先が変わった時に前のグループを消す
@@ -5385,7 +5468,12 @@ async function syncSetlist(manual) {
     if (pw && pw.trim()) { S.key = pw.trim(); save(); return syncSetlist(manual); }
     return;
   }
-  if (!d || !d.songs.length) { if (manual) alert("配信されているセットリストが見つかりませんでした。"); return; }
+  if (!d || !d.songs.length) {
+    if (d && !d.songs.length) syncErr = "配信に曲が入っていません。配信元で「今すぐ送信」を押してもらってください。";
+    if (manual) alert(syncErr || "配信されているセットリストが見つかりませんでした。");
+    render();
+    return;
+  }
   if (d.authorId && d.authorId === S.deviceId) {
     if (manual) alert("この端末が配信元です。手元の内容が最新です。");
     return;
@@ -5397,6 +5485,7 @@ async function syncSetlist(manual) {
   }
   // 受け取り側では確認を出さず、そのまま最新に入れ替える
   if (manual || (d.version && d.version !== S.setlistVer)) applySetlist(d);
+  render();
 }
 
 /* ---- 共有リンク：セットリストをURLに入れて渡す ---- */
@@ -5419,29 +5508,55 @@ function connectLink(gid) {
   const payload = JSON.stringify({ src: g.src, key: "" });
   const url = location.origin + location.pathname + "#g=" + b64e(new TextEncoder().encode(payload));
   const msg = g.key
-    ? `${g.name} の接続リンクをコピーしました。\n\n開くには合言葉が要ります。リンクとは別に伝えてください：\n${g.key}`
-    : `${g.name} の接続リンクをコピーしました。\n\n合言葉が未設定です。リンクを知っていれば誰でも開けます。`;
+    ? `${g.name} の接続リンクをコピーしました。\n\n開くには合言葉が要ります。リンクとは別に伝えてください：\n${g.key}\n\n※ メンバーには「リンクを長押し→コピー→Safariに貼って開く」と伝えてください。`
+    : `${g.name} の接続リンクをコピーしました。\n\n合言葉が未設定です。リンクを知っていれば誰でも開けます。\n\n※ メンバーには「リンクを長押し→コピー→Safariに貼って開く」と伝えてください。`;
   copyText(url, msg);
+}
+
+// URLに接続情報を持たせ続ける。
+// こうしておくと、共有・ブックマーク・ホーム画面・別のブラウザ、どれで開いても繋がる。
+function keepLinkInURL() {
+  try {
+    if (!S.linkSrc) return;
+    if (S.groups.some((g) => g.gistId)) return;          // 配信元の端末では付けない
+    const want = "#g=" + b64e(new TextEncoder().encode(JSON.stringify({ src: S.linkSrc, key: S.key || "" })));
+    if (location.hash !== want) history.replaceState(null, "", location.pathname + want);
+  } catch (e) { /* 付けられなくても動く */ }
+}
+
+function myLink() {
+  if (!S.linkSrc) return "";
+  return location.origin + location.pathname + "#g=" +
+    b64e(new TextEncoder().encode(JSON.stringify({ src: S.linkSrc, key: S.key || "" })));
 }
 
 async function importFromLink() {
   const g = location.hash.match(/^#g=(.+)$/);
-  if (g) {
-    history.replaceState(null, "", location.pathname);
-    try {
-      const before = S.src;
-      const txt = new TextDecoder().decode(b64d(g[1]));
-      if (txt.charAt(0) === "{") { const o = JSON.parse(txt); S.src = o.src || ""; S.key = o.key || ""; }
-      else S.src = txt; // 旧いリンク
-      if (!S.groups.some((g) => g.gistId)) {
-        S.viewer = true;
-        if (before && before !== S.src) resetForNewSource(); // 別グループのリンク
-      }
-      S.setlistVer = 0; save();
-      await syncSetlist(true);
-    } catch (e) { alert("接続リンクを読み取れませんでした。"); }
-    return;
-  }
+  if (!g) return;
+  // URLから消さない。消すと「Safariで開く」に接続情報が渡らない。
+  try {
+    const before = S.src;
+    let src = "", key = "";
+    const txt = new TextDecoder().decode(b64d(g[1]));
+    if (txt.charAt(0) === "{") { const o = JSON.parse(txt); src = o.src || ""; key = o.key || ""; }
+    else src = txt; // 旧いリンク
+    if (S.linkSrc === src && S.songs.length) {
+      // 同じリンクで開き直しただけ。記録を消さないよう、取り込み直さない。
+      if (key && !S.key) { S.key = key; save(); }
+      keepLinkInURL();
+      await syncSetlist(false);
+      return;
+    }
+    const changed = S.linkSrc && S.linkSrc !== src;
+    S.linkSrc = src; S.src = src; S.key = key;
+    if (!S.groups.some((x) => x.gistId)) {
+      S.viewer = true;
+      if (changed) resetForNewSource(); // 別グループのリンク
+    }
+    S.setlistVer = 0; save();
+    keepLinkInURL();
+    await syncSetlist(true);
+  } catch (e) { alert("接続リンクを読み取れませんでした。"); }
 }
 
 function copyText(t, msg) {
