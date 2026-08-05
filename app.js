@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "2026-08-05-16";
+const APP_VER = "2026-08-05-18";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -71,7 +71,7 @@ let S = {
   src: "", key: "", keyInLink: true,
   memos: {}, recs: {}, kbps: 128, preroll: 5, viewer: false, srcGroup: "",
   draws: {}, showFilter: "", folders: {}, subs: {}, subsMan: {}, subLib: {}, gsubs: {},
-  recMode: false, rsongs: [], rsongId: "", recBars: true, liveShow: "", recEdit: false, rgFilter: "", planMin: 90, planPrep: 10, rosters: {}, secWords: [],
+  recMode: false, rsongs: [], rsongId: "", recBars: true, liveShow: "", recEdit: false, rgFilter: "", planMin: 90, planPrep: 10, rosters: {}, secWords: [], trash: [],
   plan: { start: "10:00", slots: [] },
   size: 19,
 };
@@ -103,10 +103,13 @@ function load() {
   if (!S.planMin) S.planMin = 90;
   if (S.planPrep == null) S.planPrep = 10;
   if (!S.secWords) S.secWords = [];
+  if (!S.trash) S.trash = [];
+  purgeTrash();
   if (!S.rosters) S.rosters = {};
   if (!S.plan.slots) S.plan.slots = [];
   if (S.recBars == null) S.recBars = true;
   // 古いデータにも、その曲に出てくる人の名簿を持たせる
+  if (orderTakes()) save();
   S.songs.forEach((so) => {
     if (!so.roster || !so.roster.length) so.roster = songRoster(so);
     if (!so.sig) so.sig = songSig(so);
@@ -435,6 +438,89 @@ const changedCount = () => SONGS().reduce((a, so) => a
   + so.lines.filter((l, i) => lineStatus(so, i) === "changed" && !blockOf(so, i)).length
   + blocksOf(so).filter((b) => blockStatus(so, b) === "changed").length, 0);
 
+/* ---- ゴミ箱（30日は戻せる） ---- */
+const TRASH_DAYS = 30;
+const trashClips = () => {
+  const out = [];
+  (S.trash || []).forEach((t) => (t.clips || []).forEach((k) => out.push(k)));
+  return out;
+};
+function purgeTrash() {
+  const lim = Date.now() - TRASH_DAYS * 86400000;
+  const keep = [], gone = [];
+  (S.trash || []).forEach((t) => (t.at < lim ? gone.push(t) : keep.push(t)));
+  if (!gone.length) return;
+  gone.forEach((t) => (t.clips || []).forEach((k) => delClip(k)));
+  S.trash = keep;
+  save();
+}
+// 消す前に、戻せるように控えておく
+function toTrash(kind, label, songs, shows) {
+  const sids = songs.map((x) => x.id);
+  const shids = (shows || []).map((x) => x.id);
+  const pick = (obj) => {
+    const o = {};
+    Object.keys(obj || {}).forEach((k) => {
+      const p = k.split("|");
+      if (sids.includes(p[1]) || shids.includes(p[0])) o[k] = obj[k];
+    });
+    return o;
+  };
+  const clips = [];
+  songs.forEach((x) => { if (x.xls) clips.push("xls:" + x.id); });
+  const recs = pick(S.recs);
+  Object.keys(recs).forEach((k) => clips.push(k));
+  S.trash.unshift({
+    id: uid(), at: Date.now(), kind, label,
+    songs: JSON.parse(JSON.stringify(songs)),
+    shows: JSON.parse(JSON.stringify(shows || [])),
+    notes: JSON.parse(JSON.stringify(S.notes.filter((n) => sids.includes(n.songId) || shids.includes(n.showId)))),
+    memos: pick(S.memos), draws: pick(S.draws), subs: pick(S.subs),
+    subsMan: pick(S.subsMan), gsubs: pick(S.gsubs), recs,
+    clips,
+  });
+  if (S.trash.length > 200) S.trash.pop();
+}
+function fromTrash(tid) {
+  const t = (S.trash || []).find((x) => x.id === tid);
+  if (!t) return;
+  (t.shows || []).forEach((sw) => { if (!S.shows.some((x) => x.id === sw.id)) S.shows.push(sw); });
+  (t.songs || []).forEach((so) => {
+    if (t.kind === "rec") { if (!S.rsongs.some((x) => x.id === so.id)) S.rsongs.push(so); }
+    else if (!S.songs.some((x) => x.id === so.id)) S.songs.push(so);
+  });
+  (t.notes || []).forEach((n) => { if (!S.notes.some((x) => x.id === n.id)) S.notes.push(n); });
+  ["memos", "draws", "subs", "subsMan", "gsubs", "recs"].forEach((k) => {
+    Object.keys(t[k] || {}).forEach((kk) => { S[k][kk] = t[k][kk]; });
+  });
+  S.trash = S.trash.filter((x) => x.id !== tid);
+  save(); schedulePush();
+}
+function dropTrash(tid) {
+  const t = (S.trash || []).find((x) => x.id === tid);
+  if (!t) return;
+  (t.clips || []).forEach((k) => delClip(k));
+  S.trash = S.trash.filter((x) => x.id !== tid);
+  save();
+}
+
+// 同じ曲のテイクは、新しいものから順に並べる
+function orderTakes() {
+  const key = (x) => x.showId + "|" + x.groupId + "|" + x.title;
+  const groups = {};
+  S.songs.forEach((x, i) => { const k = key(x); (groups[k] = groups[k] || []).push(i); });
+  let moved = false;
+  Object.keys(groups).forEach((k) => {
+    const pos = groups[k];
+    if (pos.length < 2) return;
+    const items = pos.map((i) => S.songs[i]);
+    const sorted = items.slice().sort((a, b) => Number(b.take || 1) - Number(a.take || 1));
+    if (sorted.some((x, i) => x !== items[i])) moved = true;
+    pos.forEach((i, n) => { S.songs[i] = sorted[n]; });
+  });
+  return moved;
+}
+
 // 曲や公演を消したときに残る、行き場のないデータを片付ける
 function sweep() {
   const songIds = S.songs.map((x) => x.id);
@@ -446,8 +532,9 @@ function sweep() {
   ["subs", "subsMan", "gsubs", "memos", "draws"].forEach((name) => {
     Object.keys(S[name] || {}).forEach((k) => { if (!alive(k)) delete S[name][k]; });
   });
+  const keepClips = trashClips();
   Object.keys(S.recs || {}).forEach((k) => {
-    if (!alive(k)) { delClip(k); delete S.recs[k]; }
+    if (!alive(k)) { if (!keepClips.includes(k)) delClip(k); delete S.recs[k]; }
   });
   songIds.forEach(() => {});
   S.notes = S.notes.filter((n) => songIds.includes(n.songId) && showIds.includes(n.showId));
@@ -532,8 +619,9 @@ function dupSong(id) {
     take, from: src.id,
     lines: src.lines.map((l) => Object.assign({}, l, { parts: (l.parts || []).slice() })),
   };
-  const at = S.songs.indexOf(same[same.length - 1]);
-  S.songs.splice(at + 1, 0, copy);
+  // 新しいテイクを、その曲のかたまりの先頭に置く（最新から順に見えるように）
+  const at = Math.min.apply(null, same.map((x) => S.songs.indexOf(x)));
+  S.songs.splice(Math.max(0, at), 0, copy);
   U.songIdx = SONGS().indexOf(copy);
   U.picker = false;
   autoSubs();
@@ -1943,6 +2031,30 @@ function renderSheet() {
     return;
   }
 
+  if (U.menu && U.menu.kind === "trash") {
+    const kindName = { song: "曲", show: "公演", rec: "レコーディングの曲" };
+    overlay = document.createElement("div");
+    overlay.className = "mask";
+    overlay.innerHTML = `<button class="sp" data-act="closemenu"></button><div class="sheet">
+      <div class="row" style="margin-bottom:12px"><span class="grow" style="font-size:13px">ゴミ箱</span>
+      <button data-act="closemenu" style="width:36px;height:36px;border-radius:10px;background:var(--panel2);font-size:17px">✕</button></div>
+      <div class="sec">
+        ${(S.trash || []).map((t) => {
+          const days = Math.max(0, TRASH_DAYS - Math.floor((Date.now() - t.at) / 86400000));
+          return `<div class="row card" style="margin-bottom:8px;padding:10px 12px">
+            <div class="grow" style="min-width:0">
+              <div class="trunc">${h(t.label || "（名前なし）")}</div>
+              <div style="font-size:11px;color:var(--dim)">${kindName[t.kind] || ""}　${new Date(t.at).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}　あと${days}日</div>
+            </div>
+            <button class="chip sm" data-act="trashback" data-id="${t.id}" style="background:var(--accent);color:#0A0A0A">戻す</button>
+            <button data-act="trashdrop" data-id="${t.id}" style="padding:4px 6px;color:var(--bad)">✕</button>
+          </div>`;
+        }).join("") || `<p class="note">ゴミ箱は空です</p>`}
+      </div></div>`;
+    document.body.appendChild(overlay);
+    return;
+  }
+
   if (U.menu && U.menu.kind === "rlist") {
     overlay = document.createElement("div");
     overlay.className = "mask";
@@ -2662,6 +2774,9 @@ function viewSetupRec() {
       <button class="primary" data-act="bknow" style="margin-bottom:8px">今すぐバックアップ</button>
       <button class="ghost" data-act="bkfile">ファイルに書き出す</button>
     </div>
+
+    ${(S.trash || []).length ? `<h4 class="head">ゴミ箱</h4>
+    <div class="card"><button class="primary" data-act="gotrash">ゴミ箱（${S.trash.length}件）</button></div>` : ""}
 
     <h4 class="head">モード</h4>
     <div class="card"><button class="primary" data-act="recon">ライブモード</button></div>
@@ -3463,6 +3578,11 @@ function viewSetup() {
     <h4 class="head">歌割をPDFにする</h4>
     <div class="card"><button class="primary" data-act="gopdf">PDFにする</button></div>
 
+    ${(S.trash || []).length ? `<h4 class="head">ゴミ箱</h4>
+    <div class="card"><button class="primary" data-act="gotrash">ゴミ箱（${S.trash.length}件）</button>
+      <div style="font-size:11px;color:var(--dim);margin-top:8px">${TRASH_DAYS}日を過ぎたものから順に消えます</div>
+    </div>` : ""}
+
     <h4 class="head">モード</h4>
     <div class="card"><button class="primary" data-act="recon">レコーディングモード</button></div>
 
@@ -3595,7 +3715,8 @@ document.addEventListener("click", (e) => {
     case "delpicked": {
       const n = U.pick.length;
       if (n && confirm(`${n}曲 をこの公演から削除しますか？\n記録も一緒に消えます。`)) {
-        U.pick.forEach((sid) => delClip("xls:" + sid));
+        const dels = S.songs.filter((x) => U.pick.includes(x.id));
+        toTrash("song", dels.map((x) => songName(x)).join("、").slice(0, 40) + (dels.length > 1 ? ` ほか${dels.length}曲` : ""), dels);
         S.songs = S.songs.filter((x) => !U.pick.includes(x.id));
         U.pick = []; U.songIdx = 0; sweep(); save(); schedulePush(); render();
       }
@@ -3638,9 +3759,9 @@ document.addEventListener("click", (e) => {
     case "m-del": {
       const x = S.songs.find((y) => y.id === U.menu.id);
       U.menu = null;
-      if (x && confirm(`「${songName(x)}」を削除しますか？`)) {
+      if (x && confirm(`「${songName(x)}」を削除しますか？\nゴミ箱から${TRASH_DAYS}日以内なら戻せます。`)) {
+        toTrash("song", songName(x), [x]);
         S.songs = S.songs.filter((y) => y.id !== x.id);
-        delClip("xls:" + x.id);
         sweep(); save(); schedulePush();
       }
       render(); break;
@@ -3802,6 +3923,12 @@ document.addEventListener("click", (e) => {
     }
     case "xlsout": exportAbsentXlsx(id); break;
     case "xlsall": exportAllAbsentXlsx(); break;
+    case "gotrash": U.menu = { kind: "trash" }; renderSheet(); break;
+    case "trashback": { fromTrash(id); renderSheet(); render(); break; }
+    case "trashdrop": {
+      if (confirm("完全に消しますか？\nもう戻せません。")) { dropTrash(id); renderSheet(); render(); }
+      break;
+    }
     case "recon": {
       if (!S.recMode) {
         S.liveShow = S.showId;
@@ -4114,7 +4241,9 @@ document.addEventListener("click", (e) => {
       break;
     }
     case "rdel": {
-      if (confirm("この曲を消しますか？")) {
+      if (confirm(`この曲を消しますか？\nゴミ箱から${TRASH_DAYS}日以内なら戻せます。`)) {
+        const rs = S.rsongs.find((x) => x.id === id);
+        if (rs) toTrash("rec", rs.title, [rs]);
         S.rsongs = S.rsongs.filter((x) => x.id !== id);
         if (S.rsongId === id) S.rsongId = (S.rsongs[0] || {}).id || "";
         save(); renderSheet(); render();
@@ -4285,8 +4414,9 @@ document.addEventListener("click", (e) => {
       const sw = S.shows.find((x) => x.id === id);
       const cnt = S.notes.filter((n) => n.showId === id).length;
       const scnt = S.songs.filter((x) => x.showId === id).length;
-      if (confirm(`「${sw.name}」を削除しますか？\nこの公演の ${scnt}曲 と 記録 ${cnt}件 が消えます。`)) {
-        S.songs.filter((x) => x.showId === id).forEach((x) => delClip("xls:" + x.id));
+      if (confirm(`「${sw.name}」を削除しますか？\nこの公演の ${scnt}曲 と 記録 ${cnt}件 が消えます。\nゴミ箱から${TRASH_DAYS}日以内なら戻せます。`)) {
+        const sw2 = S.shows.find((x) => x.id === id);
+        toTrash("show", (sw2 || {}).name || "公演", S.songs.filter((x) => x.showId === id), sw2 ? [sw2] : []);
         S.songs = S.songs.filter((x) => x.showId !== id);
         S.shows = S.shows.filter((x) => x.id !== id);
         sweep();
