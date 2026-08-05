@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "2026-08-05-04";
+const APP_VER = "2026-08-05-06";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1679,7 +1679,7 @@ function viewLive() {
   return `
   <div class="hd">
     <button class="grow" style="text-align:left" data-act="picker">
-      <div class="t1 trunc">${S.recMode ? `<b style="color:var(--accent)">レコーディング</b>${s && s.grp ? " ・ " + h(s.grp) : ""}` : `${s ? `<b style="color:var(--accent)">${h((S.groups.find((x) => x.id === s.groupId) || {}).name || "")}</b> ・ ` : ""}${h(showName() || "公演名未設定")}`}${SONGS().length ? ` ・ ${U.songIdx + 1}/${SONGS().length}` : ""}${pushState ? ` ・ <span style="color:${pushState === "未送信" ? "var(--bad)" : "var(--dim)"}">${h(pushState)}</span>` : ""}</div>
+      <div class="t1 trunc">${S.recMode ? `<b style="color:var(--accent)">レコーディングモード</b>${s && s.grp ? " ・ " + h(s.grp) : ""}` : `${s ? `<b style="color:var(--accent)">${h((S.groups.find((x) => x.id === s.groupId) || {}).name || "")}</b> ・ ` : ""}${h(showName() || "公演名未設定")}`}${SONGS().length ? ` ・ ${U.songIdx + 1}/${SONGS().length}` : ""}${pushState ? ` ・ <span style="color:${pushState === "未送信" ? "var(--bad)" : "var(--dim)"}">${h(pushState)}</span>` : ""}</div>
       <div class="t2 trunc">${h(s ? songName(s) : "曲がありません")}</div>
     </button>
     <button class="ic" data-act="size">A</button>
@@ -2538,7 +2538,7 @@ function viewSetupRec() {
   return `
   <div class="hd"><button class="ic" data-act="go-live">‹</button><b>設定</b>
     <span class="grow"></span>
-    <span style="font-size:11px;color:var(--accent)">レコーディング</span></div>
+    <span style="font-size:11px;color:var(--accent)">レコーディングモード</span></div>
   <div class="scroll pad">
     <h4 class="head">曲</h4>
     ${grps.length ? `<div class="chips" style="margin-bottom:10px">
@@ -2568,10 +2568,7 @@ function viewSetupRec() {
     </div>
 
     <h4 class="head">モード</h4>
-    <div class="card"><button class="primary" data-act="recon">ライブモードに戻す</button></div>
-
-    <h4 class="head">モード</h4>
-    <div class="card"><button class="primary" data-act="recon">レコーディングモードにする</button></div>
+    <div class="card"><button class="primary" data-act="recon">ライブモード</button></div>
 
     <div style="text-align:center;color:var(--dim);font-size:11px;letter-spacing:.04em;margin:26px 0 10px">
       Created by Joe Takasaki
@@ -3221,6 +3218,9 @@ function viewSetup() {
 
     <h4 class="head">歌割をPDFにする</h4>
     <div class="card"><button class="primary" data-act="gopdf">PDFにする</button></div>
+
+    <h4 class="head">モード</h4>
+    <div class="card"><button class="primary" data-act="recon">レコーディングモード</button></div>
 
     <div style="text-align:center;color:var(--dim);font-size:11px;letter-spacing:.04em;margin:26px 0 10px">
       Created by Joe Takasaki
