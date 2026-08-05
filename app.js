@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "2026-08-05-09";
+const APP_VER = "2026-08-05-11";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -472,7 +472,7 @@ const shownNotes = () => (U.allShows ? NOTES() : NOTES().filter((n) => n.showId 
 let pushTimer = null, pushState = "";
 let undoStack = [];
 function pushUndo() {
-  undoStack.push(JSON.stringify(S.notes));
+  undoStack.push(JSON.stringify({ notes: S.notes, rsongs: S.rsongs, plan: S.plan }));
   if (undoStack.length > 40) undoStack.shift();
 }
 let saveErr = false;
@@ -1359,6 +1359,7 @@ function barsOf(so) {
   let b = Number(so.intro || 0) + 1;
   return (so.lines || []).map((l) => {
     if (l.gap) return null;
+    if (l.add) return null;                    // 足した行は小節を数えない
     if (l.at != null) b = Number(l.at);
     const cur = b;
     b += Number(l.bars || 4);
@@ -1645,7 +1646,7 @@ function viewLive() {
     body = s.lines.map((l, i) => {
       if (l.gap) return `<div class="gap"></div>`;
       const ns = ns0.filter((n) => covers(n, i));
-      const chars = Array.from(l.t);
+      const chars = Array.from(S.recMode && l.add ? "（" + l.t + "）" : l.t);
       const badge = (n) => {
         const c = noteColor(n);
         const txt = n.tags.length ? n.tags.map(tagName).join("/") : (n.memo ? "メモ" : "・");
@@ -1677,7 +1678,7 @@ function viewLive() {
         : foc ? "#4C9BFF" : (ns.length ? noteColor(ns[0]) : "");
       const strength = (st2 || foc) ? 18 : 9;
       return `${newSec ? `<div class="secdiv" id="sec-${h(l.sec)}"><span>${h(l.sec)}</span></div>` : ""}
-      <div class="ln" style="${tint ? `background:color-mix(in srgb,${tint} ${strength}%,transparent)` : ""}">
+      <div class="ln${S.recMode && l.add ? " lnadd" : ""}" style="${tint ? `background:color-mix(in srgb,${tint} ${strength}%,transparent)` : ""}">
         <button class="lbl" data-act="${S.recMode ? "rbar" : (st2 ? "assignline" : "noteblock")}" data-i="${i}"
           style="${st2 ? `color:${st2 === "need" ? "var(--bad)" : "#F0B23C"}` : ""}">${h(labelOf(s, i))}</button>
         <div class="brk ${gp[i]}"></div>
@@ -1695,6 +1696,7 @@ function viewLive() {
         : `<b style="color:var(--accent)">ライブモード</b>${s ? " ・ " + h((S.groups.find((x) => x.id === s.groupId) || {}).name || "") : ""} ・ ${h(showName() || "公演名未設定")}`}${SONGS().length ? ` ・ ${U.songIdx + 1}/${SONGS().length}` : ""}${pushState ? ` ・ <span style="color:${pushState === "未送信" ? "var(--bad)" : "var(--dim)"}">${h(pushState)}</span>` : ""}</div>
       <div class="t2 trunc">${h(s ? songName(s) : "曲がありません")}</div>
     </button>
+    ${S.recMode ? `<span id="pcd2" style="font-size:12px;color:var(--dim);font-variant-numeric:tabular-nums;margin-right:4px"></span>` : ""}
     <button class="ic" data-act="size">A</button>
   </div>
   ${saveErr ? `<div class="banner">保存できませんでした。端末の空き容量を確認してください。</div>` : ""}
@@ -1784,7 +1786,17 @@ function viewOverview(s) {
   const withBoth = withT.filter((l) => ref(l.cell) && ref(l.lcell));
   const useGrid = withT.length > 0 && withBoth.length >= withT.length * 0.8;
   let bodyHTML;
-  if (useGrid) {
+  if (S.recMode) {
+    const bars = barsOf(s);
+    bodyHTML = `<div class="ovword" style="font-size:${U.ovSize}px">${s.lines.map((l, i) => {
+      if (l.gap) return `<div style="height:1em"></div>`;
+      const newSec = l.sec && l.sec !== (s.lines[i - 1] || {}).sec;
+      return `${newSec ? `<div class="secdiv" id="sec-${h(l.sec)}"><span>${h(l.sec)}</span></div>` : ""}
+        <button class="ovw${l.add ? " lnadd" : ""}" data-act="jumpline" data-i="${i}">
+          <span class="ovwn">${S.recBars && bars[i] != null ? bars[i] : ""}</span>
+          <span>${h(l.add ? "（" + l.t + "）" : l.t)}</span></button>`;
+    }).join("")}</div>`;
+  } else if (useGrid) {
     const colNum = (t) => { let n = 0; for (let i = 0; i < t.length; i++) n = n * 26 + (t.charCodeAt(i) - 64); return n; };
     const spec = [];
     const put = (c, kind) => { if (c && !spec.some((x) => x.c === c)) spec.push({ c, kind }); };
@@ -2629,7 +2641,8 @@ function recBar() {
 
   const tabs = sectionOrder().map((nm) => {
     const e = secs.find((x) => x.name === nm);
-    return `<button class="sectab ${e && e.live ? "on" : ""}" data-act="jumpsec" data-id="${h(nm)}">${h(nm)}${e ? `<i>${e.min}</i>` : ""}</button>`;
+    const cls = e && e.live ? "on" : e && e.done ? "dn" : "";
+    return `<button class="sectab ${cls}" data-act="jumpsec" data-id="${h(nm)}">${e && e.done ? "✓" : ""}${h(nm)}${e ? `<i>${e.done ? e.used : e.min}</i>` : ""}</button>`;
   }).join("");
 
   return `${tabs ? `<div class="sectabs">${tabs}</div>` : ""}
@@ -2638,8 +2651,7 @@ function recBar() {
       <span id="pcd" style="font-size:13px;font-variant-numeric:tabular-nums">—</span>
       ${cur ? `<span style="font-size:11px;color:var(--dim)">${h(cur.name)}</span>` : ""}
       <span class="grow"></span>
-      ${cur ? `<button class="chip sm" data-act="pnextsec">次の区切り</button>` : ""}
-      <button class="chip sm" data-act="pnext" data-id="${live.s.id}" style="background:var(--accent);color:#0A0A0A">次へ</button>`
+      <button class="chip sm" data-act="pnextsec" style="background:var(--accent);color:#0A0A0A">次へ</button>`
     : next ? `<span style="color:var(--dim);font-size:12px">次 ${h(next.s.name)}　${min2hm(next.aS)}</span>
       <span class="grow"></span>
       <button class="chip sm" data-act="pstart" data-id="${next.s.id}" style="background:var(--accent);color:#0A0A0A">開始</button>`
@@ -2649,19 +2661,29 @@ function recBar() {
 }
 
 // 秒でカウントダウンする
+function fmtLeft(sec) {
+  const neg = sec < 0, v = Math.abs(Math.round(sec));
+  return (neg ? "−" : "") + Math.floor(v / 60) + ":" + String(v % 60).padStart(2, "0");
+}
 function tickPlan() {
   const el = document.getElementById("pcd");
-  if (!el) return;
+  const el2 = document.getElementById("pcd2");
   const live = planRows().find((r) => r.live);
-  if (!live) { el.textContent = "—"; return; }
+  if (!live) { if (el) el.textContent = "—"; if (el2) el2.textContent = ""; return; }
+  if (el2) {
+    const all = Number(live.s.min || 0) * 60 - (live.s.startAt ? (Date.now() - live.s.startAt) / 1000 : 0);
+    const g = slotGap(live.s);
+    el2.textContent = live.s.name + " " + fmtLeft(all) + (g != null && g !== 0 ? (g > 0 ? "  +" + g + "分" : "  −" + (-g) + "分") : "");
+    el2.style.color = g != null && g !== 0 ? (g > 0 ? "var(--bad)" : "var(--good)") : (all < 0 ? "var(--bad)" : "var(--dim)");
+  }
+  if (!el) return;
   const secs = sectionsOf(live.s);
   const cur = secs.find((x) => x.live);
   const base = cur ? (live.s.secStart || 0) : (live.s.startAt || 0);
   const total = (cur ? cur.min : Number(live.s.min || 0)) * 60;
   const left = base ? Math.round(total - (Date.now() - base) / 1000) : total;
-  const neg = left < 0, v = Math.abs(left);
-  el.textContent = (neg ? "−" : "") + Math.floor(v / 60) + ":" + String(v % 60).padStart(2, "0");
-  el.style.color = neg ? "var(--bad)" : "var(--text)";
+  el.textContent = fmtLeft(left);
+  el.style.color = left < 0 ? "var(--bad)" : "var(--text)";
 }
 setInterval(() => { if (S.recMode && !document.hidden) tickPlan(); }, 1000);
 
@@ -2700,14 +2722,21 @@ function sectionsOf(slot) {
   const fixedSum = fixed.reduce((a, n) => a + Number(adj[n]), 0);
   const rest = names2.length - fixed.length;
   const each = rest > 0 ? Math.max(1, Math.round((Number(slot.min || 0) - fixedSum) / rest)) : 0;
-  const done = Number(slot.secDone || 0);
-  return names2.map((nm, i) => ({
+  const log = slot.secLog || {};
+  return names2.map((nm) => ({
     name: nm,
     min: adj[nm] != null ? Number(adj[nm]) : each,
-    live: i === done,
-    done: i < done,
-    rest: adj[nm] != null ? Number(adj[nm]) : each,
+    live: slot.secCur === nm,
+    done: log[nm] != null,
+    used: log[nm] != null ? Number(log[nm]) : 0,
   }));
+}
+// 録り終わった区切りの、予定と実際の差（−なら巻き）
+function slotGap(slot) {
+  const ss = sectionsOf(slot);
+  const done = ss.filter((x) => x.done);
+  if (!done.length) return null;
+  return done.reduce((a, x) => a + x.used - x.min, 0);
 }
 
 /* ---- 進行表 ---- */
@@ -2792,7 +2821,7 @@ function viewPlan() {
       </div>`).join("")}
       <div class="row" style="margin-top:6px">
         <button class="chip sm grow" data-act="pseceven">均等に割り直す</button>
-        <button class="chip sm grow" data-act="pnextsec">次の区切りへ</button>
+        <button class="chip sm grow" data-act="pnextsec">次へ</button>
       </div>
     </div>` : ""}`;
   }).join("");
@@ -3453,7 +3482,12 @@ document.addEventListener("click", (e) => {
       break;
     }
     case "undo":
-      if (undoStack.length) { S.notes = JSON.parse(undoStack.pop()); save(); schedulePush(); render(); }
+      if (undoStack.length) {
+        const prev = JSON.parse(undoStack.pop());
+        if (Array.isArray(prev)) S.notes = prev;
+        else { S.notes = prev.notes; S.rsongs = prev.rsongs; S.plan = prev.plan; }
+        save(); schedulePush(); render();
+      }
       break;
     case "jump": U.picker = false; U.songIdx = i; render(); break;
     case "dupsong": dupSong(id); break;
@@ -3699,6 +3733,7 @@ document.addEventListener("click", (e) => {
     case "rbars": S.recBars = !S.recBars; save(); render(); break;
     case "rintro": {
       const so = recSong(); if (!so) break;
+      pushUndo();
       so.intro = Math.max(0, Number(so.intro || 0) + Number(id));
       save(); render(); break;
     }
@@ -3707,11 +3742,13 @@ document.addEventListener("click", (e) => {
       const so = recSong(); if (!so) break;
       const li = U.menu.i;
       const cur = barsOf(so)[li];
+      pushUndo();
       so.lines[li].at = Math.max(1, cur + Number(id));
       save(); renderSheet(); render(); break;
     }
     case "rbarclear": {
       const so = recSong(); if (!so) break;
+      pushUndo();
       delete so.lines[U.menu.i].at;
       save(); renderSheet(); render(); break;
     }
@@ -3719,38 +3756,43 @@ document.addEventListener("click", (e) => {
       const so = recSong(); if (!so) break;
       const el = document.getElementById("rbarnum");
       const v = el && Number(el.value);
-      if (v > 0) { so.lines[U.menu.i].at = Math.round(v); save(); U.menu = null; renderSheet(); render(); }
+      if (v > 0) { pushUndo(); so.lines[U.menu.i].at = Math.round(v); save(); U.menu = null; renderSheet(); render(); }
       break;
     }
     case "raddline": {
       const so = recSong(); if (!so) break;
-      so.lines.splice(U.menu.i + 1, 0, { t: id, bars: 4 });
+      pushUndo();
+      so.lines.splice(U.menu.i + 1, 0, { t: id, add: 1, bars: 0 });
       save(); U.menu = null; renderSheet(); render(); break;
     }
     case "raddfree": {
       const so = recSong(); if (!so) break;
       const v = prompt("足す文字", "");
-      if (v && v.trim()) { so.lines.splice(U.menu.i + 1, 0, { t: v.trim(), bars: 4 }); save(); U.menu = null; renderSheet(); render(); }
+      if (v && v.trim()) { pushUndo(); so.lines.splice(U.menu.i + 1, 0, { t: v.trim(), add: 1, bars: 0 }); save(); U.menu = null; renderSheet(); render(); }
       break;
     }
     case "rdelline": {
       const so = recSong(); if (!so) break;
+      pushUndo();
       so.lines.splice(U.menu.i, 1);
       save(); U.menu = null; renderSheet(); render(); break;
     }
     case "rsecset": {
       const so = recSong(); if (!so) break;
       const el = document.getElementById("rsec");
+      pushUndo();
       so.lines[U.menu.i].sec = el ? el.value.trim() : "";
       save(); U.menu = null; renderSheet(); render(); break;
     }
     case "rsecq": {
       const so = recSong(); if (!so) break;
+      pushUndo();
       so.lines[U.menu.i].sec = id;
       save(); U.menu = null; renderSheet(); render(); break;
     }
     case "rlen": {
       const so = recSong(); if (!so) break;
+      pushUndo();
       so.lines[U.menu.i].bars = Number(id);
       save(); renderSheet(); render(); break;
     }
@@ -3776,19 +3818,36 @@ document.addEventListener("click", (e) => {
       save(); render(); break;
     }
     case "pnextsec": {
-      const rows = planRows();
-      const live = rows.find((r) => r.live);
+      const live = planRows().find((r) => r.live);
       if (!live) break;
-      const n = sectionsOf(live.s).length;
-      live.s.secDone = Math.min(n - 1, Number(live.s.secDone || 0) + 1);
-      live.s.secStart = Date.now();
-      const nm2 = sectionsOf(live.s).find((x) => x.live);
-      if (nm2) {
-        const k2 = secLineIdx(nm2.name);
-        if (k2 >= 0) setTimeout(() => {
-          const el = document.getElementById("sec-" + nm2.name);
+      pushUndo();
+      const ss = sectionsOf(live.s);
+      // 今の区切りを「録り終わった」ことにして、実際にかかった分を残す
+      if (live.s.secCur) {
+        const used = live.s.secStart ? Math.max(1, Math.round((Date.now() - live.s.secStart) / 60000)) : 0;
+        live.s.secLog = live.s.secLog || {};
+        live.s.secLog[live.s.secCur] = used;
+      }
+      const nx = ss.find((x) => !x.done && x.name !== live.s.secCur);
+      if (nx) {
+        live.s.secCur = nx.name;
+        live.s.secStart = Date.now();
+        save(); render();
+        setTimeout(() => {
+          const el = document.getElementById("sec-" + nx.name);
           if (el && el.scrollIntoView) el.scrollIntoView({ block: "start" });
         }, 0);
+        break;
+      }
+      // 全部終わったら、その人を終えて次の人へ
+      live.s.a1 = nowMin();
+      delete live.s.secCur;
+      const i3 = S.plan.slots.findIndex((x) => x.id === live.s.id);
+      const nn = S.plan.slots[i3 + 1];
+      if (nn && nn.a0 == null) {
+        nn.a0 = live.s.a1; nn.startAt = Date.now(); nn.secStart = Date.now();
+        const first = sectionOrder()[0];
+        if (first) nn.secCur = first;
       }
       save(); render(); break;
     }
@@ -3847,12 +3906,23 @@ document.addEventListener("click", (e) => {
       save(); render(); break;
     case "pstart": {
       const s2 = S.plan.slots.find((x) => x.id === id);
-      if (s2) { s2.a0 = nowMin(); delete s2.a1; s2.startAt = Date.now(); s2.secStart = Date.now(); s2.secDone = 0; save(); render(); }
+      if (s2) {
+        s2.a0 = nowMin(); delete s2.a1; s2.startAt = Date.now(); s2.secStart = Date.now();
+        s2.secLog = {}; s2.secCur = sectionOrder()[0] || "";
+        save(); render();
+      }
       break;
     }
     case "jumpsec": {
-      const k = secLineIdx(id);
-      if (k >= 0) setTimeout(() => {
+      const live = planRows().find((r) => r.live);
+      if (live) {
+        pushUndo();
+        live.s.secCur = id;
+        live.s.secStart = Date.now();
+        save();
+      }
+      render();
+      setTimeout(() => {
         const el = document.getElementById("sec-" + id);
         if (el && el.scrollIntoView) el.scrollIntoView({ block: "start" });
       }, 0);
