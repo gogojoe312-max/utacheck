@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "2026-08-05-15";
+const APP_VER = "2026-08-05-16";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -75,7 +75,7 @@ let S = {
   plan: { start: "10:00", slots: [] },
   size: 19,
 };
-let U = { view: "live", songIdx: 0, sheet: null, mode: "member", allShows: false, picker: false, overview: false, ovSize: 9, draw: false, erase: false, pick: [], menu: null, printPick: null, focus: "", busy: "", allShowList: false };
+let U = { view: "live", songIdx: 0, sheet: null, mode: "member", allShows: false, picker: false, overview: false, ovSize: 9, recPick: null, draw: false, erase: false, pick: [], menu: null, printPick: null, focus: "", busy: "", allShowList: false };
 
 function load() {
   try {
@@ -1251,7 +1251,18 @@ async function keepAwake() {
     wakeLock.addEventListener("release", () => { wakeLock = null; });
   } catch (e) { /* 対応していない端末では何もしない */ }
 }
-document.addEventListener("visibilitychange", () => { if (!document.hidden) keepAwake(); });
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) return;
+  keepAwake();
+  // ホーム画面から開き直した時に、待たずに最新を取りに行く
+  if (S.src && !S.groups.some((g) => g.gistId)) syncSetlist(false);
+  if (navigator.serviceWorker && navigator.serviceWorker.getRegistration) {
+    navigator.serviceWorker.getRegistration().then((r) => { if (r) r.update(); }).catch(() => {});
+  }
+});
+window.addEventListener("pageshow", () => {
+  if (S.src && !S.groups.some((g) => g.gistId)) syncSetlist(false);
+});
 document.addEventListener("pointerdown", keepAwake, true);
 
 function tone(id) {
@@ -1484,8 +1495,15 @@ function delClip(id) { db().then((d) => d.transaction("clips", "readwrite").obje
 let REC = null, recChunks = [], recTick = null, recT0 = 0, recKey = "";
 let AU = null, auKey = "", auTick = null;
 
-const recKeyOf = (so) => S.showId + "|" + (so ? so.id : "");
-const hasRec = (so) => !!(S.recs || {})[recKeyOf(so)];
+// 録音は押すたびに別のものとして残す
+const recKeysOf = (so) => {
+  if (!so) return [];
+  const pre = S.showId + "|" + so.id;
+  return Object.keys(S.recs || {}).filter((k) => k === pre || k.indexOf(pre + "|") === 0)
+    .sort((a, b) => (S.recs[a].ts || 0) - (S.recs[b].ts || 0));
+};
+const recKeyOf = (so) => { const ks = recKeysOf(so); return ks[Math.min(U.recPick != null ? U.recPick : ks.length - 1, ks.length - 1)] || ""; };
+const hasRec = (so) => recKeysOf(so).length > 0;
 const mmss = (sec) => {
   sec = Math.max(0, Math.floor(sec || 0));
   return Math.floor(sec / 60) + ":" + String(sec % 60).padStart(2, "0");
@@ -1495,7 +1513,7 @@ async function startRec() {
   if (VIEW()) return;
   const so = song();
   if (!so) return;
-  if (hasRec(so) && !confirm("この曲の録音を録り直しますか？\n前の録音は消えます。")) return;
+
   if (!navigator.mediaDevices || !window.MediaRecorder) { alert("この端末では録音できません。"); return; }
   try {
     if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
@@ -1512,7 +1530,7 @@ async function startRec() {
     if (mt) opt.mimeType = mt;
     REC = new MediaRecorder(st, opt);
     recChunks = [];
-    recKey = recKeyOf(so);
+    recKey = S.showId + "|" + so.id + "|" + Date.now();
     REC.ondataavailable = (e) => { if (e.data && e.data.size) recChunks.push(e.data); };
     REC.onstop = async () => {
       st.getTracks().forEach((t) => t.stop());
@@ -1523,6 +1541,7 @@ async function startRec() {
         try {
           await putClip(recKey, blob);
           S.recs[recKey] = { size: blob.size, dur, ts: Date.now() };
+          U.recPick = null;
           save();
         } catch (e) { alert("保存できませんでした。端末の空き容量を確認してください。"); }
       }
@@ -1540,10 +1559,17 @@ async function startRec() {
   }
 }
 function stopRec() { if (REC && REC.state === "recording") REC.stop(); }
-const recAt = () => (REC && REC.state === "recording" && recKey === recKeyOf(song())) ? (Date.now() - recT0) / 1000 : null;
+const recAt = () => (REC && REC.state === "recording") ? (Date.now() - recT0) / 1000 : null;
+
+function freeMic() {
+  // iPhoneはマイクを掴んでいる間、音が受話口から出るので必ず離す
+  try { if (REC && REC.state === "recording") REC.stop(); } catch (e) {}
+  try { if (REC && REC.stream) REC.stream.getTracks().forEach((t) => t.stop()); } catch (e) {}
+}
 
 async function openPlayer(seek) {
   const so = song(); if (!so) return;
+  freeMic();
   const key = recKeyOf(so);
   if (!S.recs[key]) { alert("この曲の録音がありません。"); return; }
   try {
@@ -1737,7 +1763,10 @@ function viewLive() {
       : hasRec(s)
         ? `<button data-act="${AU && !AU.paused ? "pauseau" : "playtop"}" class="aub">${AU && !AU.paused ? "❚❚" : "▶"}</button>
            <input id="aubar" type="range" min="0" max="1000" value="0" class="grow">
-           <span id="autime" style="font-size:11px;color:var(--dim);min-width:74px;text-align:right">0:00 / ${mmss(S.recs[recKeyOf(s)].dur)}</span>
+           ${recKeysOf(s).length > 1 ? `<button class="chip sm" data-act="recprev">◀</button>
+             <span style="font-size:11px;color:var(--dim)">${recKeysOf(s).indexOf(recKeyOf(s)) + 1}/${recKeysOf(s).length}</span>
+             <button class="chip sm" data-act="recnext">▶</button>` : ""}
+           <span id="autime" style="font-size:11px;color:var(--dim);min-width:74px;text-align:right">0:00 / ${mmss((S.recs[recKeyOf(s)] || {}).dur)}</span>
            <button data-act="delrec" class="aub" style="font-size:13px;color:var(--dim)">✕</button>`
         : `<button data-act="recstart" class="aub" style="color:var(--bad)">●</button>
            <span class="grow" style="font-size:11px;color:var(--dim)">録音</span>`}
@@ -2919,6 +2948,7 @@ function viewPlan() {
           <b style="font-size:19px">${Math.floor(total / 60)}時間${total % 60 ? (total % 60) + "分" : ""}</b></div>
       </div>
     </div>
+    ${rows.some((r) => !r.done) ? `<button class="ghost" data-act="prebal" style="margin-bottom:10px">残り時間で振り直す</button>` : ""}
     ${list || `<p class="note">まだ誰も入っていません</p>`}
     <div class="card">
       ${memberPick || ""}
@@ -3664,6 +3694,20 @@ document.addEventListener("click", (e) => {
       break;
     }
     case "recstart": startRec(); break;
+    case "recprev": {
+      const ks = recKeysOf(song());
+      const cur = ks.indexOf(recKeyOf(song()));
+      U.recPick = Math.max(0, cur - 1);
+      if (AU) { AU.pause(); AU = null; auKey = ""; }
+      render(); break;
+    }
+    case "recnext": {
+      const ks = recKeysOf(song());
+      const cur = ks.indexOf(recKeyOf(song()));
+      U.recPick = Math.min(ks.length - 1, cur + 1);
+      if (AU) { AU.pause(); AU = null; auKey = ""; }
+      render(); break;
+    }
     case "recstop": stopRec(); break;
     case "playfrom": { const n = NOTES().find((x) => x.id === id); if (n) openPlayer(n.at || 0); break; }
     case "playtop": openPlayer(0); break;
@@ -3877,6 +3921,25 @@ document.addEventListener("click", (e) => {
       const cur = sectionsOf(live.s).find((x) => x.name === nm);
       live.s.sec = live.s.sec || {};
       live.s.sec[nm] = Math.max(1, (cur ? cur.min : 5) + Number(dv));
+      save(); render(); break;
+    }
+    case "prebal": {
+      const rows = planRows();
+      if (!rows.length) break;
+      const end = rows[rows.length - 1].pE;          // もともとの終わり
+      const now = nowMin();
+      const left = rows.filter((r) => !r.done);
+      if (!left.length) break;
+      const avail = end - now;
+      if (avail < left.length) { alert("残り時間が足りません。終わりの時刻を延ばしてください。"); break; }
+      const share = Math.floor(avail / left.length);
+      if (!confirm(`残り ${avail}分 を ${left.length}人で割り直します。\n1人あたり およそ ${share}分 になります。`)) break;
+      pushUndo();
+      left.forEach((r, i) => {
+        if (r.live) r.s.min = Math.max(1, (now - r.aS) + share);   // 今の人は「ここから share 分」
+        else r.s.min = share;
+        delete r.s.sec;                                            // 区切りの配分は割り直す
+      });
       save(); render(); break;
     }
     case "pseceven": {
