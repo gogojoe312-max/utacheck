@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "2026-08-05-35";
+const APP_VER = "2026-08-05-36";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -71,7 +71,7 @@ let S = {
   src: "", key: "", keyInLink: true,
   memos: {}, recs: {}, kbps: 128, preroll: 5, viewer: false, srcGroup: "",
   draws: {}, showFilter: "", folders: {}, subs: {}, subsMan: {}, subLib: {}, gsubs: {},
-  recMode: false, recOvSize: 14, rsongs: [], rsongId: "", recBars: true, liveShow: "", recEdit: false, rgFilter: "", linkSrc: "", planMin: 90, planPrep: 10, rosters: {}, secWords: [], trash: [],
+  recMode: false, recOvSize: 14, rsongs: [], rsongId: "", recBars: true, liveShow: "", recEdit: false, rgFilter: "", linkSrc: "", groupOrder: [], planMin: 90, planPrep: 10, rosters: {}, secWords: [], trash: [],
   plan: { start: "10:00", slots: [] },
   size: 19,
 };
@@ -2501,7 +2501,8 @@ function viewSummary() {
   if (!ns0.length) body = `<p style="padding:40px;text-align:center;color:var(--dim);font-size:14px">この公演の記録はまだありません。</p>`;
   else if (U.mode === "member") {
     // 登録した名簿の順（＝年齢順）に並べ、グループごとに見出しを付ける
-    const gorder = S.groups.map((g) => g.name).filter(Boolean);
+    const named = S.groups.map((g) => g.name).filter(Boolean);
+    const gorder = named.length > 1 ? named : ((S.groupOrder || []).length ? S.groupOrder : named);
     const gnames = Object.keys(S.rosters || {}).filter((k) => (S.rosters[k] || []).length)
       .sort((a, b) => {
         const ia = gorder.indexOf(a), ib = gorder.indexOf(b);
@@ -5059,6 +5060,8 @@ function publicationData(gid) {
     return {
       version: Date.now(), authorId: S.deviceId, src: g.src || "", groupName: g.name || "",
       members: used.map((n) => ({ name: n })),
+      rosters: S.rosters || {},                                   // 名簿の並び（年齢順）
+      groupOrder: S.groups.map((x) => x.name).filter(Boolean),    // グループの並び
       lib,
       songs: songs.map((x) => ({
         showId: x.showId, libIdx: entry(x), take: x.take || 1,
@@ -5446,6 +5449,8 @@ function applySetlist(d) {
   if (!S.groups.some((g) => g.gistId)) { S.songs = []; S.memos = {}; S.pubNotes = []; }
   S.songs = [];
   (d.members || []).forEach((x) => addMember(x.name));
+  if (d.rosters && Object.keys(d.rosters).length) S.rosters = d.rosters;
+  if (d.groupOrder && d.groupOrder.length) S.groupOrder = d.groupOrder;
   // 受け取った名簿に、その曲に出てこない人が混ざっていたら削る（古い配信への備え）
   const trimRoster = (o) => {
     const used = [];
