@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "2026-08-05-30";
+const APP_VER = "2026-08-05-35";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -71,7 +71,7 @@ let S = {
   src: "", key: "", keyInLink: true,
   memos: {}, recs: {}, kbps: 128, preroll: 5, viewer: false, srcGroup: "",
   draws: {}, showFilter: "", folders: {}, subs: {}, subsMan: {}, subLib: {}, gsubs: {},
-  recMode: false, rsongs: [], rsongId: "", recBars: true, liveShow: "", recEdit: false, rgFilter: "", linkSrc: "", planMin: 90, planPrep: 10, rosters: {}, secWords: [], trash: [],
+  recMode: false, recOvSize: 14, rsongs: [], rsongId: "", recBars: true, liveShow: "", recEdit: false, rgFilter: "", linkSrc: "", planMin: 90, planPrep: 10, rosters: {}, secWords: [], trash: [],
   plan: { start: "10:00", slots: [] },
   size: 19,
 };
@@ -118,6 +118,7 @@ function migrate() {
   if (!S.subLib) S.subLib = {};
   if (!S.gsubs) S.gsubs = {};
   if (!S.rsongs) S.rsongs = [];
+  if (!S.recOvSize) S.recOvSize = 14;
   if (!S.plan) S.plan = { start: "10:00", slots: [] };
   if (!S.planMin) S.planMin = 90;
   if (S.planPrep == null) S.planPrep = 10;
@@ -1484,7 +1485,9 @@ async function parseDocx(file, buf) {
   const lines = [];
   paras.forEach((p) => {
     const t = textOf(p);
-    if (t) lines.push({ t, bars: 4 });
+    const hasBrk = /w:type="column"/.test(p);
+    if (t) lines.push(hasBrk ? { t, bars: 4, brk: 1 } : { t, bars: 4 });
+    else if (hasBrk) lines.push({ gap: true, t: "", brk: 1 });
     else if (lines.length && !lines[lines.length - 1].gap) lines.push({ gap: true, t: "" });
   });
   while (lines.length && lines[lines.length - 1].gap) lines.pop();
@@ -1499,7 +1502,40 @@ async function parseDocx(file, buf) {
   const title = m ? m[1] : cleanName(file.name);
   const credit = head.replace(/^.*?[」』]/, "").trim() || head.trim();
 
-  return { id: uid(), title, credit, intro: 8, lines, at: Date.now() };
+  // Wordの段組を読み取り、紙面の設定から「どこで段が変わるか」も割り出す
+  let cols = 1, colSpace = 425;
+  const cm = xml.match(/<w:cols[^>]*w:num="(\d+)"/);
+  if (cm) cols = Math.max(1, Math.min(4, Number(cm[1])));
+  const cs = xml.match(/<w:cols[^>]*w:space="(\d+)"/);
+  if (cs) colSpace = Number(cs[1]);
+
+  const num = (re2, dflt) => { const m2 = xml.match(re2); return m2 ? Number(m2[1]) : dflt; };
+  const pgW = num(/<w:pgSz[^>]*w:w="(\d+)"/, 11906);
+  const pgH = num(/<w:pgSz[^>]*w:h="(\d+)"/, 16838);
+  const mTop = num(/<w:pgMar[^>]*w:top="(\d+)"/, 720);
+  const mBot = num(/<w:pgMar[^>]*w:bottom="(-?\d+)"/, 720);
+  const mLef = num(/<w:pgMar[^>]*w:left="(\d+)"/, 720);
+  const mRig = num(/<w:pgMar[^>]*w:right="(\d+)"/, 720);
+  const pitch = num(/w:linePitch="(\d+)"/, 290);
+  let pt = 10.5;
+  const stf = Object.keys(files).find((n2) => n2 === "word/styles.xml");
+  if (stf) { const m3 = dec2(files[stf]).match(/<w:sz w:val="(\d+)"/); if (m3) pt = Number(m3[1]) / 2; }
+
+  const colW = (pgW - mLef - mRig - colSpace * (cols - 1)) / cols;
+  const perLine = Math.max(8, Math.floor(colW / 20 / pt));      // 1行に入る全角の文字数
+  const rowsPerCol = Math.max(5, Math.floor((pgH - mTop - mBot) / pitch));
+
+  // 明示的な改段があればそれを優先、無ければ紙面の高さから割り出す
+  const colBreaks = [];
+  let used = 0;
+  lines.forEach((l, i) => {
+    if (l.brk) { colBreaks.push(i); used = 0; return; }
+    const n2 = l.gap ? 1 : Math.max(1, Math.ceil(Array.from(l.t).length / perLine));
+    if (used + n2 > rowsPerCol) { colBreaks.push(i); used = n2; return; }
+    used += n2;
+  });
+
+  return { id: uid(), title, credit, intro: 8, lines, cols, colBreaks, perLine, rowsPerCol, at: Date.now() };
 }
 
 // 1行4小節を基本に、直した行を基点にして振り直す
@@ -1877,7 +1913,7 @@ function viewLive() {
       <div class="t1 trunc">${S.recMode
         ? `<b style="color:var(--accent)">レコーディングモード</b>${s && s.grp ? " ・ " + h(s.grp) : ""}`
         : `<b style="color:var(--accent)">ライブモード</b>${s ? " ・ " + h((S.groups.find((x) => x.id === s.groupId) || {}).name || "") : ""} ・ ${h(showName() || "公演名未設定")}`}${SONGS().length ? ` ・ ${U.songIdx + 1}/${SONGS().length}` : ""}${pushState ? ` ・ <span style="color:${pushState === "未送信" ? "var(--bad)" : "var(--dim)"}">${h(pushState)}</span>` : ""}</div>
-      <div class="t2 trunc">${s && Number(s.take || 1) > 1 ? `<b class="tkmk">テイク${Number(s.take)}</b>` : ""}${h(s ? s.title : "曲がありません")}</div>
+      <div class="t2 trunc">${s && (S.recMode || Number(s.take || 1) > 1) ? `<b class="tkmk">テイク${Number(s.take || 1)}</b>` : ""}${h(s ? s.title : "曲がありません")}</div>
     </button>
     ${S.recMode ? `<span id="pcd2" style="font-size:12px;color:var(--dim);font-variant-numeric:tabular-nums;margin-right:4px"></span>` : ""}
     <button class="ic" data-act="size">A</button>
@@ -1977,14 +2013,29 @@ function viewOverview(s) {
   let bodyHTML;
   if (S.recMode) {
     const bars = barsOf(s);
-    bodyHTML = `<div class="ovword" style="font-size:${U.ovSize}px">${s.lines.map((l, i) => {
+    const nc = Math.max(1, Math.min(4, Number(s.cols || 1)));
+    const one = (l, i) => {
       if (l.gap) return `<div style="height:1em"></div>`;
       const newSec = l.sec && l.sec !== (s.lines[i - 1] || {}).sec;
       return `${newSec ? `<div class="secdiv" id="sec-${h(l.sec)}"><span>${h(l.sec)}</span></div>` : ""}
         <button class="ovw${l.add ? " lnadd" : ""}" data-act="jumpline" data-i="${i}">
           <span class="ovwn">${l.solo ? `<b class="solomk">ソロ</b>` : ""}${S.recBars && bars[i] != null ? bars[i] : ""}</span>
           <span>${h(l.add ? "（" + l.t + "）" : l.t)}</span></button>`;
-    }).join("")}</div>`;
+    };
+    const brks = (s.colBreaks || []).filter((x) => x > 0 && x < s.lines.length);
+    if (nc > 1 && brks.length) {
+      // Wordが段を変える位置で分ける
+      const parts = [];
+      let from = 0;
+      brks.concat([s.lines.length]).forEach((to) => {
+        if (to > from) parts.push(s.lines.slice(from, to).map((l, k) => one(l, from + k)).join(""));
+        from = to;
+      });
+      bodyHTML = `<div class="ovpage" style="font-size:${S.recOvSize}px">${
+        parts.map((p2) => `<div class="ovcol">${p2}</div>`).join("")}</div>`;
+    } else {
+      bodyHTML = `<div class="ovword" style="font-size:${S.recOvSize}px">${s.lines.map(one).join("")}</div>`;
+    }
   } else if (useGrid) {
     const colNum = (t) => { let n = 0; for (let i = 0; i < t.length; i++) n = n * 26 + (t.charCodeAt(i) - 64); return n; };
     const spec = [];
@@ -2059,7 +2110,7 @@ function viewOverview(s) {
   <div class="hd">
     <div class="grow"><div class="t1 trunc"><b style="color:var(--accent)">${S.recMode ? "レコーディングモード" : "ライブモード"}</b> ・ ${h(showName())} ・ 全体表示</div>
       <div class="t2 trunc">${h(songName(s))}</div></div>
-    <button class="ic" data-act="ovsize">${U.ovSize}px</button>
+    <button class="ic" data-act="ovsize">${S.recMode ? S.recOvSize : U.ovSize}px</button>
   </div>
   ${blockBar(s)}
   <div class="scroll" style="padding:8px 10px">${bodyHTML}
@@ -3217,7 +3268,7 @@ function viewRecPrint() {
   const trs = so.lines.map((l, i) => {
     if (l.gap) return `<tr class="prz"><td class="prn"></td><td class="prx"></td></tr>`;
     return `<tr><td class="prn">${l.solo ? "◆ " : ""}${l.sec ? h(l.sec) + " " : ""}${S.recBars && bars[i] != null ? bars[i] : ""}</td><td class="prx">${h(l.add ? "（" + l.t + "）" : l.t)}</td></tr>`;
-  }).join("");
+  });
   return `
   <div class="hd noprint"><button class="ic" data-act="recback">‹</button><b>PDF・印刷</b>
     <span class="grow"></span>
@@ -3226,7 +3277,15 @@ function viewRecPrint() {
   <div class="scroll">
     <div class="pr" id="prpage"><section class="prs"><div class="prbox"><div class="prin">
       <h3>${h(so.title)}<span class="prc">　${h(so.credit)}</span></h3>
-      <table class="prg" style="table-layout:auto">${trs}</table>
+      ${(() => {
+        const nc2 = Math.max(1, Math.min(4, Number(so.cols || 1)));
+        const bk = (so.colBreaks || []).filter((x) => x > 0 && x < so.lines.length);
+        if (nc2 < 2 || !bk.length) return `<table class="prg" style="table-layout:auto">${trs.join("")}</table>`;
+        const parts = []; let from = 0;
+        bk.concat([so.lines.length]).forEach((to) => { if (to > from) parts.push(trs.slice(from, to).join("")); from = to; });
+        return `<div style="display:flex;gap:6mm;align-items:flex-start">${
+          parts.map((pp) => `<div style="flex:1;min-width:0"><table class="prg" style="table-layout:auto">${pp}</table></div>`).join("")}</div>`;
+      })()}
     </div></div></section></div>
     <div class="noprint" style="height:40px"></div>
   </div>`;
@@ -3737,7 +3796,10 @@ document.addEventListener("click", (e) => {
       if (confirm("この曲の手書きをすべて消しますか？")) { delete S.draws[drawKey()]; save(); render(); }
       break;
     case "overview": U.overview = !U.overview; render(); break;
-    case "ovsize": U.ovSize = U.ovSize >= 14 ? 8 : U.ovSize + 2; render(); break;
+    case "ovsize":
+      if (S.recMode) { S.recOvSize = S.recOvSize >= 22 ? 11 : S.recOvSize + 2; save(); }
+      else U.ovSize = U.ovSize >= 14 ? 8 : U.ovSize + 2;
+      render(); break;
     case "jumpline": {
       U.overview = false; render();
       const el = app.querySelector(`.txt[data-l="${i}"]`);

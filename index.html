@@ -38,6 +38,11 @@ button{cursor:pointer}
   background:var(--accent);color:#0A0A0A;font-weight:700;vertical-align:middle}
 .solomk{display:inline-block;font-size:9px;line-height:1;padding:2px 4px;margin-right:4px;border-radius:4px;background:var(--accent);color:#0A0A0A;font-weight:700;vertical-align:middle}
 .ovword{display:flex;flex-direction:column}
+.ovpage{display:flex;gap:16px;align-items:flex-start}
+.ovcol{flex:1;min-width:0;display:flex;flex-direction:column}
+.ovword.ovw2{display:block;column-fill:auto}
+.ovword.ovw2 .ovw{break-inside:avoid;page-break-inside:avoid;display:flex}
+.ovword.ovw2 .secdiv{break-inside:avoid}
 .ovw{display:flex;gap:10px;text-align:left;padding:2px 2px;align-items:baseline}
 .ovwn{flex:0 0 40px;text-align:right;color:var(--dim);font-size:.8em;font-variant-numeric:tabular-nums}
 .ovw.lnadd{color:#7FB3FF}
@@ -109,6 +114,11 @@ button{cursor:pointer}
   background:var(--accent);color:#0A0A0A;font-weight:700;vertical-align:middle}
 .solomk{display:inline-block;font-size:9px;line-height:1;padding:2px 4px;margin-right:4px;border-radius:4px;background:var(--accent);color:#0A0A0A;font-weight:700;vertical-align:middle}
 .ovword{display:flex;flex-direction:column}
+.ovpage{display:flex;gap:16px;align-items:flex-start}
+.ovcol{flex:1;min-width:0;display:flex;flex-direction:column}
+.ovword.ovw2{display:block;column-fill:auto}
+.ovword.ovw2 .ovw{break-inside:avoid;page-break-inside:avoid;display:flex}
+.ovword.ovw2 .secdiv{break-inside:avoid}
 .ovw{display:flex;gap:10px;text-align:left;padding:2px 2px;align-items:baseline}
 .ovwn{flex:0 0 40px;text-align:right;color:var(--dim);font-size:.8em;font-variant-numeric:tabular-nums}
 .ovw.lnadd{color:#7FB3FF}
@@ -236,6 +246,6 @@ button{cursor:pointer}
 <div id="app"></div>
 <script src="vendor/pdf.min.js"></script>
 <script src="vendor/xlsx.full.min.js"></script>
-<script src="app.js?v=2026-08-05-30"></script>
+<script src="app.js?v=2026-08-05-35"></script>
 </body>
 </html>
