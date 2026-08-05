@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "2026-08-05-07";
+const APP_VER = "2026-08-05-09";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1289,6 +1289,13 @@ function showPianoAtC4(root) {
   if (el) el.scrollLeft = 34 * 7 - 20;
 }
 
+// 設定の一番下に置く署名と版
+const footerHTML = () => `
+    <div style="text-align:center;color:var(--dim);font-size:11px;letter-spacing:.04em;margin:26px 0 4px">
+      Created by Joe Takasaki
+    </div>
+    <div style="text-align:center;color:var(--dim);font-size:10px;opacity:.6;margin-bottom:10px">${APP_VER}</div>`;
+
 function pianoHTML(sel) {
   const W = ["C", "D", "E", "F", "G", "A", "B"], B = ["C", "D", "F", "G", "A"];
   let white = "", black = "", i = 0;
@@ -1592,6 +1599,7 @@ function render() {
   renderSheet();
   if (U.view === "live" && !U.overview) setTimeout(paintInk, 0);
   if (U.view === "print" || U.view === "recprint") setTimeout(fitPrintDOM, 0);
+  if (S.recMode) setTimeout(tickPlan, 0);
   // PDFの名前を「公演名 歌チェック」にする
   try {
     document.title = U.view === "recprint" ? ((recSong() || {}).title || "歌詞")
@@ -1663,12 +1671,14 @@ function viewLive() {
             style="color:var(--good)">🔊 ${mmss(n.at)}</button>` : ""}
         ${n.memo ? `<button class="tagpill" data-act="note" data-i="${i}" style="color:var(--dim)">${n.from != null ? `「${h(chars.slice(n.from, n.to + 1).join(""))}」 ` : ""}${h(n.memo)}</button>` : ""}`).join("");
       const st2 = lineStatus(s, i);
+      const newSec = S.recMode && l.sec && l.sec !== (s.lines[i - 1] || {}).sec;
       const foc = U.focus && partsOf(s, i).includes(U.focus);
       const tint = st2 === "need" ? "var(--bad)" : st2 === "changed" ? "#F0B23C"
         : foc ? "#4C9BFF" : (ns.length ? noteColor(ns[0]) : "");
       const strength = (st2 || foc) ? 18 : 9;
-      return `<div class="ln" style="${tint ? `background:color-mix(in srgb,${tint} ${strength}%,transparent)` : ""}">
-        <button class="lbl" data-act="${st2 ? "assignline" : "noteblock"}" data-i="${i}"
+      return `${newSec ? `<div class="secdiv" id="sec-${h(l.sec)}"><span>${h(l.sec)}</span></div>` : ""}
+      <div class="ln" style="${tint ? `background:color-mix(in srgb,${tint} ${strength}%,transparent)` : ""}">
+        <button class="lbl" data-act="${S.recMode ? "rbar" : (st2 ? "assignline" : "noteblock")}" data-i="${i}"
           style="${st2 ? `color:${st2 === "need" ? "var(--bad)" : "#F0B23C"}` : ""}">${h(labelOf(s, i))}</button>
         <div class="brk ${gp[i]}"></div>
         <div class="grow" style="min-width:0">
@@ -1680,7 +1690,9 @@ function viewLive() {
   return `
   <div class="hd">
     <button class="grow" style="text-align:left" data-act="picker">
-      <div class="t1 trunc">${S.recMode ? `<b style="color:var(--accent)">レコーディングモード</b>${s && s.grp ? " ・ " + h(s.grp) : ""}` : `${s ? `<b style="color:var(--accent)">${h((S.groups.find((x) => x.id === s.groupId) || {}).name || "")}</b> ・ ` : ""}${h(showName() || "公演名未設定")}`}${SONGS().length ? ` ・ ${U.songIdx + 1}/${SONGS().length}` : ""}${pushState ? ` ・ <span style="color:${pushState === "未送信" ? "var(--bad)" : "var(--dim)"}">${h(pushState)}</span>` : ""}</div>
+      <div class="t1 trunc">${S.recMode
+        ? `<b style="color:var(--accent)">レコーディングモード</b>${s && s.grp ? " ・ " + h(s.grp) : ""}`
+        : `<b style="color:var(--accent)">ライブモード</b>${s ? " ・ " + h((S.groups.find((x) => x.id === s.groupId) || {}).name || "") : ""} ・ ${h(showName() || "公演名未設定")}`}${SONGS().length ? ` ・ ${U.songIdx + 1}/${SONGS().length}` : ""}${pushState ? ` ・ <span style="color:${pushState === "未送信" ? "var(--bad)" : "var(--dim)"}">${h(pushState)}</span>` : ""}</div>
       <div class="t2 trunc">${h(s ? songName(s) : "曲がありません")}</div>
     </button>
     <button class="ic" data-act="size">A</button>
@@ -1730,7 +1742,6 @@ function viewLive() {
     <button data-act="prev" class="${U.songIdx <= 0 ? "off" : ""}">‹</button>
     <button data-act="next" class="${U.songIdx >= SONGS().length - 1 ? "off" : ""}">›</button>
     ${VIEW() ? "" : `<button data-act="draw" class="${U.draw ? "on" : ""}">${U.draw ? "✎中" : "✎"}</button>`}
-    ${S.recMode ? `<button data-act="recedit" class="${U.recEdit ? "on" : ""}">小節</button>` : ""}
     <button data-act="overview" class="wide">全体</button>
     ${undoStack.length && !VIEW() ? `<button data-act="undo" style="color:var(--accent)">取消</button>` : ""}
     ${S.recMode ? "" : `<button data-act="go-summary">集計</button>`}
@@ -1845,7 +1856,7 @@ function viewOverview(s) {
 
   return `
   <div class="hd">
-    <div class="grow"><div class="t1 trunc">${h(showName())} ・ 全体表示</div>
+    <div class="grow"><div class="t1 trunc"><b style="color:var(--accent)">${S.recMode ? "レコーディングモード" : "ライブモード"}</b> ・ ${h(showName())} ・ 全体表示</div>
       <div class="t2 trunc">${h(songName(s))}</div></div>
     <button class="ic" data-act="ovsize">${U.ovSize}px</button>
   </div>
@@ -1941,7 +1952,13 @@ function renderSheet() {
       <div class="chips" style="margin-bottom:10px">
         ${["1A", "1B", "1C", "2A", "2B", "2C", "D", "落ち", "大サビ", "間奏"].map((x) => `<button class="chip sm" data-act="rsecq" data-id="${x}">${x}</button>`).join("")}
       </div>
-      ${l && l.at != null ? `<button class="ghost" data-act="rbarclear" style="color:var(--dim)">手直しを取り消す</button>` : ""}
+      <div class="row" style="margin-bottom:8px">
+        <span style="font-size:11px;color:var(--dim);width:52px">下に足す</span>
+        ${["フェイク", "ガヤ", "コーラス", "掛け声"].map((x) => `<button class="chip sm grow" data-act="raddline" data-id="${x}">${x}</button>`).join("")}
+      </div>
+      <button class="ghost" data-act="raddfree" style="margin-bottom:10px;color:var(--dim)">下に自由に足す</button>
+      ${l && l.at != null ? `<button class="ghost" data-act="rbarclear" style="color:var(--dim);margin-bottom:8px">小節の手直しを取り消す</button>` : ""}
+      <button class="ghost" data-act="rdelline" style="color:var(--bad)">この行を消す</button>
     </div>`;
     document.body.appendChild(overlay);
     return;
@@ -2563,7 +2580,8 @@ function viewSetupRec() {
   return `
   <div class="hd"><button class="ic" data-act="go-live">‹</button><b>設定</b>
     <span class="grow"></span>
-    <span style="font-size:11px;color:var(--accent)">レコーディングモード</span></div>
+    ${U.busy ? `<span style="font-size:12px;color:var(--accent)">${h(U.busy)}</span>`
+             : `<span style="font-size:11px;color:var(--accent)">レコーディングモード</span>`}</div>
   <div class="scroll pad">
     <h4 class="head">曲</h4>
     ${grps.length ? `<div class="chips" style="margin-bottom:10px">
@@ -2595,9 +2613,7 @@ function viewSetupRec() {
     <h4 class="head">モード</h4>
     <div class="card"><button class="primary" data-act="recon">ライブモード</button></div>
 
-    <div style="text-align:center;color:var(--dim);font-size:11px;letter-spacing:.04em;margin:26px 0 10px">
-      Created by Joe Takasaki
-    </div>
+    ${footerHTML()}
     <div style="height:40px"></div>
   </div>`;
 }
@@ -2608,27 +2624,49 @@ function recBar() {
   const now = nowMin();
   const live = rows.find((r) => r.live);
   const next = rows.find((r) => !r.done && !r.live);
-  if (!live && !next) {
-    return `<button class="aubar" data-act="goplan" style="justify-content:center;color:var(--dim);font-size:12px">進行表をひらく</button>`;
-  }
-  const rest = live ? live.aE - now : 0;
   const secs = live ? sectionsOf(live.s) : [];
-  const curSec = secs.find((x) => x.live);
-  return `<div class="aubar">
+  const cur = secs.find((x) => x.live);
+
+  const tabs = sectionOrder().map((nm) => {
+    const e = secs.find((x) => x.name === nm);
+    return `<button class="sectab ${e && e.live ? "on" : ""}" data-act="jumpsec" data-id="${h(nm)}">${h(nm)}${e ? `<i>${e.min}</i>` : ""}</button>`;
+  }).join("");
+
+  return `${tabs ? `<div class="sectabs">${tabs}</div>` : ""}
+  <div class="aubar">
     ${live ? `<span style="color:var(--accent);font-weight:700">${h(live.s.name)}</span>
-      <span style="font-size:12px;color:${rest < 0 ? "var(--bad)" : "var(--text)"}">${rest >= 0 ? "残り " + rest + "分" : "超過 " + (-rest) + "分"}</span>
-      ${curSec ? `<span style="font-size:12px;color:var(--dim)">${h(curSec.name)} ${curSec.rest}分</span>` : ""}
+      <span id="pcd" style="font-size:13px;font-variant-numeric:tabular-nums">—</span>
+      ${cur ? `<span style="font-size:11px;color:var(--dim)">${h(cur.name)}</span>` : ""}
       <span class="grow"></span>
-      <button class="chip sm" data-act="pnextsec">区切り</button>
+      ${cur ? `<button class="chip sm" data-act="pnextsec">次の区切り</button>` : ""}
       <button class="chip sm" data-act="pnext" data-id="${live.s.id}" style="background:var(--accent);color:#0A0A0A">次へ</button>`
-    : `<span style="color:var(--dim);font-size:12px">次 ${h(next.s.name)}　${min2hm(next.aS)}</span>
+    : next ? `<span style="color:var(--dim);font-size:12px">次 ${h(next.s.name)}　${min2hm(next.aS)}</span>
       <span class="grow"></span>
-      <button class="chip sm" data-act="pstart" data-id="${next.s.id}" style="background:var(--accent);color:#0A0A0A">開始</button>`}
+      <button class="chip sm" data-act="pstart" data-id="${next.s.id}" style="background:var(--accent);color:#0A0A0A">開始</button>`
+    : `<span class="grow" style="color:var(--dim);font-size:12px">進行表に誰も入っていません</span>`}
     <button class="chip sm" data-act="goplan">進行</button>
   </div>`;
 }
 
+// 秒でカウントダウンする
+function tickPlan() {
+  const el = document.getElementById("pcd");
+  if (!el) return;
+  const live = planRows().find((r) => r.live);
+  if (!live) { el.textContent = "—"; return; }
+  const secs = sectionsOf(live.s);
+  const cur = secs.find((x) => x.live);
+  const base = cur ? (live.s.secStart || 0) : (live.s.startAt || 0);
+  const total = (cur ? cur.min : Number(live.s.min || 0)) * 60;
+  const left = base ? Math.round(total - (Date.now() - base) / 1000) : total;
+  const neg = left < 0, v = Math.abs(left);
+  el.textContent = (neg ? "−" : "") + Math.floor(v / 60) + ":" + String(v % 60).padStart(2, "0");
+  el.style.color = neg ? "var(--bad)" : "var(--text)";
+}
+setInterval(() => { if (S.recMode && !document.hidden) tickPlan(); }, 1000);
+
 // 曲の区切り（1A・1B…）と、その持ち時間
+// 歌詞に出てくる順
 function sectionNames() {
   const so = recSong();
   if (!so) return [];
@@ -2636,9 +2674,26 @@ function sectionNames() {
   so.lines.forEach((l) => { if (!l.gap && l.sec && !out.includes(l.sec)) out.push(l.sec); });
   return out;
 }
+// 録る順（1A → 2A → 1B → 2B …）
+function sectionOrder() {
+  const ns = sectionNames();
+  const key = (x) => {
+    const m = /^(\d+)\s*([A-Za-zＡ-Ｚａ-ｚ])/.exec(x);
+    return m ? { g: m[2].toUpperCase(), n: Number(m[1]) } : null;
+  };
+  const withKey = ns.map((x, i) => ({ x, i, k: key(x) }));
+  const named = withKey.filter((v) => v.k).sort((a, b) => (a.k.g < b.k.g ? -1 : a.k.g > b.k.g ? 1 : a.k.n - b.k.n));
+  const rest = withKey.filter((v) => !v.k);
+  return named.concat(rest).map((v) => v.x);
+}
+const secLineIdx = (nm) => {
+  const so = recSong();
+  if (!so) return -1;
+  return so.lines.findIndex((l) => !l.gap && l.sec === nm);
+};
 // 区切りごとの持ち時間。既定は均等割り、直した分だけ覚える。
 function sectionsOf(slot) {
-  const names2 = sectionNames();
+  const names2 = sectionOrder();
   if (!names2.length || !slot) return [];
   const adj = slot.sec || {};
   const fixed = names2.filter((n) => adj[n] != null);
@@ -2743,18 +2798,9 @@ function viewPlan() {
   }).join("");
 
   // 誰を足すかを、読み込んだ曲のグループから拾う
-  // 名簿は手で直せる。直していないグループは曲から拾う。
+  // 登録したメンバーだけを出す。自動では拾わない。
   const rosters = {};
-  S.groups.forEach((g) => { if (S.rosters[g.name]) rosters[g.name] = S.rosters[g.name].slice(); });
-  S.songs.forEach((x) => {
-    const gn = (S.groups.find((g) => g.id === x.groupId) || {}).name;
-    if (!gn || S.rosters[gn]) return;
-    rosters[gn] = rosters[gn] || [];
-    songRoster(x).forEach((mid) => {
-      const nm = (member(mid) || {}).name;
-      if (nm && !rosters[gn].includes(nm)) rosters[gn].push(nm);
-    });
-  });
+  Object.keys(S.rosters || {}).forEach((k) => { if ((S.rosters[k] || []).length) rosters[k] = S.rosters[k]; });
   const used = new Set(S.plan.slots.map((x) => x.name));
   const memberPick = Object.keys(rosters).map((gn) => `
     <div class="row" style="margin:10px 0 4px">
@@ -2804,6 +2850,7 @@ function viewPlan() {
     ${list || `<p class="note">まだ誰も入っていません</p>`}
     <div class="card">
       ${memberPick || ""}
+      <button class="ghost" data-act="prosternew" style="margin-top:10px">メンバーを登録する</button>
       <div class="row" style="gap:8px;margin-top:10px">
         <input class="field grow" id="pname" placeholder="名前を打って足す">
         <input class="field" id="pmin" type="number" inputmode="numeric" placeholder="${S.planMin}" style="width:74px">
@@ -3113,9 +3160,8 @@ function viewSetup() {
         <div style="font-size:11px;color:var(--dim)">${S.songs.filter((x) => x.showId === sw.id).length}曲 ・ ${NOTES().filter((n) => n.showId === sw.id).length}件</div>
       </button></div>`).join("");
     return `
-    <div class="hd"><button class="ic" data-act="go-live">‹</button><b>公演</b>
-      <span class="grow"></span>
-      <span style="font-size:11px;color:var(--dim)">${APP_VER}</span></div>
+    <div class="hd"><button class="ic" data-act="go-live">‹</button><b>設定</b>
+      <span class="grow"></span></div>
     <div class="scroll pad"><div style="height:6px"></div>${list}
     <h4 class="head">音を確かめる</h4>
     <div class="card">${pianoHTML(null)}</div>
@@ -3123,9 +3169,7 @@ function viewSetup() {
     ${metroHTML()}
     <h4 class="head">歌割をPDFにする</h4>
     <div class="card"><button class="primary" data-act="gopdf">PDFにする</button></div>
-    <div style="text-align:center;color:var(--dim);font-size:11px;letter-spacing:.04em;margin:26px 0 10px">
-      Created by Joe Takasaki
-    </div>
+    ${footerHTML()}
     <div style="height:40px"></div></div>`;
   }
 
@@ -3184,7 +3228,7 @@ function viewSetup() {
   <div class="hd"><button class="ic" data-act="go-live">‹</button><b>設定</b>
     <span class="grow"></span>
     ${U.busy ? `<span style="font-size:12px;color:var(--accent)">${h(U.busy)}</span>`
-             : `<span style="font-size:11px;color:var(--dim)">${APP_VER}</span>`}</div>
+             : `<span style="font-size:11px;color:var(--accent)">ライブモード</span>`}</div>
   <div class="scroll pad">
     <h4 class="head">公演</h4>
     ${S.groups.length > 1 ? `<div class="chips" style="margin-bottom:10px">
@@ -3320,9 +3364,7 @@ function viewSetup() {
     <h4 class="head">モード</h4>
     <div class="card"><button class="primary" data-act="recon">レコーディングモード</button></div>
 
-    <div style="text-align:center;color:var(--dim);font-size:11px;letter-spacing:.04em;margin:26px 0 10px">
-      Created by Joe Takasaki
-    </div>
+    ${footerHTML()}
     <div style="height:40px"></div>
   </div>`;
 }
@@ -3372,9 +3414,7 @@ document.addEventListener("click", (e) => {
       U.menu = { kind: "assign", id: so2.id, i, idx: runAt(so2, i) };
       renderSheet(); break;
     }
-    case "recedit": U.recEdit = !U.recEdit; render(); break;
     case "noteblock": {
-      if (S.recMode && U.recEdit) { U.menu = { kind: "rbar", i }; renderSheet(); break; }
       // その行が属する歌割りのかたまり（名前が付いた行＋続きの行）をまとめて選ぶ
       const so = song(); if (!so) break;
       let st = i;
@@ -3682,6 +3722,22 @@ document.addEventListener("click", (e) => {
       if (v > 0) { so.lines[U.menu.i].at = Math.round(v); save(); U.menu = null; renderSheet(); render(); }
       break;
     }
+    case "raddline": {
+      const so = recSong(); if (!so) break;
+      so.lines.splice(U.menu.i + 1, 0, { t: id, bars: 4 });
+      save(); U.menu = null; renderSheet(); render(); break;
+    }
+    case "raddfree": {
+      const so = recSong(); if (!so) break;
+      const v = prompt("足す文字", "");
+      if (v && v.trim()) { so.lines.splice(U.menu.i + 1, 0, { t: v.trim(), bars: 4 }); save(); U.menu = null; renderSheet(); render(); }
+      break;
+    }
+    case "rdelline": {
+      const so = recSong(); if (!so) break;
+      so.lines.splice(U.menu.i, 1);
+      save(); U.menu = null; renderSheet(); render(); break;
+    }
     case "rsecset": {
       const so = recSong(); if (!so) break;
       const el = document.getElementById("rsec");
@@ -3725,6 +3781,15 @@ document.addEventListener("click", (e) => {
       if (!live) break;
       const n = sectionsOf(live.s).length;
       live.s.secDone = Math.min(n - 1, Number(live.s.secDone || 0) + 1);
+      live.s.secStart = Date.now();
+      const nm2 = sectionsOf(live.s).find((x) => x.live);
+      if (nm2) {
+        const k2 = secLineIdx(nm2.name);
+        if (k2 >= 0) setTimeout(() => {
+          const el = document.getElementById("sec-" + nm2.name);
+          if (el && el.scrollIntoView) el.scrollIntoView({ block: "start" });
+        }, 0);
+      }
       save(); render(); break;
     }
     case "rgfilter": S.rgFilter = id; save(); render(); break;
@@ -3749,15 +3814,18 @@ document.addEventListener("click", (e) => {
       if (n) n.value = "";
       save(); render(); break;
     }
+    case "prosternew": {
+      const gn = prompt("グループ名", "");
+      if (!gn || !gn.trim()) break;
+      const v0 = prompt(gn.trim() + " のメンバー（、で区切る）", "");
+      if (v0 == null) break;
+      const arr0 = v0.split(/[、,・\s]+/).map((x) => x.trim()).filter(Boolean);
+      if (arr0.length) { S.rosters[gn.trim()] = arr0; save(); render(); }
+      break;
+    }
     case "proster": {
       const cur = (S.rosters[id] || []).join("、");
-      const auto = [];
-      S.songs.forEach((x) => {
-        const gn = (S.groups.find((g) => g.id === x.groupId) || {}).name;
-        if (gn !== id) return;
-        songRoster(x).forEach((mid) => { const nm = (member(mid) || {}).name; if (nm && !auto.includes(nm)) auto.push(nm); });
-      });
-      const v = prompt(id + " のメンバー（、で区切る）", cur || auto.join("、"));
+      const v = prompt(id + " のメンバー（、で区切る／空にすると消えます）", cur);
       if (v != null) {
         const arr = v.split(/[、,・\s]+/).map((x) => x.trim()).filter(Boolean);
         if (arr.length) S.rosters[id] = arr; else delete S.rosters[id];
@@ -3779,7 +3847,15 @@ document.addEventListener("click", (e) => {
       save(); render(); break;
     case "pstart": {
       const s2 = S.plan.slots.find((x) => x.id === id);
-      if (s2) { s2.a0 = nowMin(); delete s2.a1; save(); render(); }
+      if (s2) { s2.a0 = nowMin(); delete s2.a1; s2.startAt = Date.now(); s2.secStart = Date.now(); s2.secDone = 0; save(); render(); }
+      break;
+    }
+    case "jumpsec": {
+      const k = secLineIdx(id);
+      if (k >= 0) setTimeout(() => {
+        const el = document.getElementById("sec-" + id);
+        if (el && el.scrollIntoView) el.scrollIntoView({ block: "start" });
+      }, 0);
       break;
     }
     case "pnext": {
