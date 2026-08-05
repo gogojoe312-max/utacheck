@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "2026-08-05-06";
+const APP_VER = "2026-08-05-07";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -71,7 +71,7 @@ let S = {
   src: "", key: "", keyInLink: true,
   memos: {}, recs: {}, kbps: 128, preroll: 5, viewer: false, srcGroup: "",
   draws: {}, showFilter: "", folders: {}, subs: {}, subsMan: {}, subLib: {}, gsubs: {},
-  recMode: false, rsongs: [], rsongId: "", recBars: true, liveShow: "", recEdit: false, rgFilter: "", planMin: 90,
+  recMode: false, rsongs: [], rsongId: "", recBars: true, liveShow: "", recEdit: false, rgFilter: "", planMin: 90, rosters: {},
   plan: { start: "10:00", slots: [] },
   size: 19,
 };
@@ -101,6 +101,7 @@ function load() {
   if (!S.rsongs) S.rsongs = [];
   if (!S.plan) S.plan = { start: "10:00", slots: [] };
   if (!S.planMin) S.planMin = 90;
+  if (!S.rosters) S.rosters = {};
   if (!S.plan.slots) S.plan.slots = [];
   if (S.recBars == null) S.recBars = true;
   // 古いデータにも、その曲に出てくる人の名簿を持たせる
@@ -1712,7 +1713,7 @@ function viewLive() {
     <button data-act="inkundo" class="aub" style="font-size:12px;width:auto;padding:0 12px;${(S.draws[drawKey()] || []).length ? "" : "opacity:.3"}">取消</button>
     <button data-act="clearink" class="aub" style="font-size:12px;color:var(--dim)">全消</button>
   </div>` : ""}
-  ${s && !VIEW() && !U.draw ? `<div class="aubar">
+  ${S.recMode ? recBar() : (s && !VIEW() && !U.draw ? `<div class="aubar">
     ${REC
       ? `<button data-act="recstop" class="aub" style="background:var(--bad);color:#0A0A0A">■</button>
          <span class="grow" id="rectime" style="color:var(--bad);font-weight:600">● 0:00</span>
@@ -1724,14 +1725,15 @@ function viewLive() {
            <button data-act="delrec" class="aub" style="font-size:13px;color:var(--dim)">✕</button>`
         : `<button data-act="recstart" class="aub" style="color:var(--bad)">●</button>
            <span class="grow" style="font-size:11px;color:var(--dim)">録音</span>`}
-  </div>` : ""}
+  </div>` : "")}
   <div class="bottom">
     <button data-act="prev" class="${U.songIdx <= 0 ? "off" : ""}">‹</button>
     <button data-act="next" class="${U.songIdx >= SONGS().length - 1 ? "off" : ""}">›</button>
     ${VIEW() ? "" : `<button data-act="draw" class="${U.draw ? "on" : ""}">${U.draw ? "✎中" : "✎"}</button>`}
+    ${S.recMode ? `<button data-act="recedit" class="${U.recEdit ? "on" : ""}">小節</button>` : ""}
     <button data-act="overview" class="wide">全体</button>
     ${undoStack.length && !VIEW() ? `<button data-act="undo" style="color:var(--accent)">取消</button>` : ""}
-    <button data-act="go-summary">集計</button>
+    ${S.recMode ? "" : `<button data-act="go-summary">集計</button>`}
     <button data-act="go-setup">設定</button>
   </div>`;
 }
@@ -2008,6 +2010,29 @@ function renderSheet() {
       <div class="row" style="margin-bottom:12px"><span class="grow trunc" style="font-size:13px">${many ? `${U.menu.ids.length}曲` : h(x ? songName(x) : "")}</span>
       <button data-act="closemenu" style="width:36px;height:36px;border-radius:10px;background:var(--panel2);font-size:17px">✕</button></div>
       ${inner}</div>`;
+    document.body.appendChild(overlay);
+    return;
+  }
+
+  if (U.picker && S.recMode) {
+    const grps = [];
+    S.rsongs.forEach((x) => { const g = x.grp || ""; if (g && !grps.includes(g)) grps.push(g); });
+    overlay = document.createElement("div");
+    overlay.className = "mask";
+    overlay.innerHTML = `<button class="sp" data-act="close"></button><div class="sheet">
+      <div class="row" style="margin-bottom:12px"><span class="grow" style="font-size:13px;color:var(--dim)">曲を選ぶ</span>
+      <button data-act="close" style="width:36px;height:36px;border-radius:10px;background:var(--panel2);font-size:17px">✕</button></div>
+      ${grps.length ? `<div class="sec"><h4>グループ</h4><div class="chips">
+        <button class="chip sm" data-act="rgfilter" data-id="" style="${!S.rgFilter ? "background:var(--accent);color:#0A0A0A" : ""}">すべて</button>
+        ${grps.map((g) => `<button class="chip sm" data-act="rgfilter" data-id="${h(g)}"
+          style="${S.rgFilter === g ? "background:var(--accent);color:#0A0A0A" : ""}">${h(g)}</button>`).join("")}
+      </div></div>` : ""}
+      <div class="sec"><h4>曲</h4>
+        ${SONGS().map((x, i) => `<button class="ghost" data-act="ruse" data-id="${x.id}"
+          style="text-align:left;margin-bottom:8px;${i === U.songIdx ? "background:var(--accent);color:#0A0A0A" : ""}">${i + 1}. ${h(x.title)}</button>`).join("") || `<p class="note">曲がありません</p>`}
+      </div>
+      <div class="sec"><button class="primary" data-act="goplan">進行表</button></div>
+    </div>`;
     document.body.appendChild(overlay);
     return;
   }
@@ -2577,6 +2602,59 @@ function viewSetupRec() {
   </div>`;
 }
 
+// 歌詞画面の下に、今の枠と残り時間を出す
+function recBar() {
+  const rows = planRows();
+  const now = nowMin();
+  const live = rows.find((r) => r.live);
+  const next = rows.find((r) => !r.done && !r.live);
+  if (!live && !next) {
+    return `<button class="aubar" data-act="goplan" style="justify-content:center;color:var(--dim);font-size:12px">進行表をひらく</button>`;
+  }
+  const rest = live ? live.aE - now : 0;
+  const secs = live ? sectionsOf(live.s) : [];
+  const curSec = secs.find((x) => x.live);
+  return `<div class="aubar">
+    ${live ? `<span style="color:var(--accent);font-weight:700">${h(live.s.name)}</span>
+      <span style="font-size:12px;color:${rest < 0 ? "var(--bad)" : "var(--text)"}">${rest >= 0 ? "残り " + rest + "分" : "超過 " + (-rest) + "分"}</span>
+      ${curSec ? `<span style="font-size:12px;color:var(--dim)">${h(curSec.name)} ${curSec.rest}分</span>` : ""}
+      <span class="grow"></span>
+      <button class="chip sm" data-act="pnextsec">区切り</button>
+      <button class="chip sm" data-act="pnext" data-id="${live.s.id}" style="background:var(--accent);color:#0A0A0A">次へ</button>`
+    : `<span style="color:var(--dim);font-size:12px">次 ${h(next.s.name)}　${min2hm(next.aS)}</span>
+      <span class="grow"></span>
+      <button class="chip sm" data-act="pstart" data-id="${next.s.id}" style="background:var(--accent);color:#0A0A0A">開始</button>`}
+    <button class="chip sm" data-act="goplan">進行</button>
+  </div>`;
+}
+
+// 曲の区切り（1A・1B…）と、その持ち時間
+function sectionNames() {
+  const so = recSong();
+  if (!so) return [];
+  const out = [];
+  so.lines.forEach((l) => { if (!l.gap && l.sec && !out.includes(l.sec)) out.push(l.sec); });
+  return out;
+}
+// 区切りごとの持ち時間。既定は均等割り、直した分だけ覚える。
+function sectionsOf(slot) {
+  const names2 = sectionNames();
+  if (!names2.length || !slot) return [];
+  const adj = slot.sec || {};
+  const fixed = names2.filter((n) => adj[n] != null);
+  const fixedSum = fixed.reduce((a, n) => a + Number(adj[n]), 0);
+  const rest = names2.length - fixed.length;
+  const each = rest > 0 ? Math.max(1, Math.round((Number(slot.min || 0) - fixedSum) / rest)) : 0;
+  const done = Number(slot.secDone || 0);
+  return names2.map((nm, i) => ({
+    name: nm,
+    min: adj[nm] != null ? Number(adj[nm]) : each,
+    live: i === done,
+    done: i < done,
+    rest: adj[nm] != null ? Number(adj[nm]) : each,
+  }));
+}
+
 /* ---- 進行表 ---- */
 function hm2min(t) {
   const x = String(t == null ? "" : t).trim().replace(/[：．。\.]/g, ":").replace(/[^\d:]/g, "");
@@ -2646,14 +2724,31 @@ function viewPlan() {
       ${r.live ? `<button class="chip sm" data-act="pnext" data-id="${s.id}" style="background:var(--accent);color:#0A0A0A">次へ</button>`
         : !r.done && i === nextIdx ? `<button class="chip sm" data-act="pstart" data-id="${s.id}">開始</button>`
         : r.done ? `<button class="chip sm" data-act="pundo" data-id="${s.id}" style="color:var(--dim)">戻す</button>` : ""}
-    </div>`;
+    </div>
+    ${r.live && sectionsOf(s).length ? `<div class="card" style="margin:-4px 0 8px 14px;padding:10px 12px">
+      <div style="font-size:10px;color:var(--dim);margin-bottom:6px">${h(recSong() ? recSong().title : "")} の配分</div>
+      ${sectionsOf(s).map((x) => `<div class="row" style="margin-bottom:6px">
+        <span style="width:56px;font-size:12px;color:${x.live ? "var(--accent)" : x.done ? "var(--dim)" : "var(--text)"}">${h(x.name)}</span>
+        <button class="chip sm" data-act="psec" data-id="${h(x.name)}|-5">−5</button>
+        <b style="min-width:44px;text-align:center;font-size:13px">${x.min}分</b>
+        <button class="chip sm" data-act="psec" data-id="${h(x.name)}|5">＋5</button>
+        <span class="grow"></span>
+        ${x.live ? `<span style="font-size:11px;color:var(--accent)">ここ</span>` : ""}
+      </div>`).join("")}
+      <div class="row" style="margin-top:6px">
+        <button class="chip sm grow" data-act="pseceven">均等に割り直す</button>
+        <button class="chip sm grow" data-act="pnextsec">次の区切りへ</button>
+      </div>
+    </div>` : ""}`;
   }).join("");
 
   // 誰を足すかを、読み込んだ曲のグループから拾う
+  // 名簿は手で直せる。直していないグループは曲から拾う。
   const rosters = {};
+  S.groups.forEach((g) => { if (S.rosters[g.name]) rosters[g.name] = S.rosters[g.name].slice(); });
   S.songs.forEach((x) => {
     const gn = (S.groups.find((g) => g.id === x.groupId) || {}).name;
-    if (!gn) return;
+    if (!gn || S.rosters[gn]) return;
     rosters[gn] = rosters[gn] || [];
     songRoster(x).forEach((mid) => {
       const nm = (member(mid) || {}).name;
@@ -2662,7 +2757,10 @@ function viewPlan() {
   });
   const used = new Set(S.plan.slots.map((x) => x.name));
   const memberPick = Object.keys(rosters).map((gn) => `
-    <div style="font-size:10px;color:var(--dim);margin:8px 0 4px">${h(gn)}　${rosters[gn].length}人</div>
+    <div class="row" style="margin:10px 0 4px">
+      <span class="grow" style="font-size:10px;color:var(--dim)">${h(gn)}　${rosters[gn].length}人</span>
+      <button data-act="proster" data-id="${h(gn)}" style="font-size:11px;color:var(--dim);padding:2px 6px">直す</button>
+    </div>
     <div class="chips">${rosters[gn].map((nm) => `<button class="chip sm" data-act="paddm" data-id="${h(nm)}"
       style="${used.has(nm) ? "opacity:.4" : ""}">${h(nm)}</button>`).join("")}</div>`).join("");
 
@@ -3606,6 +3704,29 @@ document.addEventListener("click", (e) => {
       break;
     }
     case "goplan": U.view = "recplan"; render(); break;
+    case "psec": {
+      const [nm, dv] = String(id).split("|");
+      const live = planRows().find((r) => r.live);
+      if (!live) break;
+      const cur = sectionsOf(live.s).find((x) => x.name === nm);
+      live.s.sec = live.s.sec || {};
+      live.s.sec[nm] = Math.max(1, (cur ? cur.min : 5) + Number(dv));
+      save(); render(); break;
+    }
+    case "pseceven": {
+      const live = planRows().find((r) => r.live);
+      if (!live) break;
+      delete live.s.sec;
+      save(); render(); break;
+    }
+    case "pnextsec": {
+      const rows = planRows();
+      const live = rows.find((r) => r.live);
+      if (!live) break;
+      const n = sectionsOf(live.s).length;
+      live.s.secDone = Math.min(n - 1, Number(live.s.secDone || 0) + 1);
+      save(); render(); break;
+    }
     case "rgfilter": S.rgFilter = id; save(); render(); break;
     case "rgrp": {
       const so = S.rsongs.find((x) => x.id === id);
@@ -3627,6 +3748,22 @@ document.addEventListener("click", (e) => {
       S.plan.slots.push({ id: uid(), name: nm, min: mi > 0 ? Math.round(mi) : (S.planMin || 90), kind: "member" });
       if (n) n.value = "";
       save(); render(); break;
+    }
+    case "proster": {
+      const cur = (S.rosters[id] || []).join("、");
+      const auto = [];
+      S.songs.forEach((x) => {
+        const gn = (S.groups.find((g) => g.id === x.groupId) || {}).name;
+        if (gn !== id) return;
+        songRoster(x).forEach((mid) => { const nm = (member(mid) || {}).name; if (nm && !auto.includes(nm)) auto.push(nm); });
+      });
+      const v = prompt(id + " のメンバー（、で区切る）", cur || auto.join("、"));
+      if (v != null) {
+        const arr = v.split(/[、,・\s]+/).map((x) => x.trim()).filter(Boolean);
+        if (arr.length) S.rosters[id] = arr; else delete S.rosters[id];
+        save(); render();
+      }
+      break;
     }
     case "paddm": {
       S.plan.slots.push({ id: uid(), name: id, min: S.planMin || 90, kind: "member" });
