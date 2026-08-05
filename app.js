@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "2026-08-05-13";
+const APP_VER = "2026-08-05-15";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -71,7 +71,7 @@ let S = {
   src: "", key: "", keyInLink: true,
   memos: {}, recs: {}, kbps: 128, preroll: 5, viewer: false, srcGroup: "",
   draws: {}, showFilter: "", folders: {}, subs: {}, subsMan: {}, subLib: {}, gsubs: {},
-  recMode: false, rsongs: [], rsongId: "", recBars: true, liveShow: "", recEdit: false, rgFilter: "", planMin: 90, planPrep: 10, rosters: {},
+  recMode: false, rsongs: [], rsongId: "", recBars: true, liveShow: "", recEdit: false, rgFilter: "", planMin: 90, planPrep: 10, rosters: {}, secWords: [],
   plan: { start: "10:00", slots: [] },
   size: 19,
 };
@@ -102,6 +102,7 @@ function load() {
   if (!S.plan) S.plan = { start: "10:00", slots: [] };
   if (!S.planMin) S.planMin = 90;
   if (S.planPrep == null) S.planPrep = 10;
+  if (!S.secWords) S.secWords = [];
   if (!S.rosters) S.rosters = {};
   if (!S.plan.slots) S.plan.slots = [];
   if (S.recBars == null) S.recBars = true;
@@ -1900,7 +1901,7 @@ function renderSheet() {
       <button data-act="closemenu" style="width:36px;height:36px;border-radius:10px;background:var(--panel2);font-size:17px">✕</button></div>
       <div style="text-align:center;font-size:40px;font-weight:700;line-height:1;margin-bottom:14px">${s2.min}<span style="font-size:13px;font-weight:400;color:var(--dim)">分</span></div>
       <div class="row" style="margin-bottom:10px">
-        ${[-30, -15, -5, 5, 15, 30].map((v) => `<button class="chip grow" data-act="pset" data-id="${v}">${v > 0 ? "＋" + v : v}</button>`).join("")}
+        ${[-15, -5, -1, 1, 5, 15].map((v) => `<button class="chip grow" data-act="pset" data-id="${v}">${v > 0 ? "＋" + v : v}</button>`).join("")}
       </div>
       <div class="row" style="margin-bottom:10px">
         <input class="field grow" id="pnamev" value="${h(s2.name || "")}">
@@ -1958,18 +1959,23 @@ function renderSheet() {
           style="${(l || {}).solo ? "background:var(--accent);color:#0A0A0A;font-weight:700" : ""}">ソロ想定</button>
       </div>
       <div class="row" style="margin-bottom:10px">
-        <span style="font-size:11px;color:var(--dim);width:52px">この行</span>
+        <span style="font-size:11px;color:var(--dim);width:52px">行</span>
         ${[1, 2, 4, 8].map((b) => `<button class="chip sm grow" data-act="rlen" data-id="${b}"
           style="${Number((l || {}).bars || 4) === b ? "background:var(--accent);color:#0A0A0A" : ""}">${b}小節</button>`).join("")}
       </div>
+      <div style="font-size:10px;color:var(--dim);margin:-4px 0 10px 56px">この行から下もすべて同じ小節数にします</div>
       <div class="row" style="margin-bottom:10px">
         <span style="font-size:11px;color:var(--dim);width:52px">区切り</span>
         <input class="field grow" id="rsec" placeholder="1A / 1C / 間奏 など" value="${h((l || {}).sec || "")}">
         <button class="chip sm" data-act="rsecset">決定</button>
       </div>
       <div class="chips" style="margin-bottom:10px">
-        ${["1A", "1B", "1C", "2A", "2B", "2C", "D", "落ち", "大サビ", "間奏"].map((x) => `<button class="chip sm" data-act="rsecq" data-id="${x}">${x}</button>`).join("")}
+        ${SECDEF.concat((S.secWords || []).filter((x) => SECDEF.indexOf(x) < 0))
+          .map((x) => `<button class="chip sm" data-act="rsecq" data-id="${h(x)}"
+            style="${(l || {}).sec === x ? "background:var(--accent);color:#0A0A0A" : ""}">${h(x)}</button>`).join("")}
       </div>
+      ${(S.secWords || []).filter((x) => SECDEF.indexOf(x) < 0).length ? `<button class="ghost" data-act="rsecforget"
+        style="color:var(--dim);font-size:11px;margin-bottom:10px">覚えた区切り名を消す</button>` : ""}
       <div class="row" style="margin-bottom:8px">
         <span style="font-size:11px;color:var(--dim);width:52px">下に足す</span>
         ${["フェイク", "ガヤ", "コーラス", "掛け声"].map((x) => `<button class="chip sm grow" data-act="raddline" data-id="${x}">${x}</button>`).join("")}
@@ -2732,6 +2738,15 @@ const secLineIdx = (nm) => {
 };
 // 区切りごとの持ち時間。既定は均等割り、直した分だけ覚える。
 const PREP = "準備";
+const SECDEF = ["1A", "1B", "1C", "2A", "2B", "2C", "D", "落ち", "大サビ", "間奏"];
+// 使った区切り名を覚えておき、次からボタンに出す
+function rememberSec(nm) {
+  const v = String(nm || "").trim();
+  if (!v || SECDEF.indexOf(v) >= 0) return;
+  S.secWords = (S.secWords || []).filter((x) => x !== v);
+  S.secWords.push(v);
+  if (S.secWords.length > 20) S.secWords.shift();
+}
 function sectionsOf(slot) {
   if (!slot) return [];
   const names2 = sectionOrder();
@@ -2836,7 +2851,9 @@ function viewPlan() {
       ${sectionsOf(s).map((x) => `<div class="row" style="margin-bottom:6px">
         <span style="width:56px;font-size:12px;color:${x.live ? "var(--accent)" : x.done ? "var(--dim)" : "var(--text)"}">${h(x.name)}</span>
         <button class="chip sm" data-act="psec" data-id="${h(x.name)}|-5">−5</button>
+        <button class="chip sm" data-act="psec" data-id="${h(x.name)}|-1">−1</button>
         <b style="min-width:44px;text-align:center;font-size:13px">${x.min}分</b>
+        <button class="chip sm" data-act="psec" data-id="${h(x.name)}|1">＋1</button>
         <button class="chip sm" data-act="psec" data-id="${h(x.name)}|5">＋5</button>
         <span class="grow"></span>
         ${x.live ? `<span style="font-size:11px;color:var(--accent)">ここ</span>` : ""}
@@ -3789,12 +3806,13 @@ document.addEventListener("click", (e) => {
       const so = recSong(); if (!so) break;
       pushUndo();
       so.lines.splice(U.menu.i + 1, 0, { t: id, add: 1, bars: 0, sec: id });
+      rememberSec(id);
       save(); U.menu = null; renderSheet(); render(); break;
     }
     case "raddfree": {
       const so = recSong(); if (!so) break;
       const v = prompt("足す文字", "");
-      if (v && v.trim()) { pushUndo(); so.lines.splice(U.menu.i + 1, 0, { t: v.trim(), add: 1, bars: 0, sec: v.trim() }); save(); U.menu = null; renderSheet(); render(); }
+      if (v && v.trim()) { pushUndo(); so.lines.splice(U.menu.i + 1, 0, { t: v.trim(), add: 1, bars: 0, sec: v.trim() }); rememberSec(v.trim()); save(); U.menu = null; renderSheet(); render(); }
       break;
     }
     case "rdelline": {
@@ -3802,6 +3820,15 @@ document.addEventListener("click", (e) => {
       pushUndo();
       so.lines.splice(U.menu.i, 1);
       save(); U.menu = null; renderSheet(); render(); break;
+    }
+    case "rsecforget": {
+      const cur = (S.secWords || []).filter((x) => SECDEF.indexOf(x) < 0);
+      const v = prompt("覚えている区切り名（、で区切る）\n消したいものを取り除いてください", cur.join("、"));
+      if (v != null) {
+        S.secWords = v.split(/[、,・\s]+/).map((x) => x.trim()).filter(Boolean);
+        save(); renderSheet(); render();
+      }
+      break;
     }
     case "rsolo": {
       const so = recSong(); if (!so) break;
@@ -3815,18 +3842,26 @@ document.addEventListener("click", (e) => {
       const el = document.getElementById("rsec");
       pushUndo();
       so.lines[U.menu.i].sec = el ? el.value.trim() : "";
+      rememberSec(so.lines[U.menu.i].sec);
       save(); U.menu = null; renderSheet(); render(); break;
     }
     case "rsecq": {
       const so = recSong(); if (!so) break;
       pushUndo();
       so.lines[U.menu.i].sec = id;
+      rememberSec(id);
       save(); U.menu = null; renderSheet(); render(); break;
     }
     case "rlen": {
       const so = recSong(); if (!so) break;
       pushUndo();
-      so.lines[U.menu.i].bars = Number(id);
+      const v = Number(id);
+      // その行から下も同じ小節数にする（足した行は数えないので触らない）
+      for (let k = U.menu.i; k < so.lines.length; k++) {
+        const l3 = so.lines[k];
+        if (l3.gap || l3.add) continue;
+        l3.bars = v;
+      }
       save(); renderSheet(); render(); break;
     }
     case "rpdf": {
