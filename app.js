@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "2.1";
+const APP_VER = "2.2";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -3167,8 +3167,8 @@ ${shows}</div>
   const rangeHtml = rl1 > rl0
     ? Array.from({ length: rl1 - rl0 + 1 }, (_, k) => rl0 + k)
         .filter((li) => s.lines[li] && !s.lines[li].gap)
-        .map((li) => `<div class="rgline"><span class="rgn">${li + 1}</span>${lineHtml(li)}</div>`).join("")
-    : lineHtml(rl0);
+        .map((li) => `<div class="rgline"><span class="rgn">${li + 1}</span><span class="rgtx" data-rl="${li}">${lineHtml(li)}</span></div>`).join("")
+    : `<span class="rgtx" data-rl="${rl0}">${lineHtml(rl0)}</span>`;
   const ex = NOTES().filter((n) => n.songId === s.id && n.showId === S.showId && covers(n, sh.lineIdx));
 
   const inner = `
@@ -4496,16 +4496,7 @@ function commitFields() {
 document.addEventListener("click", (e) => {
   const b = e.target.closest("[data-act]");
   // 範囲指定（シート内の文字タップ）
-  const rc = e.target.closest("[data-r]");
-  if (rc && U.sheet) {
-    const ci = +rc.dataset.r;
-    const rl = rc.dataset.rl != null ? +rc.dataset.rl : U.sheet.lineIdx;
-    if (U.sheet.rangeLine != null && U.sheet.rangeLine !== rl) U.sheet.anchor = null;   // 別の行に移ったら選び直し
-    U.sheet.rangeLine = rl;
-    if (U.sheet.anchor == null) { U.sheet.anchor = ci; U.sheet.range = [ci, ci]; }
-    else { U.sheet.range = [Math.min(U.sheet.anchor, ci), Math.max(U.sheet.anchor, ci)]; U.sheet.anchor = null; }
-    commitFields(); renderSheet(); return;
-  }
+  if (e.target.closest("[data-r]") && U.sheet) return;   // 文字の選択はなぞりで扱う
   if (!b) return;
   const a = b.dataset.act, i = +b.dataset.i, id = b.dataset.id;
   const s = song();
@@ -5680,6 +5671,64 @@ document.addEventListener("pointerup", (e) => {
   paintInk();
 });
 document.addEventListener("pointercancel", (e) => { inkPts.delete(e.pointerId); inkPath = null; });
+
+/* ---- シートの歌詞をなぞって選ぶ ---- */
+let rgDrag = null;
+
+// 指の位置から、その行の何文字目かを求める（普段の歌詞画面と同じ考え方）
+function charAtR(row, x, y) {
+  const sp = row.querySelectorAll("[data-r]");
+  if (!sp.length) return null;
+  let best = null, bestD = Infinity;
+  for (const el of sp) {
+    const r = el.getBoundingClientRect();
+    const dy = y < r.top ? r.top - y : (y > r.bottom ? y - r.bottom : 0);
+    const dx = x < r.left ? r.left - x : (x > r.right ? x - r.right : 0);
+    const d = dy * 1000 + dx;
+    if (d < bestD) { bestD = d; best = Number(el.dataset.r); }
+  }
+  return best;
+}
+function paintRange() {
+  if (!overlay || !U.sheet) return;
+  const sh = U.sheet;
+  overlay.querySelectorAll("[data-r]").forEach((el) => {
+    const li = Number(el.parentNode && el.parentNode.dataset ? el.parentNode.dataset.rl : sh.lineIdx);
+    const ci = Number(el.dataset.r);
+    const on = sh.range && li === sh.rangeLine && ci >= sh.range[0] && ci <= sh.range[1];
+    el.style.background = on ? "color-mix(in srgb,var(--accent) 30%,transparent)" : "";
+    el.style.borderBottomColor = on ? "var(--bad)" : "";
+  });
+}
+document.addEventListener("pointerdown", (e) => {
+  if (!U.sheet) return;
+  const row = e.target.closest && e.target.closest(".rgtx");
+  if (!row) return;
+  const li = Number(row.dataset.rl);
+  const c = charAtR(row, e.clientX, e.clientY);
+  if (c == null) return;
+  rgDrag = { row, li, c0: c };
+  U.sheet.rangeLine = li;
+  U.sheet.range = [c, c];
+  U.sheet.anchor = null;
+  paintRange();
+  e.preventDefault();
+}, { passive: false });
+document.addEventListener("pointermove", (e) => {
+  if (!rgDrag) return;
+  const c = charAtR(rgDrag.row, e.clientX, e.clientY);
+  if (c == null) return;
+  U.sheet.range = [Math.min(rgDrag.c0, c), Math.max(rgDrag.c0, c)];
+  paintRange();
+  e.preventDefault();
+}, { passive: false });
+document.addEventListener("pointerup", () => {
+  if (!rgDrag) return;
+  rgDrag = null;
+  commitFields();
+  renderSheet();
+});
+document.addEventListener("pointercancel", () => { rgDrag = null; });
 
 /* ---- なぞって範囲指定 ---- */
 let org = null, dragOn = false;
