@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "1.4";
+const APP_VER = "1.5";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1747,19 +1747,31 @@ function psola(seg, rate, hzAt, outHzAt) {
   let off = 0, best = 0;
   for (let i = 0; i < Math.min(n, P0 * 2); i++) { const v = Math.abs(seg[i]); if (v > best) { best = v; off = i; } }
 
-  // 元の側の切り出し位置（周期ごとに山を追いかける）
-  const marks = [];
+  // 切り出す位置を、前の周期といちばん形が似た所に合わせる。
+  // ここがずれると、周期ごとに波形が変わって声がざらつく。
+  const marks = [off];
   let pos = off;
-  while (pos < n) {
+  while (true) {
     const P = Math.max(16, Math.round(rate / Math.max(50, hzAt(pos))));
-    // 予定の位置の前後10%で、いちばん大きい山に寄せる
-    let bp = pos, bv = -1;
-    const r = Math.max(2, Math.floor(P * 0.1));
-    for (let k = Math.max(0, pos - r); k <= Math.min(n - 1, pos + r); k++) {
-      if (Math.abs(seg[k]) > bv) { bv = Math.abs(seg[k]); bp = k; }
+    const next = pos + P;
+    if (next >= n) break;
+    const r = Math.max(2, Math.floor(P * 0.3));
+    const len = Math.min(P, n - pos - 1);
+    if (len < 8) break;
+    let bp = next, bs = -2;
+    for (let d = -r; d <= r; d++) {
+      const c = next + d;
+      if (c < pos + 8 || c + len >= n) continue;
+      let dot = 0, e1 = 0, e2 = 0;
+      for (let k = 0; k < len; k += 2) {          // 1つ飛ばしで足りる（速さのため）
+        const a2 = seg[pos + k], b2 = seg[c + k];
+        dot += a2 * b2; e1 += a2 * a2; e2 += b2 * b2;
+      }
+      const sc = (e1 > 0 && e2 > 0) ? dot / Math.sqrt(e1 * e2) : -1;
+      if (sc > bs) { bs = sc; bp = c; }
     }
     marks.push(bp);
-    pos = bp + P;
+    pos = bp;
   }
   if (marks.length < 2) return seg.slice();
 
