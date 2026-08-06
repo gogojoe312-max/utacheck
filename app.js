@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "1.3";
+const APP_VER = "1.4";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1764,7 +1764,7 @@ function psola(seg, rate, hzAt, outHzAt) {
   if (marks.length < 2) return seg.slice();
 
   const out = new Float32Array(n), acc = new Float32Array(n);
-  let sp = marks[0], mi = 0;
+  let sp = marks[0], mi = 0, carry = 0;
   while (sp < n) {
     // その時刻にいちばん近い、元の側の山
     while (mi + 1 < marks.length && Math.abs(marks[mi + 1] - sp) <= Math.abs(marks[mi] - sp)) mi++;
@@ -1778,22 +1778,29 @@ function psola(seg, rate, hzAt, outHzAt) {
       out[oi] += seg[si] * w;
       acc[oi] += w;
     }
-    sp += Math.max(8, Math.round(rate / Math.max(50, outHzAt(sp))));
+    // 端数を持ち越して進める（丸めの積み重ねで音が濁るのを防ぐ）
+    carry += rate / Math.max(50, outHzAt(sp));
+    const adv = Math.max(8, Math.round(carry));
+    carry -= adv;
+    sp += adv;
   }
   for (let k = 0; k < n; k++) out[k] = acc[k] > 0.06 ? out[k] / acc[k] : seg[k];
   return out;
 }
 
-// 高さを変える。まっすぐにする時は、出す側の高さを一定にするだけ。
-function shiftSeg(src, rate, from, to, semi, hz, flatNote) {
+// 高さを変える。
+// ふつうに動かす時は、しゃくりやビブラートをそのまま持ち上げる（形を変えない）。
+// 「まっすぐ」の時だけ、出す側の高さを一定にする。
+function shiftSeg(src, rate, from, to, semi, hz, note) {
   const a = Math.max(0, Math.floor(from * rate));
   const b = Math.min(src.length, Math.ceil(to * rate));
   const seg = src.subarray(a, b);
   if (!seg.length) return new Float32Array(0);
-  if (!semi && !flatNote) return seg.slice();
+  const flat = !!(note && note.flat);
+  if (!semi && !flat) return seg.slice();
 
   // その場所の高さ（録った時に測った線を使う）
-  const pts = flatNote ? flatNote.pts : null;
+  const pts = note ? note.pts : null;
   const hzAt = (i) => {
     if (!pts || !pts.length) return hz;
     const t2 = from + i / rate;
@@ -1808,8 +1815,9 @@ function shiftSeg(src, rate, from, to, semi, hz, flatNote) {
     return midiToHz(m0 + (m1 - m0) * f);
   };
   const ratio = Math.pow(2, (semi || 0) / 12);
-  const target = flatNote ? midiToHz(flatNote.m + (semi || 0)) : 0;
-  const outHzAt = flatNote ? (() => target) : ((i) => hzAt(i) * ratio);
+  const target = flat ? midiToHz(note.m + (semi || 0)) : 0;
+  // まっすぐ以外は、元の揺れをそのまま保ったまま持ち上げる
+  const outHzAt = flat ? (() => target) : ((i) => hzAt(i) * ratio);
   return psola(seg, rate, hzAt, outHzAt);
 }
 
@@ -1828,8 +1836,8 @@ async function playPitch(only) {
   if (only == null) dst.set(src.subarray(0, Math.min(src.length, dst.length)));
   PT.notes.forEach((nt, i) => {
     if (only != null && i !== only) return;
-    if (!nt.shift && only == null) return;
-    const seg = shiftSeg(src, rate, nt.t0, nt.t1, nt.shift, midiToHz(nt.m), nt.flat ? nt : null);
+    if (!nt.shift && !nt.flat && only == null) return;
+    const seg = shiftSeg(src, rate, nt.t0, nt.t1, nt.shift, midiToHz(nt.m), nt);
     const at = Math.floor((nt.t0 - t0) * rate);
     // 端は元の音と短く重ねて、切り替わりの「プツッ」を消す
     const fade = Math.min(Math.floor(rate * 0.006), Math.floor(seg.length / 3));
@@ -1937,7 +1945,7 @@ function pitchHTML() {
            <span style="font-size:11px;color:var(--dim);min-width:60px">${(() => { const c = Math.round(((sel.m + sel.shift) - Math.round(sel.m + sel.shift)) * 100); return c ? (c > 0 ? "+" : "") + c + "セント" : "ぴったり"; })()}</span>
            <button class="chip sm" data-act="ptstep" data-id="-1">−1</button>
            <button class="chip sm" data-act="ptstep" data-id="1">＋1</button>
-           <button class="chip sm" data-act="ptsnap">合わせる</button>
+           <button class="chip sm" data-act="ptflat" style="${sel.flat ? "background:var(--accent);color:#0A0A0A" : ""}">まっすぐ</button>
            <button class="chip sm" data-act="ptclear" style="color:var(--dim)">戻す</button>`
         : `<span style="font-size:11px;color:var(--dim)">音を押すと鳴ります。押したまま上下で高さを変えられます。</span>`}
     </div>` : `<div style="font-size:11px;color:var(--dim);margin-top:8px">「● 録音」を押して歌ってください。止めるまで録れます（最長10秒）。</div>`}
@@ -4716,11 +4724,7 @@ document.addEventListener("click", (e) => {
       drawPitch(); break;
     }
     case "ptfit": pitchFit(); drawPitch(); break;
-    case "ptsnap": {
-      const n2 = PT.notes[PT.sel];
-      if (n2) { ptPush(); n2.shift = Math.round(n2.m) - n2.m; n2.flat = true; drawPitch(); render(); }
-      break;
-    }
+    case "ptflat": { const n2 = PT.notes[PT.sel]; if (n2) { ptPush(); n2.flat = !n2.flat; drawPitch(); render(); } break; }
     case "ptstep": { const n2 = PT.notes[PT.sel]; if (n2) { ptPush(); n2.shift += Number(id); drawPitch(); render(); } break; }
     case "ptundo": { ptPop(); drawPitch(); render(); break; }
     case "ptclear": { const n2 = PT.notes[PT.sel]; if (n2) { ptPush(); n2.shift = 0; n2.flat = false; drawPitch(); render(); } break; }
