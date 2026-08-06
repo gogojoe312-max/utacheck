@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "2.3";
+const APP_VER = "2.5";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -36,11 +36,13 @@ const TAGS = [
   { c: "ミス",    id: "lyric",  l: "歌詞"       },
   { c: "ミス",    id: "gara",   l: "ガラつき"   },
   { c: "ミス",    id: "mic",    l: "マイク"     },
+  { c: "ミス",    id: "noise",  l: "ノイズ"     },
+  { c: "ミス",    id: "level",  l: "レベル"     },
 
   { c: "良い",    id: "good",   l: "◎良い"     },
   { c: "良い",    id: "close",  l: "惜しい"     },
   { c: "良い",    id: "oke",    l: "オケ聴く"   },
-  { c: "良い",    id: "noise",  l: "ノイズ"     },
+  { c: "良い",    id: "swap",   l: "差し替え"   },
 ];
 const CATCOL = {
   "音程": "#FF6B4A", "タイミング": "#F0B23C", "出音": "#3FC7C0",
@@ -57,9 +59,9 @@ const SWIPES = [
   { id: "pitch",  up: "pHi",    dn: "pLo",    lf: "pUn",    rt: "pWob" },
   { id: "rhythm", up: "fast",   dn: "slow",   lf: "short",  rt: "long" },
   { id: "attack", up: "strong", dn: "weak",   lf: "accent", rt: "diction" },
-  { id: "nuance", up: "bright", dn: "dark",   lf: "face" },
-  { id: "lyric",  up: "flip",   dn: "nuke",   lf: "mic",    rt: "gara" },
-  { id: "good",   up: "close",  dn: "noise",  lf: "oke" },
+  { id: "nuance", up: "bright", dn: "dark",   lf: "face",   rt: "mic" },
+  { id: "lyric",  up: "flip",   dn: "nuke",   lf: "noise",  rt: "gara" },
+  { id: "good",   up: "close",  dn: "level",  lf: "oke",    rt: "swap" },
 ];
 // 以前つけた記録が生IDで出ないように
 const LEGACY = { breath: "ブレス", volume: "声量", tone: "声色" };
@@ -76,7 +78,7 @@ let S = {
   groups: [], groupId: "",
   src: "", key: "", keyInLink: true,
   memos: {}, recs: {}, kbps: 128, preroll: 5, viewer: false, srcGroup: "",
-  draws: {}, showFilter: "", folders: {}, subs: {}, subsMan: {}, subLib: {}, gsubs: {},
+  draws: {}, showFilter: "", folders: {}, folderOrder: [], subs: {}, subsMan: {}, subLib: {}, gsubs: {},
   recMode: false, recOvSize: 14, rsongs: [], rsongId: "", recBars: true, liveShow: "", recEdit: false, rgFilter: "", linkSrc: "", groupOrder: [], pubAt: 0, syncAt: 0, seen: {}, planMin: 90, planPrep: 10, rosters: {}, secWords: [], trash: [],
   plan: { start: "10:00", slots: [] },
   size: 19,
@@ -119,6 +121,7 @@ function migrate() {
   if (!S.recs) S.recs = {};
   if (!S.draws) S.draws = {};
   if (!S.folders) S.folders = {};
+  if (!S.folderOrder) S.folderOrder = [];
   if (!S.subs) S.subs = {};
   if (!S.subsMan) S.subsMan = {};
   if (!S.subLib) S.subLib = {};
@@ -234,7 +237,13 @@ function groupShows(list) {
     map.get(k).push(sw);
   });
   const keys = [...map.keys()].filter(Boolean);
-  keys.sort((a, b) => Math.max(...map.get(b).map((x) => x.ts || 0)) - Math.max(...map.get(a).map((x) => x.ts || 0)));
+  const newest = (k) => Math.max.apply(null, map.get(k).map((x) => Number(x.ts || 0)));
+  const ord = S.folderOrder || [];
+  keys.sort((a, b) => {
+    const ia = ord.indexOf(a), ib = ord.indexOf(b);
+    if (ia >= 0 || ib >= 0) return (ia < 0 ? 999 : ia) - (ib < 0 ? 999 : ib);   // 手で並べたものが先
+    return newest(b) - newest(a);                                              // それ以外は新しい順
+  });
   if (map.has("")) keys.push("");
   return keys.map((k) => [k, map.get(k)]);
 }
@@ -655,7 +664,8 @@ let pushTimer = null, pushState = "";
 let undoStack = [];
 let readTimer = null;
 function pushUndo() {
-  undoStack.push(JSON.stringify({ notes: S.notes, rsongs: S.rsongs, plan: S.plan }));
+  undoStack.push(JSON.stringify({ notes: S.notes, rsongs: S.rsongs, plan: S.plan,
+    shows: S.shows, folders: S.folders, folderOrder: S.folderOrder }));
   if (undoStack.length > 40) undoStack.shift();
 }
 let saveErr = false;
@@ -4323,12 +4333,16 @@ function viewSetup() {
   const shows = groupShows(U.allShowList ? allShows : allShows.slice(0, 12)).map(([fname, list]) => {
     if (!fname) return list.map(showRow).join("");
     const open = S.folders[fname] === true || fname === curFolder;
-    return `<button class="row card" data-act="folder" data-id="${h(fname)}" data-drop="f:${h(fname)}"
-        style="width:100%;margin-bottom:8px;padding:11px 12px;text-align:left">
-        <span style="width:18px;color:var(--dim)">${open ? "▾" : "▸"}</span>
-        <span class="grow trunc">${h(fname)}</span>
-        <span style="font-size:11px;color:var(--dim)">${list.length}公演</span>
-      </button>
+    return `<div class="row card" data-drop="f:${h(fname)}" style="margin-bottom:8px;padding:8px 12px">
+        <button class="grow row" data-act="folder" data-id="${h(fname)}" style="text-align:left;min-width:0">
+          <span style="width:18px;color:var(--dim)">${open ? "▾" : "▸"}</span>
+          <span class="grow trunc">${h(fname)}</span>
+          <span style="font-size:11px;color:var(--dim)">${list.length}公演</span>
+        </button>
+        <button data-act="fup" data-id="${h(fname)}" style="padding:4px 6px;color:var(--dim)">↑</button>
+        <button data-act="fdown" data-id="${h(fname)}" style="padding:4px 6px;color:var(--dim)">↓</button>
+        <button data-act="frename" data-id="${h(fname)}" style="padding:4px 6px;color:var(--dim);font-size:12px">名前</button>
+      </div>
       ${open ? `<div style="margin-left:14px">${list.map(showRow).join("")}</div>` : ""}`;
   }).join("");
 
@@ -4372,7 +4386,7 @@ function viewSetup() {
     ${shows}
     ${allShows.length > 6 ? `<button class="ghost" data-act="allshowlist" style="margin-bottom:10px">${U.allShowList ? "最近の6公演だけ表示" : `すべて表示（全${allShows.length}公演）`}</button>` : ""}
     <div class="row" style="margin-bottom:22px">
-      <input class="field grow" id="newshow" placeholder="8/3 ○○ホール 昼公演">
+      <input class="field grow" id="newshow" placeholder="">
       <button class="chip" data-act="addshow">追加</button>
     </div>
 
@@ -4577,7 +4591,12 @@ document.addEventListener("click", (e) => {
       if (undoStack.length) {
         const prev = JSON.parse(undoStack.pop());
         if (Array.isArray(prev)) S.notes = prev;
-        else { S.notes = prev.notes; S.rsongs = prev.rsongs; S.plan = prev.plan; }
+        else {
+          S.notes = prev.notes; S.rsongs = prev.rsongs; S.plan = prev.plan;
+          if (prev.shows) S.shows = prev.shows;
+          if (prev.folders) S.folders = prev.folders;
+          if (prev.folderOrder) S.folderOrder = prev.folderOrder;
+        }
         save(); schedulePush(); render();
       }
       break;
@@ -5288,6 +5307,27 @@ document.addEventListener("click", (e) => {
               : "合言葉を外しました。リンクを知っていれば誰でも開けます。");
       render();
       break;
+    }
+    case "frename": {
+      const nm = prompt("フォルダの名前", id);
+      if (nm == null) break;
+      const v = nm.trim();
+      pushUndo();
+      S.shows.forEach((sw) => { if (folderOf(sw) === id) sw.folder = v; });
+      S.folderOrder = (S.folderOrder || []).map((x) => (x === id ? v : x)).filter(Boolean);
+      if (S.folders[id] != null) { S.folders[v] = S.folders[id]; delete S.folders[id]; }
+      save(); render(); break;
+    }
+    case "fup": case "fdown": {
+      const names = groupShows(S.shows.filter((x) => !x.hidden)).map(([k]) => k).filter(Boolean);
+      let ord = (S.folderOrder || []).filter((x) => names.includes(x));
+      names.forEach((x) => { if (!ord.includes(x)) ord.push(x); });   // まだ並べていないものを今の順で足す
+      const i2 = ord.indexOf(id);
+      const j2 = a === "fup" ? i2 - 1 : i2 + 1;
+      if (i2 < 0 || j2 < 0 || j2 >= ord.length) break;
+      ord.splice(j2, 0, ord.splice(i2, 1)[0]);
+      S.folderOrder = ord;
+      save(); render(); break;
     }
     case "folder": S.folders[id] = !(S.folders[id] === true); save(); render(); break;
     case "showfilter": {
