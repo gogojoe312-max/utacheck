@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "1.0";
+const APP_VER = "1.1";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -2031,7 +2031,11 @@ function pitchTouch(cv) {
     moved = false;
     startX = p.x; startY = p.y; startX0 = PV.x0;
     mode = hitI >= 0 ? "note" : "pan";
-    if (hitI >= 0) { PT.sel = hitI; ptPush(); PV.drag = { i: hitI, m0: PT.notes[hitI].shift, y0: p.y }; drawPitch(); render(); }
+    if (hitI >= 0) {
+      PT.sel = hitI; ptPush();
+      PV.drag = { i: hitI, m0: PT.notes[hitI].shift, y0: p.y };
+      drawPitch();                       // 描き直すだけ。画面は作り直さない。
+    }
     e.preventDefault();
   }, { passive: false });
   cv.addEventListener("touchmove", (e) => {
@@ -2045,7 +2049,7 @@ function pitchTouch(cv) {
       // つまむ動きが小さい時は、2本指の移動として扱う
       if (Math.abs(d - startD) < 12) {
         PV.x0 = startX0 - ((cx - startC.x) / PV.w) * PV.sec;
-        PV.lo = startLo - ((startC.y - cy) / PV.h) * (PV.hi - PV.lo) * -1;
+        PV.lo = startLo + ((cy - startC.y) / PV.h) * startSpan;  // 指を下げたら表示も下がる
         PV.hi = PV.lo + startSpan;
       } else {
         PV.sec = Math.max(0.3, Math.min(30, startSec / k));
@@ -2059,8 +2063,11 @@ function pitchTouch(cv) {
     const p = pos(e);
     if (Math.abs(p.x - startX) > 4 || Math.abs(p.y - startY) > 4) moved = true;
     if (mode === "note" && PV.drag) {
+      const n2 = PT.notes[PV.drag.i];
       const dm = (startY - p.y) / (PV.h / Math.max(1, PV.hi - PV.lo));
-      PT.notes[PV.drag.i].shift = Math.max(-24, Math.min(24, PV.drag.m0 + dm));
+      // 半音ずつ動かし、その音の真ん中にぴたりと合わせる
+      const want = n2.m + PV.drag.m0 + dm;
+      n2.shift = Math.max(-24, Math.min(24, Math.round(want) - n2.m));
       drawPitch();
     } else if (mode === "pan") {
       PV.x0 = startX0 - ((p.x - startX) / PV.w) * PV.sec;
@@ -2070,7 +2077,7 @@ function pitchTouch(cv) {
   }, { passive: false });
   cv.addEventListener("touchend", (e) => {
     if (mode === "note" && !moved && hitI >= 0) { PT.hist.pop(); playPitch(hitI); }   // 押しただけなら鳴らす
-    if (mode === "note" && moved) render();
+    if (mode === "note") render();       // 離した時にだけ整える
     mode = ""; PV.drag = null;
     e.preventDefault();
   }, { passive: false });
@@ -4663,7 +4670,11 @@ document.addEventListener("click", (e) => {
       drawPitch(); break;
     }
     case "ptfit": pitchFit(); drawPitch(); break;
-    case "ptsnap": { const n2 = PT.notes[PT.sel]; if (n2) { ptPush(); n2.shift = Math.round(n2.m) - n2.m; drawPitch(); render(); } break; }
+    case "ptsnap": {
+      const n2 = PT.notes[PT.sel];
+      if (n2) { ptPush(); n2.shift = Math.round(n2.m) - n2.m; n2.flat = true; drawPitch(); render(); }
+      break;
+    }
     case "ptstep": { const n2 = PT.notes[PT.sel]; if (n2) { ptPush(); n2.shift += Number(id); drawPitch(); render(); } break; }
     case "ptflat": { const n2 = PT.notes[PT.sel]; if (n2) { ptPush(); n2.flat = !n2.flat; drawPitch(); render(); } break; }
     case "ptundo": { ptPop(); drawPitch(); render(); break; }
