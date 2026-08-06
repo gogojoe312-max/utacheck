@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "2.2";
+const APP_VER = "2.3";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -2521,12 +2521,27 @@ function render() {
       if (song() && song().id === cur.id) { markRead(cur); render(); }
     }, 700);
   }
-  // PDFの名前を「公演名 歌チェック」にする
+  // PDFの名前を決める。1曲だけならその曲名、複数なら公演名。最後に「歌チェック 日付」。
   try {
-    document.title = U.view === "recprint" ? ((recSong() || {}).title || "歌詞")
-      : U.view === "print" ? ((showName() || "歌割") + " 歌チェック") : "歌チェック";
+    document.title = U.view === "recprint" ? ((recSong() || {}).title || "歌詞") + " 歌チェック " + ymd()
+      : U.view === "print" ? printTitle() : "歌チェック";
   } catch (e) { /* 名前を変えられない場合は既定のまま */ }
   if (U.view === "setup") setTimeout(() => showPianoAtC4(app), 0);
+}
+
+// 今日の日付（ファイル名用）
+function ymd(d) {
+  const t = d ? new Date(d) : new Date();
+  const p = (n) => String(n).padStart(2, "0");
+  return `${t.getFullYear()}${p(t.getMonth() + 1)}${p(t.getDate())}`;
+}
+// PDFの名前。1曲だけならその曲名、まとめてなら公演名。
+function printTitle() {
+  const all = SONGS();
+  const picked = U.printPick ? all.filter((x) => U.printPick.includes(x.id)) : all;
+  const base = picked.length === 1 ? songName(picked[0]) : (showName() || "歌割");
+  // ファイル名に使えない文字だけ置き換える（8/6 → 8-6）
+  return `${base} 歌チェック ${ymd()}`.replace(/[\\/:]/g, "-").replace(/[*?"<>|]/g, "");
 }
 
 /* ---- live ---- */
