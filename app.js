@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "2026-08-05-41";
+const APP_VER = "2026-08-05-43";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1662,14 +1662,36 @@ function analyzePitch(chan, rate) {
     const hz = detectHz(chan.subarray(i, i + win), rate);
     pts.push({ t: i / rate, hz, m: hz ? hzToMidi(hz) : 0 });
   }
-  // 前後と大きく外れた点を均す（オクターブの取り違えを減らす）
-  for (let i = 1; i < pts.length - 1; i++) {
+  // オクターブの取り違えを直す（周りと12半音ずれていたら寄せる）
+  const near = (i) => {
+    const w = [];
+    for (let k = Math.max(0, i - 6); k < Math.min(pts.length, i + 7); k++) if (pts[k].m) w.push(pts[k].m);
+    if (!w.length) return 0;
+    w.sort((a, b) => a - b);
+    return w[Math.floor(w.length / 2)];
+  };
+  for (let i = 0; i < pts.length; i++) {
     if (!pts[i].m) continue;
-    const a = pts[i - 1].m, b = pts[i + 1].m;
-    if (a && b && Math.abs(pts[i].m - a) > 6 && Math.abs(pts[i].m - b) > 6 && Math.abs(a - b) < 3) {
-      pts[i].m = (a + b) / 2; pts[i].hz = midiToHz(pts[i].m);
-    }
+    const c = near(i);
+    if (!c) continue;
+    let best = pts[i].m, bd = Math.abs(pts[i].m - c);
+    [-24, -12, 12, 24].forEach((o) => {
+      const v = pts[i].m + o;
+      if (Math.abs(v - c) < bd) { bd = Math.abs(v - c); best = v; }
+    });
+    if (best !== pts[i].m) { pts[i].m = best; pts[i].hz = midiToHz(best); }
   }
+  // 細かい揺れを均す（5点の中央値）。ビブラートの形は線の方で見せる。
+  const raw = pts.map((p) => p.m);
+  const sm = raw.slice();
+  for (let i = 0; i < pts.length; i++) {
+    if (!raw[i]) continue;
+    const w = [];
+    for (let k = Math.max(0, i - 2); k <= Math.min(pts.length - 1, i + 2); k++) if (raw[k]) w.push(raw[k]);
+    w.sort((a, b) => a - b);
+    sm[i] = w[Math.floor(w.length / 2)];
+  }
+  pts.forEach((p, i) => { p.raw = raw[i]; p.m = sm[i]; });
   // つながっているところをひとかたまりにする
   const notes = [];
   let cur = null;
@@ -1679,9 +1701,9 @@ function analyzePitch(chan, rate) {
     // 今の音の中央値から半音の7割以上ずれた点が2つ続いたら、そこから別の音
     const ms2 = cur.pts.map((x) => x.m).sort((x, y) => x - y);
     const med = ms2[Math.floor(ms2.length / 2)];
-    if (Math.abs(p.m - med) < 0.7) { cur.pts = cur.pts.concat(cur.pend, [p]); cur.pend = []; return; }
+    if (Math.abs(p.m - med) < 0.8) { cur.pts = cur.pts.concat(cur.pend, [p]); cur.pend = []; return; }
     cur.pend.push(p);
-    if (cur.pend.length >= 2) {
+    if (cur.pend.length >= 3) {
       if (cur.pts.length >= 4) notes.push(cur);
       cur = { pts: cur.pend.slice(), pend: [] };
     }
@@ -1727,8 +1749,10 @@ function shiftSeg(src, rate, from, to, semi, hz) {
 
 async function playPitch(only) {
   if (!PT.buf) return;
+  freeMic();
   unlockAudio();
   if (!AC) return;
+  try { if (AC.state === "suspended") await AC.resume(); } catch (e) {}
   const rate = PT.buf.sampleRate;
   const src = PT.buf.getChannelData(0);
   const t0 = only != null ? PT.notes[only].t0 : 0;
@@ -1743,16 +1767,28 @@ async function playPitch(only) {
     const at = Math.floor((nt.t0 - t0) * rate);
     for (let k = 0; k < seg.length && at + k < dst.length; k++) if (at + k >= 0) dst[at + k] = seg[k];
   });
+  // 録った声は小さいので持ち上げる（割れないように頭を丸める）
+  let peak = 0;
+  for (let i = 0; i < dst.length; i += 7) { const v = Math.abs(dst[i]); if (v > peak) peak = v; }
+  const gain = Math.max(1, Math.min(12, peak > 0.001 ? 0.9 / peak : 1));
+
   if (PT.src) { try { PT.src.stop(); } catch (e) {} }
   const node = AC.createBufferSource();
   node.buffer = off;
-  node.connect(AC.destination);
+  const g2 = AC.createGain();
+  g2.gain.value = gain;
+  const sh = AC.createWaveShaper();
+  const curve = new Float32Array(1024);
+  for (let i = 0; i < 1024; i++) { const x = (i / 512) - 1; curve[i] = Math.tanh(x * 1.6); }
+  sh.curve = curve;
+  node.connect(g2); g2.connect(sh); sh.connect(AC.destination);
   node.onended = () => { PT.playing = false; render(); };
   node.start();
   PT.src = node; PT.playing = true; render();
 }
 
 async function startPitch() {
+  if (PT.on) return;
   try {
     unlockAudio();
     const st = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
@@ -1767,71 +1803,228 @@ async function startPitch() {
         const blob = new Blob(PT.chunks, { type: mr.mimeType || "audio/webm" });
         PT.buf = await AC.decodeAudioData(await blob.arrayBuffer());
         PT.dur = PT.buf.duration;
+        PT.want = 10;
         PT.notes = analyzePitch(PT.buf.getChannelData(0), PT.buf.sampleRate);
         PT.sel = -1;
+        pitchFit();
       } catch (e) { alert("うまく調べられませんでした。\n" + e.message); }
       U.busy = ""; render();
     };
-    mr.start();
+    mr.start(200);                       // こまめに受け取る（途中で切れても残る）
     PT.rec = mr; PT.on = true; PT.t0 = Date.now(); render();
-    setTimeout(() => { if (PT.on) stopPitch(); }, 10000);
+    clearInterval(PT.tick); clearTimeout(PT.timer);
+    PT.tick = setInterval(() => { if (PT.on) render(); else clearInterval(PT.tick); }, 1000);
+    PT.timer = setTimeout(() => { if (PT.on && PT.rec === mr) stopPitch(); }, 10000);
   } catch (e) {
     alert("マイクを使えませんでした。\n設定でマイクを許可してください。");
   }
 }
-function stopPitch() { try { if (PT.rec && PT.rec.state === "recording") PT.rec.stop(); } catch (e) {} }
+function stopPitch() {
+  clearTimeout(PT.timer); clearInterval(PT.tick);
+  try { if (PT.rec && PT.rec.state === "recording") PT.rec.stop(); } catch (e) {}
+}
+
+// ---- ピッチの画面（Canvasで描いて、指で操作する） ----
+const PV = { x0: 0, sec: 4, lo: 55, hi: 72, drag: null, cv: null, w: 0, h: 0 };
 
 function pitchHTML() {
-  if (PT.on) {
-    return `<div class="card"><div class="row">
-      <b class="grow" style="color:var(--bad)">録音中…（10秒で止まります）</b>
-      <button class="chip sm" data-act="ptstop">止める</button></div></div>`;
-  }
-  if (!PT.notes.length) {
-    return `<div class="card">
-      <button class="primary" data-act="ptstart">10秒 録って調べる</button>
-      <div style="font-size:11px;color:var(--dim);margin-top:8px">マイクに向かって歌うと、どの音を出していたかが見えます。</div>
-    </div>`;
-  }
-  const ms = PT.notes.map((n) => n.m + n.shift);
-  const lo = Math.floor(Math.min.apply(null, ms)) - 2;
-  const hi = Math.ceil(Math.max.apply(null, ms)) + 2;
-  const rows = [];
-  for (let m = hi; m >= lo; m--) {
-    const black = [1, 3, 6, 8, 10].indexOf(((m % 12) + 12) % 12) >= 0;
-    rows.push(`<div class="ptrow${black ? " blk" : ""}"><span class="ptlbl">${midiName(m)}</span></div>`);
-  }
-  const H = (hi - lo + 1) * 14;
-  const bars = PT.notes.map((n, i) => {
-    const y = (hi - (n.m + n.shift)) * 14;
-    const x = (n.t0 / PT.dur) * 100, w = Math.max(1.2, ((n.t1 - n.t0) / PT.dur) * 100);
-    const cents = Math.round(((n.m + n.shift) - Math.round(n.m + n.shift)) * 100);
-    return `<button class="ptbar${i === PT.sel ? " on" : ""}" data-act="ptsel" data-i="${i}"
-      style="left:${x}%;width:${w}%;top:${y}px"><span>${midiName(n.m + n.shift)}${cents ? (cents > 0 ? "+" : "") + cents : ""}</span></button>`;
-  }).join("");
-  const sel = PT.sel >= 0 ? PT.notes[PT.sel] : null;
+  const on = PT.on;
+  const has = PT.notes.length > 0;
   return `<div class="card">
-    <div class="ptbox" style="height:${H}px">${rows.join("")}<div class="ptlay">${bars}</div></div>
-    <div class="row" style="margin-top:10px">
-      <button class="chip sm" data-act="ptplay" style="background:var(--accent);color:#0A0A0A">${PT.playing ? "■ 止める" : "▶ 全部聴く"}</button>
-      <span class="grow"></span>
-      <button class="chip sm" data-act="ptreset" style="color:var(--dim)">やり直す</button>
+    <div class="row" style="margin-bottom:8px">
+      ${on
+        ? `<b class="grow" style="color:var(--bad)">録音中… ${Math.max(0, 10 - Math.floor((Date.now() - PT.t0) / 1000))}秒</b>
+           <button class="chip sm" data-act="ptstop">止める</button>`
+        : `<button class="chip sm" data-act="ptstart" style="background:var(--bad);color:#fff">● 10秒 録る</button>
+           ${has ? `<button class="chip sm" data-act="ptplay" style="background:var(--accent);color:#0A0A0A">${PT.playing ? "■" : "▶"} 全部</button>
+           <button class="chip sm" data-act="ptreset" style="color:var(--dim)">消す</button>` : ""}
+           <span class="grow"></span>
+           <button class="chip sm" data-act="ptzoom" data-id="-1">−</button>
+           <button class="chip sm" data-act="ptzoom" data-id="1">＋</button>
+           <button class="chip sm" data-act="ptfit">全体</button>`}
     </div>
-    ${sel ? `<div class="card" style="margin-top:10px;padding:10px 12px">
-      <div class="row" style="margin-bottom:8px">
-        <b class="grow">${midiName(sel.m + sel.shift)}</b>
-        <span style="font-size:11px;color:var(--dim)">${(sel.t1 - sel.t0).toFixed(2)}秒　元 ${midiName(sel.m)}</span>
-      </div>
-      <div class="row" style="margin-bottom:8px">
-        ${[-12, -1, -0.5, 0.5, 1, 12].map((v) => `<button class="chip sm grow" data-act="ptshift" data-id="${v}">${Math.abs(v) === 0.5 ? (v > 0 ? "＋半" : "−半") : (v > 0 ? "＋" + v : v)}</button>`).join("")}
-      </div>
-      <div class="row">
-        <button class="chip sm grow" data-act="ptsnap">近い音に合わせる</button>
-        <button class="chip sm grow" data-act="ptplay1">▶ この音だけ</button>
-        <button class="chip sm" data-act="ptclear" style="color:var(--dim)">戻す</button>
-      </div>
-    </div>` : `<div style="font-size:11px;color:var(--dim);margin-top:8px">音を押すと、上げ下げできます。</div>`}
+    <canvas id="ptcv" class="ptcv"></canvas>
+    ${has && PT.dur < 8 ? `<div style="font-size:11px;color:var(--bad);margin-top:8px">
+      ${PT.dur.toFixed(1)}秒しか録れていません。もう一度お試しください。</div>` : ""}
+    ${has ? `<div class="row" style="margin-top:8px;font-size:11px;color:var(--dim)">
+      ${PT.sel >= 0
+        ? `<b style="color:var(--text);font-size:13px">${midiName(PT.notes[PT.sel].m + PT.notes[PT.sel].shift)}</b>
+           <span>${(() => { const c = Math.round(((PT.notes[PT.sel].m + PT.notes[PT.sel].shift) - Math.round(PT.notes[PT.sel].m + PT.notes[PT.sel].shift)) * 100); return c ? (c > 0 ? "+" : "") + c + "セント" : "ぴったり"; })()}</span>
+           <span class="grow"></span>
+           <button class="chip sm" data-act="ptsnap">合わせる</button>
+           <button class="chip sm" data-act="ptclear">戻す</button>`
+        : `<span>音を押すと鳴ります。押したまま上下に動かすと高さを変えられます。</span>`}
+    </div>` : `<div style="font-size:11px;color:var(--dim);margin-top:8px">「● 10秒 録る」を押して歌うと、出した音がここに出ます。</div>`}
   </div>`;
+}
+
+// 画面の縦位置と音の高さを行き来する
+const pvY = (m) => PV.h - ((m - PV.lo) / Math.max(1, PV.hi - PV.lo)) * PV.h;
+const pvX = (t) => ((t - PV.x0) / PV.sec) * PV.w;
+
+function drawPitch() {
+  const cv = document.getElementById("ptcv");
+  if (!cv) return;
+  PV.cv = cv;
+  const dpr = window.devicePixelRatio || 1;
+  const w = cv.clientWidth || 320, h = 260;
+  if (cv.width !== Math.floor(w * dpr) || cv.height !== Math.floor(h * dpr)) {
+    cv.width = Math.floor(w * dpr); cv.height = Math.floor(h * dpr);
+    cv.style.height = h + "px";
+  }
+  PV.w = w; PV.h = h;
+  const g = cv.getContext("2d");
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, w, h);
+
+  // 鍵盤の帯
+  const rowH = h / Math.max(1, PV.hi - PV.lo);
+  for (let m = Math.floor(PV.lo); m <= Math.ceil(PV.hi); m++) {
+    const black = [1, 3, 6, 8, 10].indexOf(((m % 12) + 12) % 12) >= 0;
+    const y = pvY(m + 0.5);
+    g.fillStyle = black ? "rgba(255,255,255,.045)" : "rgba(255,255,255,.012)";
+    g.fillRect(0, y, w, rowH);
+    if (rowH > 11) {
+      g.fillStyle = "rgba(255,255,255,.30)";
+      g.font = "9px -apple-system,sans-serif";
+      g.fillText(midiName(m), 3, y + rowH / 2 + 3);
+    }
+    g.strokeStyle = ((m % 12) + 12) % 12 === 0 ? "rgba(255,255,255,.16)" : "rgba(255,255,255,.05)";
+    g.beginPath(); g.moveTo(0, y); g.lineTo(w, y); g.stroke();
+  }
+
+  if (!PT.notes.length) {
+    g.fillStyle = "rgba(255,255,255,.22)";
+    g.font = "12px -apple-system,sans-serif";
+    const msg = PT.on ? "録音中…" : "ここに歌った音が出ます";
+    g.fillText(msg, w / 2 - g.measureText(msg).width / 2, h / 2);
+    return;
+  }
+
+  // 音のかたまり
+  PT.notes.forEach((n, i) => {
+    const x1 = pvX(n.t0), x2 = pvX(n.t1);
+    if (x2 < -20 || x1 > w + 20) return;
+    const sel = i === PT.sel;
+    const y = pvY(n.m + n.shift);
+    const bh = Math.max(10, rowH * 0.82);
+    g.fillStyle = sel ? "rgba(217,119,87,.95)" : "rgba(217,119,87,.42)";
+    g.beginPath();
+    const r = Math.min(4, (x2 - x1) / 2);
+    g.moveTo(x1 + r, y - bh / 2);
+    g.arcTo(x2, y - bh / 2, x2, y + bh / 2, r);
+    g.arcTo(x2, y + bh / 2, x1, y + bh / 2, r);
+    g.arcTo(x1, y + bh / 2, x1, y - bh / 2, r);
+    g.arcTo(x1, y - bh / 2, x2, y - bh / 2, r);
+    g.fill();
+    if (sel) { g.strokeStyle = "#fff"; g.lineWidth = 1.5; g.stroke(); }
+
+    // ビブラートやしゃくりの線
+    g.strokeStyle = sel ? "#fff" : "rgba(255,255,255,.55)";
+    g.lineWidth = 1.4;
+    g.beginPath();
+    n.pts.forEach((p, k) => {
+      const px = pvX(p.t), py = pvY((p.raw || p.m) + n.shift);
+      if (k) g.lineTo(px, py); else g.moveTo(px, py);
+    });
+    g.stroke();
+
+    if (x2 - x1 > 26 && rowH > 9) {
+      g.fillStyle = sel ? "#0A0A0A" : "rgba(0,0,0,.65)";
+      g.font = "bold 9px -apple-system,sans-serif";
+      g.fillText(midiName(n.m + n.shift), x1 + 3, y + 3);
+    }
+  });
+
+  // 目盛り（秒）
+  g.fillStyle = "rgba(255,255,255,.28)";
+  g.font = "9px -apple-system,sans-serif";
+  for (let t2 = Math.ceil(PV.x0); t2 <= PV.x0 + PV.sec; t2++) {
+    const x = pvX(t2);
+    g.fillRect(x, h - 10, 1, 10);
+    g.fillText(t2 + "s", x + 2, h - 2);
+  }
+}
+
+// 表示範囲を中身に合わせる
+function pitchFit() {
+  if (!PT.notes.length) { PV.x0 = 0; PV.sec = 4; PV.lo = 55; PV.hi = 72; return; }
+  const ms = [];
+  PT.notes.forEach((n) => n.pts.forEach((p) => ms.push(p.m + n.shift)));
+  const lo = Math.min.apply(null, ms), hi = Math.max.apply(null, ms);
+  const pad = Math.max(1.5, (hi - lo) * 0.25);
+  PV.lo = Math.floor(lo - pad); PV.hi = Math.ceil(hi + pad);
+  if (PV.hi - PV.lo < 6) { const c = (PV.hi + PV.lo) / 2; PV.lo = c - 3; PV.hi = c + 3; }
+  PV.x0 = 0; PV.sec = Math.max(1, PT.dur);
+}
+
+// 指の操作
+function pitchTouch(cv) {
+  let mode = "", startD = 0, startSec = 0, startSpan = 0, startX = 0, startY = 0, startX0 = 0, startLo = 0, moved = false, hitI = -1;
+  const pos = (e, k) => {
+    const r = cv.getBoundingClientRect();
+    const t2 = e.touches ? e.touches[k || 0] : e;
+    return { x: t2.clientX - r.left, y: t2.clientY - r.top };
+  };
+  const hit = (p) => {
+    for (let i = PT.notes.length - 1; i >= 0; i--) {
+      const n = PT.notes[i];
+      const x1 = pvX(n.t0), x2 = pvX(n.t1), y = pvY(n.m + n.shift);
+      const bh = Math.max(14, (PV.h / Math.max(1, PV.hi - PV.lo)) * 0.9);
+      if (p.x >= x1 - 4 && p.x <= x2 + 4 && Math.abs(p.y - y) <= bh) return i;
+    }
+    return -1;
+  };
+  cv.addEventListener("touchstart", (e) => {
+    if (e.touches.length === 2) {
+      mode = "zoom";
+      const a = pos(e, 0), b = pos(e, 1);
+      startD = Math.hypot(a.x - b.x, a.y - b.y) || 1;
+      startSec = PV.sec; startSpan = PV.hi - PV.lo;
+      startX0 = PV.x0; startLo = PV.lo;
+      e.preventDefault(); return;
+    }
+    const p = pos(e);
+    hitI = hit(p);
+    moved = false;
+    startX = p.x; startY = p.y; startX0 = PV.x0;
+    mode = hitI >= 0 ? "note" : "pan";
+    if (hitI >= 0) { PT.sel = hitI; PV.drag = { i: hitI, m0: PT.notes[hitI].shift, y0: p.y }; drawPitch(); render(); }
+    e.preventDefault();
+  }, { passive: false });
+  cv.addEventListener("touchmove", (e) => {
+    if (mode === "zoom" && e.touches.length === 2) {
+      const a = pos(e, 0), b = pos(e, 1);
+      const d = Math.hypot(a.x - b.x, a.y - b.y) || 1;
+      const k = d / startD;
+      const cx = (a.x + b.x) / 2, cy = (a.y + b.y) / 2;
+      const tAt = startX0 + (cx / PV.w) * startSec;
+      const mAt = startLo + ((PV.h - cy) / PV.h) * startSpan;
+      PV.sec = Math.max(0.3, Math.min(30, startSec / k));
+      const span = Math.max(3, Math.min(48, startSpan / k));
+      PV.x0 = tAt - (cx / PV.w) * PV.sec;
+      PV.lo = mAt - ((PV.h - cy) / PV.h) * span;
+      PV.hi = PV.lo + span;
+      drawPitch(); e.preventDefault(); return;
+    }
+    const p = pos(e);
+    if (Math.abs(p.x - startX) > 4 || Math.abs(p.y - startY) > 4) moved = true;
+    if (mode === "note" && PV.drag) {
+      const dm = (startY - p.y) / (PV.h / Math.max(1, PV.hi - PV.lo));
+      PT.notes[PV.drag.i].shift = Math.max(-24, Math.min(24, PV.drag.m0 + dm));
+      drawPitch();
+    } else if (mode === "pan") {
+      PV.x0 = startX0 - ((p.x - startX) / PV.w) * PV.sec;
+      drawPitch();
+    }
+    e.preventDefault();
+  }, { passive: false });
+  cv.addEventListener("touchend", (e) => {
+    if (mode === "note" && !moved && hitI >= 0) playPitch(hitI);      // 押しただけなら鳴らす
+    if (mode === "note" && moved) render();
+    mode = ""; PV.drag = null;
+    e.preventDefault();
+  }, { passive: false });
 }
 
 /* ---------------- メトロノーム ---------------- */
@@ -2018,6 +2211,7 @@ function freeMic() {
   // iPhoneはマイクを掴んでいる間、音が受話口から出るので必ず離す
   try { if (REC && REC.state === "recording") REC.stop(); } catch (e) {}
   try { if (REC && REC.stream) REC.stream.getTracks().forEach((t) => t.stop()); } catch (e) {}
+  try { if (PT.rec && PT.rec.stream) PT.rec.stream.getTracks().forEach((t) => t.stop()); } catch (e) {}
 }
 
 async function openPlayer(seek) {
@@ -2082,6 +2276,11 @@ function render() {
   if (U.view === "live" && !U.overview) setTimeout(paintInk, 0);
   if (U.view === "print" || U.view === "recprint") setTimeout(fitPrintDOM, 0);
   if (S.recMode) setTimeout(() => { tickPlan(); scrollTab(); }, 0);
+  if (U.view === "setup") setTimeout(() => {
+    const cv = document.getElementById("ptcv");
+    if (cv && !cv.dataset.ready) { cv.dataset.ready = "1"; pitchTouch(cv); }
+    drawPitch();
+  }, 0);
   if (VIEW() && (U.view === "live" || U.view === "print")) {
     const cur = song();
     clearTimeout(readTimer);
@@ -4402,9 +4601,16 @@ document.addEventListener("click", (e) => {
     }
     case "ptstart": startPitch(); break;
     case "ptstop": stopPitch(); break;
-    case "ptreset": PT.notes = []; PT.buf = null; PT.sel = -1; render(); break;
-    case "ptsel": PT.sel = (PT.sel === i ? -1 : i); render(); break;
-    case "ptshift": { const n2 = PT.notes[PT.sel]; if (n2) { n2.shift = Math.max(-24, Math.min(24, n2.shift + Number(id))); render(); } break; }
+    case "ptreset": PT.notes = []; PT.buf = null; PT.sel = -1; pitchFit(); render(); break;
+    case "ptzoom": {
+      const k = Number(id) > 0 ? 1 / 1.6 : 1.6;
+      const c = PV.x0 + PV.sec / 2, cm = (PV.lo + PV.hi) / 2;
+      PV.sec = Math.max(0.3, Math.min(30, PV.sec * k));
+      const span = Math.max(3, Math.min(48, (PV.hi - PV.lo) * k));
+      PV.x0 = c - PV.sec / 2; PV.lo = cm - span / 2; PV.hi = cm + span / 2;
+      drawPitch(); break;
+    }
+    case "ptfit": pitchFit(); drawPitch(); break;
     case "ptsnap": { const n2 = PT.notes[PT.sel]; if (n2) { n2.shift = Math.round(n2.m) - n2.m; render(); } break; }
     case "ptclear": { const n2 = PT.notes[PT.sel]; if (n2) { n2.shift = 0; render(); } break; }
     case "ptplay": {
@@ -4412,7 +4618,6 @@ document.addEventListener("click", (e) => {
       else playPitch(null);
       break;
     }
-    case "ptplay1": playPitch(PT.sel); break;
     case "readall": {
       SONGS().forEach((x) => { S.seen = S.seen || {}; S.seen[seenKey(x)] = noteSig(x); });
       save(); U.picker = false; renderSheet(); render(); break;
