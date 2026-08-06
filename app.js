@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "1.8";
+const APP_VER = "1.9";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -2059,7 +2059,7 @@ const pvT = (x) => PV.x0 + (x / PV.w) * PV.sec;
 
 function drawPitch() {
   const cv = document.getElementById("ptcv");
-  if (!cv) return;
+  if (!cv || typeof cv.getContext !== "function") return;
   PV.cv = cv;
   const dpr = window.devicePixelRatio || 1;
   const w = cv.clientWidth || 320, h = 260;
@@ -3654,7 +3654,7 @@ function viewSetupRec() {
   <div class="hd"><button class="ic" data-act="go-live">‹</button><b>設定</b>
     <span class="grow"></span>
     ${U.busy ? `<span style="font-size:12px;color:var(--accent)">${h(U.busy)}</span>`
-             : `<span style="font-size:11px;color:var(--accent)">レコーディングモード</span>`}</div>
+             : `<button data-act="recon" class="chip sm" style="color:var(--accent)">レコーディングモード ⇄</button>`}</div>
   <div class="scroll pad">
     <h4 class="head">曲</h4>
     ${grps.length ? `<div class="chips" style="margin-bottom:10px">
@@ -3690,8 +3690,6 @@ function viewSetupRec() {
     ${(S.trash || []).length ? `<h4 class="head">ゴミ箱</h4>
     <div class="card"><button class="primary" data-act="gotrash">ゴミ箱（${S.trash.length}件）</button></div>` : ""}
 
-    <h4 class="head">モード</h4>
-    <div class="card"><button class="primary" data-act="recon">ライブモード</button></div>
 
     ${footerHTML()}
     <div style="height:40px"></div>
@@ -4325,7 +4323,7 @@ function viewSetup() {
   <div class="hd"><button class="ic" data-act="go-live">‹</button><b>設定</b>
     <span class="grow"></span>
     ${U.busy ? `<span style="font-size:12px;color:var(--accent)">${h(U.busy)}</span>`
-             : `<span style="font-size:11px;color:var(--accent)">ライブモード</span>`}</div>
+             : `<button data-act="recon" class="chip sm" style="color:var(--accent)">ライブモード ⇄</button>`}</div>
   <div class="scroll pad">
         <h4 class="head">公演</h4>
     ${S.groups.length > 1 ? `<div class="chips" style="margin-bottom:10px">
@@ -4451,8 +4449,6 @@ function viewSetup() {
       <div style="font-size:11px;color:var(--dim);margin-top:8px">${TRASH_DAYS}日を過ぎたものから順に消えます</div>
     </div>` : ""}
 
-    <h4 class="head">モード</h4>
-    <div class="card"><button class="primary" data-act="recon">レコーディングモード</button></div>
 
     ${footerHTML()}
     <div style="height:40px"></div>
