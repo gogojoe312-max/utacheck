@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "2.5";
+const APP_VER = "2.8";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -78,8 +78,8 @@ let S = {
   groups: [], groupId: "",
   src: "", key: "", keyInLink: true,
   memos: {}, recs: {}, kbps: 128, preroll: 5, viewer: false, srcGroup: "",
-  draws: {}, showFilter: "", folders: {}, folderOrder: [], subs: {}, subsMan: {}, subLib: {}, gsubs: {},
-  recMode: false, recOvSize: 14, rsongs: [], rsongId: "", recBars: true, liveShow: "", recEdit: false, rgFilter: "", linkSrc: "", groupOrder: [], pubAt: 0, syncAt: 0, seen: {}, planMin: 90, planPrep: 10, rosters: {}, secWords: [], trash: [],
+  draws: {}, showFilter: "", folders: {}, folderOrder: [], rfolders: {}, rfolderOrder: [], subs: {}, subsMan: {}, subLib: {}, gsubs: {},
+  recMode: false, recOvSize: 14, rsongs: [], rsongId: "", recBars: true, liveShow: "", recEdit: false, linkSrc: "", groupOrder: [], pubAt: 0, syncAt: 0, seen: {}, planMin: 90, planPrep: 10, rosters: {}, secWords: [], trash: [],
   plan: { start: "10:00", slots: [] },
   size: 19,
 };
@@ -122,6 +122,8 @@ function migrate() {
   if (!S.draws) S.draws = {};
   if (!S.folders) S.folders = {};
   if (!S.folderOrder) S.folderOrder = [];
+  if (!S.rfolders) S.rfolders = {};
+  if (!S.rfolderOrder) S.rfolderOrder = [];
   if (!S.subs) S.subs = {};
   if (!S.subsMan) S.subsMan = {};
   if (!S.subLib) S.subLib = {};
@@ -229,6 +231,25 @@ const showRoster = () => {
 };
 
 const folderOf = (sw) => (sw && sw.folder) ? sw.folder : "";
+// レコーディングの曲をフォルダごとにまとめる（ライブの公演と同じ並べ方）
+function groupRSongs(list) {
+  const map = new Map();
+  list.forEach((x) => {
+    const k = folderOf(x);
+    if (!map.has(k)) map.set(k, []);
+    map.get(k).push(x);
+  });
+  const keys = [...map.keys()].filter(Boolean);
+  const newest = (k) => Math.max.apply(null, map.get(k).map((x) => Number(x.at || 0)));
+  const ord = S.rfolderOrder || [];
+  keys.sort((a, b) => {
+    const ia = ord.indexOf(a), ib = ord.indexOf(b);
+    if (ia >= 0 || ib >= 0) return (ia < 0 ? 999 : ia) - (ib < 0 ? 999 : ib);
+    return newest(b) - newest(a);
+  });
+  if (map.has("")) keys.push("");
+  return keys.map((k) => [k, map.get(k)]);
+}
 function groupShows(list) {
   const map = new Map();
   list.forEach((sw) => {
@@ -678,7 +699,7 @@ function save() {
 
 const REC_SHOW = "rec";
 const SONGS = () => (S.recMode
-  ? S.rsongs.filter((x) => !S.rgFilter || (x.grp || "") === S.rgFilter)
+  ? S.rsongs.slice()
   : S.songs.filter((x) => x.showId === S.showId));
 const songName = (x) => x ? (((x.take || 1) > 1 ? `テイク${x.take}　` : "") + x.title) : "";
 function ancestorsOf(so) {
@@ -1420,6 +1441,7 @@ function freqOf(id) {
 // Web Audioの音も消音スイッチを無視して鳴るようになる。
 const SILENT_WAV = "data:audio/wav;base64,UklGRkQDAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YSADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==";
 let silentEl = null;
+let micStream = null;
 function unlockAudio() {
   try {
     AC = AC || new (window.AudioContext || window.webkitAudioContext)();
@@ -1487,6 +1509,7 @@ document.addEventListener("pointerdown", keepAwake, true);
 
 function tone(id) {
   try {
+    freeMic();
     unlockAudio();
     if (!AC) return;
     const t = AC.currentTime;
@@ -1957,11 +1980,14 @@ async function startPitch() {
   try {
     unlockAudio();
     const st = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+    micStream = st;
     const mr = new MediaRecorder(st);
     PT.chunks = [];
     mr.ondataavailable = (e) => { if (e.data.size) PT.chunks.push(e.data); };
     mr.onstop = async () => {
       st.getTracks().forEach((t2) => t2.stop());
+      micStream = null;
+      resetAudio();                    // 録り終わったらスピーカーに戻す
       PT.on = false;
       U.busy = "調べています…"; render();
       try {
@@ -2290,6 +2316,7 @@ function metClick(t, accent) {
 const metStep = () => (60 / metBpm()) * 4 / metSub();
 
 function metStart() {
+  freeMic();
   unlockAudio();
   if (!AC) return;
   metStop(true);
@@ -2452,9 +2479,26 @@ const recAt = () => (REC && REC.state === "recording") ? (Date.now() - recT0) / 
 
 function freeMic() {
   // iPhoneはマイクを掴んでいる間、音が受話口から出るので必ず離す
+  let had = false;
+  const kill = (st) => {
+    if (!st || !st.getTracks) return;
+    st.getTracks().forEach((t) => { if (t.readyState !== "ended") { had = true; } t.stop(); });
+  };
   try { if (REC && REC.state === "recording") REC.stop(); } catch (e) {}
-  try { if (REC && REC.stream) REC.stream.getTracks().forEach((t) => t.stop()); } catch (e) {}
-  try { if (PT.rec && PT.rec.stream) PT.rec.stream.getTracks().forEach((t) => t.stop()); } catch (e) {}
+  try { if (REC) kill(REC.stream); } catch (e) {}
+  try { if (PT.rec) kill(PT.rec.stream); } catch (e) {}
+  try { kill(micStream); micStream = null; } catch (e) {}
+  // マイクを離した直後は、音の通り道を作り直さないと受話口のままになる
+  if (had) resetAudio();
+}
+
+// 音の通り道を作り直す（スピーカーから鳴るように戻す）
+function resetAudio() {
+  try {
+    if (AC && AC.close) { const old = AC; AC = null; old.close(); }
+    if (silentEl) { try { silentEl.pause(); } catch (e) {} silentEl = null; }
+  } catch (e) { /* 作り直せなくても動く */ }
+  unlockAudio();
 }
 
 async function openPlayer(seek) {
@@ -2657,7 +2701,7 @@ function viewLive() {
   <div class="hd">
     <button class="grow" style="text-align:left" data-act="picker">
       <div class="t1 trunc">${S.recMode
-        ? `<b style="color:var(--accent)">レコーディングモード</b>${s && s.grp ? " ・ " + h(s.grp) : ""}`
+        ? `<b style="color:var(--accent)">レコーディングモード</b>${s && s.folder ? " ・ " + h(s.folder) : ""}`
         : `<b style="color:var(--accent)">ライブモード</b>${s ? " ・ " + h((S.groups.find((x) => x.id === s.groupId) || {}).name || "") : ""} ・ ${h(showName() || "公演名未設定")}`}${SONGS().length ? ` ・ ${U.songIdx + 1}/${SONGS().length}` : ""}${pushState ? ` ・ <span style="color:${pushState === "未送信" ? "var(--bad)" : "var(--dim)"}">${h(pushState)}</span>` : ""}</div>
       ${VIEW() && S.pubAt ? `<div style="font-size:10px;line-height:1.4">${freshLine()}</div>` : ""}
       <div class="t2 trunc">${s && (S.recMode || Number(s.take || 1) > 1) ? `<b class="tkmk">テイク${Number(s.take || 1)}</b>` : ""}${h(s ? s.title : "曲がありません")}</div>
@@ -3093,21 +3137,26 @@ function renderSheet() {
   }
 
   if (U.picker && S.recMode) {
-    const grps = [];
-    S.rsongs.forEach((x) => { const g = x.grp || ""; if (g && !grps.includes(g)) grps.push(g); });
     overlay = document.createElement("div");
     overlay.className = "mask";
     overlay.innerHTML = `<button class="sp" data-act="close"></button><div class="sheet">
       <div class="row" style="margin-bottom:12px"><span class="grow" style="font-size:13px;color:var(--dim)">曲を選ぶ</span>
       <button data-act="close" style="width:36px;height:36px;border-radius:10px;background:var(--panel2);font-size:17px">✕</button></div>
-      ${grps.length ? `<div class="sec"><h4>グループ</h4><div class="chips">
-        <button class="chip sm" data-act="rgfilter" data-id="" style="${!S.rgFilter ? "background:var(--accent);color:#0A0A0A" : ""}">すべて</button>
-        ${grps.map((g) => `<button class="chip sm" data-act="rgfilter" data-id="${h(g)}"
-          style="${S.rgFilter === g ? "background:var(--accent);color:#0A0A0A" : ""}">${h(g)}</button>`).join("")}
-      </div></div>` : ""}
+
       <div class="sec"><h4>曲</h4>
-        ${SONGS().map((x, i) => `<button class="ghost" data-act="ruse" data-id="${x.id}"
-          style="text-align:left;margin-bottom:8px;${i === U.songIdx ? "background:var(--accent);color:#0A0A0A" : ""}">${i + 1}. ${h(x.title)}</button>`).join("") || `<p class="note">曲がありません</p>`}
+        ${groupRSongs(SONGS()).map(([fname, songs2]) => {
+          const rows = songs2.map((x) => {
+            const i = SONGS().findIndex((y) => y.id === x.id);
+            return `<button class="ghost" data-act="ruse" data-id="${x.id}"
+              style="text-align:left;margin-bottom:6px;${i === U.songIdx ? "background:var(--accent);color:#0A0A0A" : ""}">${h(x.title)}</button>`;
+          }).join("");
+          if (!fname) return rows;
+          const open = S.rfolders[fname] === true || fname === folderOf(recSong());
+          return `<button class="ghost row" data-act="rfolder" data-id="${h(fname)}" style="text-align:left;margin-bottom:6px;color:var(--dim)">
+              <span style="width:16px">${open ? "▾" : "▸"}</span><span class="grow trunc">${h(fname)}</span>
+              <span style="font-size:11px">${songs2.length}曲</span></button>
+            ${open ? `<div style="margin-left:12px">${rows}</div>` : ""}`;
+        }).join("") || `<p class="note">曲がありません</p>`}
       </div>
       <div class="sec"><button class="primary" data-act="goplan">進行表</button></div>
       ${VIEW() && unreadSongs().length ? `<div class="sec">
@@ -3685,18 +3734,32 @@ function viewAbsent() {
 
 /* ---- レコーディングの設定 ---- */
 function viewSetupRec() {
-  const grps = [];
-  S.rsongs.forEach((x) => { const g = x.grp || ""; if (g && !grps.includes(g)) grps.push(g); });
   const cur = SONGS();
-  const list = cur.map((x, i) => `<div class="row card" data-drop="r:${x.id}" style="margin-bottom:8px;padding:10px 12px;${x.id === S.rsongId ? "outline:1px solid var(--accent)" : ""}">
+  const songRow = (x) => `<div class="row card" data-drop="r:${x.id}" style="margin-bottom:8px;padding:10px 12px;${x.id === S.rsongId ? "outline:1px solid var(--accent)" : ""}">
       <span class="grip" data-drag="rec:${x.id}">⣿</span>
       <button class="grow" style="text-align:left;min-width:0" data-act="ruse" data-id="${x.id}">
-        <div class="trunc" style="${x.id === S.rsongId ? "color:var(--accent)" : ""}">${i + 1}. ${h(x.title)}</div>
-        <div class="trunc" style="font-size:11px;color:var(--dim)">${h(x.grp || "グループなし")}　${x.lines.filter((l) => !l.gap).length}行</div>
+        <div class="trunc" style="${x.id === S.rsongId ? "color:var(--accent)" : ""}">${h(x.title)}</div>
+        <div class="trunc" style="font-size:11px;color:var(--dim)">${x.lines.filter((l) => !l.gap).length}行${x.cols > 1 ? ` ・ ${x.cols}段` : ""}</div>
       </button>
-      <button data-act="rgrp" data-id="${x.id}" style="padding:4px 7px;color:var(--dim);font-size:12px">組</button>
+      <button data-act="rfset" data-id="${x.id}" style="padding:4px 7px;color:var(--dim);font-size:12px">箱</button>
       <button data-act="rdel" data-id="${x.id}" style="padding:4px 6px;color:var(--bad)">✕</button>
-    </div>`).join("");
+    </div>`;
+  const curFolder = folderOf(recSong());
+  const list = groupRSongs(cur).map(([fname, songs2]) => {
+    if (!fname) return songs2.map(songRow).join("");
+    const open = S.rfolders[fname] === true || fname === curFolder;
+    return `<div class="row card" data-drop="rf:${h(fname)}" style="margin-bottom:8px;padding:8px 12px">
+        <button class="grow row" data-act="rfolder" data-id="${h(fname)}" style="text-align:left;min-width:0">
+          <span style="width:18px;color:var(--dim)">${open ? "▾" : "▸"}</span>
+          <span class="grow trunc">${h(fname)}</span>
+          <span style="font-size:11px;color:var(--dim)">${songs2.length}曲</span>
+        </button>
+        <button data-act="rfup" data-id="${h(fname)}" style="padding:4px 6px;color:var(--dim)">↑</button>
+        <button data-act="rfdown" data-id="${h(fname)}" style="padding:4px 6px;color:var(--dim)">↓</button>
+        <button data-act="rfrename" data-id="${h(fname)}" style="padding:4px 6px;color:var(--dim);font-size:12px">名前</button>
+      </div>
+      ${open ? `<div style="margin-left:14px">${songs2.map(songRow).join("")}</div>` : ""}`;
+  }).join("");
 
   return `
   <div class="hd"><button class="ic" data-act="go-live">‹</button><b>設定</b>
@@ -3705,11 +3768,6 @@ function viewSetupRec() {
              : `<button data-act="recon" class="chip sm" style="color:var(--accent)">レコーディングモード ⇄</button>`}</div>
   <div class="scroll pad">
     <h4 class="head">曲</h4>
-    ${grps.length ? `<div class="chips" style="margin-bottom:10px">
-      <button class="chip sm" data-act="rgfilter" data-id="" style="${!S.rgFilter ? "background:var(--accent);color:#0A0A0A" : ""}">すべて</button>
-      ${grps.map((g) => `<button class="chip sm" data-act="rgfilter" data-id="${h(g)}"
-        style="${S.rgFilter === g ? "background:var(--accent);color:#0A0A0A" : ""}">${h(g)}</button>`).join("")}
-    </div>` : ""}
     ${list || `<p class="note">曲がありません</p>`}
     <div class="card"><button class="primary" data-act="rpick">歌詞のWordを読み込む（複数可）</button></div>
 
@@ -5100,14 +5158,6 @@ document.addEventListener("click", (e) => {
       }
       save(); render(); break;
     }
-    case "rgfilter": S.rgFilter = id; save(); render(); break;
-    case "rgrp": {
-      const so = S.rsongs.find((x) => x.id === id);
-      if (!so) break;
-      const nm = prompt("グループ名（空にすると外れます）", so.grp || "");
-      if (nm != null) { so.grp = nm.trim(); save(); render(); }
-      break;
-    }
     case "psetstart": {
       const el = document.getElementById("pstarttime");
       if (el && el.value.trim()) { S.plan.start = min2hm(hm2min(el.value)); save(); render(); }
@@ -5231,6 +5281,35 @@ document.addEventListener("click", (e) => {
       U.menu = null; save(); U.view = "live"; render();
       break;
     }
+    case "rfolder": S.rfolders[id] = !(S.rfolders[id] === true); save(); render(); break;
+    case "rfset": {
+      const so = S.rsongs.find((x) => x.id === id);
+      if (!so) break;
+      const nm = prompt("フォルダ名（空にすると外に出ます）", so.folder || "");
+      if (nm != null) { pushUndo(); so.folder = nm.trim(); save(); render(); }
+      break;
+    }
+    case "rfrename": {
+      const nm = prompt("フォルダの名前", id);
+      if (nm == null) break;
+      const v = nm.trim();
+      pushUndo();
+      S.rsongs.forEach((x) => { if (folderOf(x) === id) x.folder = v; });
+      S.rfolderOrder = (S.rfolderOrder || []).map((x) => (x === id ? v : x)).filter(Boolean);
+      if (S.rfolders[id] != null) { S.rfolders[v] = S.rfolders[id]; delete S.rfolders[id]; }
+      save(); render(); break;
+    }
+    case "rfup": case "rfdown": {
+      const names = groupRSongs(S.rsongs).map(([k]) => k).filter(Boolean);
+      let ord = (S.rfolderOrder || []).filter((x) => names.includes(x));
+      names.forEach((x) => { if (!ord.includes(x)) ord.push(x); });
+      const i2 = ord.indexOf(id);
+      const j2 = a === "rfup" ? i2 - 1 : i2 + 1;
+      if (i2 < 0 || j2 < 0 || j2 >= ord.length) break;
+      ord.splice(j2, 0, ord.splice(i2, 1)[0]);
+      S.rfolderOrder = ord;
+      save(); render(); break;
+    }
     case "rdel": {
       if (confirm(`この曲を消しますか？\nゴミ箱から${TRASH_DAYS}日以内なら戻せます。`)) {
         const rs = S.rsongs.find((x) => x.id === id);
@@ -5245,14 +5324,25 @@ document.addEventListener("click", (e) => {
       const inp = document.createElement("input");
       inp.type = "file"; inp.accept = ".docx"; inp.multiple = true;
       inp.onchange = async () => {
+        let last = null, n = 0;
         for (const f of inp.files) {
           try {
             const so = await parseDocx(f);
+            // 今開いている曲と同じフォルダに入れる（続けて読み込む時に散らばらない）
+            const near = recSong();
+            if (near && near.folder) so.folder = near.folder;
             S.rsongs.push(so);
             S.rsongId = so.id;
+            last = so; n++;
           } catch (e) { alert(f.name + " を読めませんでした。\n" + e.message); }
         }
+        if (last) {
+          const k = SONGS().findIndex((x) => x.id === last.id);
+          if (k >= 0) U.songIdx = k;
+
+        }
         save(); U.menu = null; render();
+        if (n) setTimeout(() => alert(n + "曲を読み込みました。"), 0);
       };
       inp.click();
       break;
@@ -5542,6 +5632,14 @@ function onDrop(from, target) {
     const a = S.rsongs.findIndex((x) => x.id === from.slice(4));
     const b = S.rsongs.findIndex((x) => x.id === target.slice(2));
     if (a < 0 || b < 0 || a === b) return;
+    const me = S.rsongs[a], other = S.rsongs[b];
+    if (folderOf(me) !== folderOf(other)) {
+      // 別のフォルダの曲に重ねたら、そちらへ移す
+      pushUndo();
+      me.folder = other.folder || "";
+      save(); render();
+      return;
+    }
     S.rsongs.splice(b, 0, S.rsongs.splice(a, 1)[0]);
     save(); render();
     return;
@@ -5552,6 +5650,12 @@ function onDrop(from, target) {
     if (a < 0 || b < 0 || a === b) return;
     S.plan.slots.splice(b, 0, S.plan.slots.splice(a, 1)[0]);
     save(); render();
+    return;
+  }
+  if (from.slice(0, 4) === "rec:" && target.slice(0, 3) === "rf:") {
+    // レコーディングの曲をフォルダに入れる
+    const so = S.rsongs.find((x) => x.id === from.slice(4));
+    if (so) { pushUndo(); so.folder = target.slice(3); save(); render(); }
     return;
   }
   if (from.slice(0, 5) === "song:" && target.slice(0, 2) === "g:") return moveSong(from.slice(5), target.slice(2));
