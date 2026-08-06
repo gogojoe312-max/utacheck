@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "1.9";
+const APP_VER = "2.1";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -11,6 +11,8 @@ const TAGS = [
   { c: "音程",    id: "pitch",  l: "音程"       },
   { c: "音程",    id: "pHi",    l: "音程高"     },
   { c: "音程",    id: "pLo",    l: "音程低"     },
+  { c: "音程",    id: "pUn",    l: "不自然"     },
+  { c: "音程",    id: "pWob",   l: "揺れ"       },
 
   { c: "タイミング", id: "rhythm", l: "リズム"   },
   { c: "タイミング", id: "fast",   l: "速い"     },
@@ -32,9 +34,13 @@ const TAGS = [
   { c: "ミス",    id: "flip",   l: "裏返り"     },
   { c: "ミス",    id: "nuke",   l: "抜けた"     },
   { c: "ミス",    id: "lyric",  l: "歌詞"       },
+  { c: "ミス",    id: "gara",   l: "ガラつき"   },
   { c: "ミス",    id: "mic",    l: "マイク"     },
 
   { c: "良い",    id: "good",   l: "◎良い"     },
+  { c: "良い",    id: "close",  l: "惜しい"     },
+  { c: "良い",    id: "oke",    l: "オケ聴く"   },
+  { c: "良い",    id: "noise",  l: "ノイズ"     },
 ];
 const CATCOL = {
   "音程": "#FF6B4A", "タイミング": "#F0B23C", "出音": "#3FC7C0",
@@ -48,12 +54,12 @@ const noteColor = (n) => {
 };
 // 上=高い/速い/強い/明るい、下=低い/遅い/弱い/暗い で統一
 const SWIPES = [
-  { id: "pitch",  up: "pHi",    dn: "pLo" },
+  { id: "pitch",  up: "pHi",    dn: "pLo",    lf: "pUn",    rt: "pWob" },
   { id: "rhythm", up: "fast",   dn: "slow",   lf: "short",  rt: "long" },
   { id: "attack", up: "strong", dn: "weak",   lf: "accent", rt: "diction" },
   { id: "nuance", up: "bright", dn: "dark",   lf: "face" },
-  { id: "lyric",  up: "flip",   dn: "nuke",   lf: "mic" },
-  { id: "good" },
+  { id: "lyric",  up: "flip",   dn: "nuke",   lf: "mic",    rt: "gara" },
+  { id: "good",   up: "close",  dn: "noise",  lf: "oke" },
 ];
 // 以前つけた記録が生IDで出ないように
 const LEGACY = { breath: "ブレス", volume: "声量", tone: "声色" };
@@ -3148,10 +3154,21 @@ ${shows}</div>
   const chars = Array.from(l.t);
   const sh = U.sheet;
 
-  const rangeHtml = chars.map((ch, ci) => {
-    const on = sh.range && ci >= sh.range[0] && ci <= sh.range[1];
-    return `<span data-r="${ci}" style="${on ? "background:color-mix(in srgb,var(--accent) 30%,transparent);border-bottom-color:var(--bad)" : ""}">${ch === " " ? "&nbsp;" : h(ch)}</span>`;
-  }).join("");
+  // まとめて選んだ時は、その範囲の行を全部出す
+  const rl0 = sh.lineIdx, rl1 = sh.lineEnd != null ? sh.lineEnd : sh.lineIdx;
+  const rangeLine = sh.rangeLine != null ? sh.rangeLine : rl0;
+  const lineHtml = (li) => {
+    const cs = Array.from(s.lines[li] ? s.lines[li].t : "");
+    return cs.map((ch, ci) => {
+      const on = sh.range && li === rangeLine && ci >= sh.range[0] && ci <= sh.range[1];
+      return `<span data-r="${ci}" data-rl="${li}" style="${on ? "background:color-mix(in srgb,var(--accent) 30%,transparent);border-bottom-color:var(--bad)" : ""}">${ch === " " ? "&nbsp;" : h(ch)}</span>`;
+    }).join("");
+  };
+  const rangeHtml = rl1 > rl0
+    ? Array.from({ length: rl1 - rl0 + 1 }, (_, k) => rl0 + k)
+        .filter((li) => s.lines[li] && !s.lines[li].gap)
+        .map((li) => `<div class="rgline"><span class="rgn">${li + 1}</span>${lineHtml(li)}</div>`).join("")
+    : lineHtml(rl0);
   const ex = NOTES().filter((n) => n.songId === s.id && n.showId === S.showId && covers(n, sh.lineIdx));
 
   const inner = `
@@ -3159,7 +3176,7 @@ ${shows}</div>
       <span class="grow" style="font-size:11px;color:var(--dim)">${h(labelOf(s, sh.lineIdx) || "続き")} · ${sh.lineEnd ? `${sh.lineIdx + 1}〜${sh.lineEnd + 1}行目（まとめて）` : `${sh.lineIdx + 1}行目`}</span>
       <button data-act="cancel" style="width:36px;height:36px;border-radius:10px;background:var(--panel2);font-size:17px">✕</button>
     </div>
-    <div class="sec"><h4>${sh.lineEnd ? "この歌割り全体につきます" : "文字をタップすると一部だけ指定できます"}</h4>
+    <div class="sec"><h4>${sh.lineEnd ? "文字をタップするとその一部だけ、押さなければ全体につきます" : "文字をタップすると一部だけ指定できます"}</h4>
       <div class="range">${rangeHtml}</div>
       ${sh.range ? `<button class="chip sm" data-act="rangeoff" style="margin-top:8px;color:var(--dim)">行全体に戻す</button>` : ""}
     </div>
@@ -3168,7 +3185,13 @@ ${shows}</div>
         ${SWIPES.map((sw) => {
           const col = CATCOL[catOf(sw.id)] || "var(--accent)";
           const on = sh.tags.includes(sw.id);
-          const sub = (k) => sw[k] ? `<span class="t${k}">${tagName(sw[k])}</span>` : "";
+          const sub = (k) => {
+            if (!sw[k]) return "";
+            const nm = tagName(sw[k]);
+            // 長い語は詰めて出す（はみ出して切れないように）
+            const cls = Array.from(nm).length >= 5 ? " tlong" : Array.from(nm).length === 4 ? " tmid4" : "";
+            return `<span class="t${k}${cls}">${h(nm)}</span>`;
+          };
           return `<div class="tile" data-swipe="${sw.id}"
             style="box-shadow:inset 0 0 0 1.5px ${col};${on ? `background:${col}` : ""}">
             ${sub("up")}${sub("lf")}
@@ -4476,6 +4499,9 @@ document.addEventListener("click", (e) => {
   const rc = e.target.closest("[data-r]");
   if (rc && U.sheet) {
     const ci = +rc.dataset.r;
+    const rl = rc.dataset.rl != null ? +rc.dataset.rl : U.sheet.lineIdx;
+    if (U.sheet.rangeLine != null && U.sheet.rangeLine !== rl) U.sheet.anchor = null;   // 別の行に移ったら選び直し
+    U.sheet.rangeLine = rl;
     if (U.sheet.anchor == null) { U.sheet.anchor = ci; U.sheet.range = [ci, ci]; }
     else { U.sheet.range = [Math.min(U.sheet.anchor, ci), Math.max(U.sheet.anchor, ci)]; U.sheet.anchor = null; }
     commitFields(); renderSheet(); return;
@@ -4711,7 +4737,7 @@ document.addEventListener("click", (e) => {
       { const rb = document.getElementById("recbtn"); if (rb) { rb.textContent = "● 録音"; rb.style.background = ""; rb.style.color = ""; rb.style.borderColor = ""; } }
       if (overlay) overlay.querySelectorAll(".wk.on,.bk.on").forEach((el) => el.classList.remove("on"));
       break;
-    case "rangeoff": U.sheet.range = null; U.sheet.anchor = null; commitFields(); renderSheet(); break;
+    case "rangeoff": U.sheet.rangeLine = null; U.sheet.range = null; U.sheet.anchor = null; commitFields(); renderSheet(); break;
     case "delnote": pushUndo(); delClip(id); S.notes = S.notes.filter((n) => n.id !== id); save(); schedulePush(); commitFields(); render(); break;
     case "mode": U.mode = id; render(); break;
     case "allshows": U.allShows = !U.allShows; render(); break;
@@ -5360,9 +5386,11 @@ function commitNote() {
   if (sh.sel.length || sh.tags.length || memo.trim() || (sh.seq && sh.seq.length)) {
     pushUndo();
     S.notes.push({
-      id: uid(), songId: s.id, lineIdx: sh.lineIdx, memberIds: sh.sel, tags: sh.tags,
+      id: uid(), songId: s.id,
+      lineIdx: sh.range && sh.rangeLine != null ? sh.rangeLine : sh.lineIdx,
+      memberIds: sh.sel, tags: sh.tags,
       memo: memo.trim(), pitch: sh.seq && sh.seq.length ? sh.seq.join("-") : null,
-      lineEnd: sh.lineEnd || null,
+      lineEnd: sh.range ? null : (sh.lineEnd || null),   // 文字を選んだ時はその行だけ
       from: sh.range ? sh.range[0] : null, to: sh.range ? sh.range[1] : null,
       at: recAt(),
       showId: S.showId, ts: Date.now(),
