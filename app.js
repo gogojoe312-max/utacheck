@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "1.5";
+const APP_VER = "1.8";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -127,6 +127,7 @@ function migrate() {
   purgeTrash();
   if (!S.rosters) S.rosters = {};
   if (!S.seen) S.seen = {};
+  purgeRecs();
   if (!S.plan.slots) S.plan.slots = [];
   if (S.recBars == null) S.recBars = true;
   // 古いデータにも、その曲に出てくる人の名簿を持たせる
@@ -507,6 +508,22 @@ const needCount = () => SONGS().reduce((a, so) => a
 const changedCount = () => SONGS().reduce((a, so) => a
   + so.lines.filter((l, i) => lineStatus(so, i) === "changed" && !blockOf(so, i)).length
   + blocksOf(so).filter((b) => blockStatus(so, b) === "changed").length, 0);
+
+// 録音は30日で自動的に消す（容量を食うため）
+const REC_DAYS = 30;
+function purgeRecs() {
+  const lim = Date.now() - REC_DAYS * 86400000;
+  const keep = trashClips();
+  let n = 0;
+  Object.keys(S.recs || {}).forEach((k) => {
+    const r = S.recs[k];
+    if (!r || !r.ts || r.ts >= lim) return;
+    if (keep.indexOf(k) >= 0) return;          // ゴミ箱にある分は残す
+    delClip(k); delete S.recs[k]; n++;
+  });
+  if (n) save();
+  return n;
+}
 
 /* ---- ゴミ箱（30日は戻せる） ---- */
 const TRASH_DAYS = 30;
@@ -1800,37 +1817,79 @@ function psola(seg, rate, hzAt, outHzAt) {
   return out;
 }
 
-// 高さを変える。
-// ふつうに動かす時は、しゃくりやビブラートをそのまま持ち上げる（形を変えない）。
-// 「まっすぐ」の時だけ、出す側の高さを一定にする。
-function shiftSeg(src, rate, from, to, semi, hz, note) {
+
+// その時刻の高さ（録った時の線から）
+function hzAtTime(nt, t) {
+  const pts = nt.pts;
+  if (!pts || !pts.length) return midiToHz(nt.m);
+  let k = 0;
+  while (k + 1 < pts.length && pts[k + 1].t < t) k++;
+  const p0 = pts[k], p1 = pts[Math.min(pts.length - 1, k + 1)];
+  const m0 = p0.raw != null ? p0.raw : p0.m;
+  const m1 = p1.raw != null ? p1.raw : p1.m;
+  const span = p1.t - p0.t;
+  const f = span > 0 ? Math.max(0, Math.min(1, (t - p0.t) / span)) : 0;
+  return midiToHz(m0 + (m1 - m0) * f);
+}
+
+// 録音全体を一度に作り直す。かたまりごとに貼り合わせないので、継ぎ目のノイズが出ない。
+function buildPitch(src, rate, notes, from, to) {
   const a = Math.max(0, Math.floor(from * rate));
   const b = Math.min(src.length, Math.ceil(to * rate));
   const seg = src.subarray(a, b);
   if (!seg.length) return new Float32Array(0);
-  const flat = !!(note && note.flat);
-  if (!semi && !flat) return seg.slice();
+  if (!notes.some((n) => n.shift || n.flat)) return seg.slice();
 
-  // その場所の高さ（録った時に測った線を使う）
-  const pts = note ? note.pts : null;
-  const hzAt = (i) => {
-    if (!pts || !pts.length) return hz;
-    const t2 = from + i / rate;
-    // 前後の点をなめらかにつなぐ（段々にならないように）
-    let k = 0;
-    while (k + 1 < pts.length && pts[k + 1].t < t2) k++;
-    const p0 = pts[k], p1 = pts[Math.min(pts.length - 1, k + 1)];
-    const m0 = p0.raw != null ? p0.raw : p0.m;
-    const m1 = p1.raw != null ? p1.raw : p1.m;
-    const span = p1.t - p0.t;
-    const f = span > 0 ? Math.max(0, Math.min(1, (t2 - p0.t) / span)) : 0;
-    return midiToHz(m0 + (m1 - m0) * f);
+  // 各サンプルが、どのかたまりに属するか
+  const find = (t) => {
+    for (let i2 = 0; i2 < notes.length; i2++) if (t >= notes[i2].t0 && t < notes[i2].t1) return notes[i2];
+    return null;
   };
-  const ratio = Math.pow(2, (semi || 0) / 12);
-  const target = flat ? midiToHz(note.m + (semi || 0)) : 0;
-  // まっすぐ以外は、元の揺れをそのまま保ったまま持ち上げる
-  const outHzAt = flat ? (() => target) : ((i) => hzAt(i) * ratio);
-  return psola(seg, rate, hzAt, outHzAt);
+  let cache = null, cacheT0 = -1, cacheT1 = -1;
+  const noteAt = (t) => {
+    if (cache && t >= cacheT0 && t < cacheT1) return cache;
+    const n = find(t);
+    cache = n; cacheT0 = n ? n.t0 : t; cacheT1 = n ? n.t1 : t + 0.001;
+    return n;
+  };
+  const hzAt = (i2) => {
+    const t = from + i2 / rate;
+    const n = noteAt(t);
+    return n ? hzAtTime(n, t) : 0;
+  };
+  const one = (n, t) => {
+    if (!n) return 0;
+    if (n.flat) return midiToHz(n.m + (n.shift || 0));
+    return hzAtTime(n, t) * Math.pow(2, (n.shift || 0) / 12);
+  };
+  // かたまりの境目で高さが急に変わると、そこだけ音がうねる。
+  // 20msかけて滑らかにつなぐ。
+  const RAMP = 0.02;
+  const outHzAt = (i2) => {
+    const t = from + i2 / rate;
+    const n = noteAt(t);
+    if (!n) return 0;
+    const v = one(n, t);
+    if (!v) return 0;
+    let other = null, f = 0;
+    if (t - n.t0 < RAMP) { other = find(n.t0 - 0.001); f = 0.5 - 0.5 * ((t - n.t0) / RAMP); }
+    else if (n.t1 - t < RAMP) { other = find(n.t1 + 0.001); f = 0.5 - 0.5 * ((n.t1 - t) / RAMP); }
+    if (!other || other === n) return v;
+    const ov = one(other, t);
+    if (!ov) return v;
+    return v * (1 - f) + ov * f;
+  };
+  // 音の無い所は元の周期が測れないので、近くのかたまりの値で埋める
+  const fill = (fn) => (i2) => {
+    let v = fn(i2);
+    if (v) return v;
+    for (let d = 1; d < rate; d += 64) {
+      v = fn(i2 - d) || fn(i2 + d);
+      if (v) return v;
+    }
+    return 220;
+  };
+  return psola(seg, rate, fill(hzAt), fill(outHzAt));
 }
 
 async function playPitch(only) {
@@ -1842,26 +1901,21 @@ async function playPitch(only) {
   const rate = PT.buf.sampleRate;
   const src = PT.buf.getChannelData(0);
   const t0 = only != null ? PT.notes[only].t0 : 0;
-  const total = only != null ? (PT.notes[only].t1 - PT.notes[only].t0) : PT.dur;
-  const off = AC.createBuffer(1, Math.max(1, Math.ceil(total * rate)), rate);
+  const t1 = only != null ? PT.notes[only].t1 : PT.dur;
+  const list = only != null ? [PT.notes[only]] : PT.notes;
+  const dst0 = buildPitch(src, rate, list, t0, t1);
+
+  const off = AC.createBuffer(1, Math.max(1, dst0.length), rate);
   const dst = off.getChannelData(0);
-  if (only == null) dst.set(src.subarray(0, Math.min(src.length, dst.length)));
-  PT.notes.forEach((nt, i) => {
-    if (only != null && i !== only) return;
-    if (!nt.shift && !nt.flat && only == null) return;
-    const seg = shiftSeg(src, rate, nt.t0, nt.t1, nt.shift, midiToHz(nt.m), nt);
-    const at = Math.floor((nt.t0 - t0) * rate);
-    // 端は元の音と短く重ねて、切り替わりの「プツッ」を消す
-    const fade = Math.min(Math.floor(rate * 0.006), Math.floor(seg.length / 3));
-    for (let k = 0; k < seg.length; k++) {
-      const o = at + k;
-      if (o < 0 || o >= dst.length) continue;
-      let mix = 1;
-      if (k < fade) mix = k / fade;
-      else if (k > seg.length - fade) mix = Math.max(0, (seg.length - k) / fade);
-      dst[o] = dst[o] * (1 - mix) + seg[k] * mix;
-    }
-  });
+  dst.set(dst0);
+  // 頭と終わりを短く絞る（鳴らし始め・鳴らし終わりの「ブチッ」を消す）
+  const ed = Math.min(Math.floor(rate * 0.005), Math.floor(dst.length / 4));
+  for (let k = 0; k < ed; k++) {
+    const w = 0.5 - 0.5 * Math.cos((Math.PI * k) / ed);
+    dst[k] *= w;
+    dst[dst.length - 1 - k] *= w;
+  }
+
   // 録った声は小さいので持ち上げる（割れないように頭を丸める）
   let peak = 0;
   for (let i = 0; i < dst.length; i += 7) { const v = Math.abs(dst[i]); if (v > peak) peak = v; }
@@ -1898,7 +1952,7 @@ async function startPitch() {
         const blob = new Blob(PT.chunks, { type: mr.mimeType || "audio/webm" });
         PT.buf = await AC.decodeAudioData(await blob.arrayBuffer());
         PT.dur = PT.buf.duration;
-        PT.want = 10;
+        PT.chunks = [];                 // 解析したら、録った断片は捨てる
         PT.notes = analyzePitch(PT.buf.getChannelData(0), PT.buf.sampleRate);
         PT.sel = -1; PT.hist = [];
         pitchFit();
@@ -1923,13 +1977,44 @@ function stopPitch() {
 const PV = { x0: 0, sec: 4, lo: 55, hi: 72, drag: null, cv: null, w: 0, h: 0 };
 // 元に戻せるように、直前の状態を控える
 function ptPush() {
-  PT.hist.push(PT.notes.map((n) => ({ shift: n.shift, flat: !!n.flat })));
+  PT.hist.push(PT.notes.map((n) => ({ t0: n.t0, t1: n.t1, m: n.m, shift: n.shift, flat: !!n.flat, pts: n.pts })));
   if (PT.hist.length > 30) PT.hist.shift();
 }
 function ptPop() {
   const h2 = PT.hist.pop();
   if (!h2) return;
-  h2.forEach((x, i) => { if (PT.notes[i]) { PT.notes[i].shift = x.shift; PT.notes[i].flat = x.flat; } });
+  PT.notes = h2.map((x) => ({ t0: x.t0, t1: x.t1, m: x.m, shift: x.shift, flat: x.flat, pts: x.pts }));
+  if (PT.sel >= PT.notes.length) PT.sel = -1;
+}
+
+// かたまりを、その時刻で2つに切る
+function splitNote(i, t) {
+  const n = PT.notes[i];
+  if (!n) return false;
+  const pad = 0.05;
+  if (t <= n.t0 + pad || t >= n.t1 - pad) return false;   // 端すぎる所では切らない
+  const a = n.pts.filter((p) => p.t < t);
+  const b = n.pts.filter((p) => p.t >= t);
+  if (a.length < 4 || b.length < 4) return false;
+  const mid = (arr) => { const v = arr.map((x) => x.m).sort((p, q) => p - q); return v[Math.floor(v.length / 2)]; };
+  ptPush();
+  PT.notes.splice(i, 1,
+    { t0: n.t0, t1: t, m: mid(a), shift: n.shift, flat: n.flat, pts: a },
+    { t0: t, t1: n.t1, m: mid(b), shift: n.shift, flat: n.flat, pts: b });
+  PT.sel = i;
+  return true;
+}
+
+// 隣とくっつける
+function joinNote(i) {
+  const a = PT.notes[i], b = PT.notes[i + 1];
+  if (!a || !b) return false;
+  ptPush();
+  const pts = a.pts.concat(b.pts);
+  const v = pts.map((x) => x.m).sort((p, q) => p - q);
+  PT.notes.splice(i, 2, { t0: a.t0, t1: b.t1, m: v[Math.floor(v.length / 2)], shift: a.shift, flat: a.flat, pts });
+  PT.sel = i;
+  return true;
 }
 
 function pitchHTML() {
@@ -1958,6 +2043,8 @@ function pitchHTML() {
            <button class="chip sm" data-act="ptstep" data-id="-1">−1</button>
            <button class="chip sm" data-act="ptstep" data-id="1">＋1</button>
            <button class="chip sm" data-act="ptflat" style="${sel.flat ? "background:var(--accent);color:#0A0A0A" : ""}">まっすぐ</button>
+           <button class="chip sm" data-act="ptsplit">切る</button>
+           ${PT.sel < PT.notes.length - 1 ? `<button class="chip sm" data-act="ptjoin">つなぐ</button>` : ""}
            <button class="chip sm" data-act="ptclear" style="color:var(--dim)">戻す</button>`
         : `<span style="font-size:11px;color:var(--dim)">音を押すと鳴ります。押したまま上下で高さを変えられます。</span>`}
     </div>` : `<div style="font-size:11px;color:var(--dim);margin-top:8px">「● 録音」を押して歌ってください。止めるまで録れます（最長10秒）。</div>`}
@@ -1968,6 +2055,7 @@ function pitchHTML() {
 // 画面の縦位置と音の高さを行き来する
 const pvY = (m) => PV.h - ((m - PV.lo) / Math.max(1, PV.hi - PV.lo)) * PV.h;
 const pvX = (t) => ((t - PV.x0) / PV.sec) * PV.w;
+const pvT = (x) => PV.x0 + (x / PV.w) * PV.sec;
 
 function drawPitch() {
   const cv = document.getElementById("ptcv");
@@ -2036,6 +2124,12 @@ function drawPitch() {
     });
     g.stroke();
 
+    // かたまりの切れ目
+    if (i > 0) {
+      g.strokeStyle = "rgba(255,255,255,.25)";
+      g.lineWidth = 1;
+      g.beginPath(); g.moveTo(x1, 0); g.lineTo(x1, h - 12); g.stroke();
+    }
     if (x2 - x1 > 26 && rowH > 9) {
       g.fillStyle = sel ? "#0A0A0A" : "rgba(0,0,0,.65)";
       g.font = "bold 9px -apple-system,sans-serif";
@@ -2067,7 +2161,7 @@ function pitchFit() {
 
 // 指の操作
 function pitchTouch(cv) {
-  let mode = "", startD = 0, startSec = 0, startSpan = 0, startX = 0, startY = 0, startX0 = 0, startLo = 0, moved = false, hitI = -1, startC = { x: 0, y: 0 };
+  let mode = "", startD = 0, startSec = 0, startSpan = 0, startX = 0, startY = 0, startX0 = 0, startLo = 0, moved = false, hitI = -1, startC = { x: 0, y: 0 }, holdT = null, held = false;
   const pos = (e, k) => {
     const r = cv.getBoundingClientRect();
     const t2 = e.touches ? e.touches[k || 0] : e;
@@ -2097,6 +2191,15 @@ function pitchTouch(cv) {
     moved = false;
     startX = p.x; startY = p.y; startX0 = PV.x0;
     mode = hitI >= 0 ? "note" : "pan";
+    clearTimeout(holdT);
+    if (hitI >= 0) {
+      // 長押しでその場所を切る
+      const at = pvT(p.x), idx2 = hitI;
+      holdT = setTimeout(() => {
+        if (moved || mode !== "note") return;
+        if (splitNote(idx2, at)) { held = true; drawPitch(); render(); }
+      }, 550);
+    }
     if (hitI >= 0) {
       PT.sel = hitI; ptPush();
       PV.drag = { i: hitI, m0: PT.notes[hitI].shift, y0: p.y };
@@ -2127,7 +2230,7 @@ function pitchTouch(cv) {
       drawPitch(); e.preventDefault(); return;
     }
     const p = pos(e);
-    if (Math.abs(p.x - startX) > 4 || Math.abs(p.y - startY) > 4) moved = true;
+    if (Math.abs(p.x - startX) > 4 || Math.abs(p.y - startY) > 4) { moved = true; clearTimeout(holdT); }
     if (mode === "note" && PV.drag) {
       const n2 = PT.notes[PV.drag.i];
       const dm = (startY - p.y) / (PV.h / Math.max(1, PV.hi - PV.lo));
@@ -2142,6 +2245,8 @@ function pitchTouch(cv) {
     e.preventDefault();
   }, { passive: false });
   cv.addEventListener("touchend", (e) => {
+    clearTimeout(holdT);
+    if (held) { held = false; mode = ""; PV.drag = null; e.preventDefault(); return; }
     if (mode === "note" && !moved && hitI >= 0) { PT.hist.pop(); playPitch(hitI); }   // 押しただけなら鳴らす
     if (mode === "note") render();       // 離した時にだけ整える
     mode = ""; PV.drag = null;
@@ -4290,6 +4395,7 @@ function viewSetup() {
       </div>
     </div>
     <div class="card">
+      <div style="font-size:11px;color:var(--dim);margin-bottom:8px">録音は${REC_DAYS}日で自動的に消えます。</div>
       ${(() => {
         const ks = Object.keys(S.recs || {});
         if (!ks.length) return `<p class="note">録音なし</p>`;
@@ -4726,7 +4832,11 @@ document.addEventListener("click", (e) => {
     }
     case "ptstart": startPitch(); break;
     case "ptstop": stopPitch(); break;
-    case "ptreset": PT.notes = []; PT.buf = null; PT.sel = -1; pitchFit(); render(); break;
+    case "ptreset": {
+      PT.notes = []; PT.buf = null; PT.chunks = []; PT.hist = []; PT.sel = -1;
+      if (PT.src) { try { PT.src.stop(); } catch (e) {} PT.src = null; }
+      pitchFit(); render(); break;
+    }
     case "ptzoom": {
       const k = Number(id) > 0 ? 1 / 1.6 : 1.6;
       const c = PV.x0 + PV.sec / 2, cm = (PV.lo + PV.hi) / 2;
@@ -4736,6 +4846,13 @@ document.addEventListener("click", (e) => {
       drawPitch(); break;
     }
     case "ptfit": pitchFit(); drawPitch(); break;
+    case "ptsplit": {
+      const n2 = PT.notes[PT.sel];
+      if (n2 && splitNote(PT.sel, (n2.t0 + n2.t1) / 2)) { drawPitch(); render(); }
+      else alert("これ以上は切れません。");
+      break;
+    }
+    case "ptjoin": { if (joinNote(PT.sel)) { drawPitch(); render(); } break; }
     case "ptflat": { const n2 = PT.notes[PT.sel]; if (n2) { ptPush(); n2.flat = !n2.flat; drawPitch(); render(); } break; }
     case "ptstep": { const n2 = PT.notes[PT.sel]; if (n2) { ptPush(); n2.shift += Number(id); drawPitch(); render(); } break; }
     case "ptundo": { ptPop(); drawPitch(); render(); break; }
