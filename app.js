@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "4.2";
+const APP_VER = "4.3";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1516,6 +1516,10 @@ async function parseXLSX(file, buf) {
   let lead = [];              // 作家名より前の、名前の付いていない行（題名・副題）
   const bubbleAt = {};
   bubbles.forEach((b) => { (bubbleAt[b.r] = bubbleAt[b.r] || []).push(b.t); });
+  const pend = [];            // まだ入れていない煽り
+  const flushPend = () => {
+    while (pend.length) rows.push(["煽り", softText(pend.shift()), "", "", "", "", "煽り", ""]);
+  };
   blocks.forEach(([nc, lc], bi) => {
     let topRun = true;        // いちばん上から途切れずに続く、名前の無い行（＝見出し）
     grid.forEach((r, ri) => {
@@ -1534,28 +1538,28 @@ async function parseXLSX(file, buf) {
       const extraCell = ac != null ? col(ac) + (ri + 1) : "";
       if (!nv && !lv) {
         topRun = false;                    // 空行で見出しの連なりは終わり
+        flushPend();
         const last = rows[rows.length - 1];
         if (rows.length && (last[0] || last[1])) rows.push(["", ""]);
         return;
       }
       if (!nv && CREDIT.test(lv)) { head.push(lv); lead.forEach((x) => head.unshift(x[1])); lead = []; return; }
       if (bi === 0 && bubbleAt[ri]) {
-        // 吹き出し（煽り）は別の行として入れる。
-        // ただし、ひとつの歌割のまとまり（名前の無い続きの行）の途中に割り込ませると
-        // まとまりが分断されるので、そのまとまりの手前まで戻して置く。
-        bubbleAt[ri].forEach((t2) => {
-          let at = rows.length;
-          while (at > 0 && rows[at - 1][0] === "→") at--;
-          rows.splice(at, 0, ["煽り", softText(t2), "", "", "", "", "煽り", ""]);
-        });
+        // 吹き出し（煽り）は別の行として入れる。ただしすぐには入れない。
+        // ひとつの歌割のまとまり（名前の無い続きの行）の途中に割り込ませると
+        // まとまりが分断されるので、まとまりが終わるまで持っておく。
+        bubbleAt[ri].forEach((t2) => pend.push(t2));
         delete bubbleAt[ri];
       }
+      // 新しいまとまりが始まる行の手前で、持っていた煽りを出す
+      if (pend.length && nv) flushPend();
       if (nv) topRun = false;
       // いちばん上から続く、名前の無い行は見出し（曲名・メンバー一覧など）
       if (!nv && topRun && bi > 0) { head.push(lv); return; }
       if (!nv && !rows.length && lead.length < 3) { lead.push(["→", lv, col(nc) + (ri + 1), col(lc) + (ri + 1), "", "", "", ""]); return; }
       rows.push([nv || "→", lv, col(nc) + (ri + 1), col(lc) + (ri + 1), extraRaw, extraCell, nvRaw, softText(ac != null ? (r[ac] || "") : "")]);
     });
+    flushPend();
   });
   // 作家名が見つからなかった場合、拾っておいた行は歌詞に戻す
   lead.reverse().forEach((x) => rows.unshift(x));
@@ -1581,12 +1585,29 @@ function finalize(title, credit, rows) {
     splitNames(lb).forEach((t) => labelNames.add(t));
   });
 
+  // 煽りは「広本　オイ！オイ！」のように、担当と掛け声が1つの吹き出しに入っている。
+  // 先頭が名前なら切り離して、その人の担当として扱う（集計にも出るようにする）。
+  rows.forEach((r) => {
+    if (r[0] !== "煽り") return;
+    const t = String(r[1] || "").trim();
+    // 「広本　「オイ！」」と「広本「オイ！」」の両方
+    const m = /^([^\s　「『”"]+)[\s　]+(.+)$/.exec(t) || /^([^\s　「『”"]{1,14})([「『”"].+)$/.exec(t);
+    if (!m) return;
+    const who = splitNames(m[1]);
+    // 全部が既に出てくる名前の時だけ切り離す（掛け声を名前と読み違えないように）
+    if (!who.length || !who.every((n) => labelNames.has(n))) return;
+    r[0] = m[1];          // 表示上の担当
+    r[6] = "煽り";        // 煽りであることは別に持っておく
+    r[1] = m[2].trim();
+  });
+
   // 「A ＝ 小野田・植村・島川・相馬」のようなブロック定義行を拾って、歌詞から外す
   const groups = {};
   const groupCells = {};
   const groupRows = [];
   rows = rows.filter((r) => {
     const toks = splitNames(r[1]);
+    if (r[6] === "煽り") return true;
     if (!r[0] || r[0] === "→" || r[0].length > 2 || toks.length < 2) return true;
     if (!toks.every((t) => t.length <= 5 && !/[。、！？「」ぁ-ん]{3,}/.test(t))) return true;
     const known = toks.filter((t) => labelNames.has(t)).length;
