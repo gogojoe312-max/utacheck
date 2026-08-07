@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "4.8";
+const APP_VER = "4.9";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -4410,7 +4410,8 @@ function viewRecPrint() {
 // 紙のサイズはmmで指定するので、端末や印刷時の拡大縮小に左右されない。
 // 箱からはみ出た分は切り取られるため、2ページ目が発生しない。
 const PR_BASE = 15;      // 画面の基準の文字の大きさ
-const K_MIN = 0.62;      // これより小さくすると紙で読めない（約7pt）
+const K_MIN = 0.62;      // 複数ページに分ける時の文字の大きさ（約7pt）
+const K_SQUEEZE = 0.55;  // あと少しで1ページに収まるなら、ここまでは縮めて1枚にする（約6pt）
 function fitPrintDOM() {
   const pr = document.getElementById("prpage");
   if (!pr) return;
@@ -4459,7 +4460,9 @@ function fitPrintDOM() {
     }
     // これ以上縮めると紙で読めない。1ページに押し込むのをやめて、複数ページに分ける。
     // 縮小（transform）は途中でページを割れないので、文字の大きさで合わせる。
-    if (k < K_MIN) {
+    // ただし、あと少しで収まる曲まで2ページにすると、
+    // 2枚目に総括だけ、のような紙が出てしまう。少しの差なら1ページに収める。
+    if (k < K_SQUEEZE) {
       if (body) { body.style.columnCount = 1; body.style.columnGap = ""; }
       sec.classList.add("prlong");
       inner.style.transform = "none";
