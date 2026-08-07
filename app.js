@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "3.7";
+const APP_VER = "3.8";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -2785,6 +2785,10 @@ function viewLive() {
       </div>
     </div>` : ""}
   ${bootErr ? `<div style="padding:10px 12px;background:#3A2420;color:#FFB4A2;font-size:12px;white-space:pre-wrap">${h(bootErr)}<button data-act="bootok" style="float:right;color:#FFB4A2">✕</button></div>` : ""}
+  ${!noSong && /合言葉/.test(syncErr) ? `<div class="noprint" style="padding:10px 12px;background:#2A2118;color:#F0C089;font-size:12px">
+      ${h(syncErr)}表示中の内容は古いままです。
+      <button class="chip sm" data-act="askkey" style="margin-left:8px">合言葉を入れる</button>
+    </div>` : ""}
   ${noSong ? `<div style="padding:12px;background:#2A2118;color:#F0C089;font-size:12px;line-height:1.7">
       ${h(syncErr || (S.src ? "まだ受け取れていません。" : "接続リンクから開いてください。"))}
       ${syncAt ? `<div style="color:var(--dim);font-size:11px;margin-top:4px">最後に受け取れたのは ${new Date(syncAt).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}</div>` : ""}
@@ -5055,7 +5059,7 @@ document.addEventListener("click", (e) => {
     case "synow": syncSetlist(true); break;
     case "askkey": {
       const pw = prompt("合言葉を入れてください。", S.key || "");
-      if (pw != null) { S.key = pw.trim(); save(); keepLinkInURL(); syncSetlist(true); }
+      if (pw != null) { S.key = pw.trim(); askedKey = false; save(); keepLinkInURL(); syncSetlist(true); }
       break;
     }
     case "gmenu": U.menu = { kind: "gmenu", id }; renderSheet(); break;
@@ -6619,7 +6623,7 @@ async function backupToFile() {
 /* ---- 受け取り：配信されたものを取り込む ---- */
 const srcUrl = () => S.src || "./setlist.json";
 
-let syncErr = "", syncAt = 0, syncBackoff = 0, justUpdated = 0;
+let syncErr = "", syncAt = 0, syncBackoff = 0, justUpdated = 0, askedKey = false;
 async function fetchSetlist() {
   const u = srcUrl();
   if (!u) { syncErr = "つなぎ先がありません。接続リンクを開き直してください。"; return null; }
@@ -6764,10 +6768,15 @@ async function syncSetlist(manual) {
   const d = await fetchSetlist();
   if (d === "nokey" || d === "badkey") {
     if (d === "badkey") S.key = "";
+    // 裏で回っている同期は15秒ごとなので、毎回聞くと使い物にならない。
+    // 自動の時は最初の1回だけ。あとは画面の「合言葉を入れる」から入れてもらう。
+    if (!manual && askedKey) { render(); return; }
+    askedKey = true;
     const pw = prompt(d === "nokey"
       ? "合言葉を入れてください。"
       : "合言葉が違います。もう一度入れてください。", "");
-    if (pw && pw.trim()) { S.key = pw.trim(); save(); return syncSetlist(manual); }
+    if (pw && pw.trim()) { S.key = pw.trim(); save(); askedKey = false; return syncSetlist(manual); }
+    render();
     return;
   }
   if (!d || !d.songs.length) {
@@ -6821,7 +6830,10 @@ function keepLinkInURL() {
   try {
     if (!S.linkSrc) return;
     if (S.groups.some((g) => g.gistId)) return;          // 配信元の端末では付けない
-    const want = "#g=" + b64e(new TextEncoder().encode(JSON.stringify({ src: S.linkSrc, key: S.key || "" })));
+    // 合言葉はURLに入れない。
+    // 入れてしまうと、メンバーがそのURLを共有・ブックマーク・スクショした時点で
+    // 「リンクと合言葉を別々に渡す」という前提が崩れ、暗号化の意味が無くなる。
+    const want = "#g=" + b64e(new TextEncoder().encode(JSON.stringify({ src: S.linkSrc })));
     if (location.hash !== want) history.replaceState(null, "", location.pathname + want);
   } catch (e) { /* 付けられなくても動く */ }
 }
@@ -6956,7 +6968,10 @@ async function importFromLink() {
       return;
     }
     const changed = S.linkSrc && S.linkSrc !== src;
-    S.linkSrc = src; S.src = src; S.key = key;
+    S.linkSrc = src; S.src = src;
+    // 古い形式のリンクは合言葉を持っている。持っていないリンクで上書きして消さない。
+    if (key) S.key = key;
+    else if (changed) S.key = "";   // 別のグループにつなぎ直した時だけ捨てる
     if (!S.groups.some((x) => x.gistId)) {
       S.viewer = true;
       if (changed) resetForNewSource(); // 別グループのリンク
