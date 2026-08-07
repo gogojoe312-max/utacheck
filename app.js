@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "3.3";
+const APP_VER = "3.4";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -378,6 +378,7 @@ function focusList() {
   return ros.map((nm) => inSong.find((m) => m.name === nm)).filter(Boolean);
 }
 
+const isAgeri = (l) => (l || {}).label === "煽り" || (l || {}).labelRaw === "煽り";
 // 名前を出す。「ハモ ◯◯」の部分は色を変えて、ひと目で分かるようにする。
 function labelHTML(so, i) {
   const t = labelOf(so, i);
@@ -2750,7 +2751,7 @@ function viewLive() {
         : foc ? "#4C9BFF" : (ns.length ? noteColor(ns[0]) : "");
       const strength = (st2 || foc) ? 18 : 9;
       return `${newSec ? `<div class="secdiv" id="sec-${h(l.sec)}"><span>${h(l.sec)}</span></div>` : ""}
-      <div class="ln${S.recMode && l.add ? " lnadd" : ""}" style="${tint ? `background:color-mix(in srgb,${tint} ${strength}%,transparent)` : ""}">
+      <div class="ln${S.recMode && l.add ? " lnadd" : ""}${isAgeri(l) ? " lnage" : ""}" style="${tint ? `background:color-mix(in srgb,${tint} ${strength}%,transparent)` : ""}">
         <button class="lbl" data-act="${S.recMode ? "rbar" : (st2 ? "assignline" : "noteblock")}" data-i="${i}"
           style="${st2 ? `color:${st2 === "need" ? "var(--bad)" : "#F0B23C"}` : ""}">${S.recMode && l.solo ? `<b class="solomk">ソロ</b>` : ""}${labelHTML(s, i)}</button>
         <div class="brk ${gp[i]}"></div>
@@ -2877,7 +2878,7 @@ function viewOverview(s) {
     const oc = ost === "need" ? "var(--bad)" : ost === "changed" ? "#F0B23C" : "";
     return `<button class="ovl" data-act="jumpline" data-i="${i}"
       style="${oc ? `background:color-mix(in srgb,${oc} 16%,transparent);border-radius:4px` : ""}">
-      <span class="ovn" style="${oc ? `color:${oc}` : ""}">${labelHTML(s, i)}</span><span class="ovb ${gp[i]}"></span><span class="ovt">${cells}${tail}${pb}</span></button>`;
+      <span class="ovn${isAgeri(l) ? " ovage" : ""}" style="${oc ? `color:${oc}` : ""}">${labelHTML(s, i)}</span><span class="ovb ${gp[i]}"></span><span class="ovt">${cells}${tail}${pb}</span></button>`;
   });
 
   // 元のExcelの並びを再現できるなら、そちらで出す
@@ -2969,7 +2970,7 @@ function viewOverview(s) {
           has = true;
           const st5 = lineStatus(s, en.i);
           const c5 = st5 === "need" ? "var(--bad)" : st5 === "changed" ? "#F0B23C" : "";
-          return `<td class="ogn"${c5 ? ` style="color:${c5}"` : ""}>${labelHTML(s, en.i)}</td>`;
+          return `<td class="ogn${isAgeri(s.lines[en.i]) ? " ovage" : ""}"${c5 ? ` style="color:${c5}"` : ""}>${labelHTML(s, en.i)}</td>`;
         }
         if (ex && ex.l.extraRaw) { has = true; return `<td class="ogn"><b class="hamomk">${h(ex.l.extraRaw)}</b></td>`; }
         return `<td class="${sp.kind === "lyric" ? "ogx" : "ogn"}"></td>`;
@@ -5422,7 +5423,9 @@ document.addEventListener("click", (e) => {
       inp.type = "file"; inp.accept = ".docx"; inp.multiple = true;
       inp.onchange = async () => {
         let last = null, n = 0;
-        for (const f of inp.files) {
+        const picked = Array.from(inp.files || []);
+        inp.value = "";
+        for (const f of picked) {
           try {
             const so = await parseDocx(f);
             // 今開いている曲と同じフォルダに入れる（続けて読み込む時に散らばらない）
@@ -5603,7 +5606,12 @@ document.addEventListener("keydown", (e) => { if (e.target.id === "memo" && e.ke
 
 document.addEventListener("input", (e) => { if (e.target.id === "aubar") seekAudio(e.target.value); });
 document.addEventListener("change", (e) => {
-  if (e.target.id === "file") handleFiles(e.target.files);
+  if (e.target.id === "file") {
+    // 一覧を控えてから空にする。同じファイルをもう一度選んでも読み込めるように。
+    const picked = Array.from(e.target.files || []);
+    e.target.value = "";
+    if (picked.length) handleFiles(picked);
+  }
   if (e.target.id === "songmemo") commitFields();
 });
 
