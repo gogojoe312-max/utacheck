@@ -227,9 +227,6 @@ button{cursor:pointer}
 .prs{break-inside:avoid;page-break-inside:avoid}
 .prs + .prs{break-before:page;page-break-before:always}
 .prbox{width:170mm;height:196mm;overflow:hidden;position:relative}
-/* 縮めても読めない長い曲は、1ページに押し込まず紙をまたぐ */
-.prs.prlong{break-inside:auto;page-break-inside:auto}
-.prs.prlong .prbox{height:auto;overflow:visible}
 .prin{transform-origin:top left}
 .prs h3{font-size:1.35em;border-left:4px solid #111;padding-left:7px;margin-bottom:8px}
 .prc{font-size:.62em;color:#666;font-weight:400}
@@ -258,9 +255,6 @@ button{cursor:pointer}
   @page{size:A4;margin:0}
   /* 箱そのものが用紙より大きくならないよう、印刷時も高さを固定する */
   .prbox{width:170mm!important;overflow:hidden!important}
-  /* ただし、縮めても読めない長い曲だけは紙をまたいで続ける */
-  .prs.prlong{break-inside:auto!important;page-break-inside:auto!important}
-  .prs.prlong .prbox{height:auto!important;overflow:visible!important}
   .prs{margin:0!important;padding:0!important}
 }
 </style>
@@ -269,6 +263,6 @@ button{cursor:pointer}
 <div id="app"></div>
 <script src="vendor/pdf.min.js"></script>
 <script src="vendor/xlsx.full.min.js"></script>
-<script src="app.js?v=5.1"></script>
+<script src="app.js?v=5.2"></script>
 </body>
 </html>

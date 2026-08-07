@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "5.1";
+const APP_VER = "5.2";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -4409,9 +4409,7 @@ function viewRecPrint() {
 // 1曲を「A4より一回り小さい箱」に入れ、中身をその箱に収まる倍率まで縮める。
 // 紙のサイズはmmで指定するので、端末や印刷時の拡大縮小に左右されない。
 // 箱からはみ出た分は切り取られるため、2ページ目が発生しない。
-const PR_BASE = 15;      // 画面の基準の文字の大きさ
-const K_MIN = 0.62;      // 複数ページに分ける時の文字の大きさ（約7pt）
-const K_SQUEEZE = 0.55;  // あと少しで1ページに収まるなら、ここまでは縮めて1枚にする（約6pt）
+// 1曲は必ず1枚に収める。収まるまで縮める。
 function fitPrintDOM() {
   const pr = document.getElementById("prpage");
   if (!pr) return;
@@ -4449,44 +4447,12 @@ function fitPrintDOM() {
       }
       return k;
     };
-    sec.classList.remove("prlong");
-    inner.style.fontSize = "";
     let k = solve();
     if (k < 0.72 && body && !sec.querySelector(".prg")) {   // 小さくなりすぎるなら2段組を試す
       body.style.columnCount = 2;
       body.style.columnGap = "14px";
       const k2 = solve();
       if (k2 <= k) { body.style.columnCount = 1; k = solve(); } else k = k2;
-    }
-    // これ以上縮めると紙で読めない。1ページに押し込むのをやめて、複数ページに分ける。
-    // 縮小（transform）は途中でページを割れないので、文字の大きさで合わせる。
-    // ただし、あと少しで収まる曲まで2ページにすると、
-    // 2枚目に総括だけ、のような紙が出てしまう。少しの差なら1ページに収める。
-    if (k < K_SQUEEZE) {
-      if (body) { body.style.columnCount = 1; body.style.columnGap = ""; }
-      sec.classList.add("prlong");
-      inner.style.transform = "none";
-      inner.style.width = "";
-      box.style.height = "auto";
-      let f = PR_BASE * K_MIN;
-      inner.style.fontSize = f.toFixed(2) + "px";
-      // ここからは推測せず、実際の高さを測って決める。
-      // 読める大きさで置いた結果、あと少しで1ページに収まるなら、
-      // そこまで詰めて1枚にする（2枚目に総括だけ、のような紙を出さない）。
-      const fits = () => inner.scrollHeight <= bh - 6;
-      if (!fits() && inner.scrollHeight <= bh * 1.25) {
-        const floor = PR_BASE * 0.42;
-        for (let n = 0; n < 14 && !fits(); n++) {
-          f *= 0.96;
-          if (f < floor) break;
-          inner.style.fontSize = f.toFixed(2) + "px";
-        }
-      }
-      if (fits()) {                       // 1ページに収まった
-        sec.classList.remove("prlong");
-        box.style.height = Math.min(bh, inner.scrollHeight + 10) + "px";
-      }
-      return;
     }
     inner.style.transformOrigin = "top left";
     inner.style.width = (bw / k) + "px";
