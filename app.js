@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "4.5";
+const APP_VER = "4.6";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -118,6 +118,26 @@ function migrate() {
   if (!S.shows.some((x) => x.id === S.showId)) S.showId = S.shows[0].id;
   if (!S.deviceId) S.deviceId = uid() + uid();
   if (!S.memos) S.memos = {};
+  // 差し替えの時に一時的にメモへ書き足していた ［元：〜］ を片付ける。
+  // 元の歌詞が残っているので、合う行があればそこへ戻してから消す。
+  (S.notes || []).forEach((n) => {
+    const m = /^［元：([\s\S]*?)］[\s　]*/.exec(n.memo || "");
+    if (!m) return;
+    n.memo = String(n.memo).slice(m[0].length);
+    const so = (S.songs || []).find((x) => x.id === n.songId);
+    if (!so || !so.lines) return;
+    const a = normT(m[1]);
+    let j = so.lines.findIndex((l) => aliveLine(l) && normT(l.t) === a);
+    if (j < 0) {
+      let bv = 0.6;
+      so.lines.forEach((l, k) => {
+        if (!aliveLine(l)) return;
+        const v = overlapRate(a, normT(l.t));
+        if (v > bv) { bv = v; j = k; }
+      });
+    }
+    if (j >= 0) { n.lineIdx = j; n.lineEnd = null; n.from = null; n.to = null; }
+  });
   if (!S.recs) S.recs = {};
   if (!S.draws) S.draws = {};
   if (!S.folders) S.folders = {};
@@ -6340,23 +6360,43 @@ function clearHl() {
 // 歌割だけを新しいファイルに入れ替える。曲のidは変えないので、
 // 指摘・総括・手書き・録音・代役・既読の紐付けがそのまま残る。
 // 行の対応は歌詞の文字で取る（歌割が変わっても歌詞は同じことがほとんど）。
+const normT = (t) => String(t || "").replace(/[\s　、。！？!?,.・：:／/「」『』”"]/g, "");
+const aliveLine = (l) => !!(l && !l.gap && l.t);
+// 片方がもう片方を丸ごと含んでいるか（煽りから担当名が外れた時など）。
+// どのくらい重なっているかを 0〜1 で返す。
+function overlapRate(a, b) {
+  if (!a || !b) return 0;
+  const [sh, lo] = a.length <= b.length ? [a, b] : [b, a];
+  if (sh.length < 4 || lo.indexOf(sh) < 0) return 0;
+  return sh.length / lo.length;
+}
 function lineMap(oldLines, newLines) {
-  const norm = (t) => String(t || "").replace(/[\s　、。！？!?,.・]/g, "");
   const map = new Map();
   const used = new Set();
-  const alive = (l) => l && !l.gap && l.t;
-  // まず完全一致
+  // 1. 完全一致
   oldLines.forEach((l, i) => {
-    if (!alive(l)) return;
-    const j = newLines.findIndex((x, k) => alive(x) && x.t === l.t && !used.has(k));
+    if (!aliveLine(l)) return;
+    const j = newLines.findIndex((x, k) => aliveLine(x) && x.t === l.t && !used.has(k));
     if (j >= 0) { used.add(j); map.set(i, j); }
   });
-  // 残りは記号や空白の違いを無視して合わせる
+  // 2. 記号や空白の違いを無視して合わせる
   oldLines.forEach((l, i) => {
-    if (!alive(l) || map.has(i)) return;
-    const a = norm(l.t); if (!a) return;
-    const j = newLines.findIndex((x, k) => alive(x) && !used.has(k) && norm(x.t) === a);
+    if (!aliveLine(l) || map.has(i)) return;
+    const a = normT(l.t); if (!a) return;
+    const j = newLines.findIndex((x, k) => aliveLine(x) && !used.has(k) && normT(x.t) === a);
     if (j >= 0) { used.add(j); map.set(i, j); }
+  });
+  // 3. 片方がもう片方を含む（頭の担当名が外れた等）。いちばん重なるものを選ぶ。
+  oldLines.forEach((l, i) => {
+    if (!aliveLine(l) || map.has(i)) return;
+    const a = normT(l.t); if (!a) return;
+    let best = -1, bv = 0.6;
+    newLines.forEach((x, k) => {
+      if (!aliveLine(x) || used.has(k)) return;
+      const v = overlapRate(a, normT(x.t));
+      if (v > bv) { bv = v; best = k; }
+    });
+    if (best >= 0) { used.add(best); map.set(i, best); }
   });
   return map;
 }
