@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "3.6";
+const APP_VER = "3.7";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -6318,6 +6318,7 @@ function publicationData(gid) {
 
   // このグループの曲がある公演を、新しい順に全部。大きすぎる時だけ古い方から落とす。
   let ids = showsNewestFirst()
+    .filter((sw) => !sw.hidden)
     .filter((sw) => S.songs.some((x) => x.showId === sw.id && x.groupId === g.id))
     .map((x) => x.id);
   let d = build(ids);
@@ -6325,6 +6326,11 @@ function publicationData(gid) {
     ids = ids.slice(0, -1);
     d = build(ids);
   }
+  // メンバーが開いた時に最初に出す公演。
+  // 公演の ts は「作った日時」なので、単に新しい順の先頭にすると
+  // 古い公演を複製して作り直した時などに意図と違うものが出る。
+  // こちらで今開いている公演をそのまま指定する。
+  d.focusShow = ids.includes(S.showId) ? S.showId : (ids[0] || "");
   return d;
 }
 
@@ -6739,8 +6745,16 @@ function applySetlist(d) {
       const nid = uid();
       S.shows = [{ id: nid, name: todayLabel(), ts: Date.now() }];
     }
-    const newest = showsNewestFirst()[0];
-    if (newest) S.showId = newest.id;
+    const focus = d.focusShow && S.shows.some((x) => x.id === d.focusShow)
+      ? d.focusShow
+      : ((showsNewestFirst().filter((x) => !x.hidden)[0] || {}).id || "");
+    if (focus) S.showId = focus;
+    // 更新が届いたら、開いている画面に関係なく歌詞の1曲目に戻す
+    U.view = "live";
+    U.menu = null;
+    U.sheet = null;
+    U.overview = false;
+    U.picker = false;
   }
   U.songIdx = 0;
   save(); render();
