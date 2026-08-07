@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "4.1";
+const APP_VER = "4.2";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -83,7 +83,7 @@ let S = {
   plan: { start: "10:00", slots: [] },
   size: 19,
 };
-let U = { view: "live", songIdx: 0, sheet: null, mode: "member", allShows: false, picker: false, overview: false, ovSize: 9, recPick: null, sumOpen: "", draw: false, erase: false, pick: [], menu: null, printPick: null, focus: "", busy: "", allShowList: false, pdfBack: "" };
+let U = { view: "live", songIdx: 0, sheet: null, mode: "member", allShows: false, picker: false, overview: false, ovSize: 9, recPick: null, sumOpen: "", draw: false, erase: false, pick: [], menu: null, printPick: null, focus: "", busy: "", allShowList: false, pdfBack: "", swapId: "" };
 
 const S0 = JSON.parse(JSON.stringify(S));
 
@@ -725,9 +725,17 @@ const shownNotes = () => (U.allShows ? NOTES() : NOTES().filter((n) => n.showId 
 let pushTimer = null, pushState = "";
 let undoStack = [];
 let readTimer = null;
-function pushUndo() {
-  undoStack.push(JSON.stringify({ notes: S.notes, rsongs: S.rsongs, plan: S.plan,
-    shows: S.shows, folders: S.folders, folderOrder: S.folderOrder }));
+function pushUndo(songId) {
+  const snap = { notes: S.notes, rsongs: S.rsongs, plan: S.plan,
+    shows: S.shows, folders: S.folders, folderOrder: S.folderOrder };
+  // 歌割を差し替える時だけ、その1曲と代役も控える。
+  // 全曲を毎回控えるとメモリを食うので、必要な時に限る。
+  if (songId) {
+    const so = S.songs.find((x) => x.id === songId);
+    if (so) snap.song = so;
+    snap.subs = S.subs; snap.subsMan = S.subsMan;
+  }
+  undoStack.push(JSON.stringify(snap));
   if (undoStack.length > 40) undoStack.shift();
 }
 let saveErr = false;
@@ -3337,6 +3345,7 @@ function renderSheet() {
           ${B("m-rename", "曲名を変える")}
           ${B("m-take", "テイクを増やす")}
           ${B("m-pdf", "この曲をPDFにする")}
+          ${many ? "" : B("m-swap", "歌割を差し替える（記録はそのまま）")}
           ${(() => { const n = S.notes.filter((y) => y.songId === U.menu.id && y.showId === S.showId).length;
             return n ? B("m-chk", `チェックをExcelに書き込む（${n}件）`) : ""; })()}
           ${(() => { const n = S.notes.filter((y) => y.songId === U.menu.id && y.showId === S.showId).length;
@@ -4715,6 +4724,8 @@ function viewSetup() {
     ${songs}
     <div class="card">
       <button class="primary" data-act="pickfile" style="margin-bottom:8px">歌割のPDF / Excel を選ぶ（複数可）</button>
+      <input type="file" id="swapfile" style="display:none"
+        accept="application/pdf,.pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.xlsx,.xls,.csv">
       <input type="file" id="file" multiple style="display:none"
         accept="application/pdf,.pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.xlsx,.xls,.csv,application/json,.json">
       <div style="font-size:11px;color:var(--dim);margin-top:6px">→ ${h(group().name || "")}</div>
@@ -4916,6 +4927,12 @@ document.addEventListener("click", (e) => {
           if (prev.shows) S.shows = prev.shows;
           if (prev.folders) S.folders = prev.folders;
           if (prev.folderOrder) S.folderOrder = prev.folderOrder;
+          if (prev.subs) S.subs = prev.subs;
+          if (prev.subsMan) S.subsMan = prev.subsMan;
+          if (prev.song) {                                  // 差し替えを元に戻す
+            const k = S.songs.findIndex((x) => x.id === prev.song.id);
+            if (k >= 0) S.songs[k] = prev.song;
+          }
         }
         save(); schedulePush(); render();
       }
@@ -5096,6 +5113,13 @@ document.addEventListener("click", (e) => {
       save(); schedulePush(); render(); break;
     }
     case "pickfile": document.getElementById("file").click(); break;
+    case "m-swap": {
+      U.swapId = U.menu && U.menu.id;
+      U.menu = null; renderSheet(); render();
+      const el2 = document.getElementById("swapfile");
+      if (el2) el2.click();
+      break;
+    }
     case "pdfpicked": {
       if (!U.pick.length) break;
       commitFields();
@@ -5782,6 +5806,12 @@ document.addEventListener("change", (e) => {
     e.target.value = "";
     if (picked.length) handleFiles(picked);
   }
+  if (e.target.id === "swapfile") {
+    const one = (e.target.files || [])[0];
+    e.target.value = "";
+    const sid = U.swapId; U.swapId = "";
+    if (one && sid) swapSong(sid, one);
+  }
   if (e.target.id === "songmemo") commitFields();
 });
 
@@ -6280,6 +6310,112 @@ function clearHl() {
 }
 
 /* ---------------- files ---------------- */
+// 歌割だけを新しいファイルに入れ替える。曲のidは変えないので、
+// 指摘・総括・手書き・録音・代役・既読の紐付けがそのまま残る。
+// 行の対応は歌詞の文字で取る（歌割が変わっても歌詞は同じことがほとんど）。
+function lineMap(oldLines, newLines) {
+  const norm = (t) => String(t || "").replace(/[\s　、。！？!?,.・]/g, "");
+  const map = new Map();
+  const used = new Set();
+  const alive = (l) => l && !l.gap && l.t;
+  // まず完全一致
+  oldLines.forEach((l, i) => {
+    if (!alive(l)) return;
+    const j = newLines.findIndex((x, k) => alive(x) && x.t === l.t && !used.has(k));
+    if (j >= 0) { used.add(j); map.set(i, j); }
+  });
+  // 残りは記号や空白の違いを無視して合わせる
+  oldLines.forEach((l, i) => {
+    if (!alive(l) || map.has(i)) return;
+    const a = norm(l.t); if (!a) return;
+    const j = newLines.findIndex((x, k) => alive(x) && !used.has(k) && norm(x.t) === a);
+    if (j >= 0) { used.add(j); map.set(i, j); }
+  });
+  return map;
+}
+
+async function swapSong(songId, file) {
+  const so = S.songs.find((x) => x.id === songId);
+  if (!so || VIEW()) return;
+  const ext = (file.name.split(".").pop() || "").toLowerCase();
+  let buf = null, parsed = null;
+  U.busy = `${file.name} を読んでいます…`; render();
+  try {
+    if (ext === "pdf") parsed = await parsePDF(file);
+    else { buf = await file.arrayBuffer(); parsed = await parseXLSX(file, buf); }
+  } catch (err) {
+    U.busy = ""; render();
+    alert("読み込めませんでした。\n" + ((err && err.message) || ""));
+    return;
+  }
+  const ns = buildSong(parsed);
+  U.busy = ""; render();
+
+  const map = lineMap(so.lines, ns.lines);
+  const mine = S.notes.filter((n) => n.songId === so.id);
+  const lost = mine.filter((n) => !map.has(n.lineIdx)).length;
+  const kept = mine.length - lost;
+  const msg = `「${songName(so)}」の歌割を\n「${cleanName(file.name)}」に差し替えます。\n\n`
+    + (mine.length
+        ? `指摘 ${mine.length}件のうち ${kept}件 はそのまま移ります。`
+          + (lost ? `\n残り ${lost}件 は歌詞が変わっていて行が合いません。近くの行に移して、元の歌詞をメモの頭に書き足します。` : "")
+        : "この曲にはまだ指摘がありません。")
+    + `\n\n総括・手書き・録音・代役・既読はそのまま残ります。`;
+  if (!confirm(msg)) return;
+
+  pushUndo(so.id);
+  // 指摘の行番号を付け替える
+  const survivors = [...map.values()].sort((a, b) => a - b);
+  const nearest = (j) => {
+    if (!survivors.length) return 0;
+    return survivors.reduce((a, b) => (Math.abs(b - j) < Math.abs(a - j) ? b : a));
+  };
+  mine.forEach((n) => {
+    if (map.has(n.lineIdx)) {
+      const to = map.get(n.lineIdx);
+      if (n.lineEnd != null) n.lineEnd = map.has(n.lineEnd) ? map.get(n.lineEnd) : to;
+      n.lineIdx = to;
+      return;
+    }
+    const was = (so.lines[n.lineIdx] || {}).t || "";
+    n.lineIdx = nearest(n.lineIdx);
+    n.lineEnd = null;
+    n.from = null; n.to = null;                    // 文字の位置はもう合わない
+    if (was) n.memo = `［元：${was}］` + (n.memo ? " " + n.memo : "");
+  });
+  // 代役も行番号で持っているので付け替える
+  [["subs"], ["subsMan"]].forEach(([name]) => {
+    const k = subKey(so.id);
+    const src = (S[name] || {})[k];
+    if (!src) return;
+    const dst = {};
+    Object.keys(src).forEach((i) => { const j = map.get(Number(i)); if (j != null) dst[j] = src[i]; });
+    S[name][k] = dst;
+  });
+
+  // 中身だけ入れ替える。id・公演・グループ・テイクは変えない。
+  so.lines = ns.lines;
+  so.blocks = ns.blocks;
+  so.roster = ns.roster;
+  so.credit = ns.credit;
+  so.blockCells = ns.blockCells;
+  so.blockRows = ns.blockRows;
+  so.sheetName = ns.sheetName;
+  so.cols = ns.cols;
+  so.title = ns.title;
+  so.sig = songSig(so);
+  so.impAt = Date.now();
+  if (buf) {
+    try { await putClip("xls:" + so.id, new Blob([buf])); so.xls = 1; so.xlsAt = so.impAt; }
+    catch (e) { /* 保管できなくても差し替えは済んでいる */ }
+  }
+  autoSubs();
+  save(); schedulePush(); render();
+  alert(lost
+    ? `差し替えました。\n${kept}件はそのまま、${lost}件は近くの行に移しました。\n取り消すには「取消」を押してください。`
+    : `差し替えました。\n指摘 ${kept}件はそのまま残っています。`);
+}
+
 async function handleFiles(files) {
   const list = [...files].sort((a, b) => a.name.localeCompare(b.name, "ja"));
   const failed = [];
