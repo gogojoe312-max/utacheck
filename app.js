@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "3.4";
+const APP_VER = "3.5";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -83,7 +83,7 @@ let S = {
   plan: { start: "10:00", slots: [] },
   size: 19,
 };
-let U = { view: "live", songIdx: 0, sheet: null, mode: "member", allShows: false, picker: false, overview: false, ovSize: 9, recPick: null, sumOpen: "", draw: false, erase: false, pick: [], menu: null, printPick: null, focus: "", busy: "", allShowList: false };
+let U = { view: "live", songIdx: 0, sheet: null, mode: "member", allShows: false, picker: false, overview: false, ovSize: 9, recPick: null, sumOpen: "", draw: false, erase: false, pick: [], menu: null, printPick: null, focus: "", busy: "", allShowList: false, pdfBack: "" };
 
 const S0 = JSON.parse(JSON.stringify(S));
 
@@ -656,7 +656,9 @@ function orderTakes() {
 
 // 曲や公演を消したときに残る、行き場のないデータを片付ける
 function sweep() {
-  const songIds = S.songs.map((x) => x.id);
+  // レコーディングの曲は S.songs に居ない。ここに入れ忘れると、
+  // その曲に付けた手書き・メモ・録音・指摘が起動のたびに消える。
+  const songIds = S.songs.map((x) => x.id).concat((S.rsongs || []).map((x) => x.id));
   const showIds = S.shows.map((x) => x.id);
   const alive = (k) => {
     const p = String(k).split("|");
@@ -2641,6 +2643,11 @@ function render() {
   else if (U.view === "summary") app.innerHTML = viewSummary();
   else app.innerHTML = viewSetup();
 
+  // 保存できていないことは、どの画面にいても分かるようにする（紙面には出さない）
+  if (saveErr && U.view !== "print" && U.view !== "recprint") {
+    app.insertAdjacentHTML("afterbegin",
+      `<div class="banner noprint">保存できませんでした。端末の空き容量を確認してください。</div>`);
+  }
   const sc = app.querySelector(".scroll");
   if (sc && sameView) sc.scrollTop = st;
   renderSheet();
@@ -2793,8 +2800,6 @@ function viewLive() {
     ${S.recMode ? `<span id="pcd2" style="font-size:12px;color:var(--dim);font-variant-numeric:tabular-nums;margin-right:4px"></span>` : ""}
     <button class="ic" data-act="size">A</button>
   </div>
-  ${saveErr ? `<div class="banner">保存できませんでした。端末の空き容量を確認してください。</div>` : ""}
-
   ${s ? blockBar(s) : ""}
   <div class="scroll" style="position:relative">
     <canvas id="ink" class="ink" style="pointer-events:${U.draw && !VIEW() ? "auto" : "none"};touch-action:${U.draw ? "none" : "auto"}"></canvas>
@@ -3129,6 +3134,15 @@ function renderSheet() {
           style="${Number((l || {}).bars || 4) === b ? "background:var(--accent);color:#0A0A0A" : ""}">${b}小節</button>`).join("")}
       </div>
       <div style="font-size:10px;color:var(--dim);margin:-4px 0 10px 56px">この行から下もすべて同じ小節数にします</div>
+      <div class="row" style="margin-bottom:10px">
+        <span style="font-size:11px;color:var(--dim);width:52px">イントロ</span>
+        <button class="chip sm" data-act="rintro" data-id="-4">−4</button>
+        <button class="chip sm" data-act="rintro" data-id="-1">−1</button>
+        <span class="grow" style="text-align:center;font-size:13px;font-weight:600">${Number((so || {}).intro || 0)}小節</span>
+        <button class="chip sm" data-act="rintro" data-id="1">＋1</button>
+        <button class="chip sm" data-act="rintro" data-id="4">＋4</button>
+      </div>
+      <div style="font-size:10px;color:var(--dim);margin:-4px 0 10px 56px">歌い出しまでの長さ。全体の小節番号がずれます</div>
       <div class="row" style="margin-bottom:10px">
         <span style="font-size:11px;color:var(--dim);width:52px">区切り</span>
         <input class="field grow" id="rsec" placeholder="1A / 1C / 間奏 など" value="${h((l || {}).sec || "")}">
@@ -3825,6 +3839,7 @@ function viewSetupRec() {
         <div class="trunc" style="${x.id === S.rsongId ? "color:var(--accent)" : ""}">${h(x.title)}</div>
         <div class="trunc" style="font-size:11px;color:var(--dim)">${x.lines.filter((l) => !l.gap).length}行${x.cols > 1 ? ` ・ ${x.cols}段` : ""}</div>
       </button>
+      <button data-act="rpdf" data-id="${x.id}" style="padding:4px 7px;color:var(--dim);font-size:12px">PDF</button>
       <button data-act="rfset" data-id="${x.id}" style="padding:4px 7px;color:var(--dim);font-size:12px">箱</button>
       <button data-act="rdel" data-id="${x.id}" style="padding:4px 6px;color:var(--bad)">✕</button>
     </div>`;
@@ -5089,14 +5104,13 @@ document.addEventListener("click", (e) => {
       U.songIdx = 0; U.view = "setup"; save(); render();
       break;
     }
-    case "recoff": U.view = "setup"; render(); break;
-    case "recback": U.view = "live"; render(); break;
+    case "recback": U.view = U.pdfBack || "live"; U.pdfBack = ""; render(); break;
     case "rbars": S.recBars = !S.recBars; save(); render(); break;
     case "rintro": {
       const so = recSong(); if (!so) break;
       pushUndo();
       so.intro = Math.max(0, Number(so.intro || 0) + Number(id));
-      save(); render(); break;
+      save(); renderSheet(); render(); break;
     }
     case "rbar": U.menu = { kind: "rbar", i }; renderSheet(); break;
     case "rbarset": {
@@ -5183,7 +5197,14 @@ document.addEventListener("click", (e) => {
       save(); renderSheet(); render(); break;
     }
     case "rpdf": {
+      if (id) {
+        S.rsongId = id;
+        const kp = SONGS().findIndex((x) => x.id === id);
+        if (kp >= 0) U.songIdx = kp;
+        save();
+      }
       const so = recSong(); if (!so) break;
+      U.pdfBack = U.view;
       U.view = "recprint"; render();
       break;
     }
