@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "5.4";
+const APP_VER = "5.5";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -4411,7 +4411,8 @@ function viewRecPrint() {
 // 箱からはみ出た分は切り取られるため、2ページ目が発生しない。
 
 
-// 1曲は必ず1枚に収める。収まるまで縮める。
+const PR_BASE = 15;   // 画面の基準の文字の大きさ
+// 1曲は必ず1枚に収める。紙の幅の中で折り返し、高さに収まるまで文字を小さくする。
 function fitPrintDOM() {
   const pr = document.getElementById("prpage");
   if (!pr) return;
@@ -4424,45 +4425,24 @@ function fitPrintDOM() {
     box.style.height = "";                 // いったん元の高さ（上限）に戻す
     const bw = box.clientWidth, bh = box.clientHeight;
     if (!bw || !bh) return;
-    // 幅を広げると折り返しが変わるので、収まるまで測り直す
-    const solve = () => {
-      let k = 1;
-      // 最後の行が欠けないよう、少し余裕を持たせた大きさに収める
-      const bh2 = bh - 10, bw2 = bw - 2;
-      const over = () => {
-        inner.style.transform = "none";
-        inner.style.width = (bw / k) + "px";
-        const w = Math.max(1, inner.scrollWidth, inner.offsetWidth) * k;
-        const hgt = Math.max(1, inner.scrollHeight, inner.offsetHeight) * k;
-        // 縦と横の両方を見る（2段組では横にはみ出すことがある）
-        return Math.max(hgt / bh2, w / bw2);
-      };
-      for (let n = 0; n < 10; n++) {
-        const o = over();
-        if (o <= 1.005) break;
-        k = k / o * 0.995;
-        if (k < 0.12) break;
-      }
-      for (let n = 0; n < 8; n++) {
-        if (over() <= 1.001) break;
-        k *= 0.94;
-      }
-      return k;
-    };
-    let k = solve();
-    if (k < 0.72 && body && !sec.querySelector(".prg")) {   // 小さくなりすぎるなら2段組を試す
-      body.style.columnCount = 2;
-      body.style.columnGap = "14px";
-      const k2 = solve();
-      if (k2 <= k) { body.style.columnCount = 1; k = solve(); } else k = k2;
-    }
+    // 幅は紙の幅に固定し、文字の大きさだけで高さを合わせる。
+    // 以前は横に引き伸ばしてから縮小していたため、幅の測り方が狂うと
+    // 右段（2番）が紙からはみ出して切り落とされていた。
+    // この方法なら横にはみ出しようがなく、行が消えることもない。
+    inner.style.transform = "none";
     inner.style.transformOrigin = "top left";
-    inner.style.width = (bw / k) + "px";
-    inner.style.transform = "scale(" + k + ")";
-    // 縮めても元の高さのまま場所を取るので、箱の高さを見た目に合わせる。
-    // これで短い曲のときに白紙が次のページへ溢れない。
-    const ih = Math.max(1, inner.scrollHeight, inner.offsetHeight);
-    box.style.height = Math.min(bh, Math.ceil(ih * k) + 10) + "px";
+    inner.style.width = "";
+    if (body) { body.style.columnCount = 1; body.style.columnGap = ""; }
+    let f = PR_BASE;
+    inner.style.fontSize = f + "px";
+    const tooTall = () => inner.scrollHeight > bh - 8;
+    const tooWide = () => inner.scrollWidth > bw + 1;
+    for (let n = 0; n < 60 && (tooTall() || tooWide()); n++) {
+      f *= 0.94;
+      if (f < 1.2) break;
+      inner.style.fontSize = f.toFixed(2) + "px";
+    }
+    box.style.height = Math.min(bh, inner.scrollHeight + 6) + "px";
   });
   // 画面では紙全体が見えるように縮める。印刷時は等倍に戻る。
   const sc = app.querySelector(".scroll");
