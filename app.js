@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "5.8";
+const APP_VER = "5.9";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -4453,6 +4453,13 @@ function fitPrintDOM() {
   pr.style.marginBottom = (-(1 - k2) * pr.offsetHeight) + "px";
 }
 
+// 曲はもう決まっているので、確認の画面は挟まずそのまま印刷へ。
+// 紙面の組み直し（fitPrintDOM）が終わってから呼ぶ。
+// 印刷から戻ったときのために画面自体は残す。
+function autoPrint() {
+  setTimeout(() => { try { window.print(); } catch (e) { /* 出せなければ画面が残るだけ */ } }, 150);
+}
+
 function viewPrint() {
   // この公演の曲すべてが対象。グループでは絞らない。
   const all = SONGS();
@@ -5020,9 +5027,7 @@ document.addEventListener("click", (e) => {
       U.printPick = [q];
       U.view = "print";
       render();
-      // 曲は決まっているので、選び直す画面は挟まずそのまま印刷へ。
-      // 紙面の組み直し（fitPrintDOM）が終わってから呼ぶ。
-      setTimeout(() => { try { window.print(); } catch (e) { /* 出せなければ画面は残る */ } }, 120);
+      autoPrint();
       break;
     }
     case "m-setgroup": {
@@ -5156,6 +5161,7 @@ document.addEventListener("click", (e) => {
       U.printPick = U.pick.slice();
       U.view = "print";
       render();
+      autoPrint();
       break;
     }
     case "goabsent": commitFields(); U.view = "absent"; render(); break;
@@ -5671,7 +5677,7 @@ document.addEventListener("click", (e) => {
       inp.click();
       break;
     }
-    case "gopdf": commitFields(); U.picker = false; U.printPick = null; U.view = "print"; render(); break;
+    case "gopdf": commitFields(); U.picker = false; U.printPick = null; U.view = "print"; render(); autoPrint(); break;
     case "doprint": window.print(); break;
     case "ghstart": gistStart(id); break;
     case "ghpush": doPush("force"); break;
