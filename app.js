@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "4.6";
+const APP_VER = "4.7";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -120,7 +120,8 @@ function migrate() {
   if (!S.memos) S.memos = {};
   // 差し替えの時に一時的にメモへ書き足していた ［元：〜］ を片付ける。
   // 元の歌詞が残っているので、合う行があればそこへ戻してから消す。
-  (S.notes || []).forEach((n) => {
+  // メンバー側の指摘は S.pubNotes に入る。両方を見る。
+  [].concat(S.notes || [], S.pubNotes || []).forEach((n) => {
     const m = /^［元：([\s\S]*?)］[\s　]*/.exec(n.memo || "");
     if (!m) return;
     n.memo = String(n.memo).slice(m[0].length);
