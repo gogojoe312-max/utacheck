@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "3.5";
+const APP_VER = "3.6";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -336,7 +336,9 @@ function noteSig(so) {
     .map((n) => [n.lineIdx, n.lineEnd, n.from, n.to, (n.tags || []).join(","), n.memo, n.pitch,
       (n.memberIds || []).map((m) => (member(m) || {}).name).sort().join("・")].join(":"))
     .sort().join("|");
-  return hash32(ns + "//" + (songMemo(so.id) || ""));
+  // 曲は公演に属するので、今どの公演を開いているかに関係なく、その曲の総括を見る
+  const mk = (so.showId || S.showId) + "|" + so.id;
+  return hash32(ns + "//" + ((S.memos || {})[mk] || ""));
 }
 const seenKey = (so) => so ? (so.showId + "|" + so.title + "|" + (so.take || 1)) : "";
 const isUnread = (so) => VIEW() && so && noteSig(so) !== (S.seen || {})[seenKey(so)];
@@ -347,8 +349,10 @@ function markRead(so) {
   if ((S.seen || {})[k] === sig) return;
   S.seen = S.seen || {};
   S.seen[k] = sig;
-  // もう無い曲の分は捨てる
-  const alive = SONGS().map(seenKey);
+  // もう無い曲の分は捨てる。
+  // ここで今の公演の曲だけを見ると、他の公演の既読が毎回消えて、
+  // 公演を切り替えるたびに全部が未読に戻ってしまう。全公演を対象にする。
+  const alive = S.songs.map(seenKey);
   Object.keys(S.seen).forEach((x) => { if (!alive.includes(x)) delete S.seen[x]; });
   save();
 }
@@ -4463,16 +4467,41 @@ function viewPrint() {
 /* ---- setup ---- */
 function viewSetup() {
   if (VIEW()) {
-    const list = showsFor().map((sw) => `<div class="row card" style="margin-bottom:8px;padding:12px;${sw.id === S.showId ? "outline:1px solid var(--accent)" : ""}">
-      <button class="grow" style="text-align:left" data-act="useshow" data-id="${sw.id}">
+    // 公演の並びはJoe側と同じにする（フォルダごとにまとめ、新しい順、箱に入っていない分は下）
+    const allShows = showsFor();
+    const curFolder = folderOf(S.shows.find((x) => x.id === S.showId));
+    const unreadIn = (sid) => S.songs.filter((x) => x.showId === sid && isUnread(x)).length;
+    const showRow = (sw) => {
+      const un = unreadIn(sw.id);
+      return `<div class="row card" style="margin-bottom:8px;padding:12px;${sw.id === S.showId ? "outline:1px solid var(--accent)" : ""}">
+      <button class="grow" style="text-align:left;min-width:0" data-act="useshow" data-id="${sw.id}">
         <div class="trunc" style="${sw.id === S.showId ? "color:var(--accent)" : ""}">${h(sw.name)}</div>
         <div style="font-size:11px;color:var(--dim)">${S.songs.filter((x) => x.showId === sw.id).length}曲 ・ ${NOTES().filter((n) => n.showId === sw.id).length}件</div>
-      </button></div>`).join("");
+      </button>
+      ${un ? `<span style="font-size:11px;color:var(--accent);font-weight:700">未読${un}</span>` : ""}</div>`;
+    };
+    const list = groupShows(U.allShowList ? allShows : allShows.slice(0, 12)).map(([fname, rows]) => {
+      if (!fname) return rows.map(showRow).join("");
+      const open = S.folders[fname] === true || fname === curFolder;
+      const un = rows.reduce((a, sw) => a + unreadIn(sw.id), 0);
+      return `<div class="row card" style="margin-bottom:8px;padding:8px 12px">
+        <button class="grow row" data-act="folder" data-id="${h(fname)}" style="text-align:left;min-width:0">
+          <span style="width:18px;color:var(--dim)">${open ? "▾" : "▸"}</span>
+          <span class="grow trunc">${h(fname)}</span>
+          ${un ? `<span style="font-size:11px;color:var(--accent);font-weight:700;margin-right:8px">未読${un}</span>` : ""}
+          <span style="font-size:11px;color:var(--dim)">${rows.length}公演</span>
+        </button>
+      </div>
+      ${open ? `<div style="margin-left:14px">${rows.map(showRow).join("")}</div>` : ""}`;
+    }).join("");
     return `
     <div class="hd"><button class="ic" data-act="go-live">‹</button><b>設定</b>
       <span class="grow"></span>
       <span style="font-size:11px;color:var(--accent)">ライブモード</span></div>
-    <div class="scroll pad"><div style="height:6px"></div>${list}
+    <div class="scroll pad">
+    <h4 class="head">公演</h4>
+    ${list || `<p class="note">公演がありません</p>`}
+    ${allShows.length > 12 ? `<button class="ghost" data-act="allshowlist" style="margin-bottom:10px">${U.allShowList ? "最近の12公演だけ表示" : `すべて表示（全${allShows.length}公演）`}</button>` : ""}
 
     <h4 class="head">音を確かめる</h4>
     <div class="card">${pianoHTML(null)}</div>
@@ -4555,7 +4584,7 @@ function viewSetup() {
         style="${S.showFilter === g.id ? "background:var(--accent);color:#0A0A0A" : ""}">${h(g.name)}</button>`).join("")}
     </div>` : ""}
     ${shows}
-    ${allShows.length > 6 ? `<button class="ghost" data-act="allshowlist" style="margin-bottom:10px">${U.allShowList ? "最近の6公演だけ表示" : `すべて表示（全${allShows.length}公演）`}</button>` : ""}
+    ${allShows.length > 12 ? `<button class="ghost" data-act="allshowlist" style="margin-bottom:10px">${U.allShowList ? "最近の12公演だけ表示" : `すべて表示（全${allShows.length}公演）`}</button>` : ""}
     <div class="row" style="margin-bottom:22px">
       <input class="field grow" id="newshow" placeholder="">
       <button class="chip" data-act="addshow">追加</button>
@@ -6235,6 +6264,7 @@ function publicationData(gid) {
       members: used.map((n) => ({ name: n })),
       rosters: S.rosters || {},                                   // 名簿の並び（年齢順）
       groupOrder: S.groups.map((x) => x.name).filter(Boolean),    // グループの並び
+      folderOrder: (S.folderOrder || []).slice(),                 // 公演の箱の並び
       lib,
       songs: songs.map((x) => ({
         showId: x.showId, libIdx: entry(x), take: x.take || 1,
@@ -6633,6 +6663,7 @@ function applySetlist(d) {
   }
   if (d.rosters && Object.keys(d.rosters).length) S.rosters = d.rosters;
   if (d.groupOrder && d.groupOrder.length) S.groupOrder = d.groupOrder;
+  if (Array.isArray(d.folderOrder)) S.folderOrder = d.folderOrder.slice();
   // 受け取った名簿に、その曲に出てこない人が混ざっていたら削る（古い配信への備え）
   const trimRoster = (o) => {
     const used = [];
