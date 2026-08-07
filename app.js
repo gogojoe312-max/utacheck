@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "3.9";
+const APP_VER = "4.0";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -383,13 +383,15 @@ function focusList() {
 }
 
 const isAgeri = (l) => (l || {}).label === "煽り" || (l || {}).labelRaw === "煽り";
-// 歌詞の無い空きは、イントロ／間奏／アウトロとして扱う。ここにも指摘を付けられる。
-function gapName(so, i) {
+// 歌詞の無い空きにも指摘を付けられる。
+// 何の区間かは資料に書いていないので、こちらで名前を付けない（間奏とは限らない）。
+// 記録シートでだけ、前後の歌詞から場所が分かるようにする。
+function gapWhere(so, i) {
   if (!so || !(so.lines[i] || {}).gap) return "";
-  const has = (l) => !l.gap && l.t;
-  if (!so.lines.slice(0, i).some(has)) return "イントロ";
-  if (!so.lines.slice(i + 1).some(has)) return "アウトロ";
-  return "間奏";
+  const has = (l) => l && !l.gap && l.t;
+  for (let k = i - 1; k >= 0; k--) if (has(so.lines[k])) return "「" + so.lines[k].t + "」のあと";
+  for (let k = i + 1; k < so.lines.length; k++) if (has(so.lines[k])) return "「" + so.lines[k].t + "」のまえ";
+  return "";
 }
 // 名前を出す。「ハモ ◯◯」の部分は色を変えて、ひと目で分かるようにする。
 function labelHTML(so, i) {
@@ -2813,7 +2815,7 @@ function viewLive() {
           `<button class="tagpill" data-act="note" data-i="${i}" style="color:var(--dim)">${h(n.memo)}</button>`).join("");
         const gt = gns.length ? noteColor(gns[0]) : "";
         return `<div class="ln lngap" style="${gt ? `background:color-mix(in srgb,${gt} 9%,transparent)` : ""}">
-          <button class="lbl" data-act="noteblock" data-i="${i}" style="color:var(--dim)">${gapName(s, i)}</button>
+          <button class="lbl" data-act="noteblock" data-i="${i}"></button>
           <div class="brk"></div>
           <div class="grow" style="min-width:0"><button data-act="noteblock" data-i="${i}"
             style="display:block;width:100%;text-align:left;min-height:14px">${gm}</button>${gp2}</div></div>`;
@@ -2963,7 +2965,7 @@ function viewOverview(s) {
       const gns = ns0.filter((n) => covers(n, i));
       if (!gns.length) return `<div style="height:7px"></div>`;
       return `<button class="ovl" data-act="jumpline" data-i="${i}">
-        <span class="ovn" style="color:var(--dim)">${gapName(s, i)}</span><span class="ovb"></span><span class="ovt">${
+        <span class="ovn"></span><span class="ovb"></span><span class="ovt">${
         gns.map((n) => `<b class="mk ovm" style="background:${noteColor(n)}">${h(n.tags.length ? n.tags.map(tagName).join("/") : "メモ")}</b>`).join("")}</span></button>`;
     }
     const ns = ns0.filter((n) => covers(n, i));
@@ -3440,7 +3442,7 @@ ${shows}</div>
     }).join("");
   };
   const rangeHtml = l.gap
-    ? `<span class="rgtx" style="color:var(--dim)">${h(gapName(s, sh.lineIdx))}（歌詞なし）</span>`
+    ? `<span class="rgtx" style="color:var(--dim)">${h(gapWhere(s, sh.lineIdx)) || "歌詞のない箇所"}</span>`
     : rl1 > rl0
     ? Array.from({ length: rl1 - rl0 + 1 }, (_, k) => rl0 + k)
         .filter((li) => s.lines[li] && !s.lines[li].gap)
