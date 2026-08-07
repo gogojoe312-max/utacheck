@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "5.6";
+const APP_VER = "5.7";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -4596,26 +4596,12 @@ function viewPrint() {
     return withT.length && ok.length < withT.length * 0.8;
   });
 
-  const chips = all.map((x) => {
-    const on = !U.printPick || U.printPick.includes(x.id);
-    const cnt = NOTES().filter((n) => n.songId === x.id && n.showId === S.showId).length;
-    return `<button class="chip sm" data-act="printpick" data-id="${x.id}"
-      style="${on ? "background:var(--accent);color:#0A0A0A" : ""}">${on ? "✓ " : ""}${h(songName(x))}${cnt ? ` (${cnt})` : ""}</button>`;
-  }).join("");
-
   return `
   <div class="hd noprint"><button class="ic" data-act="go-live">‹</button><b>PDF・印刷</b>
     <span class="grow"></span>
     <button class="chip sm" data-act="doprint" style="background:var(--accent);color:#0A0A0A">PDFで保存</button></div>
-  <div class="noprint" style="padding:10px 14px 0">
-    <div class="row" style="margin-bottom:8px">
-      <span class="grow" style="font-size:12px;color:var(--dim)">${picked.length} / ${all.length} 曲を選択中</span>
-      <button class="chip sm" data-act="printall">${picked.length === all.length ? "すべて外す" : "すべて選ぶ"}</button>
-    </div>
-    <div class="chips" style="margin-bottom:10px">${chips || `<span style="font-size:12px;color:var(--dim)">この公演には曲がありません</span>`}</div>
-    ${noGrid.length ? `<div style="font-size:11px;color:var(--bad);margin-bottom:10px">
-      ${h(noGrid.map((x) => songName(x)).join("、"))} は元の並びを再現できません。Excelから読み込み直すと同じ並びになります。</div>` : ""}
-  </div>
+  ${noGrid.length ? `<div class="noprint" style="padding:8px 14px;font-size:11px;color:var(--bad)">
+    ${h(noGrid.map((x) => songName(x)).join("、"))} は元の並びを再現できません。Excelから読み込み直すと同じ並びになります。</div>` : ""}
   <div class="scroll">
     ${needWide ? `<style>@page{size:A4 landscape;margin:0}</style>
     <div class="noprint" style="padding:8px 12px;background:#2A2118;color:#F0C089;font-size:12px;line-height:1.6">
@@ -4624,7 +4610,7 @@ function viewPrint() {
       iPhoneは方向の指定を無視することがあり、縦のままだと文字が小さくなります。
     </div>` : ""}
     <div class="pr${needWide ? " land" : ""}" id="prpage">${body}</div>
-    ${body ? "" : `<p class="noprint" style="padding:30px;text-align:center;color:var(--dim);font-size:13px">上の曲名を押して選んでください</p>`}
+    ${body ? "" : `<p class="noprint" style="padding:30px;text-align:center;color:var(--dim);font-size:13px">この公演には曲がありません</p>`}
     <div class="noprint" style="height:40px"></div>
   </div>`;
 }
@@ -5683,18 +5669,6 @@ document.addEventListener("click", (e) => {
       break;
     }
     case "gopdf": commitFields(); U.picker = false; U.printPick = null; U.view = "print"; render(); break;
-    case "printpick": {
-      const ids = SONGS().map((x) => x.id);
-      const cur3 = U.printPick || ids.slice();
-      U.printPick = cur3.includes(id) ? cur3.filter((x) => x !== id) : cur3.concat(id);
-      render(); break;
-    }
-    case "printall": {
-      const ids = SONGS().map((x) => x.id);
-      const allOn = !U.printPick || U.printPick.length === ids.length;
-      U.printPick = allOn ? [] : null;
-      render(); break;
-    }
     case "doprint": window.print(); break;
     case "ghstart": gistStart(id); break;
     case "ghpush": doPush("force"); break;
