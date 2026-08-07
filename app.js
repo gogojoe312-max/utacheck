@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "5.2";
+const APP_VER = "5.3";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -4409,6 +4409,52 @@ function viewRecPrint() {
 // 1曲を「A4より一回り小さい箱」に入れ、中身をその箱に収まる倍率まで縮める。
 // 紙のサイズはmmで指定するので、端末や印刷時の拡大縮小に左右されない。
 // 箱からはみ出た分は切り取られるため、2ページ目が発生しない。
+
+// 歌割表そのままの表を、そのまま縦に積むと紙の幅が余る。
+// 行を分けて横に並べ、いちばん大きく組める段数を実際に測って選ぶ。
+function splitGrid(inner, grid, solve, k0) {
+  const host = grid.parentNode;
+  if (!host) return k0;
+  const rows = [];
+  [...grid.rows].forEach((r) => rows.push(r));
+  if (rows.length < 8) return k0;
+  const mark = document.createElement("div");
+  host.insertBefore(mark, grid);
+  const build = (n) => {
+    const wrap = document.createElement("div");
+    wrap.className = "prsplit";
+    wrap.style.display = "flex";
+    wrap.style.gap = "5mm";
+    wrap.style.alignItems = "flex-start";
+    const per = Math.ceil(rows.length / n);
+    for (let i = 0; i < n; i++) {
+      const col = document.createElement("div");
+      col.style.flex = "1";
+      col.style.minWidth = "0";
+      const tb = grid.cloneNode(false);
+      rows.slice(i * per, (i + 1) * per).forEach((r) => tb.appendChild(r.cloneNode(true)));
+      if (!tb.rows.length) continue;
+      col.appendChild(tb);
+      wrap.appendChild(col);
+    }
+    return wrap;
+  };
+  let bestN = 1, bestK = k0, bestNode = null;
+  for (const n of [2, 3, 4]) {
+    const wrap = build(n);
+    if (bestNode) bestNode.remove(); else grid.remove();
+    mark.parentNode.insertBefore(wrap, mark);
+    bestNode = wrap;
+    const kn = solve();
+    if (kn > bestK * 1.02) { bestK = kn; bestN = n; }
+  }
+  if (bestNode) bestNode.remove();
+  const finalNode = bestN === 1 ? grid : build(bestN);
+  mark.parentNode.insertBefore(finalNode, mark);
+  mark.remove();
+  return solve();
+}
+
 // 1曲は必ず1枚に収める。収まるまで縮める。
 function fitPrintDOM() {
   const pr = document.getElementById("prpage");
@@ -4448,11 +4494,25 @@ function fitPrintDOM() {
       return k;
     };
     let k = solve();
-    if (k < 0.72 && body && !sec.querySelector(".prg")) {   // 小さくなりすぎるなら2段組を試す
-      body.style.columnCount = 2;
-      body.style.columnGap = "14px";
-      const k2 = solve();
-      if (k2 <= k) { body.style.columnCount = 1; k = solve(); } else k = k2;
+    // 1列に縦積みすると紙の幅が余り、高さのせいだけで極端に小さくなる。
+    // 段に分けて幅を使い切る。何段が良いかは実際に測って決める。
+    if (k < 0.78) {
+      const grid = sec.querySelector("table.prg");
+      if (grid) {
+        const best = splitGrid(inner, grid, solve, k);
+        k = best;
+      } else if (body) {
+        let bestN = 1, bestK = k;
+        for (const n of [2, 3]) {
+          body.style.columnCount = n;
+          body.style.columnGap = "14px";
+          const kn = solve();
+          if (kn > bestK * 1.02) { bestK = kn; bestN = n; }
+        }
+        body.style.columnCount = bestN;
+        body.style.columnGap = bestN > 1 ? "14px" : "";
+        k = solve();
+      }
     }
     inner.style.transformOrigin = "top left";
     inner.style.width = (bw / k) + "px";
