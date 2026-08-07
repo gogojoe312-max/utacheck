@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "4.3";
+const APP_VER = "4.4";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1590,8 +1590,14 @@ function finalize(title, credit, rows) {
   rows.forEach((r) => {
     if (r[0] !== "煽り") return;
     const t = String(r[1] || "").trim();
-    // 「広本　「オイ！」」と「広本「オイ！」」の両方
-    const m = /^([^\s　「『”"]+)[\s　]+(.+)$/.exec(t) || /^([^\s　「『”"]{1,14})([「『”"].+)$/.exec(t);
+    // 資料ごとに書き方が違うので、担当と掛け声の区切り方を一通り見る。
+    //   島川：盛り上がっていくぞー！ ／ 広本　「オイ！」 ／ 広本「オイ！」 ／ （島川）オイ！
+    // 「・」は名前どうしの区切り（小野田・植村）なので、ここには入れない
+    const SEP = "：:／/→⇒>＞";
+    const m = new RegExp(`^([^\\s　${SEP}「『”"]+)[\\s　]*[${SEP}][\\s　]*(.+)$`).exec(t)
+      || /^[（(]([^）)]{1,14})[）)][\s　]*(.+)$/.exec(t)
+      || /^([^\s　「『”"]+)[\s　]+(.+)$/.exec(t)
+      || /^([^\s　「『”"]{1,14})([「『”"].+)$/.exec(t);
     if (!m) return;
     const who = splitNames(m[1]);
     // 全部が既に出てくる名前の時だけ切り離す（掛け声を名前と読み違えないように）
