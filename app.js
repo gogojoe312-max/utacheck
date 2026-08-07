@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "4.4";
+const APP_VER = "4.5";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -6385,7 +6385,7 @@ async function swapSong(songId, file) {
   const msg = `「${songName(so)}」の歌割を\n「${cleanName(file.name)}」に差し替えます。\n\n`
     + (mine.length
         ? `指摘 ${mine.length}件のうち ${kept}件 はそのまま移ります。`
-          + (lost ? `\n残り ${lost}件 は歌詞が変わっていて行が合いません。近くの行に移して、元の歌詞をメモの頭に書き足します。` : "")
+          + (lost ? `\n残り ${lost}件 は歌詞が変わっていて行が合いません。近くの行に移します。` : "")
         : "この曲にはまだ指摘がありません。")
     + `\n\n総括・手書き・録音・代役・既読はそのまま残ります。`;
   if (!confirm(msg)) return;
@@ -6404,11 +6404,9 @@ async function swapSong(songId, file) {
       n.lineIdx = to;
       return;
     }
-    const was = (so.lines[n.lineIdx] || {}).t || "";
     n.lineIdx = nearest(n.lineIdx);
     n.lineEnd = null;
     n.from = null; n.to = null;                    // 文字の位置はもう合わない
-    if (was) n.memo = `［元：${was}］` + (n.memo ? " " + n.memo : "");
   });
   // 代役も行番号で持っているので付け替える
   [["subs"], ["subsMan"]].forEach(([name]) => {
