@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "5.5";
+const APP_VER = "5.6";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -5031,6 +5031,9 @@ document.addEventListener("click", (e) => {
       U.printPick = [q];
       U.view = "print";
       render();
+      // 曲は決まっているので、選び直す画面は挟まずそのまま印刷へ。
+      // 紙面の組み直し（fitPrintDOM）が終わってから呼ぶ。
+      setTimeout(() => { try { window.print(); } catch (e) { /* 出せなければ画面は残る */ } }, 120);
       break;
     }
     case "m-setgroup": {
