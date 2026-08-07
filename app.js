@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "4.0";
+const APP_VER = "4.1";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -434,6 +434,21 @@ function blockStatus(so, b) {
   return ((so.blocks && so.blocks[b]) || []).some((p) => ab.includes(p)) ? "need" : "";
 }
 const blocksOf = (so) => Object.keys((so && so.blocks) || {});
+// その歌割をいつ取り込んだか。古いデータは xlsAt しか持っていない。
+const impOf = (so) => (so && (so.impAt || so.xlsAt)) || 0;
+const impLabel = (t) => t ? new Date(t).toLocaleDateString("ja-JP", { month: "numeric", day: "numeric" }) : "";
+// 同じ曲名で、もっと新しく取り込んだものが他の公演にあるか
+function staleBy(so) {
+  const mine = impOf(so);
+  if (!mine) return 0;
+  let newest = 0;
+  S.songs.forEach((x) => {
+    if (x.id === so.id || x.title !== so.title) return;
+    const t = impOf(x);
+    if (t > newest) newest = t;
+  });
+  return newest > mine ? newest : 0;
+}
 // A / B などのブロックの中身を、歌詞の上に細く出す
 function blockBar(so) {
   const bs = blocksOf(so);
@@ -4657,7 +4672,9 @@ function viewSetup() {
       <button data-act="picksong" data-id="${x.id}" style="width:26px;flex:0 0 26px;font-size:15px;color:${on ? "var(--accent)" : "var(--dim)"}">${on ? "☑" : "☐"}</button>
       <button class="grow" style="text-align:left;min-width:0" data-act="opensong" data-i="${i}">
         <div class="trunc">${h(songName(x))}</div>
-        <div class="trunc" style="font-size:11px;color:var(--dim)">${x.groupId ? h((S.groups.find((g) => g.id === x.groupId) || {}).name || "—") : "配信しない"}</div>
+        <div class="trunc" style="font-size:11px;color:var(--dim)">${x.groupId ? h((S.groups.find((g) => g.id === x.groupId) || {}).name || "—") : "配信しない"}${
+        impOf(x) ? ` ・ 取り込み ${impLabel(impOf(x))}` : ""}${
+        staleBy(x) ? `<span style="color:#F0B23C"> ・ 古い（別の公演に ${impLabel(staleBy(x))} 版）</span>` : ""}</div>
       </button>
       <button data-act="up" data-i="${i}" style="padding:4px 5px;color:var(--dim)">↑</button>
       <button data-act="down" data-i="${i}" style="padding:4px 5px;color:var(--dim)">↓</button>
@@ -5807,8 +5824,19 @@ function dupShow(fromId) {
   const nid = uid();
   S.shows.push({ id: nid, name: nm.trim(), ts: Date.now(), from: fromId, folder: folderOf(sw) });
   S.songs.filter((x) => x.showId === fromId).forEach((x) => {
-    S.songs.push({ id: uid(), showId: nid, groupId: x.groupId, title: x.title, credit: x.credit,
-      lines: x.lines.map((l) => Object.assign({}, l, { parts: (l.parts || []).slice() })) });
+    // 名簿・ブロック（A/B）・テイク・取り込み日まで引き継ぐ。
+    // ここが抜けていると、複製した公演でブロックの行の担当が空になり、
+    // 欠席の代役も組めず、いつ取り込んだ歌割かも分からなくなる。
+    const blocks = {};
+    Object.keys(x.blocks || {}).forEach((b) => { blocks[b] = (x.blocks[b] || []).slice(); });
+    S.songs.push({
+      id: uid(), showId: nid, groupId: x.groupId, title: x.title, credit: x.credit,
+      lines: x.lines.map((l) => Object.assign({}, l, { parts: (l.parts || []).slice() })),
+      roster: (x.roster || []).slice(), blocks,
+      blockCells: x.blockCells, blockRows: x.blockRows, sheetName: x.sheetName,
+      take: x.take || 1, sig: x.sig, cols: x.cols,
+      impAt: impOf(x),
+    });
   });
   S.showId = nid; U.songIdx = 0; U.picker = false;
   autoSubs();
@@ -6263,12 +6291,12 @@ async function handleFiles(files) {
       if (ext === "json") {
         const d = JSON.parse(await f.text());
         (d.members || []).forEach((m) => addMember(m.name));
-        (d.songs || []).forEach((sg) => S.songs.push(Object.assign(buildSong(sg), { groupId: S.groupId, showId: S.showId })));
+        (d.songs || []).forEach((sg) => S.songs.push(Object.assign(buildSong(sg), { groupId: S.groupId, showId: S.showId, impAt: Date.now() })));
       } else if (ext === "pdf") {
-        S.songs.push(Object.assign(buildSong(await parsePDF(f)), { groupId: S.groupId, showId: S.showId }));
+        S.songs.push(Object.assign(buildSong(await parsePDF(f)), { groupId: S.groupId, showId: S.showId, impAt: Date.now() }));
       } else {
         const buf = await f.arrayBuffer();
-        const so = Object.assign(buildSong(await parseXLSX(f, buf)), { groupId: S.groupId, showId: S.showId });
+        const so = Object.assign(buildSong(await parseXLSX(f, buf)), { groupId: S.groupId, showId: S.showId, impAt: Date.now() });
         // 同じ曲の入れ直しなら、古い方の記録を写せるようにする
         const prevSo = SONGS().find((x) => x.title === so.title || sigOf(x) === sigOf(so));
         const had = prevSo ? S.notes.filter((n) => n.songId === prevSo.id).length : 0;
