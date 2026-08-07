@@ -227,11 +227,14 @@ button{cursor:pointer}
 .prs{break-inside:avoid;page-break-inside:avoid}
 .prs + .prs{break-before:page;page-break-before:always}
 .prbox{width:170mm;height:222mm;overflow:hidden;position:relative}
+/* 縮めても読めない長い曲は、1ページに押し込まず紙をまたぐ */
+.prs.prlong{break-inside:auto;page-break-inside:auto}
+.prs.prlong .prbox{height:auto;overflow:visible}
 .prin{transform-origin:top left}
 .prs h3{font-size:1.35em;border-left:4px solid #111;padding-left:7px;margin-bottom:8px}
 .prc{font-size:.62em;color:#666;font-weight:400}
 .prl{display:flex;gap:6px;line-height:1.85;align-items:baseline;break-inside:avoid}
-.prn{flex:0 0 30%;max-width:110px;text-align:right;color:#555;font-size:.85em;word-break:break-word}
+.prn{flex:0 0 30%;max-width:110px;text-align:right;color:#555;font-size:.85em;word-break:keep-all;overflow-wrap:normal}
 .prx{flex:1;min-width:0}
 .prx u{text-decoration:underline;text-decoration-thickness:2px;text-underline-offset:2px}
 .prt{font-size:.85em;font-weight:700;margin-left:3px;white-space:nowrap}
@@ -239,7 +242,7 @@ button{cursor:pointer}
 .prg{width:100%;border-collapse:collapse;table-layout:fixed}
 .prg td{vertical-align:baseline;padding:1px 3px;line-height:1.7}
 .prg tr.prz td{height:.55em;line-height:.55em;padding:0}
-.prg td.prn{width:15%;text-align:right;color:#555;font-size:.85em;word-break:break-word;max-width:none}
+.prg td.prn{width:15%;text-align:right;color:#555;font-size:.85em;word-break:keep-all;overflow-wrap:normal;max-width:none}
 .prg td.prx{width:35%;word-break:break-word}
 .prm{margin-top:10px;padding:7px 9px;border:1px solid #999;border-radius:4px;font-size:1em;white-space:pre-wrap;break-inside:avoid}
 @media print{
@@ -255,6 +258,9 @@ button{cursor:pointer}
   @page{size:A4;margin:0}
   /* 箱そのものが用紙より大きくならないよう、印刷時も高さを固定する */
   .prbox{width:170mm!important;overflow:hidden!important}
+  /* ただし、縮めても読めない長い曲だけは紙をまたいで続ける */
+  .prs.prlong{break-inside:auto!important;page-break-inside:auto!important}
+  .prs.prlong .prbox{height:auto!important;overflow:visible!important}
   .prs{margin:0!important;padding:0!important}
 }
 </style>
@@ -263,6 +269,6 @@ button{cursor:pointer}
 <div id="app"></div>
 <script src="vendor/pdf.min.js"></script>
 <script src="vendor/xlsx.full.min.js"></script>
-<script src="app.js?v=4.7"></script>
+<script src="app.js?v=4.8"></script>
 </body>
 </html>

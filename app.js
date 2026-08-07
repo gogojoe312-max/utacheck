@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "4.7";
+const APP_VER = "4.8";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -4409,6 +4409,8 @@ function viewRecPrint() {
 // 1曲を「A4より一回り小さい箱」に入れ、中身をその箱に収まる倍率まで縮める。
 // 紙のサイズはmmで指定するので、端末や印刷時の拡大縮小に左右されない。
 // 箱からはみ出た分は切り取られるため、2ページ目が発生しない。
+const PR_BASE = 15;      // 画面の基準の文字の大きさ
+const K_MIN = 0.62;      // これより小さくすると紙で読めない（約7pt）
 function fitPrintDOM() {
   const pr = document.getElementById("prpage");
   if (!pr) return;
@@ -4446,12 +4448,25 @@ function fitPrintDOM() {
       }
       return k;
     };
+    sec.classList.remove("prlong");
+    inner.style.fontSize = "";
     let k = solve();
     if (k < 0.72 && body && !sec.querySelector(".prg")) {   // 小さくなりすぎるなら2段組を試す
       body.style.columnCount = 2;
       body.style.columnGap = "14px";
       const k2 = solve();
       if (k2 <= k) { body.style.columnCount = 1; k = solve(); } else k = k2;
+    }
+    // これ以上縮めると紙で読めない。1ページに押し込むのをやめて、複数ページに分ける。
+    // 縮小（transform）は途中でページを割れないので、文字の大きさで合わせる。
+    if (k < K_MIN) {
+      if (body) { body.style.columnCount = 1; body.style.columnGap = ""; }
+      sec.classList.add("prlong");
+      inner.style.transform = "none";
+      inner.style.width = "";
+      inner.style.fontSize = (PR_BASE * K_MIN).toFixed(2) + "px";
+      box.style.height = "auto";
+      return;
     }
     inner.style.transformOrigin = "top left";
     inner.style.width = (bw / k) + "px";
@@ -4503,7 +4518,9 @@ function viewPrint() {
       const sub = subOf(so.id, i);
       const txt = sub ? labelOf(so, i) : (l.labelRaw || l.raw || l.label || "");
       const m = /^([\s\S]*?)[\s　]*((?:ハモ|コーラス|Cho)[\s\S]*)$/.exec(txt);
-      const inner2 = m ? `${h(m[1])}${m[1] ? "<br>" : ""}<b class="hamomk">${h(m[2])}</b>` : h(txt);
+      // 名前の途中で改行されないよう、「・」の後だけ折り返せるようにする
+      const nb = (t) => h(t).replace(/・/g, "・<wbr>");
+      const inner2 = m ? `${nb(m[1])}${m[1] ? "<br>" : ""}<b class="hamomk">${nb(m[2])}</b>` : nb(txt);
       return `<span${st ? ' style="font-weight:700;text-decoration:underline"' : ""}>${inner2}</span>`;
     };
 
