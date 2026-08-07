@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "2.8";
+const APP_VER = "3.3";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -376,6 +376,15 @@ function focusList() {
   const inSong = songRoster(so).map((mid) => member(mid)).filter(Boolean);
   if (!ros || !ros.length) return inSong;
   return ros.map((nm) => inSong.find((m) => m.name === nm)).filter(Boolean);
+}
+
+// 名前を出す。「ハモ ◯◯」の部分は色を変えて、ひと目で分かるようにする。
+function labelHTML(so, i) {
+  const t = labelOf(so, i);
+  if (!t) return "";
+  const m = /^([\s\S]*?)[\s　]*((?:ハモ|コーラス|Cho)[\s\S]*)$/.exec(t);
+  if (!m) return h(t);
+  return `${h(m[1])}${m[1] ? "<br>" : ""}<b class="hamomk">${h(m[2])}</b>`;
 }
 
 function labelOf(so, i) {
@@ -1304,9 +1313,69 @@ async function addVersionTab(buf, tabName, edits) {
 const NAMECELL = /^[^\s、,，・･\/／]{1,4}([\s、,，・･\/／]+[^\s、,，・･\/／]{1,4})*$/;
 const looksName = (v) => !!v && v.length <= 12 && NAMECELL.test(v);
 
+// どのシートが歌割かを選ぶ。
+// 1枚目が「マイク番号」のように番号だけの表のことがあるため。
+function pickSheet(wb) {
+  const names = wb.SheetNames;
+  const score = (sn) => {
+    const sh2 = wb.Sheets[sn];
+    if (!sh2 || !sh2["!ref"]) return -1e9;
+    let pt = 0;
+    if (/歌割|唄割|うたわり/.test(sn)) pt += 1000;
+    if (/マイク|ﾏｲｸ|番号|MC|表紙|メモ/i.test(sn)) pt -= 800;
+    // 名前らしい文字（漢字・かな）が入った短いセルを数える
+    const g = XLSX.utils.sheet_to_json(sh2, { header: 1, blankrows: false, defval: "" });
+    let nameLike = 0, numLike = 0;
+    g.forEach((r) => (r || []).forEach((v) => {
+      const t = String(v == null ? "" : v).trim();
+      if (!t || t.length > 24) return;
+      if (/^[\d０-９１-９・\s]+$/.test(t)) numLike++;
+      else if (/[\u3040-\u30ff\u4e00-\u9fff]/.test(t) && t.length <= 12) nameLike++;
+    }));
+    return pt + nameLike - numLike * 2;
+  };
+  // 基本は1枚目。1枚目が明らかに歌割でない時だけ、他を探す。
+  const first = names[0];
+  const bad = /マイク|ﾏｲｸ|番号/i.test(first) || score(first) < 0;
+  if (!bad) return first;
+  let best = first, bs = score(first);
+  names.forEach((sn) => { const v = score(sn); if (v > bs) { bs = v; best = sn; } });
+  return best;
+}
+
+// Excelの吹き出し（テキストボックス）を読む。煽りがここに書かれていることがある。
+async function readBubbles(raw, sheetIdx) {
+  try {
+    const { files } = await unzip(raw);
+    const dec3 = (u8) => new TextDecoder().decode(u8);
+    const relPath = "xl/worksheets/_rels/sheet" + (sheetIdx + 1) + ".xml.rels";
+    if (!files[relPath]) return [];
+    const m = /Target="([^"]*drawings\/drawing\d+\.xml)"/.exec(dec3(files[relPath]));
+    if (!m) return [];
+    const key = "xl/" + m[1].replace(/^\.\.\//, "");
+    if (!files[key]) return [];
+    const x = dec3(files[key]);
+    const out = [];
+    const re2 = /<xdr:(?:two|one)CellAnchor[\s\S]*?<\/xdr:(?:two|one)CellAnchor>/g;
+    let g;
+    while ((g = re2.exec(x))) {
+      const seg = g[0];
+      const f2 = /<xdr:from>[\s\S]*?<xdr:col>(\d+)<\/xdr:col>[\s\S]*?<xdr:row>(\d+)<\/xdr:row>/.exec(seg);
+      if (!f2) continue;
+      const t = (seg.match(/<a:t>([^<]*)<\/a:t>/g) || []).map((y) => y.replace(/<[^>]+>/g, "")).join("");
+      const txt = t.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").trim();
+      if (txt) out.push({ c: Number(f2[1]), r: Number(f2[2]), t: txt });
+    }
+    return out;
+  } catch (e) { return []; }
+}
+
 async function parseXLSX(file, buf) {
-  const wb = XLSX.read(buf || await file.arrayBuffer(), { type: "array" });
-  const sh = wb.Sheets[wb.SheetNames[0]];
+  const raw0 = buf || new Uint8Array(await file.arrayBuffer());
+  const wb = XLSX.read(raw0, { type: "array" });
+  const pickedName = pickSheet(wb);
+  const sh = wb.Sheets[pickedName];
+  const bubbles = await readBubbles(raw0, wb.SheetNames.indexOf(pickedName));
   const grid = XLSX.utils.sheet_to_json(sh, { header: 1, blankrows: true, defval: "" })
     .map((r) => (r || []).map((v) => String(v == null ? "" : v).replace(/\s*\n\s*/g, " ")));
   const w = grid.reduce((m, r) => Math.max(m, r.length), 0);
@@ -1346,7 +1415,10 @@ async function parseXLSX(file, buf) {
   const head = [];
   const rows = [];
   let lead = [];              // 作家名より前の、名前の付いていない行（題名・副題）
+  const bubbleAt = {};
+  bubbles.forEach((b) => { (bubbleAt[b.r] = bubbleAt[b.r] || []).push(b.t); });
   blocks.forEach(([nc, lc], bi) => {
+    let topRun = true;        // いちばん上から途切れずに続く、名前の無い行（＝見出し）
     grid.forEach((r, ri) => {
       let nv = cleanText(r[nc] || "");
       let nvRaw = softText(r[nc] || "");
@@ -1362,11 +1434,20 @@ async function parseXLSX(file, buf) {
       const extraRaw = ac != null ? cleanText(r[ac] || "") : "";
       const extraCell = ac != null ? col(ac) + (ri + 1) : "";
       if (!nv && !lv) {
+        topRun = false;                    // 空行で見出しの連なりは終わり
         const last = rows[rows.length - 1];
         if (rows.length && (last[0] || last[1])) rows.push(["", ""]);
         return;
       }
       if (!nv && CREDIT.test(lv)) { head.push(lv); lead.forEach((x) => head.unshift(x[1])); lead = []; return; }
+      if (bi === 0 && bubbleAt[ri]) {
+        // 吹き出し（煽り）は、その行の前に別の行として入れる
+        bubbleAt[ri].forEach((t2) => rows.push(["煽り", softText(t2), "", "", "", "", "煽り", ""]));
+        delete bubbleAt[ri];
+      }
+      if (nv) topRun = false;
+      // いちばん上から続く、名前の無い行は見出し（曲名・メンバー一覧など）
+      if (!nv && topRun && bi > 0) { head.push(lv); return; }
       if (!nv && !rows.length && lead.length < 3) { lead.push(["→", lv, col(nc) + (ri + 1), col(lc) + (ri + 1), "", "", "", ""]); return; }
       rows.push([nv || "→", lv, col(nc) + (ri + 1), col(lc) + (ri + 1), extraRaw, extraCell, nvRaw, softText(ac != null ? (r[ac] || "") : "")]);
     });
@@ -1374,7 +1455,9 @@ async function parseXLSX(file, buf) {
   // 作家名が見つからなかった場合、拾っておいた行は歌詞に戻す
   lead.reverse().forEach((x) => rows.unshift(x));
   // 一番左のシートを読んでいる
-  const sheetName = wb.SheetNames[0];
+  const sheetName = pickedName;
+  // どの行にも当てはまらなかった吹き出しは、最後にまとめて入れる
+  Object.keys(bubbleAt).forEach((k) => bubbleAt[k].forEach((t2) => rows.push(["煽り", softText(t2), "", "", "", "", "煽り", ""])));
   const parsed0 = finalize(cleanName(file.name), head.join("　"), rows);
   parsed0.sheetName = sheetName;
   return parsed0;
@@ -2669,7 +2752,7 @@ function viewLive() {
       return `${newSec ? `<div class="secdiv" id="sec-${h(l.sec)}"><span>${h(l.sec)}</span></div>` : ""}
       <div class="ln${S.recMode && l.add ? " lnadd" : ""}" style="${tint ? `background:color-mix(in srgb,${tint} ${strength}%,transparent)` : ""}">
         <button class="lbl" data-act="${S.recMode ? "rbar" : (st2 ? "assignline" : "noteblock")}" data-i="${i}"
-          style="${st2 ? `color:${st2 === "need" ? "var(--bad)" : "#F0B23C"}` : ""}">${S.recMode && l.solo ? `<b class="solomk">ソロ</b>` : ""}${h(labelOf(s, i))}</button>
+          style="${st2 ? `color:${st2 === "need" ? "var(--bad)" : "#F0B23C"}` : ""}">${S.recMode && l.solo ? `<b class="solomk">ソロ</b>` : ""}${labelHTML(s, i)}</button>
         <div class="brk ${gp[i]}"></div>
         <div class="grow" style="min-width:0">
           <div class="txt" data-l="${i}" style="font-size:${S.size}px">${cells}</div>${pills}
@@ -2794,7 +2877,7 @@ function viewOverview(s) {
     const oc = ost === "need" ? "var(--bad)" : ost === "changed" ? "#F0B23C" : "";
     return `<button class="ovl" data-act="jumpline" data-i="${i}"
       style="${oc ? `background:color-mix(in srgb,${oc} 16%,transparent);border-radius:4px` : ""}">
-      <span class="ovn" style="${oc ? `color:${oc}` : ""}">${h(labelOf(s, i))}</span><span class="ovb ${gp[i]}"></span><span class="ovt">${cells}${tail}${pb}</span></button>`;
+      <span class="ovn" style="${oc ? `color:${oc}` : ""}">${labelHTML(s, i)}</span><span class="ovb ${gp[i]}"></span><span class="ovt">${cells}${tail}${pb}</span></button>`;
   });
 
   // 元のExcelの並びを再現できるなら、そちらで出す
@@ -2886,9 +2969,9 @@ function viewOverview(s) {
           has = true;
           const st5 = lineStatus(s, en.i);
           const c5 = st5 === "need" ? "var(--bad)" : st5 === "changed" ? "#F0B23C" : "";
-          return `<td class="ogn"${c5 ? ` style="color:${c5}"` : ""}>${h(labelOf(s, en.i))}</td>`;
+          return `<td class="ogn"${c5 ? ` style="color:${c5}"` : ""}>${labelHTML(s, en.i)}</td>`;
         }
-        if (ex && ex.l.extraRaw) { has = true; return `<td class="ogn">${h(ex.l.extraRaw)}</td>`; }
+        if (ex && ex.l.extraRaw) { has = true; return `<td class="ogn"><b class="hamomk">${h(ex.l.extraRaw)}</b></td>`; }
         return `<td class="${sp.kind === "lyric" ? "ogx" : "ogn"}"></td>`;
       }).join("");
       trs.push(`<tr${has ? "" : ' class="ogz"'}>${tds}</tr>`);
@@ -4197,6 +4280,7 @@ function viewPrint() {
   const all = SONGS();
   const picked = U.printPick ? all.filter((x) => U.printPick.includes(x.id)) : all;
 
+  let needWide = false;
   const body = picked.map((so) => {
     const ns0 = NOTES().filter((n) => n.songId === so.id && n.showId === S.showId);
     const mm = songMemo(so.id);
@@ -4223,7 +4307,9 @@ function viewPrint() {
       const st = lineStatus(so, i);
       const sub = subOf(so.id, i);
       const txt = sub ? labelOf(so, i) : (l.labelRaw || l.raw || l.label || "");
-      return `<span${st ? ' style="font-weight:700;text-decoration:underline"' : ""}>${h(txt)}</span>`;
+      const m = /^([\s\S]*?)[\s　]*((?:ハモ|コーラス|Cho)[\s\S]*)$/.exec(txt);
+      const inner2 = m ? `${h(m[1])}${m[1] ? "<br>" : ""}<b class="hamomk">${h(m[2])}</b>` : h(txt);
+      return `<span${st ? ' style="font-weight:700;text-decoration:underline"' : ""}>${inner2}</span>`;
     };
 
     // 元のExcelの列の並びを再現する
@@ -4277,9 +4363,8 @@ function viewPrint() {
 
       const rowsSet = [];
       for (let r = minR; r <= maxR; r++) rowsSet.push(r);
-      const trs = rowsSet.map((rn) => {
-        let has = false;
-        const tds = spec.map((sp) => {
+      let has = false;
+      const gridCell = (sp, rn) => {
           const key = sp.c + ":" + rn;
           const cls = sp.kind === "lyric" ? "prx" : "prn";
           const bb = bat[key];
@@ -4293,11 +4378,22 @@ function viewPrint() {
           const en = byName[key], el = byLyric[key], ex = byExtra[key];
           if (el && el.l.t) { has = true; return `<td class="prx">${cellHTML(el.l, el.i)}</td>`; }
           if (en && en.l.t) { has = true; return `<td class="prn">${nameHTML(en.l, en.i)}</td>`; }
-          if (ex && ex.l.extraRaw) { has = true; return `<td class="prn">${h(ex.l.extraRaw)}</td>`; }
+          if (ex && ex.l.extraRaw) { has = true; return `<td class="prn"><b class="hamomk">${h(ex.l.extraRaw)}</b></td>`; }
           return `<td class="${cls}"></td>`;
-        }).join("");
+      };
+      const trs = rowsSet.map((rn) => {
+        has = false;
+        const tds = spec.map((sp) => gridCell(sp, rn)).join("");
         return `<tr${has ? "" : ' class="prz"'}>${tds}</tr>`;
       }).join("");
+      // 名前＋歌詞の組が2つ以上ある（Excelが横に2段）なら、縦に積む。
+      // 横に並べたままだと幅で縮んで、文字が小さく紙が余る。
+      const pairs = [];
+      spec.forEach((sp, k) => {
+        if (sp.kind === "name") pairs.push([k]);
+        else if (pairs.length) pairs[pairs.length - 1].push(k);
+      });
+      if (pairs.length >= 2) needWide = true;   // 名前＋歌詞の組が2つ以上なら、紙を横向きにする
       inner = `<table class="prg">${trs}</table>`;
     } else {
       inner = `<div class="prbody">${so.lines.map((l, i) => {
@@ -4341,7 +4437,8 @@ function viewPrint() {
       ${h(noGrid.map((x) => songName(x)).join("、"))} は元の並びを再現できません。Excelから読み込み直すと同じ並びになります。</div>` : ""}
   </div>
   <div class="scroll">
-    <div class="pr" id="prpage">${body}</div>
+    ${needWide ? `<style>@page{size:A4 landscape;margin:0}</style>` : ""}
+    <div class="pr${needWide ? " land" : ""}" id="prpage">${body}</div>
     ${body ? "" : `<p class="noprint" style="padding:30px;text-align:center;color:var(--dim);font-size:13px">上の曲名を押して選んでください</p>`}
     <div class="noprint" style="height:40px"></div>
   </div>`;
@@ -5830,6 +5927,39 @@ document.addEventListener("pointerup", (e) => {
   paintInk();
 });
 document.addEventListener("pointercancel", (e) => { inkPts.delete(e.pointerId); inkPath = null; });
+
+/* ---- 歌詞を2本指で拡大・縮小する ---- */
+// ライブ・レコーディング・メンバー側のどれでも効く。
+let pinch = null;
+function pinchSize(v) {
+  if (S.recMode && U.overview) { S.recOvSize = Math.max(9, Math.min(28, Math.round(v))); return S.recOvSize; }
+  if (U.overview) { U.ovSize = Math.max(7, Math.min(20, Math.round(v))); return U.ovSize; }
+  S.size = Math.max(11, Math.min(34, Math.round(v)));
+  return S.size;
+}
+const pinchNow = () => (S.recMode && U.overview) ? S.recOvSize : (U.overview ? U.ovSize : S.size);
+document.addEventListener("touchstart", (e) => {
+  if (e.touches.length !== 2) return;
+  if (U.sheet || U.menu || U.picker) return;
+  if (U.view !== "live") return;
+  const t = e.touches;
+  pinch = { d: Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY) || 1, base: pinchNow() };
+}, { passive: true });
+document.addEventListener("touchmove", (e) => {
+  if (!pinch || e.touches.length !== 2) return;
+  const t = e.touches;
+  const d = Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY) || 1;
+  const v = pinchSize(pinch.base * (d / pinch.d));
+  // 描き直さずに、今出ている文字の大きさだけ変える（指の動きに遅れないように）
+  const sel = U.overview ? ".ovcols, .ogrid, .ovword, .ovpage" : ".txt";
+  document.querySelectorAll(sel).forEach((el) => { el.style.fontSize = v + "px"; });
+  e.preventDefault();
+}, { passive: false });
+document.addEventListener("touchend", (e) => {
+  if (!pinch || e.touches.length) return;
+  pinch = null;
+  save(); render();
+});
 
 /* ---- シートの歌詞をなぞって選ぶ ---- */
 let rgDrag = null;
