@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "5.7";
+const APP_VER = "5.8";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -4471,8 +4471,11 @@ function viewPrint() {
         const t = n.tags.length ? n.tags.map(tagName).join("・") : (n.memo ? "メモ" : "");
         return `[${t}${n.pitch ? " " + pitchLabel(n.pitch) : ""}${n.memo ? " " + n.memo : ""}]`;
       };
+      // 文字を選ばずに行ごと指摘したものは、その行の歌詞ぜんぶに下線を引く。
+      // タグだけだとどの行か紙の上で追いにくいため。
+      const wholeLine = ns.some((n) => n.from == null);
       let cells = chars.map((ch, ci) => {
-        const mk = ns.find((n) => n.from != null && ci >= n.from && ci <= n.to);
+        const mk = wholeLine || ns.find((n) => n.from != null && ci >= n.from && ci <= n.to);
         const tail = ns.filter((n) => n.from != null && n.to === ci).map((n) => `<b class="prt">${h(mark(n))}</b>`).join("");
         return (mk ? `<u>${ch === " " ? "&nbsp;" : h(ch)}</u>` : (ch === " " ? "&nbsp;" : h(ch))) + tail;
       }).join("");
