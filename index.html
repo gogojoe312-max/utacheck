@@ -218,7 +218,7 @@ button{cursor:pointer}
 .head{font-size:11px;color:var(--dim);font-weight:400;margin:18px 0 8px;letter-spacing:.08em}
 
 /* 紙・PDF用 */
-.pr.land .prbox{width:257mm;height:170mm}
+.pr.land .prbox{width:257mm;height:144mm}
 
 .pr{background:#fff;color:#111;padding:0;width:170mm;margin:0 auto}
 
@@ -226,7 +226,7 @@ button{cursor:pointer}
 
 .prs{break-inside:avoid;page-break-inside:avoid}
 .prs + .prs{break-before:page;page-break-before:always}
-.prbox{width:170mm;height:222mm;overflow:hidden;position:relative}
+.prbox{width:170mm;height:196mm;overflow:hidden;position:relative}
 /* 縮めても読めない長い曲は、1ページに押し込まず紙をまたぐ */
 .prs.prlong{break-inside:auto;page-break-inside:auto}
 .prs.prlong .prbox{height:auto;overflow:visible}
@@ -247,9 +247,9 @@ button{cursor:pointer}
 .prm{margin-top:10px;padding:7px 9px;border:1px solid #999;border-radius:4px;font-size:1em;white-space:pre-wrap;break-inside:avoid}
 @media print{
   html,body{height:auto;overflow:visible;background:#fff}
-  .pr.land .prbox{width:257mm;height:170mm}
+  .pr.land .prbox{width:257mm;height:144mm}
 
-.pr{transform:none!important;width:170mm!important;margin:0 auto!important;padding:14mm 0 0!important}
+.pr{transform:none!important;width:170mm!important;margin:0 auto!important;padding:2mm 0 0!important}
   #app{height:auto;display:block;overflow:visible}
   .noprint,.bottom,.hd{display:none!important}
   .scroll{overflow:visible!important;flex:none;padding:0!important;margin:0!important}
@@ -269,6 +269,6 @@ button{cursor:pointer}
 <div id="app"></div>
 <script src="vendor/pdf.min.js"></script>
 <script src="vendor/xlsx.full.min.js"></script>
-<script src="app.js?v=5.0"></script>
+<script src="app.js?v=5.1"></script>
 </body>
 </html>
