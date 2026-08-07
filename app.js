@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "4.9";
+const APP_VER = "5.0";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -4467,8 +4467,25 @@ function fitPrintDOM() {
       sec.classList.add("prlong");
       inner.style.transform = "none";
       inner.style.width = "";
-      inner.style.fontSize = (PR_BASE * K_MIN).toFixed(2) + "px";
       box.style.height = "auto";
+      let f = PR_BASE * K_MIN;
+      inner.style.fontSize = f.toFixed(2) + "px";
+      // ここからは推測せず、実際の高さを測って決める。
+      // 読める大きさで置いた結果、あと少しで1ページに収まるなら、
+      // そこまで詰めて1枚にする（2枚目に総括だけ、のような紙を出さない）。
+      const fits = () => inner.scrollHeight <= bh - 6;
+      if (!fits() && inner.scrollHeight <= bh * 1.25) {
+        const floor = PR_BASE * 0.42;
+        for (let n = 0; n < 14 && !fits(); n++) {
+          f *= 0.96;
+          if (f < floor) break;
+          inner.style.fontSize = f.toFixed(2) + "px";
+        }
+      }
+      if (fits()) {                       // 1ページに収まった
+        sec.classList.remove("prlong");
+        box.style.height = Math.min(bh, inner.scrollHeight + 10) + "px";
+      }
       return;
     }
     inner.style.transformOrigin = "top left";
@@ -4652,7 +4669,12 @@ function viewPrint() {
       ${h(noGrid.map((x) => songName(x)).join("、"))} は元の並びを再現できません。Excelから読み込み直すと同じ並びになります。</div>` : ""}
   </div>
   <div class="scroll">
-    ${needWide ? `<style>@page{size:A4 landscape;margin:0}</style>` : ""}
+    ${needWide ? `<style>@page{size:A4 landscape;margin:0}</style>
+    <div class="noprint" style="padding:8px 12px;background:#2A2118;color:#F0C089;font-size:12px;line-height:1.6">
+      この曲は歌割表が横に2段あるので、紙は<b>横向き</b>で組んでいます。
+      印刷／PDFの画面で「方向」が縦向きになっていたら、<b>横向きに変えてください</b>。
+      iPhoneは方向の指定を無視することがあり、縦のままだと文字が小さくなります。
+    </div>` : ""}
     <div class="pr${needWide ? " land" : ""}" id="prpage">${body}</div>
     ${body ? "" : `<p class="noprint" style="padding:30px;text-align:center;color:var(--dim);font-size:13px">上の曲名を押して選んでください</p>`}
     <div class="noprint" style="height:40px"></div>
