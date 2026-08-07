@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "3.8";
+const APP_VER = "3.9";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -383,6 +383,14 @@ function focusList() {
 }
 
 const isAgeri = (l) => (l || {}).label === "煽り" || (l || {}).labelRaw === "煽り";
+// 歌詞の無い空きは、イントロ／間奏／アウトロとして扱う。ここにも指摘を付けられる。
+function gapName(so, i) {
+  if (!so || !(so.lines[i] || {}).gap) return "";
+  const has = (l) => !l.gap && l.t;
+  if (!so.lines.slice(0, i).some(has)) return "イントロ";
+  if (!so.lines.slice(i + 1).some(has)) return "アウトロ";
+  return "間奏";
+}
 // 名前を出す。「ハモ ◯◯」の部分は色を変えて、ひと目で分かるようにする。
 function labelHTML(so, i) {
   const t = labelOf(so, i);
@@ -904,6 +912,72 @@ async function parsePDF(file) {
   return finalize(cleanName(file.name), [title, credit].filter(Boolean).join("　"), allRows);
 }
 
+// 歌割表の名前は、そのまとまりの縦の「真ん中」に置かれる（結合セル＋中央揃え）。
+// 近い方の名前にぶら下げるだけだと、3行のまとまりの一番下の行が
+// 次の名前とほぼ等距離になり、そちらに取られてしまう。
+// （例：上村［吹き硝子／映らない／透明水晶］の「透明水晶」が
+//   次の「小野田・松原」に0.6pt差で取られていた）
+// そこで、名前の位置を中心にして、上下へ同時に広げていく。
+function assignOwners(list, med) {
+  const lyr = [];
+  list.forEach((r) => { r.owner = null; if (r.t) lyr.push(r); });
+  const labels = list.filter((r) => r.label);
+  if (!lyr.length || !labels.length) return;
+  const far = med * 1.7;                        // これ以上あいていたら段落の切れ目
+  const owner = new Array(lyr.length).fill(null);
+
+  const runs = labels.map((L) => {
+    let k = 0, bd = Infinity;
+    lyr.forEach((r, i) => { const d = Math.abs(r.top - L.top); if (d < bd) { bd = d; k = i; } });
+    let lo = k, hi = k;
+    // 行と行のちょうど間にいるなら、上下2行でひとまとまり（偶数行のまとまり）
+    if (bd > med * 0.35) {
+      if (lyr[k].top < L.top) hi = Math.min(k + 1, lyr.length - 1);
+      else lo = Math.max(k - 1, 0);
+    }
+    return { L, lo, hi, k };
+  });
+
+  // まず名前そのものの位置を押さえる
+  runs.forEach((rn) => {
+    for (let i = rn.lo; i <= rn.hi; i++) if (owner[i] == null) owner[i] = rn.L;
+    while (rn.lo <= rn.hi && owner[rn.lo] !== rn.L) rn.lo++;
+    while (rn.hi >= rn.lo && owner[rn.hi] !== rn.L) rn.hi--;
+  });
+  // 取り合いに負けて行が無くなった名前は、近くの空いている行を拾う
+  runs.forEach((rn) => {
+    if (rn.lo <= rn.hi) return;
+    for (let d = 1; d <= 2; d++) {
+      for (const i of [rn.k - d, rn.k + d]) {
+        if (i >= 0 && i < lyr.length && owner[i] == null) {
+          owner[i] = rn.L; rn.lo = rn.hi = i; return;
+        }
+      }
+    }
+  });
+  // 上下へ同時に広げる。片側でも埋まっていたら止める（＝中央揃えの対称性を保つ）
+  let moved = true;
+  while (moved) {
+    moved = false;
+    runs.forEach((rn) => {
+      if (rn.lo > rn.hi) return;
+      const a = rn.lo - 1, b = rn.hi + 1;
+      if (a < 0 || b >= lyr.length) return;
+      if (owner[a] != null || owner[b] != null) return;
+      if (lyr[a + 1].top - lyr[a].top > far) return;      // 段落をまたがない
+      if (lyr[b].top - lyr[b - 1].top > far) return;
+      owner[a] = rn.L; owner[b] = rn.L; rn.lo = a; rn.hi = b;
+      moved = true;
+    });
+  }
+  // どこにも入らなかった行は、すぐ上の名前の続きとして扱う
+  let cur = null;
+  lyr.forEach((r, i) => {
+    if (owner[i]) cur = owner[i];
+    r.owner = owner[i] || cur;
+  });
+}
+
 function parsePage(items, isFirstPage, pageH) {
   if (!items.length) return { title: "", credit: "", rows: [] };
   // 行にまとめる
@@ -1020,21 +1094,14 @@ function parsePage(items, isFirstPage, pageH) {
     });
   }
 
-  // ラベルなしの行を、最も近いラベル行にぶら下げる
   const out = [];
   per.forEach((list) => {
     if (!list.length) return;
-    const labeled = list.filter((r) => r.label);
-    list.forEach((r) => {
-      if (r.label) { r.owner = r; return; }
-      let best = null, bd = Infinity;
-      labeled.forEach((L) => { const d = Math.abs(L.top - r.top); if (d < bd) { bd = d; best = L; } });
-      r.owner = bd <= 26 ? best : null;
-    });
     // 段落の切れ目
     const gaps = [];
     for (let i = 1; i < list.length; i++) gaps.push(list[i].top - list[i - 1].top);
     const med = gaps.length ? gaps.slice().sort((a, b) => a - b)[Math.floor(gaps.length / 2)] : 12;
+    assignOwners(list, med);
     const seen = new Set();
     list.forEach((r, i) => {
       if (i > 0 && list[i].top - list[i - 1].top > med * 1.7) out.push(["", ""]);
@@ -1448,8 +1515,14 @@ async function parseXLSX(file, buf) {
       }
       if (!nv && CREDIT.test(lv)) { head.push(lv); lead.forEach((x) => head.unshift(x[1])); lead = []; return; }
       if (bi === 0 && bubbleAt[ri]) {
-        // 吹き出し（煽り）は、その行の前に別の行として入れる
-        bubbleAt[ri].forEach((t2) => rows.push(["煽り", softText(t2), "", "", "", "", "煽り", ""]));
+        // 吹き出し（煽り）は別の行として入れる。
+        // ただし、ひとつの歌割のまとまり（名前の無い続きの行）の途中に割り込ませると
+        // まとまりが分断されるので、そのまとまりの手前まで戻して置く。
+        bubbleAt[ri].forEach((t2) => {
+          let at = rows.length;
+          while (at > 0 && rows[at - 1][0] === "→") at--;
+          rows.splice(at, 0, ["煽り", softText(t2), "", "", "", "", "煽り", ""]);
+        });
         delete bubbleAt[ri];
       }
       if (nv) topRun = false;
@@ -2728,7 +2801,23 @@ function viewLive() {
     const ns0 = NOTES().filter((n) => n.songId === s.id && n.showId === S.showId);
     const gp = groupPos(s.lines);
     body = s.lines.map((l, i) => {
-      if (l.gap) return `<div class="gap"></div>`;
+      if (l.gap) {
+        const gns = ns0.filter((n) => covers(n, i));
+        if (VIEW() && !gns.length) return `<div class="gap"></div>`;
+        const gm = gns.map((n) => {
+          const c = noteColor(n);
+          const txt = n.tags.length ? n.tags.map(tagName).join("/") : (n.memo ? "メモ" : "・");
+          return `<b class="mk" style="background:${c}">${h(txt)}${n.pitch ? " ♪" + h(pitchLabel(n.pitch)) : ""}</b>`;
+        }).join("");
+        const gp2 = gns.filter((n) => n.memo).map((n) =>
+          `<button class="tagpill" data-act="note" data-i="${i}" style="color:var(--dim)">${h(n.memo)}</button>`).join("");
+        const gt = gns.length ? noteColor(gns[0]) : "";
+        return `<div class="ln lngap" style="${gt ? `background:color-mix(in srgb,${gt} 9%,transparent)` : ""}">
+          <button class="lbl" data-act="noteblock" data-i="${i}" style="color:var(--dim)">${gapName(s, i)}</button>
+          <div class="brk"></div>
+          <div class="grow" style="min-width:0"><button data-act="noteblock" data-i="${i}"
+            style="display:block;width:100%;text-align:left;min-height:14px">${gm}</button>${gp2}</div></div>`;
+      }
       const ns = ns0.filter((n) => covers(n, i));
       const chars = Array.from(S.recMode && l.add ? "（" + l.t + "）" : l.t);
       const badge = (n) => {
@@ -2870,7 +2959,13 @@ function viewOverview(s) {
   const ns0 = NOTES().filter((n) => n.songId === s.id && n.showId === S.showId);
   const gp = groupPos(s.lines);
   const rows = s.lines.map((l, i) => {
-    if (l.gap) return `<div style="height:7px"></div>`;
+    if (l.gap) {
+      const gns = ns0.filter((n) => covers(n, i));
+      if (!gns.length) return `<div style="height:7px"></div>`;
+      return `<button class="ovl" data-act="jumpline" data-i="${i}">
+        <span class="ovn" style="color:var(--dim)">${gapName(s, i)}</span><span class="ovb"></span><span class="ovt">${
+        gns.map((n) => `<b class="mk ovm" style="background:${noteColor(n)}">${h(n.tags.length ? n.tags.map(tagName).join("/") : "メモ")}</b>`).join("")}</span></button>`;
+    }
     const ns = ns0.filter((n) => covers(n, i));
     const chars = Array.from(l.t);
     const cells = chars.map((ch, ci) => {
@@ -3344,7 +3439,9 @@ ${shows}</div>
       return `<span data-r="${ci}" data-rl="${li}" style="${on ? "background:color-mix(in srgb,var(--accent) 30%,transparent);border-bottom-color:var(--bad)" : ""}">${ch === " " ? "&nbsp;" : h(ch)}</span>`;
     }).join("");
   };
-  const rangeHtml = rl1 > rl0
+  const rangeHtml = l.gap
+    ? `<span class="rgtx" style="color:var(--dim)">${h(gapName(s, sh.lineIdx))}（歌詞なし）</span>`
+    : rl1 > rl0
     ? Array.from({ length: rl1 - rl0 + 1 }, (_, k) => rl0 + k)
         .filter((li) => s.lines[li] && !s.lines[li].gap)
         .map((li) => `<div class="rgline"><span class="rgn">${li + 1}</span><span class="rgtx" data-rl="${li}">${lineHtml(li)}</span></div>`).join("")
