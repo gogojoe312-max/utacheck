@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "6.0";
+const APP_VER = "6.1";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -6865,38 +6865,77 @@ async function unpackBackup(o) {
 
 // バックアップの置き場所（Gistのid）を見失った時に、GitHubから探し直す。
 // 端末のデータが飛んでも、GitHub側のバックアップは残っている。
+// 過去の版（Gistの更新履歴）まで遡って探す。
 async function findBackup() {
   if (!S.ghToken) { alert("先に自動公開のトークンを入れてください。"); return; }
   let list;
   try { list = await gh("/gists?per_page=100"); }
   catch (e) { alert("GitHubに接続できませんでした。\n" + e.message); return; }
-  const cands = (list || []).filter((g) => g.files && g.files["utacheck-backup.json"]);
-  if (!cands.length) { alert("バックアップが見つかりませんでした。"); return; }
+  const isBk = (g) => Object.keys((g && g.files) || {}).some((n) => /backup/i.test(n))
+    || /歌チェック|utacheck/i.test(g.description || "");
+  const cands = (list || []).filter(isBk);
+  if (!cands.length) {
+    alert(`Gistは ${(list || []).length}件 見つかりましたが、\nバックアップらしいものはありませんでした。`);
+    return;
+  }
   cands.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
+  const fails = [];
+  let seen = 0;
   for (const g of cands) {
-    let obj = null;
-    try {
-      const full = await gh("/gists/" + g.id);
-      const f = full.files["utacheck-backup.json"];
-      let raw = JSON.parse(f.content);
-      if (raw && raw.enc && !S.bkKey) {
-        const pw = prompt("このバックアップには合言葉がかかっています。\n入れてください。", "");
-        if (pw == null) continue;
-        S.bkKey = pw.trim();
+    let full;
+    try { full = await gh("/gists/" + g.id); }
+    catch (e) { fails.push(`${g.id.slice(0, 7)}：開けません（${e.message}）`); continue; }
+    // 最新の版と、過去の版を新しい順に
+    const vers = [{ sha: "", at: full.updated_at }]
+      .concat((full.history || []).map((h) => ({ sha: h.version, at: h.committed_at })));
+    for (const v of vers) {
+      let files = full.files;
+      if (v.sha) {
+        try { files = (await gh("/gists/" + g.id + "/" + v.sha)).files; }
+        catch (e) { continue; }
       }
-      obj = await unpackBackup(raw);
-    } catch (e) { continue; }
-    const st = (obj && obj.state) || {};
-    const when = new Date(obj.at || g.updated_at).toLocaleString("ja-JP");
-    const n = `公演${(st.shows || []).length}件・曲${(st.songs || []).length}件・記録${(st.notes || []).length}件`;
-    if (confirm(`見つかりました。\n\n${when}\n${n}\n\nこれを使いますか？\n（「いいえ」で次の候補を見ます）`)) {
-      S.bkGistId = g.id;
-      save();
-      await restoreBackup();
-      return;
+      const key = Object.keys(files || {}).find((n) => /backup/i.test(n));
+      if (!key) continue;
+      let obj = null;
+      try {
+        let raw = JSON.parse(files[key].content);
+        if (raw && raw.enc && !S.bkKey) {
+          const pw = prompt("このバックアップには合言葉がかかっています。\n入れてください。", "");
+          if (pw == null) break;
+          S.bkKey = pw.trim();
+        }
+        obj = await unpackBackup(raw);
+      } catch (e) {
+        fails.push(`${g.id.slice(0, 7)} ${new Date(v.at).toLocaleString("ja-JP")}：${e.message}`);
+        continue;
+      }
+      const st = (obj && obj.state) || {};
+      const cnt = (st.shows || []).length + (st.songs || []).length + (st.notes || []).length;
+      if (!cnt) continue;                       // 空の版は飛ばす
+      seen++;
+      const when = new Date(obj.at || v.at).toLocaleString("ja-JP");
+      const n = `公演${(st.shows || []).length}件・曲${(st.songs || []).length}件・記録${(st.notes || []).length}件`;
+      if (confirm(`${seen}件目\n\n${when}\n${n}\n\nこれを使いますか？\n（「いいえ」でもっと古い版を見ます）`)) {
+        S.bkGistId = g.id;
+        save();
+        if (v.sha) {                            // 過去の版はその場で戻す
+          const tk = S.ghToken, bk = S.bkGistId, bkk = S.bkKey;
+          Object.keys(S).forEach((k) => { delete S[k]; });
+          Object.assign(S, st);
+          S.ghToken = tk; S.bkGistId = bk; if (bkk) S.bkKey = bkk;
+          save();
+          alert("戻しました。");
+          location.reload();
+        } else {
+          await restoreBackup();
+        }
+        return;
+      }
     }
   }
-  alert("ほかに候補はありませんでした。");
+  alert(`中身のある版は ${seen}件 見つかりました。\n`
+    + (fails.length ? `\n開けなかったもの:\n${fails.slice(0, 6).join("\n")}` : "")
+    + `\n\nGist ${cands.length}件を調べました。`);
 }
 
 async function doBackup(silent) {
