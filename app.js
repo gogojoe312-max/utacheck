@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "6.5";
+const APP_VER = "6.6";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -4858,7 +4858,8 @@ function viewSetup() {
       <button class="ghost" data-act="bkfile" style="margin-bottom:8px">ファイルに書き出す</button>
       <button class="ghost" data-act="bkrestore" style="color:var(--bad);margin-bottom:6px">バックアップから戻す</button>
       <button class="ghost" data-act="bkfind" style="margin-bottom:6px">バックアップを探す（見つからない時）</button>
-      <button class="ghost" data-act="bkfromid" style="margin-bottom:10px">GistのURLを指定して戻す</button>
+      <button class="ghost" data-act="bkfromid" style="margin-bottom:6px">GistのURLを指定して戻す</button>
+      <button class="primary" data-act="bkfrompub" style="margin-bottom:10px">配信データから取り戻す</button>
       <button class="primary" data-act="editlink">自分用リンクを作る</button>
       <div style="font-size:11px;color:var(--dim);margin-top:8px">公演・曲・記録・総括・手書きをすべて保存します。録音とトークンは含みません。</div>
     </div>
@@ -5689,6 +5690,7 @@ document.addEventListener("click", (e) => {
     case "bkrestore": restoreBackup(); break;
     case "bkfind": findBackup(); break;
     case "bkfromid": restoreFromId(); break;
+    case "bkfrompub": recoverFromDelivery(); break;
     case "ghclear":
       if (confirm("トークンを消して入れ直します。\n配信先の設定は残ります。")) { S.ghToken = ""; save(); render(); }
       break;
@@ -6910,6 +6912,113 @@ async function unpackWithPass(raw, pw, alsoKnown) {
   }
   S.bkKey = keep;
   throw last || new Error("合言葉が合いません。");
+}
+
+// 端末のデータが消えた時に、配信データ（メンバーに見えている方）から自分のデータとして取り戻す。
+// 手書きと録音は配信に含まれないので戻らない。それ以外（公演・曲・歌割・指摘・総括）は戻る。
+async function recoverFromDelivery() {
+  try { await recoverInner(); }
+  catch (e) { alert("取り込めませんでした。\n" + ((e && e.message) || e)); }
+}
+async function recoverInner() {
+  if (!S.ghToken) { alert("先に自動公開のトークンを入れてください。"); return; }
+  alert("配信データを探します。\n少し時間がかかります。");
+  const list = await gh("/gists?per_page=100");
+  if (!Array.isArray(list)) { alert("GitHubからの返事が想定と違います。"); return; }
+  const cands = list.filter((g) => Object.keys(g.files || {}).some((n) => /^utacheck\.json$/i.test(n)));
+  if (!cands.length) { alert("配信データが見つかりませんでした。"); return; }
+  cands.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
+
+  let took = 0;
+  for (const g0 of cands) {
+    const label = (g0.description || "").replace(/^歌チェック\s*配信データ\s*\/?\s*/, "") || "（名前なし）";
+    if (!confirm(`「${label}」\n更新 ${new Date(g0.updated_at).toLocaleString("ja-JP")}\n\nこれを取り込みますか？`)) continue;
+    let d = null;
+    for (let tryN = 0; tryN < 4 && !d; tryN++) {
+      let raw;
+      try { raw = JSON.parse((await gh("/gists/" + g0.id)).files["utacheck.json"].content); }
+      catch (e) { alert("中身を読めませんでした。"); break; }
+      if (!raw || !raw.enc) { d = raw; break; }
+      const pw = prompt(`「${label}」の合言葉を入れてください。`
+        + (tryN ? "\n（合いませんでした）" : ""), "");
+      if (pw == null) break;
+      for (const k of keyVariants(pw)) {
+        try { d = await openJSON(raw, k); break; } catch (e) { /* 次の形を試す */ }
+      }
+    }
+    if (!d) continue;
+    mergeDelivery(d, g0, label);
+    took++;
+  }
+  if (!took) { alert("何も取り込みませんでした。"); return; }
+  S.viewer = false;
+  S.pubNotes = [];
+  sweep();
+  save();
+  alert(`取り込みました。\n公演${S.shows.length}件・曲${S.songs.length}件・記録${S.notes.length}件\n\n※手書きと録音は配信に含まれないため戻りません。`);
+  location.reload();
+}
+
+// 配信データ1つぶんを、自分のデータとして足す（すでにある分は消さない）
+function mergeDelivery(d, gist, label) {
+  (d.members || []).forEach((x) => addMember(x.name));
+  if (d.rosters && Object.keys(d.rosters).length) S.rosters = d.rosters;
+  if (Array.isArray(d.folderOrder) && d.folderOrder.length) S.folderOrder = d.folderOrder.slice();
+
+  // グループを用意する（配信先の設定もそのまま引き継ぐ）
+  let g = S.groups.find((x) => x.name === (d.groupName || label));
+  if (!g) { g = { id: uid(), name: d.groupName || label, key: "" }; S.groups.push(g); }
+  g.gistId = gist.id;
+  if (d.src) g.src = d.src;
+
+  // 公演（同じidがあれば残す）
+  (d.shows || []).forEach((x) => {
+    if (S.shows.some((y) => y.id === x.id)) return;
+    S.shows.push(Object.assign({}, x, {
+      absent: (x.absent || []).map((nm) => addMember(nm).id),
+    }));
+  });
+
+  const lib = Array.isArray(d.lib) ? d.lib : null;
+  const added = [];
+  (d.songs || []).forEach((sg) => {
+    const src = lib ? (lib[sg.libIdx] || { lines: [] }) : sg;
+    const o = Object.assign(buildSong(src), {
+      groupId: g.id, showId: sg.showId || S.showId, take: sg.take || 1,
+    });
+    S.songs.push(o); added.push(o);
+  });
+  (d.songs || []).forEach((sg, i) => { if (sg.fromIdx != null && added[sg.fromIdx]) added[i].from = added[sg.fromIdx].id; });
+
+  // 指摘は「自分の記録」として入れる（読むだけの印は付けない）
+  (d.notes || []).forEach((n) => {
+    const so = added[n.songIdx];
+    if (!so) return;
+    S.notes.push({
+      id: uid(), showId: n.showId || so.showId, songId: so.id, lineIdx: n.lineIdx,
+      lineEnd: n.lineEnd || null, from: n.from, to: n.to,
+      memberIds: (n.memberNames || []).map((nm) => addMember(nm).id),
+      tags: n.tags || [], memo: n.memo || "", pitch: n.pitch || null,
+      at: n.at != null ? n.at : null, ts: Date.now(),
+    });
+  });
+  (d.memos || []).forEach((m) => {
+    const so = added[m.songIdx];
+    if (so && m.text) S.memos[(m.showId || so.showId) + "|" + so.id] = m.text;
+  });
+  (d.gsubs || []).forEach((x) => {
+    const so = added[x.songIdx]; if (!so) return;
+    const k = (x.showId || so.showId) + "|" + so.id;
+    S.gsubs[k] = S.gsubs[k] || {};
+    S.gsubs[k][x.block] = (x.names || []).map((nm) => addMember(nm).id);
+  });
+  (d.subs || []).forEach((x) => {
+    const so = added[x.songIdx]; if (!so) return;
+    const k = (x.showId || so.showId) + "|" + so.id;
+    S.subs[k] = S.subs[k] || {};
+    S.subs[k][x.lineIdx] = (x.names || []).map((nm) => addMember(nm).id);
+  });
+  if (d.focusShow && S.shows.some((x) => x.id === d.focusShow)) S.showId = d.focusShow;
 }
 
 async function restoreFromId() {
