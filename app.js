@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "7.1";
+const APP_VER = "7.2";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1598,10 +1598,28 @@ async function readBubbles(raw, sheetIdx) {
 
 async function parseXLSX(file, buf) {
   const raw0 = buf || new Uint8Array(await file.arrayBuffer());
-  const wb = XLSX.read(raw0, { type: "array" });
+  // cellStyles を付けると、セルの塗りつぶしの色が読める。
+  // 歌割表ではワンハーフでカットした箇所をグレーで塗ってあるので、それを歌詞から外す。
+  let wb;
+  try { wb = XLSX.read(raw0, { type: "array", cellStyles: true }); }
+  catch (e) { wb = XLSX.read(raw0, { type: "array" }); }
   const pickedName = pickSheet(wb);
   const sh = wb.Sheets[pickedName];
   const bubbles = await readBubbles(raw0, wb.SheetNames.indexOf(pickedName));
+  const isGray = (ri, ci) => {
+    const cell = sh[XLSX.utils.encode_cell({ r: ri, c: ci })];
+    const f = cell && cell.s && (cell.s.fgColor || (cell.s.fill && cell.s.fill.fgColor));
+    let rgb = f && f.rgb;
+    if (!rgb || typeof rgb !== "string") return false;
+    if (rgb.length === 8) rgb = rgb.slice(2);            // 先頭は透明度
+    if (rgb.length !== 6) return false;
+    const R = parseInt(rgb.slice(0, 2), 16), G = parseInt(rgb.slice(2, 4), 16), B = parseInt(rgb.slice(4, 6), 16);
+    if ([R, G, B].some((x) => isNaN(x))) return false;
+    // 色味が無く（R≒G≒B）、白でも黒でもない＝グレー
+    const flat = Math.abs(R - G) < 18 && Math.abs(G - B) < 18 && Math.abs(R - B) < 18;
+    const mid = R > 0x40 && R < 0xF0;
+    return flat && mid;
+  };
   const grid = XLSX.utils.sheet_to_json(sh, { header: 1, blankrows: true, defval: "" })
     .map((r) => (r || []).map((v) => String(v == null ? "" : v).replace(/\s*\n\s*/g, " ")));
   const w = grid.reduce((m, r) => Math.max(m, r.length), 0);
@@ -1643,6 +1661,7 @@ async function parseXLSX(file, buf) {
   let lead = [];              // 作家名より前の、名前の付いていない行（題名・副題）
   const bubbleAt = {};
   bubbles.forEach((b) => { (bubbleAt[b.r] = bubbleAt[b.r] || []).push(b.t); });
+  let cutRows = 0;            // グレー＝ワンハーフでカットした行
   const pend = [];            // まだ入れていない煽り
   const flushPend = () => {
     while (pend.length) rows.push(["煽り", softText(pend.shift()), "", "", "", "", "煽り", ""]);
@@ -1671,6 +1690,8 @@ async function parseXLSX(file, buf) {
         return;
       }
       if (!nv && CREDIT.test(lv)) { head.push(lv); lead.forEach((x) => head.unshift(x[1])); lead = []; return; }
+      // ワンハーフでカットした箇所（グレー）は歌詞に出さない
+      if (lv && isGray(ri, lc)) { cutRows++; return; }
       if (bi === 0 && bubbleAt[ri]) {
         // 吹き出し（煽り）は別の行として入れる。ただしすぐには入れない。
         // ひとつの歌割のまとまり（名前の無い続きの行）の途中に割り込ませると
@@ -1695,6 +1716,7 @@ async function parseXLSX(file, buf) {
   // どの行にも当てはまらなかった吹き出しは、最後にまとめて入れる
   Object.keys(bubbleAt).forEach((k) => bubbleAt[k].forEach((t2) => rows.push(["煽り", softText(t2), "", "", "", "", "煽り", ""])));
   const parsed0 = finalize(cleanName(file.name), head.join("　"), rows);
+  if (cutRows) parsed0.cutRows = cutRows;   // グレー＝カットとして外した行数
   parsed0.sheetName = sheetName;
   return parsed0;
 }
