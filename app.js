@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "6.1";
+const APP_VER = "6.2";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -6867,10 +6867,16 @@ async function unpackBackup(o) {
 // 端末のデータが飛んでも、GitHub側のバックアップは残っている。
 // 過去の版（Gistの更新履歴）まで遡って探す。
 async function findBackup() {
+  try { await findBackupInner(); }
+  catch (e) { alert("探せませんでした。\n" + ((e && e.message) || e)); }
+}
+async function findBackupInner() {
+  alert("GitHubのバックアップを探します。\n少し時間がかかります。");
   if (!S.ghToken) { alert("先に自動公開のトークンを入れてください。"); return; }
   let list;
   try { list = await gh("/gists?per_page=100"); }
   catch (e) { alert("GitHubに接続できませんでした。\n" + e.message); return; }
+  if (!Array.isArray(list)) { alert("GitHubからの返事が想定と違います。\nトークンに gist の権限が付いているか確認してください。"); return; }
   const isBk = (g) => Object.keys((g && g.files) || {}).some((n) => /backup/i.test(n))
     || /歌チェック|utacheck/i.test(g.description || "");
   const cands = (list || []).filter(isBk);
