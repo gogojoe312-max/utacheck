@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "8.0";
+const APP_VER = "8.1";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -5964,32 +5964,7 @@ document.addEventListener("click", (e) => {
       break;
     }
     case "rpick": {
-      const inp = document.createElement("input");
-      inp.type = "file"; inp.accept = ".docx"; inp.multiple = true;
-      inp.onchange = async () => {
-        let last = null, n = 0;
-        const picked = Array.from(inp.files || []);
-        inp.value = "";
-        for (const f of picked) {
-          try {
-            const so = await parseDocx(f);
-            // 今開いている曲と同じフォルダに入れる（続けて読み込む時に散らばらない）
-            const near = recSong();
-            if (near && near.folder) so.folder = near.folder;
-            S.rsongs.push(so);
-            S.rsongId = so.id;
-            last = so; n++;
-          } catch (e) { alert(f.name + " を読めませんでした。\n" + e.message); }
-        }
-        if (last) {
-          const k = SONGS().findIndex((x) => x.id === last.id);
-          if (k >= 0) U.songIdx = k;
-
-        }
-        save(); U.menu = null; render();
-        if (n) setTimeout(() => alert(n + "曲を読み込みました。"), 0);
-      };
-      inp.click();
+      recFileInput().click();
       break;
     }
     case "gopdf": commitFields(); U.picker = false; U.printPick = null; U.view = "print"; render(); autoPrint(); break;
@@ -6201,6 +6176,11 @@ document.addEventListener("change", (e) => {
     const picked = Array.from(e.target.files || []);
     e.target.value = "";
     if (picked.length) handleFiles(picked);
+  }
+  if (e.target.id === "recfile") {
+    const picked = Array.from(e.target.files || []);
+    e.target.value = "";
+    if (picked.length) loadRecDocs(picked);
   }
   if (e.target.id === "swapfile") {
     const one = (e.target.files || [])[0];
@@ -6838,6 +6818,45 @@ async function swapSong(songId, file) {
   alert(lost
     ? `差し替えました。\n${kept}件はそのまま、${lost}件は近くの行に移しました。\n取り消すには「取消」を押してください。`
     : `差し替えました。\n指摘 ${kept}件はそのまま残っています。`);
+}
+
+// レコーディングの歌詞（Word）を読み込む
+// どの画面からでも使えるよう、本体に1つだけ置いておく。
+// 画面の中に書くと、その画面が出ていない時（レコーディング中など）に使えない。
+function recFileInput() {
+  let el = document.getElementById("recfile");
+  if (el && el.tagName === "INPUT") return el;
+  el = document.createElement("input");
+  el.type = "file";
+  el.id = "recfile";
+  el.multiple = true;
+  el.accept = ".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  el.style.display = "none";
+  document.body.appendChild(el);
+  return el;
+}
+
+async function loadRecDocs(picked) {
+  let last = null, n = 0;
+  for (const f of picked) {
+    U.busy = `${f.name} を読んでいます…`; render();
+    try {
+      const so = await parseDocx(f);
+      // 今開いている曲と同じフォルダに入れる（続けて読み込む時に散らばらない）
+      const near = recSong();
+      if (near && near.folder) so.folder = near.folder;
+      S.rsongs.push(so);
+      S.rsongId = so.id;
+      last = so; n++;
+    } catch (e) { alert(f.name + " を読めませんでした。\n" + ((e && e.message) || e)); }
+  }
+  U.busy = "";
+  if (last) {
+    const k = SONGS().findIndex((x) => x.id === last.id);
+    if (k >= 0) U.songIdx = k;
+  }
+  save(); U.menu = null; render();
+  if (n) setTimeout(() => alert(n + "曲を読み込みました。"), 0);
 }
 
 async function handleFiles(files) {
