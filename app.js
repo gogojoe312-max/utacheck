@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "8.2";
+const APP_VER = "8.3";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -72,7 +72,7 @@ let S = {
   members: [], songs: [], notes: [],
   shows: [], showId: "",
   src: "", setlistVer: 0,
-  deviceId: "", pubNotes: [],
+  deviceId: "", pubNotes: [], alertMsg: null, pubAlert: null, alertSeen: "",
   bkGistId: "", bkAt: 0, bkKey: "", bkHash: 0, bkSeen: 0, editPass: "",
   ghToken: "", autoPub: true,
   groups: [], groupId: "",
@@ -2930,6 +2930,22 @@ async function delRec(key) {
 const app = document.getElementById("app");
 let overlay = null;
 
+// ライブ中の緊急メッセージ。メンバーが「確認」を押すまで画面いっぱいに出す。
+const alertPending = () => {
+  const a = S.pubAlert;
+  return VIEW() && a && a.id && S.alertSeen !== a.id ? a : null;
+};
+function viewAlert(a) {
+  return `
+  <div class="scroll" style="display:flex;flex-direction:column;justify-content:center;align-items:center;
+    background:var(--bad);color:#0A0A0A;padding:28px 22px;text-align:center;gap:22px">
+    <div style="font-size:13px;font-weight:700;letter-spacing:.1em;opacity:.75">お知らせ</div>
+    <div style="font-size:26px;font-weight:800;line-height:1.5;white-space:pre-wrap;word-break:break-word">${h(a.text)}</div>
+    <div style="font-size:12px;opacity:.7">${new Date(a.at || Date.now()).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" })}</div>
+    <button data-act="alertok" style="background:#0A0A0A;color:#fff;border-radius:14px;padding:16px 40px;font-size:17px;font-weight:700">確認しました</button>
+  </div>`;
+}
+
 function render() {
   const keep = app.querySelector(".scroll");
   const st = keep ? keep.scrollTop : 0;
@@ -2937,7 +2953,9 @@ function render() {
   const sameView = app.dataset.view === sig;
   app.dataset.view = sig;
 
-  if (S.recMode && U.view === "recplan") app.innerHTML = viewPlan();
+  const pend = alertPending();
+  if (pend) app.innerHTML = viewAlert(pend);
+  else if (S.recMode && U.view === "recplan") app.innerHTML = viewPlan();
   else if (S.recMode && U.view === "recprint") app.innerHTML = viewRecPrint();
   else if (U.view === "absent") app.innerHTML = viewAbsent();
   else if (U.view === "print") app.innerHTML = viewPrint();
@@ -4217,6 +4235,23 @@ function viewSetupRec() {
     <h4 class="head">メトロノーム</h4>
     ${metroHTML()}
 
+    ${S.groups.some((g) => g.gistId) ? `
+    <h4 class="head">ライブ中のお知らせ</h4>
+    <div class="card" style="margin-bottom:22px">
+      ${S.alertMsg ? `<div style="background:var(--bad);color:#0A0A0A;border-radius:10px;padding:10px 12px;margin-bottom:8px">
+          <div style="font-size:11px;font-weight:700;opacity:.7;margin-bottom:4px">出しています ・ ${new Date(S.alertMsg.at).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" })}</div>
+          <div style="font-size:15px;font-weight:700;white-space:pre-wrap;word-break:break-word">${h(S.alertMsg.text)}</div>
+        </div>
+        <button class="ghost" data-act="alertclear" style="color:var(--bad);margin-bottom:8px">取り下げる</button>` : ""}
+      <textarea class="field" id="alerttx" rows="2" style="resize:none;margin-bottom:8px" placeholder="例：曲順が変わりました"></textarea>
+      <button class="primary" data-act="alertsend">メンバー全員に出す</button>
+      <div style="font-size:11px;color:var(--dim);line-height:1.7;margin-top:8px">
+        アプリを開いているメンバーの画面に、全画面で出ます（数秒〜10秒ほど）。<br>
+        メンバーが「確認しました」を押すと、その人の画面からは消えます。<br>
+        誰が見たかは分かりません。アプリを閉じている人には届きません。
+      </div>
+    </div>` : ""}
+
     <h4 class="head">保存領域</h4>
     <div class="card" style="margin-bottom:22px">
       ${(() => {
@@ -5060,6 +5095,23 @@ function viewSetup() {
           </div>
           <div style="font-size:11px;color:var(--dim);margin-top:6px">Tokens (classic) / gist</div>`}
     </div>
+
+    ${S.groups.some((g) => g.gistId) ? `
+    <h4 class="head">ライブ中のお知らせ</h4>
+    <div class="card" style="margin-bottom:22px">
+      ${S.alertMsg ? `<div style="background:var(--bad);color:#0A0A0A;border-radius:10px;padding:10px 12px;margin-bottom:8px">
+          <div style="font-size:11px;font-weight:700;opacity:.7;margin-bottom:4px">出しています ・ ${new Date(S.alertMsg.at).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" })}</div>
+          <div style="font-size:15px;font-weight:700;white-space:pre-wrap;word-break:break-word">${h(S.alertMsg.text)}</div>
+        </div>
+        <button class="ghost" data-act="alertclear" style="color:var(--bad);margin-bottom:8px">取り下げる</button>` : ""}
+      <textarea class="field" id="alerttx" rows="2" style="resize:none;margin-bottom:8px" placeholder="例：曲順が変わりました"></textarea>
+      <button class="primary" data-act="alertsend">メンバー全員に出す</button>
+      <div style="font-size:11px;color:var(--dim);line-height:1.7;margin-top:8px">
+        アプリを開いているメンバーの画面に、全画面で出ます（数秒〜10秒ほど）。<br>
+        メンバーが「確認しました」を押すと、その人の画面からは消えます。<br>
+        誰が見たかは分かりません。アプリを閉じている人には届きません。
+      </div>
+    </div>` : ""}
 
     <h4 class="head">保存領域</h4>
     <div class="card" style="margin-bottom:22px">
@@ -5993,6 +6045,27 @@ document.addEventListener("click", (e) => {
     case "bkfind": findBackup(); break;
     case "bkfromid": restoreFromId(); break;
     case "bkfrompub": recoverFromDelivery(); break;
+    case "alertok": {
+      const a = S.pubAlert;
+      if (a && a.id) { S.alertSeen = a.id; save(); }
+      render(); break;
+    }
+    case "alertsend": {
+      const el4 = document.getElementById("alerttx");
+      const tx = el4 ? String(el4.value || "").trim() : "";
+      if (!tx) { alert("メッセージを入れてください。"); break; }
+      if (!confirm(`メンバー全員の画面に、この内容を全画面で出します。\n\n${tx}\n\n送りますか？`)) break;
+      S.alertMsg = { id: uid(), text: tx, at: Date.now() };
+      save(); doPush("force"); render();
+      break;
+    }
+    case "alertclear": {
+      if (!S.alertMsg) break;
+      if (!confirm("お知らせを取り下げます。\nまだ見ていない人には出なくなります。")) break;
+      S.alertMsg = null;
+      save(); doPush("force"); render();
+      break;
+    }
     case "gostorage": commitFields(); U.view = "setup"; U.focus = "storage"; render(); break;
     case "shrinknow": {
       // 古い公演から順に消して、保存が通るまで小さくする。
@@ -6988,6 +7061,7 @@ function publicationData(gid) {
       version: Date.now(), authorId: S.deviceId, src: g.src || "", groupName: g.name || "",
       members: used.map((n) => ({ name: n })),
       rosters: S.rosters || {},                                   // 名簿の並び（年齢順）
+      alert: S.alertMsg || null,                                  // ライブ中のお知らせ
       groupOrder: S.groups.map((x) => x.name).filter(Boolean),    // グループの並び
       folderOrder: (S.folderOrder || []).slice(),                 // 公演の箱の並び
       lib,
@@ -7684,6 +7758,7 @@ function applySetlist(d) {
   if (d.rosters && Object.keys(d.rosters).length) S.rosters = d.rosters;
   if (d.groupOrder && d.groupOrder.length) S.groupOrder = d.groupOrder;
   if (Array.isArray(d.folderOrder)) S.folderOrder = d.folderOrder.slice();
+  S.pubAlert = d.alert || null;
   // 受け取った名簿に、その曲に出てこない人が混ざっていたら削る（古い配信への備え）
   const trimRoster = (o) => {
     const used = [];
