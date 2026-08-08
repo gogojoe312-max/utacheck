@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "8.6";
+const APP_VER = "8.7";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -6038,14 +6038,26 @@ document.addEventListener("click", (e) => {
       if (!gg || !gg.gistId || gg.nopub) { alert("いま選んでいるグループは配信していません。"); break; }
       if (!confirm(`${gg.name} のメンバーの画面に、この内容を全画面で出します。\n\n${tx}\n\n送りますか？`)) break;
       S.alertMsg = { id: uid(), text: tx, at: Date.now(), to: [gg.id] };
-      save(); doPush("force"); render();
+      if (el4) el4.value = "";
+      save(); render();
+      // 送れたかどうかをその場で伝える（黙って失敗すると気づけない）
+      doPush("force").then(() => {
+        alert(/公開済/.test(pushState)
+          ? `${gg.name} に出しました。\n${pushState}\n\nアプリを開いているメンバーの画面に、数秒〜10秒ほどで出ます。`
+          : `出せていません。\n${pushState || "通信できませんでした"}\n\n設定の「今すぐ送信」を試してください。`);
+        render();
+      });
       break;
     }
     case "alertclear": {
       if (!S.alertMsg) break;
       if (!confirm("お知らせを取り下げます。\nまだ見ていない人には出なくなります。")) break;
       S.alertMsg = null;
-      save(); doPush("force"); render();
+      save(); render();
+      doPush("force").then(() => {
+        alert(/公開済/.test(pushState) ? "取り下げました。" : `取り下げを送れていません。\n${pushState || "通信できませんでした"}`);
+        render();
+      });
       break;
     }
     case "gostorage": commitFields(); U.view = "setup"; U.focus = "storage"; render(); break;
