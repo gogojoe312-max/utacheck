@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "6.3";
+const APP_VER = "6.4";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -6858,11 +6858,21 @@ async function packBackup() {
 }
 async function unpackBackup(o) {
   let b = o;
-  if (o && o.enc) b = await openJSON(o, S.bkKey);
+  if (o && o.enc) {
+    // 合言葉が違うのか、そのあとの展開で失敗したのかを区別する。
+    // 一緒くたにすると「合言葉が違います」と出続けて原因が分からなくなる。
+    try { b = await openJSON(o, S.bkKey); }
+    catch (e) { const err = new Error("合言葉が合いません。"); err.badKey = 1; throw err; }
+  }
   if (!b || !b.bk) throw new Error("バックアップの形式ではありません。");
   let u8 = b64d(b.data);
-  if (b.z) u8 = await unsqueeze(u8);
-  return JSON.parse(new TextDecoder().decode(u8));
+  if (b.z) {
+    if (typeof DecompressionStream === "undefined") throw new Error("この端末では展開できません（DecompressionStream非対応）。");
+    try { u8 = await unsqueeze(u8); }
+    catch (e) { throw new Error("中身を展開できませんでした。" + ((e && e.message) ? "（" + e.message + "）" : "")); }
+  }
+  try { return JSON.parse(new TextDecoder().decode(u8)); }
+  catch (e) { throw new Error("中身を読み取れませんでした。"); }
 }
 
 // バックアップの置き場所（Gistのid）を見失った時に、GitHubから探し直す。
@@ -6892,7 +6902,10 @@ async function restoreFromId() {
           if (pw == null) return;
           S.bkKey = pw.trim();
         }
-        try { obj = await unpackBackup(raw); } catch (e) { if (!raw || !raw.enc) break; }
+        try { obj = await unpackBackup(raw); }
+        catch (e) {
+          if (!e.badKey) { alert(`開けませんでした。\n\n${e.message}`); break; }
+        }
       }
       if (!obj) continue;
       const st = obj.state || {};
@@ -6961,7 +6974,11 @@ async function findBackupInner() {
         }
         try { obj = await unpackBackup(raw); }
         catch (e) {
-          if (!raw || !raw.enc) { fails.push(`${g.id.slice(0, 7)}：${e.message}`); break; }
+          if (!e.badKey) {                      // 合言葉の問題ではないので聞き直さない
+            alert(`${new Date(v.at).toLocaleString("ja-JP")} の版は開けませんでした。\n\n${e.message}`);
+            fails.push(`${g.id.slice(0, 7)}：${e.message}`);
+            break;
+          }
         }
       }
       if (!obj) continue;
