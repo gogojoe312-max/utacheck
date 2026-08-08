@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "6.6";
+const APP_VER = "6.7";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -3231,6 +3231,7 @@ function renderSheet() {
         : (S.ghToken ? B2("ghstart", "自動公開を始める", "background:var(--accent);color:#0A0A0A;font-weight:700")
                      : `<div style="font-size:12px;color:var(--dim);padding:6px 2px">先にGitHubのトークンを入れてください。</div>`)}
       ${B2("nopubtoggle", g.nopub ? "配信するようにする" : "配信しないようにする", "color:var(--dim)")}
+      ${S.groups.length > 1 ? B2("gdel", "このグループを消す", "color:var(--bad)") : ""}
     </div>`;
     document.body.appendChild(overlay);
     return;
@@ -4061,6 +4062,23 @@ function viewSetupRec() {
     <h4 class="head">メトロノーム</h4>
     ${metroHTML()}
 
+    <h4 class="head">保存領域</h4>
+    <div class="card" style="margin-bottom:22px">
+      ${(() => {
+        const used = (() => { try { return (localStorage.getItem(KEY) || "").length; } catch (e) { return 0; } })();
+        const mb = (used / 1048576).toFixed(2);
+        const over = saveErr;
+        return `<div class="row" style="margin-bottom:6px">
+          <span class="grow" style="font-size:13px">いま使っている量</span>
+          <span style="font-size:13px;color:${over ? "var(--bad)" : "var(--dim)"};font-weight:700">${mb} MB</span>
+        </div>
+        <div style="font-size:11px;color:var(--dim);line-height:1.7">
+          公演${S.shows.length}件・曲${S.songs.length}件・記録${S.notes.length}件<br>
+          端末の上限に達すると保存できなくなります。${over ? "<b style=\"color:var(--bad)\">いま上限を超えています。</b>使わないグループや古い公演を消してください。" : ""}
+        </div>`;
+      })()}
+    </div>
+
     <h4 class="head">バックアップ</h4>
     <div class="card">
       <div class="row" style="margin-bottom:10px">
@@ -4848,6 +4866,23 @@ function viewSetup() {
           <div style="font-size:11px;color:var(--dim);margin-top:6px">Tokens (classic) / gist</div>`}
     </div>
 
+    <h4 class="head">保存領域</h4>
+    <div class="card" style="margin-bottom:22px">
+      ${(() => {
+        const used = (() => { try { return (localStorage.getItem(KEY) || "").length; } catch (e) { return 0; } })();
+        const mb = (used / 1048576).toFixed(2);
+        const over = saveErr;
+        return `<div class="row" style="margin-bottom:6px">
+          <span class="grow" style="font-size:13px">いま使っている量</span>
+          <span style="font-size:13px;color:${over ? "var(--bad)" : "var(--dim)"};font-weight:700">${mb} MB</span>
+        </div>
+        <div style="font-size:11px;color:var(--dim);line-height:1.7">
+          公演${S.shows.length}件・曲${S.songs.length}件・記録${S.notes.length}件<br>
+          端末の上限に達すると保存できなくなります。${over ? "<b style=\"color:var(--bad)\">いま上限を超えています。</b>使わないグループや古い公演を消してください。" : ""}
+        </div>`;
+      })()}
+    </div>
+
     <h4 class="head">バックアップ</h4>
     <div class="card">
       <div class="row" style="margin-bottom:10px">
@@ -5242,6 +5277,33 @@ document.addEventListener("click", (e) => {
       break;
     }
     case "gmenu": U.menu = { kind: "gmenu", id }; renderSheet(); break;
+    case "gdel": {
+      if (S.groups.length < 2) break;
+      const g = group(id); if (!g) break;
+      const songs = S.songs.filter((x) => x.groupId === id);
+      const ids = songs.map((x) => x.id);
+      const notes = S.notes.filter((n) => ids.includes(n.songId)).length;
+      if (!confirm(`「${g.name}」を消します。\n\nこのグループの 曲${songs.length}件・記録${notes}件 も一緒に消えます。\n手書き・録音・総括も消えます。\n\n元に戻せません。よろしいですか？`)) break;
+      if (songs.length && !confirm(`本当に消しますか？\n\n曲${songs.length}件が消えます。`)) break;
+      S.songs = S.songs.filter((x) => x.groupId !== id);
+      S.notes = S.notes.filter((n) => !ids.includes(n.songId));
+      // その曲にぶら下がっていたものも片付ける（残すと保存領域を食う）
+      ids.forEach((sid) => {
+        Object.keys(S.memos || {}).forEach((k) => { if (k.split("|")[1] === sid) delete S.memos[k]; });
+        Object.keys(S.draws || {}).forEach((k) => { if (k.split("|")[1] === sid) delete S.draws[k]; });
+        Object.keys(S.recs || {}).forEach((k) => { if (k.split("|")[1] === sid) { delClip("rec:" + k); delete S.recs[k]; } });
+        Object.keys(S.subs || {}).forEach((k) => { if (k.split("|")[1] === sid) delete S.subs[k]; });
+        Object.keys(S.subsMan || {}).forEach((k) => { if (k.split("|")[1] === sid) delete S.subsMan[k]; });
+        Object.keys(S.gsubs || {}).forEach((k) => { if (k.split("|")[1] === sid) delete S.gsubs[k]; });
+        delClip("xls:" + sid);
+      });
+      S.groups = S.groups.filter((x) => x.id !== id);
+      if (S.groupId === id) S.groupId = S.groups[0].id;
+      if (S.showFilter === id) S.showFilter = "";
+      U.menu = null;
+      save(); schedulePush(); renderSheet(); render();
+      break;
+    }
     case "nopubtoggle": {
       const g = group(id);
       if (!g) break;
