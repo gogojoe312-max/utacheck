@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "7.3";
+const APP_VER = "7.4";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -879,7 +879,8 @@ const SONGS = () => (S.recMode
   : S.songs.filter((x) => x.showId === S.showId));
 const takeLabel = (x) => {
   if (!x) return "";
-  if (x.takeName) return x.takeName;                 // 「本番」「リハ」など、自分で付けた名前
+  // 自分で付けた名前があればそれ。空文字を入れた時は「何も付けない」という意味。
+  if (x.takeName != null) return x.takeName;
   return (x.take || 1) > 1 ? `テイク${x.take}` : "";
 };
 const songName = (x) => x ? ((takeLabel(x) ? takeLabel(x) + "　" : "") + x.title) : "";
@@ -3548,8 +3549,8 @@ function renderSheet() {
           <button class="ghost" data-act="m-setgroup" data-id="" style="text-align:left;color:var(--dim);${!many && x && !x.groupId ? "background:var(--accent);color:#0A0A0A" : ""}">なし（配信しない）</button></div>`
       : `<div class="sec">
           ${B("m-rename", "曲名を変える")}
-          ${B("m-take", "テイクを増やす")}
-          ${many ? "" : B("m-takename", "テイクの名前を変える")}
+          ${B("m-take", "同じ曲をもう1つ作る")}
+          ${many ? "" : B("m-takename", "名前を付ける")}
           ${B("m-pdf", "この曲をPDFにする")}
           ${many ? "" : B("m-swap", "歌割を差し替える（記録はそのまま）")}
           ${(() => { const n = S.notes.filter((y) => y.songId === U.menu.id && y.showId === S.showId).length;
@@ -5289,13 +5290,8 @@ document.addEventListener("click", (e) => {
     case "m-takename": {
       const x = S.songs.find((y) => y.id === U.menu.id); U.menu = null;
       if (x) {
-        const now = x.takeName || ((x.take || 1) > 1 ? `テイク${x.take}` : "");
-        const nm = prompt("テイクの名前\n（空にすると「テイク◯」に戻ります）", now);
-        if (nm != null) {
-          const v = nm.trim();
-          if (v && v !== `テイク${x.take || 1}`) x.takeName = v; else delete x.takeName;
-          save(); schedulePush();
-        }
+        const nm = prompt("曲名の前に付ける名前\n（空にすると何も付きません）", takeLabel(x));
+        if (nm != null) { x.takeName = nm.trim(); save(); schedulePush(); }
       }
       render(); break;
     }
@@ -6252,7 +6248,7 @@ function dupShow(fromId) {
       lines: x.lines.map((l) => Object.assign({}, l, { parts: (l.parts || []).slice() })),
       roster: (x.roster || []).slice(), blocks,
       blockCells: x.blockCells, blockRows: x.blockRows, sheetName: x.sheetName,
-      take: x.take || 1, takeName: x.takeName || "", sig: x.sig, cols: x.cols,
+      take: x.take || 1, takeName: x.takeName != null ? x.takeName : null, sig: x.sig, cols: x.cols,
       impAt: impOf(x),
     });
   });
@@ -6940,7 +6936,7 @@ function publicationData(gid) {
       folderOrder: (S.folderOrder || []).slice(),                 // 公演の箱の並び
       lib,
       songs: songs.map((x) => ({
-        showId: x.showId, libIdx: entry(x), take: x.take || 1, takeName: x.takeName || "",
+        showId: x.showId, libIdx: entry(x), take: x.take || 1, takeName: x.takeName != null ? x.takeName : null,
         fromIdx: x.from != null && idx.has(x.from) ? idx.get(x.from) : null,
       })),
       shows: S.shows.filter((x) => showIds.includes(x.id)).map((x) => Object.assign({}, x, {
@@ -7346,7 +7342,7 @@ function mergeDelivery(d, gist, label) {
     const src = lib ? (lib[sg.libIdx] || { lines: [] }) : sg;
     const o = Object.assign(buildSong(src), {
       groupId: g.id, showId: sg.showId || S.showId, take: sg.take || 1,
-      takeName: sg.takeName || "",
+      takeName: sg.takeName != null ? sg.takeName : undefined,
     });
     S.songs.push(o); added.push(o);
   });
@@ -7651,7 +7647,7 @@ function applySetlist(d) {
   const lib = Array.isArray(d.lib) ? d.lib : null;
   (d.songs || []).forEach((sg) => {
     const src = lib ? (lib[sg.libIdx] || { lines: [] }) : sg;
-    const o = Object.assign(buildSong(src), { groupId: S.groupId, showId: sg.showId || S.showId, take: sg.take || 1, takeName: sg.takeName || "" });
+    const o = Object.assign(buildSong(src), { groupId: S.groupId, showId: sg.showId || S.showId, take: sg.take || 1, takeName: sg.takeName != null ? sg.takeName : undefined });
     trimRoster(o);
     S.songs.push(o); added.push(o);
   });
