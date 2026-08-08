@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "5.9";
+const APP_VER = "6.0";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -4856,7 +4856,8 @@ function viewSetup() {
       </div>
       <button class="primary" data-act="bknow" style="margin-bottom:8px">今すぐバックアップ</button>
       <button class="ghost" data-act="bkfile" style="margin-bottom:8px">ファイルに書き出す</button>
-      <button class="ghost" data-act="bkrestore" style="color:var(--bad);margin-bottom:10px">バックアップから戻す</button>
+      <button class="ghost" data-act="bkrestore" style="color:var(--bad);margin-bottom:6px">バックアップから戻す</button>
+      <button class="ghost" data-act="bkfind" style="margin-bottom:10px">バックアップを探す（見つからない時）</button>
       <button class="primary" data-act="editlink">自分用リンクを作る</button>
       <div style="font-size:11px;color:var(--dim);margin-top:8px">公演・曲・記録・総括・手書きをすべて保存します。録音とトークンは含みません。</div>
     </div>
@@ -5685,6 +5686,7 @@ document.addEventListener("click", (e) => {
     case "bknow": doBackup(false); break;
     case "bkfile": backupToFile(); break;
     case "bkrestore": restoreBackup(); break;
+    case "bkfind": findBackup(); break;
     case "ghclear":
       if (confirm("トークンを消して入れ直します。\n配信先の設定は残ります。")) { S.ghToken = ""; save(); render(); }
       break;
@@ -6859,6 +6861,42 @@ async function unpackBackup(o) {
   let u8 = b64d(b.data);
   if (b.z) u8 = await unsqueeze(u8);
   return JSON.parse(new TextDecoder().decode(u8));
+}
+
+// バックアップの置き場所（Gistのid）を見失った時に、GitHubから探し直す。
+// 端末のデータが飛んでも、GitHub側のバックアップは残っている。
+async function findBackup() {
+  if (!S.ghToken) { alert("先に自動公開のトークンを入れてください。"); return; }
+  let list;
+  try { list = await gh("/gists?per_page=100"); }
+  catch (e) { alert("GitHubに接続できませんでした。\n" + e.message); return; }
+  const cands = (list || []).filter((g) => g.files && g.files["utacheck-backup.json"]);
+  if (!cands.length) { alert("バックアップが見つかりませんでした。"); return; }
+  cands.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
+  for (const g of cands) {
+    let obj = null;
+    try {
+      const full = await gh("/gists/" + g.id);
+      const f = full.files["utacheck-backup.json"];
+      let raw = JSON.parse(f.content);
+      if (raw && raw.enc && !S.bkKey) {
+        const pw = prompt("このバックアップには合言葉がかかっています。\n入れてください。", "");
+        if (pw == null) continue;
+        S.bkKey = pw.trim();
+      }
+      obj = await unpackBackup(raw);
+    } catch (e) { continue; }
+    const st = (obj && obj.state) || {};
+    const when = new Date(obj.at || g.updated_at).toLocaleString("ja-JP");
+    const n = `公演${(st.shows || []).length}件・曲${(st.songs || []).length}件・記録${(st.notes || []).length}件`;
+    if (confirm(`見つかりました。\n\n${when}\n${n}\n\nこれを使いますか？\n（「いいえ」で次の候補を見ます）`)) {
+      S.bkGistId = g.id;
+      save();
+      await restoreBackup();
+      return;
+    }
+  }
+  alert("ほかに候補はありませんでした。");
 }
 
 async function doBackup(silent) {
