@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "7.6";
+const APP_VER = "7.7";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -6214,6 +6214,15 @@ document.addEventListener("change", (e) => {
   if (e.target.id === "songmemo") commitFields();
 });
 
+// 総括は打ちながら確定する。入力欄から離れるまで送られないと、
+// メンバー側に出るまでが遅くなるため。
+let memoTimer = null;
+document.addEventListener("input", (e) => {
+  if (e.target.id !== "songmemo") return;
+  clearTimeout(memoTimer);
+  memoTimer = setTimeout(() => commitFields(), 600);
+});
+
 // タグを押したらその場で確定して戻る
 let sheetTimer = null;
 function scheduleCommit() { clearTimeout(sheetTimer); commitNote(); }
@@ -7106,7 +7115,7 @@ function schedulePush() {
   if (!S.ghToken || !S.autoPub || !S.groups.some((g) => g.gistId)) return;
   pushState = "未送信";
   clearTimeout(pushTimer);
-  const wait = Math.max(12000 - (Date.now() - lastPushAt), 4000);
+  const wait = Math.max(6000 - (Date.now() - lastPushAt), 1500);
   pushTimer = setTimeout(() => doPush(true), wait);
 }
 
@@ -7170,7 +7179,7 @@ function hasPending() {
   });
 }
 
-// アプリを開いている間、1分ごとに自動でやりとりする
+// アプリを開いている間、自動でやりとりする
 setInterval(() => {
   if (document.hidden || preview) return;
   if (S.ghToken && S.groups.some((g) => g.gistId)) {
@@ -7179,7 +7188,7 @@ setInterval(() => {
     if (syncBackoff && Date.now() < syncBackoff) return;
     syncSetlist(false);
   }
-}, 15000);
+}, 6000);
 
 setInterval(() => {
   if (document.hidden || preview) return;
