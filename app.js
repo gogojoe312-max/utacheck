@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "6.2";
+const APP_VER = "6.3";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -4857,7 +4857,8 @@ function viewSetup() {
       <button class="primary" data-act="bknow" style="margin-bottom:8px">今すぐバックアップ</button>
       <button class="ghost" data-act="bkfile" style="margin-bottom:8px">ファイルに書き出す</button>
       <button class="ghost" data-act="bkrestore" style="color:var(--bad);margin-bottom:6px">バックアップから戻す</button>
-      <button class="ghost" data-act="bkfind" style="margin-bottom:10px">バックアップを探す（見つからない時）</button>
+      <button class="ghost" data-act="bkfind" style="margin-bottom:6px">バックアップを探す（見つからない時）</button>
+      <button class="ghost" data-act="bkfromid" style="margin-bottom:10px">GistのURLを指定して戻す</button>
       <button class="primary" data-act="editlink">自分用リンクを作る</button>
       <div style="font-size:11px;color:var(--dim);margin-top:8px">公演・曲・記録・総括・手書きをすべて保存します。録音とトークンは含みません。</div>
     </div>
@@ -5687,6 +5688,7 @@ document.addEventListener("click", (e) => {
     case "bkfile": backupToFile(); break;
     case "bkrestore": restoreBackup(); break;
     case "bkfind": findBackup(); break;
+    case "bkfromid": restoreFromId(); break;
     case "ghclear":
       if (confirm("トークンを消して入れ直します。\n配信先の設定は残ります。")) { S.ghToken = ""; save(); render(); }
       break;
@@ -6866,6 +6868,50 @@ async function unpackBackup(o) {
 // バックアップの置き場所（Gistのid）を見失った時に、GitHubから探し直す。
 // 端末のデータが飛んでも、GitHub側のバックアップは残っている。
 // 過去の版（Gistの更新履歴）まで遡って探す。
+// Gistを直接指定して戻す。探索で見つけられない時の確実な手段。
+async function restoreFromId() {
+  const inp = prompt("戻したいバックアップのGistを指定します。\nURL か ID を貼ってください。\n例 https://gist.github.com/xxxx/abc123...", "");
+  if (inp == null) return;
+  const id = (String(inp).trim().split(/[/?#]/).filter(Boolean).pop() || "").trim();
+  if (!id) { alert("IDが読み取れませんでした。"); return; }
+  try {
+    const full = await gh("/gists/" + id);
+    const vers = [{ sha: "", at: full.updated_at }]
+      .concat((full.history || []).map((h) => ({ sha: h.version, at: h.committed_at })));
+    for (const v of vers) {
+      let files = full.files;
+      if (v.sha) { try { files = (await gh("/gists/" + id + "/" + v.sha)).files; } catch (e) { continue; } }
+      const key = Object.keys(files || {}).find((n) => /backup/i.test(n));
+      if (!key) continue;
+      let raw; try { raw = JSON.parse(files[key].content); } catch (e) { continue; }
+      let obj = null;
+      for (let tryN = 0; tryN < 3 && !obj; tryN++) {
+        if (raw && raw.enc) {
+          const pw = prompt(`${new Date(v.at).toLocaleString("ja-JP")} の合言葉を入れてください。`
+            + (tryN ? "\n（合いませんでした）" : ""), S.bkKey || "");
+          if (pw == null) return;
+          S.bkKey = pw.trim();
+        }
+        try { obj = await unpackBackup(raw); } catch (e) { if (!raw || !raw.enc) break; }
+      }
+      if (!obj) continue;
+      const st = obj.state || {};
+      const when = new Date(obj.at || v.at).toLocaleString("ja-JP");
+      const n = `公演${(st.shows || []).length}件・曲${(st.songs || []).length}件・記録${(st.notes || []).length}件`;
+      if (!confirm(`${when}\n${n}\n\nこれで戻しますか？\n（「いいえ」でもっと古い版を見ます）`)) continue;
+      const tk = S.ghToken, bkk = S.bkKey;
+      Object.keys(S).forEach((k) => { delete S[k]; });
+      Object.assign(S, st);
+      S.ghToken = tk; S.bkGistId = id; if (bkk) S.bkKey = bkk;
+      save();
+      alert("戻しました。");
+      location.reload();
+      return;
+    }
+    alert("このGistから使える版が見つかりませんでした。");
+  } catch (e) { alert("開けませんでした。\n" + ((e && e.message) || e)); }
+}
+
 async function findBackup() {
   try { await findBackupInner(); }
   catch (e) { alert("探せませんでした。\n" + ((e && e.message) || e)); }
@@ -6903,18 +6949,22 @@ async function findBackupInner() {
       const key = Object.keys(files || {}).find((n) => /backup/i.test(n));
       if (!key) continue;
       let obj = null;
-      try {
-        let raw = JSON.parse(files[key].content);
-        if (raw && raw.enc && !S.bkKey) {
-          const pw = prompt("このバックアップには合言葉がかかっています。\n入れてください。", "");
+      let raw = null;
+      try { raw = JSON.parse(files[key].content); } catch (e) { continue; }
+      // 合言葉が違うことがあるので、失敗したらその場で聞き直す（黙って飛ばさない）
+      for (let tryN = 0; tryN < 3 && !obj; tryN++) {
+        if (raw && raw.enc && (!S.bkKey || tryN > 0)) {
+          const pw = prompt(`${new Date(v.at).toLocaleString("ja-JP")} のバックアップの合言葉を入れてください。`
+            + (tryN ? "\n（合いませんでした）" : ""), S.bkKey || "");
           if (pw == null) break;
           S.bkKey = pw.trim();
         }
-        obj = await unpackBackup(raw);
-      } catch (e) {
-        fails.push(`${g.id.slice(0, 7)} ${new Date(v.at).toLocaleString("ja-JP")}：${e.message}`);
-        continue;
+        try { obj = await unpackBackup(raw); }
+        catch (e) {
+          if (!raw || !raw.enc) { fails.push(`${g.id.slice(0, 7)}：${e.message}`); break; }
+        }
       }
+      if (!obj) continue;
       const st = (obj && obj.state) || {};
       const cnt = (st.shows || []).length + (st.songs || []).length + (st.notes || []).length;
       if (!cnt) continue;                       // 空の版は飛ばす
