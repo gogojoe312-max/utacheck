@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "8.1";
+const APP_VER = "8.2";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -83,7 +83,7 @@ let S = {
   plan: { start: "10:00", slots: [] },
   size: 19,
 };
-let U = { view: "live", songIdx: 0, sheet: null, mode: "member", allShows: false, picker: false, overview: false, ovSize: 9, recPick: null, sumOpen: "", draw: false, erase: false, pick: [], menu: null, printPick: null, focus: "", busy: "", allShowList: false, pdfBack: "", swapId: "" };
+let U = { view: "live", songIdx: 0, sheet: null, mode: "member", allShows: false, picker: false, overview: false, ovSize: 9, recPick: null, sumOpen: "", draw: false, erase: false, pick: [], menu: null, printPick: null, focus: "", busy: "", allShowList: false, pdfBack: "", swapId: "", markOnly: false };
 
 const S0 = JSON.parse(JSON.stringify(S));
 
@@ -3117,7 +3117,7 @@ function viewLive() {
         ? `<b style="color:var(--accent)">レコーディングモード</b>${s && s.folder ? " ・ " + h(s.folder) : ""}`
         : `<b style="color:var(--accent)">ライブモード</b>${s ? " ・ " + h((S.groups.find((x) => x.id === s.groupId) || {}).name || "") : ""} ・ ${h(showName() || "公演名未設定")}`}${SONGS().length ? ` ・ ${U.songIdx + 1}/${SONGS().length}` : ""}${pushState ? ` ・ <span style="color:${pushState === "未送信" ? "var(--bad)" : "var(--dim)"}">${h(pushState)}</span>` : ""}</div>
       ${VIEW() && S.pubAt ? `<div style="font-size:10px;line-height:1.4">${freshLine()}</div>` : ""}
-      <div class="t2 trunc">${s && takeLabel(s) ? `<b class="tkmk">${h(takeLabel(s))}</b>` : ""}${h(s ? s.title : "曲がありません")}</div>
+      <div class="t2 clamp2">${s && s.mark ? `<b style="color:var(--accent)">★</b> ` : ""}${s && takeLabel(s) ? `<b class="tkmk">${h(takeLabel(s))}</b>` : ""}${h(s ? s.title : "曲がありません")}</div>
     </button>
     ${S.recMode ? `<span id="pcd2" style="font-size:12px;color:var(--dim);font-variant-numeric:tabular-nums;margin-right:4px"></span>` : ""}
     <button class="ic" data-act="size">A</button>
@@ -3544,6 +3544,7 @@ function renderSheet() {
             style="text-align:left;margin-bottom:8px;${!many && x && x.groupId === g.id ? "background:var(--accent);color:#0A0A0A" : ""}">${h(g.name)}</button>`).join("")}
           <button class="ghost" data-act="m-setgroup" data-id="" style="text-align:left;color:var(--dim);${!many && x && !x.groupId ? "background:var(--accent);color:#0A0A0A" : ""}">なし（配信しない）</button></div>`
       : `<div class="sec">
+          ${B("m-mark", (many ? "印を付ける／外す" : ((S.songs.find((y) => y.id === U.menu.id) || {}).mark ? "★ 印を外す" : "★ 印を付ける")))}
           ${B("m-rename", "曲名を変える")}
           ${B("m-take", "テイクを増やす")}
           ${many ? "" : B("m-takenum", "テイク番号を変える")}
@@ -4916,14 +4917,16 @@ function viewSetup() {
       ${open ? `<div style="margin-left:14px">${list.map(showRow).join("")}</div>` : ""}`;
   }).join("");
 
-  const cur = SONGS();
-  const songs = cur.map((x, i) => {
+  const all2 = SONGS();
+  const cur = U.markOnly ? all2.filter((x) => x.mark) : all2;
+  const songs = cur.map((x0, i0) => {
+    const x = x0, i = all2.indexOf(x0);
     const on = U.pick.includes(x.id);
     return `<div class="row card" data-drop="g:${x.id}" style="margin-bottom:8px;${on ? "outline:1px solid var(--accent)" : ""}">
       <span class="grip" data-drag="song:${x.id}">⣿</span>
       <button data-act="picksong" data-id="${x.id}" style="width:26px;flex:0 0 26px;font-size:15px;color:${on ? "var(--accent)" : "var(--dim)"}">${on ? "☑" : "☐"}</button>
       <button class="grow" style="text-align:left;min-width:0" data-act="opensong" data-i="${i}">
-        <div class="trunc">${h(songName(x))}</div>
+        <div class="clamp2">${x.mark ? `<b style="color:var(--accent)">★</b> ` : ""}${h(songName(x))}</div>
         <div class="trunc" style="font-size:11px;color:var(--dim)">${x.groupId ? h((S.groups.find((g) => g.id === x.groupId) || {}).name || "—") : "配信しない"}${
         impOf(x) ? ` ・ 取り込み ${impLabel(impOf(x))}` : ""}${
         staleBy(x) ? `<span style="color:#F0B23C"> ・ 古い（別の公演に ${impLabel(staleBy(x))} 版）</span>` : ""}</div>
@@ -4936,6 +4939,7 @@ function viewSetup() {
   const bar = `<div class="chips" style="margin-bottom:10px">
       <button class="chip sm" data-act="pickall">${U.pick.length === cur.length && cur.length ? "選択を解除" : "すべて選ぶ"}</button>
       <button class="chip sm" data-act="sorttitle">曲名順</button>
+      ${S.songs.some((x) => x.mark) ? `<button class="chip sm" data-act="markonly" style="${U.markOnly ? "background:var(--accent);color:#0A0A0A" : "color:var(--accent)"}">★だけ</button>` : ""}
       ${U.pick.length ? `<button class="chip sm" data-act="pdfpicked" style="background:var(--accent);color:#0A0A0A">${U.pick.length}曲をPDF</button>
       <button class="chip sm" data-act="picktake">テイク</button>
       <button class="chip sm" data-act="clearpicked">記録を消す</button>
@@ -5278,6 +5282,17 @@ document.addEventListener("click", (e) => {
     }
     case "sorttitle": sortSongsByTitle(); schedulePush(); render(); break;
     case "songmenu": U.menu = { kind: "song", id: SONGS()[i] ? SONGS()[i].id : "" }; renderSheet(); break;
+    case "m-mark": {
+      const ids = U.menu.ids || [U.menu.id];
+      const anyOff = ids.some((sid) => !(S.songs.find((y) => y.id === sid) || {}).mark);
+      ids.forEach((sid) => {
+        const x = S.songs.find((y) => y.id === sid); if (!x) return;
+        if (anyOff) x.mark = 1; else delete x.mark;
+      });
+      U.menu = null; save(); schedulePush(); renderSheet(); render();
+      break;
+    }
+    case "markonly": U.markOnly = !U.markOnly; render(); break;
     case "m-rename": {
       const x = S.songs.find((y) => y.id === U.menu.id); U.menu = null;
       if (x) { const nm = prompt("曲名", x.title); if (nm && nm.trim()) { x.title = nm.trim(); save(); schedulePush(); } }

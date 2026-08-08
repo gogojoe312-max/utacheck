@@ -29,6 +29,8 @@ button{cursor:pointer}
 .row{display:flex;align-items:center;gap:8px}
 .grow{flex:1;min-width:0}
 .trunc{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* 長い曲名で後半が切れないよう、2行まで折り返して出す */
+.clamp2{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;white-space:normal;word-break:break-word;line-height:1.35}
 .hd{flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--line)}
 .hd .t1{font-size:11px;color:var(--dim)}
 .hd .t2{font-size:16px;font-weight:600}
@@ -263,6 +265,6 @@ button{cursor:pointer}
 <div id="app"></div>
 <script src="vendor/pdf.min.js"></script>
 <script src="vendor/xlsx.full.min.js"></script>
-<script src="app.js?v=8.1"></script>
+<script src="app.js?v=8.2"></script>
 </body>
 </html>
