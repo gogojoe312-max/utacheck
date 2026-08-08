@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "7.4";
+const APP_VER = "7.5";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -879,9 +879,8 @@ const SONGS = () => (S.recMode
   : S.songs.filter((x) => x.showId === S.showId));
 const takeLabel = (x) => {
   if (!x) return "";
-  // 自分で付けた名前があればそれ。空文字を入れた時は「何も付けない」という意味。
-  if (x.takeName != null) return x.takeName;
-  return (x.take || 1) > 1 ? `テイク${x.take}` : "";
+  // 出すのは自分で付けた名前だけ。付けていなければ何も出さない。
+  return x.takeName || "";
 };
 const songName = (x) => x ? ((takeLabel(x) ? takeLabel(x) + "　" : "") + x.title) : "";
 function ancestorsOf(so) {
@@ -931,7 +930,10 @@ function dupSong(id) {
     take, from: src.id,
     lines: src.lines.map((l) => Object.assign({}, l, { parts: (l.parts || []).slice() })),
   };
-  // 新しいテイクを、その曲のかたまりの先頭に置く（最新から順に見えるように）
+  // 作ったらすぐ名前を聞く。空でも構わない（何も付かない）。
+  const nm = prompt("この曲に付ける名前\n（空でも構いません。あとから変えられます）", "");
+  copy.takeName = nm == null ? "" : nm.trim();
+  // 新しく作った方を、その曲のかたまりの先頭に置く（新しいものから順に見えるように）
   const at = Math.min.apply(null, same.map((x) => S.songs.indexOf(x)));
   S.songs.splice(Math.max(0, at), 0, copy);
   U.songIdx = SONGS().indexOf(copy);
@@ -3122,7 +3124,7 @@ function viewLive() {
         ? `<b style="color:var(--accent)">レコーディングモード</b>${s && s.folder ? " ・ " + h(s.folder) : ""}`
         : `<b style="color:var(--accent)">ライブモード</b>${s ? " ・ " + h((S.groups.find((x) => x.id === s.groupId) || {}).name || "") : ""} ・ ${h(showName() || "公演名未設定")}`}${SONGS().length ? ` ・ ${U.songIdx + 1}/${SONGS().length}` : ""}${pushState ? ` ・ <span style="color:${pushState === "未送信" ? "var(--bad)" : "var(--dim)"}">${h(pushState)}</span>` : ""}</div>
       ${VIEW() && S.pubAt ? `<div style="font-size:10px;line-height:1.4">${freshLine()}</div>` : ""}
-      <div class="t2 trunc">${s && (S.recMode || Number(s.take || 1) > 1) ? `<b class="tkmk">テイク${Number(s.take || 1)}</b>` : ""}${h(s ? s.title : "曲がありません")}</div>
+      <div class="t2 trunc">${s && takeLabel(s) ? `<b class="tkmk">${h(takeLabel(s))}</b>` : ""}${h(s ? s.title : "曲がありません")}</div>
     </button>
     ${S.recMode ? `<span id="pcd2" style="font-size:12px;color:var(--dim);font-variant-numeric:tabular-nums;margin-right:4px"></span>` : ""}
     <button class="ic" data-act="size">A</button>
@@ -3139,7 +3141,7 @@ function viewLive() {
     </div>` : ""}
     ${s && !VIEW() ? `<div class="pull" id="pull">
       <div class="pullbar"><i id="pullfill"></i></div>
-      <div class="pulltx" id="pulltx">引き上げて テイク${nextTake(s)} を作る</div>
+      <div class="pulltx" id="pulltx">引き上げて この曲をもう1つ作る</div>
     </div>` : `<div style="height:120px"></div>`}</div>
   ${U.draw && !VIEW() ? `<div class="aubar">
     <button data-act="pen" class="aub" style="${U.erase ? "" : "background:var(--bad);color:#0A0A0A"}">✎</button>
@@ -3640,7 +3642,7 @@ ${shows}</div>
       </div>
       <div class="sec"><h4>曲</h4>${list}
         ${song() && !VIEW() ? `<button class="ghost" data-act="dupsong" data-id="${song().id}" style="margin-top:8px">
-          テイク${nextTake(song())} を作る</button>
+          この曲をもう1つ作る</button>
   ` : ""}
       </div>
       ${VIEW() && unreadSongs().length ? `<div class="sec">
@@ -4940,7 +4942,7 @@ function viewSetup() {
       <button class="chip sm" data-act="pickall">${U.pick.length === cur.length && cur.length ? "選択を解除" : "すべて選ぶ"}</button>
       <button class="chip sm" data-act="sorttitle">曲名順</button>
       ${U.pick.length ? `<button class="chip sm" data-act="pdfpicked" style="background:var(--accent);color:#0A0A0A">${U.pick.length}曲をPDF</button>
-      <button class="chip sm" data-act="picktake">テイク</button>
+      <button class="chip sm" data-act="picktake">もう1つ</button>
       <button class="chip sm" data-act="clearpicked">記録を消す</button>
       <button class="chip sm" data-act="pickgroup">グループ</button>
       <button class="chip sm" data-act="delpicked" style="background:var(--bad);color:#0A0A0A">削除</button>` : ""}
@@ -5250,7 +5252,7 @@ document.addEventListener("click", (e) => {
     case "picktake": {
       const ids = U.pick.slice();
       if (!ids.length) break;
-      if (confirm(`${ids.length}曲 のテイクを増やしますか？`)) {
+      if (confirm(`${ids.length}曲 を もう1つずつ作りますか？`)) {
         ids.forEach((sid) => dupSong(sid));
         U.pick = []; render();
       }
@@ -6406,7 +6408,7 @@ function setPull(v) {
   f.style.width = (r * 100) + "%";
   if (tx) {
     tx.style.color = r >= 1 ? "var(--accent)" : "var(--dim)";
-    tx.textContent = r >= 1 ? `離すと テイク${nextTake(song())} を作ります` : `引き上げて テイク${nextTake(song())} を作る`;
+    tx.textContent = r >= 1 ? "離すと この曲をもう1つ作ります" : "引き上げて この曲をもう1つ作る";
   }
 }
 document.addEventListener("pointerdown", (e) => {
