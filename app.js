@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "7.2";
+const APP_VER = "7.3";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -877,7 +877,12 @@ const REC_SHOW = "rec";
 const SONGS = () => (S.recMode
   ? S.rsongs.slice()
   : S.songs.filter((x) => x.showId === S.showId));
-const songName = (x) => x ? (((x.take || 1) > 1 ? `テイク${x.take}　` : "") + x.title) : "";
+const takeLabel = (x) => {
+  if (!x) return "";
+  if (x.takeName) return x.takeName;                 // 「本番」「リハ」など、自分で付けた名前
+  return (x.take || 1) > 1 ? `テイク${x.take}` : "";
+};
+const songName = (x) => x ? ((takeLabel(x) ? takeLabel(x) + "　" : "") + x.title) : "";
 function ancestorsOf(so) {
   const out = []; let cur = so;
   while (cur && cur.from) {
@@ -3544,6 +3549,7 @@ function renderSheet() {
       : `<div class="sec">
           ${B("m-rename", "曲名を変える")}
           ${B("m-take", "テイクを増やす")}
+          ${many ? "" : B("m-takename", "テイクの名前を変える")}
           ${B("m-pdf", "この曲をPDFにする")}
           ${many ? "" : B("m-swap", "歌割を差し替える（記録はそのまま）")}
           ${(() => { const n = S.notes.filter((y) => y.songId === U.menu.id && y.showId === S.showId).length;
@@ -5280,6 +5286,19 @@ document.addEventListener("click", (e) => {
       render(); break;
     }
     case "m-take": { const q = U.menu.id; U.menu = null; dupSong(q); break; }
+    case "m-takename": {
+      const x = S.songs.find((y) => y.id === U.menu.id); U.menu = null;
+      if (x) {
+        const now = x.takeName || ((x.take || 1) > 1 ? `テイク${x.take}` : "");
+        const nm = prompt("テイクの名前\n（空にすると「テイク◯」に戻ります）", now);
+        if (nm != null) {
+          const v = nm.trim();
+          if (v && v !== `テイク${x.take || 1}`) x.takeName = v; else delete x.takeName;
+          save(); schedulePush();
+        }
+      }
+      render(); break;
+    }
     case "m-group": U.menu = { kind: "group", id: U.menu.id }; renderSheet(); break;
     case "m-chk": { const q = U.menu.id; U.menu = null; exportCheckXlsx(q); render(); break; }
     case "m-pdf": {
@@ -6233,7 +6252,7 @@ function dupShow(fromId) {
       lines: x.lines.map((l) => Object.assign({}, l, { parts: (l.parts || []).slice() })),
       roster: (x.roster || []).slice(), blocks,
       blockCells: x.blockCells, blockRows: x.blockRows, sheetName: x.sheetName,
-      take: x.take || 1, sig: x.sig, cols: x.cols,
+      take: x.take || 1, takeName: x.takeName || "", sig: x.sig, cols: x.cols,
       impAt: impOf(x),
     });
   });
@@ -6921,7 +6940,7 @@ function publicationData(gid) {
       folderOrder: (S.folderOrder || []).slice(),                 // 公演の箱の並び
       lib,
       songs: songs.map((x) => ({
-        showId: x.showId, libIdx: entry(x), take: x.take || 1,
+        showId: x.showId, libIdx: entry(x), take: x.take || 1, takeName: x.takeName || "",
         fromIdx: x.from != null && idx.has(x.from) ? idx.get(x.from) : null,
       })),
       shows: S.shows.filter((x) => showIds.includes(x.id)).map((x) => Object.assign({}, x, {
@@ -7327,6 +7346,7 @@ function mergeDelivery(d, gist, label) {
     const src = lib ? (lib[sg.libIdx] || { lines: [] }) : sg;
     const o = Object.assign(buildSong(src), {
       groupId: g.id, showId: sg.showId || S.showId, take: sg.take || 1,
+      takeName: sg.takeName || "",
     });
     S.songs.push(o); added.push(o);
   });
@@ -7631,7 +7651,7 @@ function applySetlist(d) {
   const lib = Array.isArray(d.lib) ? d.lib : null;
   (d.songs || []).forEach((sg) => {
     const src = lib ? (lib[sg.libIdx] || { lines: [] }) : sg;
-    const o = Object.assign(buildSong(src), { groupId: S.groupId, showId: sg.showId || S.showId, take: sg.take || 1 });
+    const o = Object.assign(buildSong(src), { groupId: S.groupId, showId: sg.showId || S.showId, take: sg.take || 1, takeName: sg.takeName || "" });
     trimRoster(o);
     S.songs.push(o); added.push(o);
   });
