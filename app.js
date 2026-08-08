@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "7.5";
+const APP_VER = "7.6";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -879,8 +879,9 @@ const SONGS = () => (S.recMode
   : S.songs.filter((x) => x.showId === S.showId));
 const takeLabel = (x) => {
   if (!x) return "";
-  // 出すのは自分で付けた名前だけ。付けていなければ何も出さない。
-  return x.takeName || "";
+  // 名前を付けていればそれ。空文字を入れた時は「何も付けない」という意味。
+  if (x.takeName != null) return x.takeName;
+  return (x.take || 1) > 1 ? `テイク${x.take}` : "";
 };
 const songName = (x) => x ? ((takeLabel(x) ? takeLabel(x) + "　" : "") + x.title) : "";
 function ancestorsOf(so) {
@@ -930,10 +931,7 @@ function dupSong(id) {
     take, from: src.id,
     lines: src.lines.map((l) => Object.assign({}, l, { parts: (l.parts || []).slice() })),
   };
-  // 作ったらすぐ名前を聞く。空でも構わない（何も付かない）。
-  const nm = prompt("この曲に付ける名前\n（空でも構いません。あとから変えられます）", "");
-  copy.takeName = nm == null ? "" : nm.trim();
-  // 新しく作った方を、その曲のかたまりの先頭に置く（新しいものから順に見えるように）
+  // 新しいテイクを、その曲のかたまりの先頭に置く（最新から順に見えるように）
   const at = Math.min.apply(null, same.map((x) => S.songs.indexOf(x)));
   S.songs.splice(Math.max(0, at), 0, copy);
   U.songIdx = SONGS().indexOf(copy);
@@ -3141,7 +3139,7 @@ function viewLive() {
     </div>` : ""}
     ${s && !VIEW() ? `<div class="pull" id="pull">
       <div class="pullbar"><i id="pullfill"></i></div>
-      <div class="pulltx" id="pulltx">引き上げて この曲をもう1つ作る</div>
+      <div class="pulltx" id="pulltx">引き上げて テイク${nextTake(s)} を作る</div>
     </div>` : `<div style="height:120px"></div>`}</div>
   ${U.draw && !VIEW() ? `<div class="aubar">
     <button data-act="pen" class="aub" style="${U.erase ? "" : "background:var(--bad);color:#0A0A0A"}">✎</button>
@@ -3551,8 +3549,9 @@ function renderSheet() {
           <button class="ghost" data-act="m-setgroup" data-id="" style="text-align:left;color:var(--dim);${!many && x && !x.groupId ? "background:var(--accent);color:#0A0A0A" : ""}">なし（配信しない）</button></div>`
       : `<div class="sec">
           ${B("m-rename", "曲名を変える")}
-          ${B("m-take", "同じ曲をもう1つ作る")}
-          ${many ? "" : B("m-takename", "名前を付ける")}
+          ${B("m-take", "テイクを増やす")}
+          ${many ? "" : B("m-takenum", "テイク番号を変える")}
+          ${many ? "" : B("m-takename", "テイクに名前を付ける")}
           ${B("m-pdf", "この曲をPDFにする")}
           ${many ? "" : B("m-swap", "歌割を差し替える（記録はそのまま）")}
           ${(() => { const n = S.notes.filter((y) => y.songId === U.menu.id && y.showId === S.showId).length;
@@ -3642,7 +3641,7 @@ ${shows}</div>
       </div>
       <div class="sec"><h4>曲</h4>${list}
         ${song() && !VIEW() ? `<button class="ghost" data-act="dupsong" data-id="${song().id}" style="margin-top:8px">
-          この曲をもう1つ作る</button>
+          テイク${nextTake(song())} を作る</button>
   ` : ""}
       </div>
       ${VIEW() && unreadSongs().length ? `<div class="sec">
@@ -4942,7 +4941,7 @@ function viewSetup() {
       <button class="chip sm" data-act="pickall">${U.pick.length === cur.length && cur.length ? "選択を解除" : "すべて選ぶ"}</button>
       <button class="chip sm" data-act="sorttitle">曲名順</button>
       ${U.pick.length ? `<button class="chip sm" data-act="pdfpicked" style="background:var(--accent);color:#0A0A0A">${U.pick.length}曲をPDF</button>
-      <button class="chip sm" data-act="picktake">もう1つ</button>
+      <button class="chip sm" data-act="picktake">テイク</button>
       <button class="chip sm" data-act="clearpicked">記録を消す</button>
       <button class="chip sm" data-act="pickgroup">グループ</button>
       <button class="chip sm" data-act="delpicked" style="background:var(--bad);color:#0A0A0A">削除</button>` : ""}
@@ -5252,7 +5251,7 @@ document.addEventListener("click", (e) => {
     case "picktake": {
       const ids = U.pick.slice();
       if (!ids.length) break;
-      if (confirm(`${ids.length}曲 を もう1つずつ作りますか？`)) {
+      if (confirm(`${ids.length}曲 のテイクを増やしますか？`)) {
         ids.forEach((sid) => dupSong(sid));
         U.pick = []; render();
       }
@@ -5289,10 +5288,24 @@ document.addEventListener("click", (e) => {
       render(); break;
     }
     case "m-take": { const q = U.menu.id; U.menu = null; dupSong(q); break; }
+    case "m-takenum": {
+      const x = S.songs.find((y) => y.id === U.menu.id); U.menu = null;
+      if (x) {
+        const v = prompt("テイク番号\n（1にすると「テイク◯」の表記が消えます）", String(x.take || 1));
+        if (v != null) {
+          const n = Math.max(1, Math.min(99, Math.round(Number(v)) || 1));
+          x.take = n;
+          delete x.takeName;          // 番号で出すので、付けていた名前は外す
+          orderTakes();
+          save(); schedulePush();
+        }
+      }
+      render(); break;
+    }
     case "m-takename": {
       const x = S.songs.find((y) => y.id === U.menu.id); U.menu = null;
       if (x) {
-        const nm = prompt("曲名の前に付ける名前\n（空にすると何も付きません）", takeLabel(x));
+        const nm = prompt("テイクに付ける名前\n（空にすると何も付きません）", takeLabel(x));
         if (nm != null) { x.takeName = nm.trim(); save(); schedulePush(); }
       }
       render(); break;
@@ -6408,7 +6421,7 @@ function setPull(v) {
   f.style.width = (r * 100) + "%";
   if (tx) {
     tx.style.color = r >= 1 ? "var(--accent)" : "var(--dim)";
-    tx.textContent = r >= 1 ? "離すと この曲をもう1つ作ります" : "引き上げて この曲をもう1つ作る";
+    tx.textContent = r >= 1 ? `離すと テイク${nextTake(song())} を作ります` : `引き上げて テイク${nextTake(song())} を作る`;
   }
 }
 document.addEventListener("pointerdown", (e) => {
