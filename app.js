@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "8.4";
+const APP_VER = "8.5";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -83,7 +83,7 @@ let S = {
   plan: { start: "10:00", slots: [] },
   size: 19,
 };
-let U = { view: "live", songIdx: 0, sheet: null, mode: "member", allShows: false, picker: false, overview: false, ovSize: 9, recPick: null, sumOpen: "", draw: false, erase: false, pick: [], menu: null, printPick: null, focus: "", busy: "", allShowList: false, pdfBack: "", swapId: "", markOnly: false, alertTo: [] };
+let U = { view: "live", songIdx: 0, sheet: null, mode: "member", allShows: false, picker: false, overview: false, ovSize: 9, recPick: null, sumOpen: "", draw: false, erase: false, pick: [], menu: null, printPick: null, focus: "", busy: "", allShowList: false, pdfBack: "", swapId: "", markOnly: false };
 
 const S0 = JSON.parse(JSON.stringify(S));
 
@@ -5016,30 +5016,17 @@ function viewSetup() {
       ${S.groups.some((g) => g.nopub) ? "" : `<button class="chip sm" data-act="addnopub">「配信しない」グループを作る</button>`}
     </div>
 
-    ${S.groups.some((g) => g.gistId && !g.nopub) ? `
+    ${(() => { const gg = group(); return gg && gg.gistId && !gg.nopub; })() ? `
     <h4 class="head">ライブ中のお知らせ</h4>
     <div class="card" style="margin-bottom:22px">
       ${S.alertMsg ? `<div style="background:var(--bad);color:#0A0A0A;border-radius:10px;padding:10px 12px;margin-bottom:8px">
-          <div style="font-size:11px;font-weight:700;opacity:.7;margin-bottom:4px">出しています ・ ${new Date(S.alertMsg.at).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" })}${
-            (S.alertMsg.to || []).length ? " ・ " + h(S.alertMsg.to.map((gid) => (group(gid) || {}).name).filter(Boolean).join("、")) : " ・ 全グループ"}</div>
+          <div style="font-size:11px;font-weight:700;opacity:.7;margin-bottom:4px">出しています ・ ${new Date(S.alertMsg.at).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" })} ・ ${
+            h((S.alertMsg.to || []).map((gid) => (group(gid) || {}).name).filter(Boolean).join("、") || "全グループ")}</div>
           <div style="font-size:15px;font-weight:700;white-space:pre-wrap;word-break:break-word">${h(S.alertMsg.text)}</div>
         </div>
         <button class="ghost" data-act="alertclear" style="color:var(--bad);margin-bottom:8px">取り下げる</button>` : ""}
-      <div style="font-size:11px;color:var(--dim);margin-bottom:6px">出す相手（選ばなければ全グループ）</div>
-      <div class="chips" style="margin-bottom:8px">
-        ${S.groups.filter((g) => g.gistId && !g.nopub).map((g) => {
-          const on = (U.alertTo || []).includes(g.id);
-          return `<button class="chip sm" data-act="alertto" data-id="${g.id}"
-            style="${on ? "background:var(--accent);color:#0A0A0A" : ""}">${on ? "✓ " : ""}${h(g.name)}</button>`;
-        }).join("")}
-      </div>
-      <textarea class="field" id="alerttx" rows="2" style="resize:none;margin-bottom:8px" placeholder="例：曲順が変わりました"></textarea>
-      <button class="primary" data-act="alertsend">${(U.alertTo || []).length ? `${U.alertTo.length}グループに出す` : "全グループに出す"}</button>
-      <div style="font-size:11px;color:var(--dim);line-height:1.7;margin-top:8px">
-        アプリを開いているメンバーの画面に、全画面で出ます（数秒〜10秒ほど）。<br>
-        メンバーが「確認しました」を押すと、その人の画面からは消えます。<br>
-        誰が見たかは分かりません。アプリを閉じている人には届きません。
-      </div>
+      <textarea class="field" id="alerttx" rows="2" style="resize:none;margin-bottom:8px" placeholder="${h(group().name)} のメンバーへ"></textarea>
+      <button class="primary" data-act="alertsend">お知らせ</button>
     </div>` : ""}
 
     <h4 class="head">欠席対応</h4>
@@ -6043,19 +6030,14 @@ document.addEventListener("click", (e) => {
       if (a && a.id) { S.alertSeen = a.id; save(); }
       render(); break;
     }
-    case "alertto": {
-      U.alertTo = U.alertTo || [];
-      U.alertTo = U.alertTo.includes(id) ? U.alertTo.filter((x) => x !== id) : U.alertTo.concat(id);
-      render(); break;
-    }
     case "alertsend": {
       const el4 = document.getElementById("alerttx");
       const tx = el4 ? String(el4.value || "").trim() : "";
       if (!tx) { alert("メッセージを入れてください。"); break; }
-      const to = (U.alertTo || []).filter((gid) => S.groups.some((g) => g.id === gid && g.gistId && !g.nopub));
-      const who = to.length ? to.map((gid) => (group(gid) || {}).name).join("、") : "全グループ";
-      if (!confirm(`${who} のメンバーの画面に、この内容を全画面で出します。\n\n${tx}\n\n送りますか？`)) break;
-      S.alertMsg = { id: uid(), text: tx, at: Date.now(), to };
+      const gg = group();
+      if (!gg || !gg.gistId || gg.nopub) { alert("いま選んでいるグループは配信していません。"); break; }
+      if (!confirm(`${gg.name} のメンバーの画面に、この内容を全画面で出します。\n\n${tx}\n\n送りますか？`)) break;
+      S.alertMsg = { id: uid(), text: tx, at: Date.now(), to: [gg.id] };
       save(); doPush("force"); render();
       break;
     }
