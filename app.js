@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "8.7";
+const APP_VER = "8.8";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -6041,7 +6041,7 @@ document.addEventListener("click", (e) => {
       if (el4) el4.value = "";
       save(); render();
       // 送れたかどうかをその場で伝える（黙って失敗すると気づけない）
-      doPush("force").then(() => {
+      pushOne(gg.id).then(() => {
         alert(/公開済/.test(pushState)
           ? `${gg.name} に出しました。\n${pushState}\n\nアプリを開いているメンバーの画面に、数秒〜10秒ほどで出ます。`
           : `出せていません。\n${pushState || "通信できませんでした"}\n\n設定の「今すぐ送信」を試してください。`);
@@ -6052,9 +6052,10 @@ document.addEventListener("click", (e) => {
     case "alertclear": {
       if (!S.alertMsg) break;
       if (!confirm("お知らせを取り下げます。\nまだ見ていない人には出なくなります。")) break;
+      const gone2 = (S.alertMsg.to || [])[0];
       S.alertMsg = null;
       save(); render();
-      doPush("force").then(() => {
+      pushOne(gone2).then(() => {
         alert(/公開済/.test(pushState) ? "取り下げました。" : `取り下げを送れていません。\n${pushState || "通信できませんでした"}`);
         render();
       });
@@ -7145,7 +7146,16 @@ async function gh(path, opts) {
       msg = /rate limit/i.test(body)
         ? "GitHubへの送信回数の上限に達しました。しばらく待つと自動で送り直します。"
         : "gist の権限がありません（403）。classic トークンで gist にチェックが要ります。\n" + body;
-      if (/rate limit/i.test(body)) { const e2 = new Error(msg); e2.status = 429; e2.reset = Number(r.headers.get("x-ratelimit-reset")) || 0; throw e2; }
+      if (/rate limit/i.test(body)) {
+        const e2 = new Error(msg); e2.status = 429;
+        // 短時間に送りすぎた時（二次的な制限）は Retry-After に秒数が入る。たいてい60秒ほど。
+        // 1時間ぶんの上限を使い切った時だけ x-ratelimit-reset を見る。
+        const ra = Number(r.headers.get("retry-after")) || 0;
+        const remain = Number(r.headers.get("x-ratelimit-remaining"));
+        e2.after = ra;
+        e2.reset = (!ra && remain === 0) ? (Number(r.headers.get("x-ratelimit-reset")) || 0) : 0;
+        throw e2;
+      }
     }
     if (r.status === 404) msg = "配信先のGistが見つかりません（404）。削除された可能性があります。";
     const e = new Error(msg);
@@ -7216,8 +7226,33 @@ function schedulePush() {
   if (!S.ghToken || !S.autoPub || !S.groups.some((g) => g.gistId)) return;
   pushState = "未送信";
   clearTimeout(pushTimer);
-  const wait = Math.max(6000 - (Date.now() - lastPushAt), 1500);
+  // 短い間隔で送り続けるとGitHubに止められる。最短3秒あける。
+  const wait = Math.max(8000 - (Date.now() - lastPushAt), 3000);
   pushTimer = setTimeout(() => doPush(true), wait);
+}
+
+// 1つのグループにだけ送る。お知らせのように相手が決まっている時に使う。
+// 全グループへ送ると、GitHubの送信回数をむだに使って「混み合っています」になりやすい。
+async function pushOne(gid) {
+  const g = group(gid);
+  if (!S.ghToken || !g || !g.gistId || g.nopub) { pushState = "未送信"; return; }
+  pushState = "送信中"; render();
+  lastPushAt = Date.now();
+  try {
+    await gistPush(g.id, true);
+    const d = new Date();
+    pushState = `公開済 ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  } catch (e) {
+    if (e.status === 429) {
+      const wait = e.after ? Math.min(Math.max(e.after * 1000 + 2000, 5000), 300000) : 45000;
+      const rt = new Date(Date.now() + wait);
+      limitedAt = `${String(rt.getHours()).padStart(2, "0")}:${String(rt.getMinutes()).padStart(2, "0")}`;
+      pushState = "順番待ち" + (limitedAt ? " " + limitedAt + "頃" : "");
+      clearTimeout(pushTimer);
+      pushTimer = setTimeout(() => pushOne(gid), wait);
+    } else pushState = "未送信";
+  }
+  render();
 }
 
 async function doPush(silent) {
@@ -7234,7 +7269,8 @@ async function doPush(silent) {
       if (e.status === 404) { gone.push(g); }
       else if (e.status === 429) {
         limited++;
-        const wait = e.reset ? Math.min(Math.max(e.reset * 1000 - Date.now() + 3000, 20000), 3900000) : 90000;
+        const wait = e.after ? Math.min(Math.max(e.after * 1000 + 2000, 5000), 300000)
+          : (e.reset ? Math.min(Math.max(e.reset * 1000 - Date.now() + 3000, 20000), 3900000) : 45000);
         const rt = new Date(Date.now() + wait);
         limitedAt = `${String(rt.getHours()).padStart(2, "0")}:${String(rt.getMinutes()).padStart(2, "0")}`;
         clearTimeout(pushTimer);
