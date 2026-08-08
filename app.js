@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "6.4";
+const APP_VER = "6.5";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -6879,6 +6879,39 @@ async function unpackBackup(o) {
 // 端末のデータが飛んでも、GitHub側のバックアップは残っている。
 // 過去の版（Gistの更新履歴）まで遡って探す。
 // Gistを直接指定して戻す。探索で見つけられない時の確実な手段。
+// 見た目が同じでも内部の文字コードが違うことがある（濁点・長音・前後の空白など）。
+// 入れてもらった合言葉から、ありうる形を作って順に試す。
+function keyVariants(pw) {
+  const base = String(pw == null ? "" : pw);
+  const out = [];
+  const add = (v) => { if (typeof v === "string" && !out.includes(v)) out.push(v); };
+  [base, base.trim(), base.replace(/[\s　]/g, "")].forEach((b) => {
+    add(b);
+    try { add(b.normalize("NFC")); add(b.normalize("NFD")); } catch (e) {}
+  });
+  return out;
+}
+// この端末が知っている合言葉も候補にする（配信用と取り違えていることがある）
+function knownKeys() {
+  const out = [];
+  const add = (v) => { if (v && !out.includes(v)) out.push(v); };
+  add(S.bkKey); add(S.key);
+  (S.groups || []).forEach((g) => add(g.key));
+  return out;
+}
+async function unpackWithPass(raw, pw, alsoKnown) {
+  const cands = keyVariants(pw).concat(alsoKnown ? knownKeys() : []);
+  let last = null;
+  const keep = S.bkKey;
+  for (const k of cands) {
+    S.bkKey = k;
+    try { return await unpackBackup(raw); }
+    catch (e) { last = e; if (!e.badKey) { S.bkKey = keep; throw e; } }
+  }
+  S.bkKey = keep;
+  throw last || new Error("合言葉が合いません。");
+}
+
 async function restoreFromId() {
   const inp = prompt("戻したいバックアップのGistを指定します。\nURL か ID を貼ってください。\n例 https://gist.github.com/xxxx/abc123...", "");
   if (inp == null) return;
@@ -6902,7 +6935,7 @@ async function restoreFromId() {
           if (pw == null) return;
           S.bkKey = pw.trim();
         }
-        try { obj = await unpackBackup(raw); }
+        try { obj = await unpackWithPass(raw, S.bkKey, tryN > 0); }
         catch (e) {
           if (!e.badKey) { alert(`開けませんでした。\n\n${e.message}`); break; }
         }
@@ -6972,7 +7005,7 @@ async function findBackupInner() {
           if (pw == null) break;
           S.bkKey = pw.trim();
         }
-        try { obj = await unpackBackup(raw); }
+        try { obj = await unpackWithPass(raw, S.bkKey, tryN > 0); }
         catch (e) {
           if (!e.badKey) {                      // 合言葉の問題ではないので聞き直さない
             alert(`${new Date(v.at).toLocaleString("ja-JP")} の版は開けませんでした。\n\n${e.message}`);
