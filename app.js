@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "8.8";
+const APP_VER = "8.9";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -2946,7 +2946,21 @@ function viewAlert(a) {
   </div>`;
 }
 
+// 入力中に画面を作り直すと、打っていた文字と入力位置が飛ぶ。
+// 誰かが文字を打っている間は組み直さず、離れた時にまとめてやり直す。
+let pendingRender = false;
+function typingNow() {
+  const ae = document.activeElement;
+  if (!ae) return false;
+  const t = ae.tagName;
+  if (t !== "TEXTAREA" && t !== "INPUT") return false;
+  if (ae.type === "file") return false;
+  return true;
+}
 function render() {
+  // メンバーへのお知らせだけは、打っていても割り込ませる
+  if (typingNow() && !alertPending()) { pendingRender = true; return; }
+  pendingRender = false;
   const keep = app.querySelector(".scroll");
   const st = keep ? keep.scrollTop : 0;
   const sig = U.view + U.songIdx + U.mode + U.allShows + U.overview;
@@ -3356,6 +3370,8 @@ function viewOverview(s) {
 
 /* ---- sheet ---- */
 function renderSheet() {
+  // 記録シートの中で打っている最中も、組み直すと文字が飛ぶ
+  if (typingNow() && overlay && overlay.contains(document.activeElement)) { pendingRender = true; return; }
   if (overlay) { overlay.remove(); overlay = null; }
 
   if (U.menu && U.menu.kind === "pedit") {
@@ -6253,6 +6269,11 @@ document.addEventListener("focusin", (e) => { if (e.target.id === "memo") clearT
 document.addEventListener("keydown", (e) => { if (e.target.id === "memo" && e.key === "Enter") commitNote(); });
 
 document.addEventListener("input", (e) => { if (e.target.id === "aubar") seekAudio(e.target.value); });
+// 入力欄から離れたら、待たせていた画面の組み直しをやる
+document.addEventListener("focusout", () => {
+  setTimeout(() => { if (pendingRender && !typingNow()) render(); }, 0);
+});
+
 document.addEventListener("change", (e) => {
   if (e.target.id === "file") {
     // 一覧を控えてから空にする。同じファイルをもう一度選んでも読み込めるように。
