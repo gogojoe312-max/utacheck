@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "6.9";
+const APP_VER = "7.0";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -795,10 +795,37 @@ function unpackState(o) {
   return o;
 }
 
+// 保存に失敗したら、まず自分で空きを作ってから もう一度試す。
+// 消すのは「読めなくなった取り残し」だけ。中身が残っているものは勝手に消さない。
+function freeSpace() {
+  let freed = 0;
+  try {
+    const junk = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k || k.indexOf(KEY + ":broken:") !== 0) continue;
+      const v = localStorage.getItem(k) || "";
+      let empty = true;
+      try {
+        const o = unpackState(JSON.parse(v));
+        empty = !((o.songs || []).length || (o.notes || []).length);
+      } catch (e) { empty = true; }      // 読めないものは残しても使えない
+      if (empty) junk.push(k);
+    }
+    junk.forEach((k) => { localStorage.removeItem(k); freed++; });
+  } catch (e) { /* 数えられない端末もある */ }
+  return freed;
+}
 function save() {
   if (preview) return;
-  try { localStorage.setItem(KEY, JSON.stringify(packState(S))); saveErr = false; }
-  catch (e) { saveErr = true; }
+  const txt = JSON.stringify(packState(S));
+  try { localStorage.setItem(KEY, txt); saveErr = false; return; }
+  catch (e) { /* 空きを作って もう一度 */ }
+  if (freeSpace()) {
+    try { localStorage.setItem(KEY, txt); saveErr = false; return; }
+    catch (e) { /* それでも足りない */ }
+  }
+  saveErr = true;
 }
 
 const REC_SHOW = "rec";
@@ -2830,7 +2857,7 @@ function render() {
   // 保存できていないことは、どの画面にいても分かるようにする（紙面には出さない）
   if (saveErr && U.view !== "print" && U.view !== "recprint") {
     app.insertAdjacentHTML("afterbegin",
-      `<div class="banner noprint">保存できませんでした。端末の空き容量を確認してください。</div>`);
+      `<button class="banner noprint" data-act="gostorage" style="width:100%;text-align:left">保存できていません。ここを押して空きを作ってください。</button>`);
   }
   const sc = app.querySelector(".scroll");
   if (sc && sameView) sc.scrollTop = st;
@@ -4132,6 +4159,7 @@ function viewSetupRec() {
           ${over ? "<b style=\"color:var(--bad)\">いま上限を超えていて、保存できていません。</b>下の「取り残し」を消すと空きます。"
                  : "上限に達すると保存できなくなります。"}
         </div>
+        ${over ? `<button class="primary" data-act="shrinknow" style="margin-bottom:10px">いま空きを作る（古い公演を消す）</button>` : ""}
         ${stray.length ? `<div style="font-size:11px;color:var(--accent);margin-bottom:6px">
           取り残しのデータが ${stray.length}件 あります（合計 ${mb(stray.reduce((a, x) => a + x.b, 0))} MB）。<br>
           読み込みでつまずいた時に、消さずに横へ避けたものです。中身が残っていれば戻せます。</div>
@@ -4969,6 +4997,7 @@ function viewSetup() {
           ${over ? "<b style=\"color:var(--bad)\">いま上限を超えていて、保存できていません。</b>下の「取り残し」を消すと空きます。"
                  : "上限に達すると保存できなくなります。"}
         </div>
+        ${over ? `<button class="primary" data-act="shrinknow" style="margin-bottom:10px">いま空きを作る（古い公演を消す）</button>` : ""}
         ${stray.length ? `<div style="font-size:11px;color:var(--accent);margin-bottom:6px">
           取り残しのデータが ${stray.length}件 あります（合計 ${mb(stray.reduce((a, x) => a + x.b, 0))} MB）。<br>
           読み込みでつまずいた時に、消さずに横へ避けたものです。中身が残っていれば戻せます。</div>
@@ -5853,6 +5882,38 @@ document.addEventListener("click", (e) => {
     case "bkfind": findBackup(); break;
     case "bkfromid": restoreFromId(); break;
     case "bkfrompub": recoverFromDelivery(); break;
+    case "gostorage": commitFields(); U.view = "setup"; U.focus = "storage"; render(); break;
+    case "shrinknow": {
+      // 古い公演から順に消して、保存が通るまで小さくする。
+      // いま開いている公演と、いちばん新しい公演は残す。
+      const keep = [S.showId];
+      const order = showsNewestFirst().filter((x) => !x.hidden);
+      if (order[0]) keep.push(order[0].id);
+      const drop = order.slice().reverse().filter((x) => !keep.includes(x.id));
+      if (!drop.length) { alert("消せる古い公演がありません。\nグループを消すか、録音を消してください。"); break; }
+      const names = drop.map((x) => x.name).join("、");
+      if (!confirm(`古い公演から順に消して、保存できるようにします。\n\n対象（古い順）：\n${names}\n\n必要な分だけ消します。消した公演の曲・記録は戻せません。\n（配信データには残るので、あとから取り戻せます）\n\n進めますか？`)) break;
+      let gone = 0;
+      for (const sw of drop) {
+        const ids = S.songs.filter((x) => x.showId === sw.id).map((x) => x.id);
+        S.songs = S.songs.filter((x) => x.showId !== sw.id);
+        S.notes = S.notes.filter((n) => n.showId !== sw.id && !ids.includes(n.songId));
+        [S.memos, S.draws, S.recs, S.subs, S.subsMan, S.gsubs].forEach((m) => {
+          Object.keys(m || {}).forEach((k) => { if (k.split("|")[0] === sw.id) delete m[k]; });
+        });
+        ids.forEach((sid) => { delClip("xls:" + sid); });
+        S.shows = S.shows.filter((x) => x.id !== sw.id);
+        gone++;
+        save();
+        if (!saveErr) break;
+      }
+      save();
+      alert(saveErr
+        ? `公演を${gone}件消しましたが、まだ保存できません。\nグループや録音も消してください。`
+        : `公演を${gone}件消して、保存できるようになりました。`);
+      render();
+      break;
+    }
     case "strayuse": {
       let o = null;
       try { o = unpackState(JSON.parse(localStorage.getItem(id) || "")); } catch (e) { alert("読み取れませんでした。"); break; }
