@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "7.0";
+const APP_VER = "7.1";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -87,10 +87,23 @@ let U = { view: "live", songIdx: 0, sheet: null, mode: "member", allShows: false
 
 const S0 = JSON.parse(JSON.stringify(S));
 
-function load() {
+async function loadRaw() {
+  // まずIndexedDB。新しい方を採り、読めなければ古い方。
+  try {
+    const a = await idbGet("state:0"), b = await idbGet("state:1");
+    idbOK = true;
+    const cands = [a, b].filter((x) => x && x.txt).sort((x, y) => (y.seq || 0) - (x.seq || 0));
+    for (const c of cands) {
+      try { JSON.parse(c.txt); saveSeq = Math.max(saveSeq, c.seq || 0); return c.txt; }
+      catch (e) { /* 壊れていたら次 */ }
+    }
+  } catch (e) { idbOK = false; }
+  try { return localStorage.getItem(KEY); } catch (e) { return null; }
+}
+async function load() {
   let raw = null;
   try {
-    raw = localStorage.getItem(KEY);
+    raw = await loadRaw();
     if (raw) S = Object.assign(S, unpackState(JSON.parse(raw)));
   } catch (e) { /* 初回、または壊れている */ }
   try {
@@ -816,17 +829,49 @@ function freeSpace() {
   } catch (e) { /* 数えられない端末もある */ }
   return freed;
 }
+// 保存はIndexedDBへ。書き込みは非同期なので、呼ばれた直後の分をまとめて書く。
+// 交互に2か所へ書き、片方が途中で切れても もう片方が残るようにする。
+let idbOK = false;                 // IndexedDBが使えるか（起動時に判定）
+let saveTimer = null, saveSeq = 0, saving = false, savePend = null;
+async function flushSave() {
+  if (saving || savePend == null) return;
+  saving = true;
+  const txt = savePend; savePend = null;
+  try {
+    saveSeq++;
+    await idbPut("state:" + (saveSeq % 2), { at: Date.now(), seq: saveSeq, txt });
+    saveErr = false;
+  } catch (e) {
+    // IndexedDBが使えない端末では、今まで通りlocalStorageに置く
+    try { localStorage.setItem(KEY, txt); saveErr = false; }
+    catch (e2) {
+      if (freeSpace()) { try { localStorage.setItem(KEY, txt); saveErr = false; } catch (e3) { saveErr = true; } }
+      else saveErr = true;
+    }
+  }
+  saving = false;
+  if (savePend != null) flushSave();
+}
 function save() {
   if (preview) return;
   const txt = JSON.stringify(packState(S));
-  try { localStorage.setItem(KEY, txt); saveErr = false; return; }
-  catch (e) { /* 空きを作って もう一度 */ }
-  if (freeSpace()) {
+  if (!idbOK) {                    // IndexedDBが使えない時だけ、今まで通り
     try { localStorage.setItem(KEY, txt); saveErr = false; return; }
-    catch (e) { /* それでも足りない */ }
+    catch (e) { /* 空きを作って もう一度 */ }
+    if (freeSpace()) {
+      try { localStorage.setItem(KEY, txt); saveErr = false; return; }
+      catch (e) { /* それでも足りない */ }
+    }
+    saveErr = true;
+    return;
   }
-  saveErr = true;
+  savePend = txt;
+  saveErr = false;
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(flushSave, 120);
 }
+// 画面を閉じる時など、待たずに書き切る
+function saveNow() { clearTimeout(saveTimer); return flushSave(); }
 
 const REC_SHOW = "rec";
 const SONGS = () => (S.recMode
@@ -2681,8 +2726,12 @@ function db() {
   return new Promise((res, rej) => {
     if (DB) return res(DB);
     if (!window.indexedDB) return rej(new Error("この端末では音声を保存できません。"));
-    const r = indexedDB.open("utacheck", 1);
-    r.onupgradeneeded = () => { r.result.createObjectStore("clips"); };
+    const r = indexedDB.open("utacheck", 2);
+    r.onupgradeneeded = () => {
+      const d2 = r.result;
+      if (!d2.objectStoreNames.contains("clips")) d2.createObjectStore("clips");
+      if (!d2.objectStoreNames.contains("state")) d2.createObjectStore("state");
+    };
     r.onsuccess = () => { DB = r.result; res(DB); };
     r.onerror = () => rej(r.error);
   });
@@ -2704,6 +2753,25 @@ async function getClip(id) {
   });
 }
 function delClip(id) { db().then((d) => d.transaction("clips", "readwrite").objectStore("clips").delete(id)).catch(() => {}); }
+
+// 本体のデータの置き場所。localStorageは端末の上限（数MB）が小さすぎるので、
+// IndexedDBに置く。こちらは桁違いに入る。
+async function idbPut(key, val) {
+  const d = await db();
+  return new Promise((res, rej) => {
+    const t = d.transaction("state", "readwrite");
+    t.objectStore("state").put(val, key);
+    t.oncomplete = res; t.onerror = () => rej(t.error);
+  });
+}
+async function idbGet(key) {
+  const d = await db();
+  return new Promise((res, rej) => {
+    const t = d.transaction("state", "readonly");
+    const q = t.objectStore("state").get(key);
+    q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error);
+  });
+}
 
 let REC = null, recChunks = [], recTick = null, recT0 = 0, recKey = "";
 let AU = null, auKey = "", auTick = null;
@@ -4148,17 +4216,19 @@ function viewSetupRec() {
         } catch (e) { /* 数えられない端末もある */ }
         stray.sort((a, b2) => b2.at - a.at);
         const mb = (x) => (x / 1048576).toFixed(2);
-        const pct = Math.min(100, Math.round(total / 5242880 * 100));
+        const cur = enc.encode(JSON.stringify(packState(S))).length;
         const over = saveErr;
         return `<div class="row" style="margin-bottom:6px">
-          <span class="grow" style="font-size:13px">この場所の合計</span>
-          <span style="font-size:13px;color:${over || pct > 80 ? "var(--bad)" : "var(--dim)"};font-weight:700">${mb(total)} MB / 約5 MB（${pct}%）</span>
+          <span class="grow" style="font-size:13px">いまのデータ</span>
+          <span style="font-size:13px;color:${over ? "var(--bad)" : "var(--dim)"};font-weight:700">${mb(cur)} MB</span>
         </div>
-        <div style="font-size:11px;color:var(--dim);line-height:1.7;margin-bottom:${stray.length ? 10 : 0}px">
-          いまのデータ ${mb(mine)} MB（公演${S.shows.length}件・曲${S.songs.length}件・記録${S.notes.length}件）<br>
-          ${over ? "<b style=\"color:var(--bad)\">いま上限を超えていて、保存できていません。</b>下の「取り残し」を消すと空きます。"
-                 : "上限に達すると保存できなくなります。"}
+        <div style="font-size:11px;color:var(--dim);line-height:1.7;margin-bottom:${stray.length || total ? 10 : 0}px">
+          公演${S.shows.length}件・曲${S.songs.length}件・記録${S.notes.length}件<br>
+          ${idbOK ? "保存先は端末のデータベースです。上限はほぼ気にしなくて構いません。"
+                  : "<b style=\"color:var(--bad)\">この端末ではデータベースが使えず、上限5MBの場所に保存しています。</b>"}
+          ${over ? "<br><b style=\"color:var(--bad)\">いま保存できていません。</b>" : ""}
         </div>
+        ${total ? `<div style="font-size:11px;color:var(--dim);margin-bottom:8px">古い置き場所に ${mb(total)} MB 残っています。${stray.length ? "" : "次に開いた時に自動で片付きます。"}</div>` : ""}
         ${over ? `<button class="primary" data-act="shrinknow" style="margin-bottom:10px">いま空きを作る（古い公演を消す）</button>` : ""}
         ${stray.length ? `<div style="font-size:11px;color:var(--accent);margin-bottom:6px">
           取り残しのデータが ${stray.length}件 あります（合計 ${mb(stray.reduce((a, x) => a + x.b, 0))} MB）。<br>
@@ -4986,17 +5056,19 @@ function viewSetup() {
         } catch (e) { /* 数えられない端末もある */ }
         stray.sort((a, b2) => b2.at - a.at);
         const mb = (x) => (x / 1048576).toFixed(2);
-        const pct = Math.min(100, Math.round(total / 5242880 * 100));
+        const cur = enc.encode(JSON.stringify(packState(S))).length;
         const over = saveErr;
         return `<div class="row" style="margin-bottom:6px">
-          <span class="grow" style="font-size:13px">この場所の合計</span>
-          <span style="font-size:13px;color:${over || pct > 80 ? "var(--bad)" : "var(--dim)"};font-weight:700">${mb(total)} MB / 約5 MB（${pct}%）</span>
+          <span class="grow" style="font-size:13px">いまのデータ</span>
+          <span style="font-size:13px;color:${over ? "var(--bad)" : "var(--dim)"};font-weight:700">${mb(cur)} MB</span>
         </div>
-        <div style="font-size:11px;color:var(--dim);line-height:1.7;margin-bottom:${stray.length ? 10 : 0}px">
-          いまのデータ ${mb(mine)} MB（公演${S.shows.length}件・曲${S.songs.length}件・記録${S.notes.length}件）<br>
-          ${over ? "<b style=\"color:var(--bad)\">いま上限を超えていて、保存できていません。</b>下の「取り残し」を消すと空きます。"
-                 : "上限に達すると保存できなくなります。"}
+        <div style="font-size:11px;color:var(--dim);line-height:1.7;margin-bottom:${stray.length || total ? 10 : 0}px">
+          公演${S.shows.length}件・曲${S.songs.length}件・記録${S.notes.length}件<br>
+          ${idbOK ? "保存先は端末のデータベースです。上限はほぼ気にしなくて構いません。"
+                  : "<b style=\"color:var(--bad)\">この端末ではデータベースが使えず、上限5MBの場所に保存しています。</b>"}
+          ${over ? "<br><b style=\"color:var(--bad)\">いま保存できていません。</b>" : ""}
         </div>
+        ${total ? `<div style="font-size:11px;color:var(--dim);margin-bottom:8px">古い置き場所に ${mb(total)} MB 残っています。${stray.length ? "" : "次に開いた時に自動で片付きます。"}</div>` : ""}
         ${over ? `<button class="primary" data-act="shrinknow" style="margin-bottom:10px">いま空きを作る（古い公演を消す）</button>` : ""}
         ${stray.length ? `<div style="font-size:11px;color:var(--accent);margin-bottom:6px">
           取り残しのデータが ${stray.length}件 あります（合計 ${mb(stray.reduce((a, x) => a + x.b, 0))} MB）。<br>
@@ -7835,12 +7907,26 @@ function copyText(t, msg) {
 }
 
 /* ---------------- boot ---------------- */
-load();
-render();
-importFromLink();
-syncSetlist(false);
-window.addEventListener("pagehide", () => { commitFields(); save(); });
-document.addEventListener("visibilitychange", () => { if (document.hidden) { commitFields(); save(); } });
+(async () => {
+  await load();
+  // 前まで localStorage に置いていた分は、IndexedDB へ引っ越す。
+  // 移し終えてから消すので、途中で止まっても元は残る。
+  if (idbOK) {
+    try {
+      const old = localStorage.getItem(KEY);
+      if (old) {
+        await saveNow();
+        const back = await idbGet("state:" + (saveSeq % 2));
+        if (back && back.txt) localStorage.removeItem(KEY);
+      }
+    } catch (e) { /* 引っ越せなくても、IndexedDB側で動く */ }
+  }
+  render();
+  importFromLink();
+  syncSetlist(false);
+})();
+window.addEventListener("pagehide", () => { commitFields(); save(); saveNow(); });
+document.addEventListener("visibilitychange", () => { if (document.hidden) { commitFields(); save(); saveNow(); } });
 if ("serviceWorker" in navigator) {
   let reloaded = false;
   navigator.serviceWorker.addEventListener("controllerchange", () => {
