@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "7.9";
+const APP_VER = "8.0";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -4893,8 +4893,9 @@ function viewSetup() {
       <span class="grip" data-drag="show:${sw.id}">⣿</span>
       <button class="grow" style="text-align:left;min-width:0" data-act="useshow" data-id="${sw.id}">
         <div class="trunc" style="${sw.id === S.showId ? "color:var(--accent)" : ""}">${h(sw.name)}</div>
-        <div style="font-size:11px;color:var(--dim)">${S.songs.filter((x) => x.showId === sw.id).length}曲 ・ ${NOTES().filter((n) => n.showId === sw.id).length}件${sw.id === S.showId ? " ・ 記録中" : ""}</div>
+        <div style="font-size:11px;color:var(--dim)">${S.songs.filter((x) => x.showId === sw.id).length}曲 ・ ${NOTES().filter((n) => n.showId === sw.id).length}件${sw.id === S.showId ? " ・ 記録中" : ""}${sw.nopub ? ` ・ <b style="color:var(--bad)">配信しない</b>` : ""}</div>
       </button>
+      <button data-act="showpub" data-id="${sw.id}" style="padding:4px 6px;font-size:12px;color:${sw.nopub ? "var(--bad)" : "var(--dim)"}">${sw.nopub ? "配信×" : "配信○"}</button>
       <button data-act="copyshow" data-id="${sw.id}" style="padding:4px 6px;color:var(--dim);font-size:12px">複製</button>
       <button data-act="renameshow" data-id="${sw.id}" style="padding:4px 6px;color:var(--dim);font-size:12px">名前</button>
       <button data-act="delshow" data-id="${sw.id}" style="padding:4px 6px;color:var(--bad)">✕</button>
@@ -5541,6 +5542,16 @@ document.addEventListener("click", (e) => {
       if (S.showFilter === id) S.showFilter = "";
       U.menu = null;
       save(); schedulePush(); renderSheet(); render();
+      break;
+    }
+    case "showpub": {
+      const sw = S.shows.find((x) => x.id === id); if (!sw) break;
+      if (!sw.nopub) {
+        const n = S.songs.filter((x) => x.showId === id).length;
+        if (!confirm(`「${sw.name}」を配信しないようにします。\n\nこの公演の 曲${n}件 と記録は、メンバーに見えなくなります。\n手元のデータは消えません。`)) break;
+        sw.nopub = 1;
+      } else delete sw.nopub;
+      save(); schedulePush(); render();
       break;
     }
     case "nopubtoggle": {
@@ -6246,7 +6257,8 @@ function dupShow(fromId) {
   const nm = prompt("新しい公演名", suggest);
   if (nm == null || !nm.trim()) return;
   const nid = uid();
-  S.shows.push({ id: nid, name: nm.trim(), ts: Date.now(), from: fromId, folder: folderOf(sw) });
+  S.shows.push({ id: nid, name: nm.trim(), ts: Date.now(), from: fromId, folder: folderOf(sw),
+    nopub: sw && sw.nopub ? 1 : undefined });
   S.songs.filter((x) => x.showId === fromId).forEach((x) => {
     // 名簿・ブロック（A/B）・テイク・取り込み日まで引き継ぐ。
     // ここが抜けていると、複製した公演でブロックの行の担当が空になり、
@@ -6997,7 +7009,7 @@ function publicationData(gid) {
 
   // このグループの曲がある公演を、新しい順に全部。大きすぎる時だけ古い方から落とす。
   let ids = showsNewestFirst()
-    .filter((sw) => !sw.hidden)
+    .filter((sw) => !sw.hidden && !sw.nopub)          // 公演ごとに配信しない設定
     .filter((sw) => S.songs.some((x) => x.showId === sw.id && x.groupId === g.id))
     .map((x) => x.id);
   let d = build(ids);
