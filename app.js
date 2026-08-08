@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "6.8";
+const APP_VER = "6.9";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -4099,21 +4099,50 @@ function viewSetupRec() {
     <h4 class="head">保存領域</h4>
     <div class="card" style="margin-bottom:22px">
       ${(() => {
-        // Safariは「バイト数」で数える。日本語は1文字3バイトなので、文字数だと実態を見誤る。
-        const txt = (() => { try { return localStorage.getItem(KEY) || ""; } catch (e) { return ""; } })();
-        const bytes = new TextEncoder().encode(txt).length;
-        const mb = (bytes / 1048576).toFixed(2);
-        const pct = Math.min(100, Math.round(bytes / 5242880 * 100));
+        // Safariは保存領域を「この場所ぜんぶ」で数える。今のデータだけ見ても実態は分からない。
+        const enc = new TextEncoder();
+        let total = 0, mine = 0;
+        const stray = [];
+        try {
+          for (let i = 0; i < localStorage.length; i++) {
+            const k = localStorage.key(i);
+            const v = localStorage.getItem(k) || "";
+            const b = enc.encode(k).length + enc.encode(v).length;
+            total += b;
+            if (k === KEY) mine = b;
+            else if (k.indexOf(KEY + ":broken:") === 0) {
+              const at = Number(k.split(":broken:")[1] || 0);
+              let n = null;
+              try { const o = unpackState(JSON.parse(v)); n = { sh: (o.shows || []).length, sg: (o.songs || []).length, nt: (o.notes || []).length }; }
+              catch (e) { /* 読めなくても大きさは分かる */ }
+              stray.push({ k, at, b, n });
+            }
+          }
+        } catch (e) { /* 数えられない端末もある */ }
+        stray.sort((a, b2) => b2.at - a.at);
+        const mb = (x) => (x / 1048576).toFixed(2);
+        const pct = Math.min(100, Math.round(total / 5242880 * 100));
         const over = saveErr;
         return `<div class="row" style="margin-bottom:6px">
-          <span class="grow" style="font-size:13px">いま使っている量</span>
-          <span style="font-size:13px;color:${over || pct > 80 ? "var(--bad)" : "var(--dim)"};font-weight:700">${mb} MB / 約5 MB（${pct}%）</span>
+          <span class="grow" style="font-size:13px">この場所の合計</span>
+          <span style="font-size:13px;color:${over || pct > 80 ? "var(--bad)" : "var(--dim)"};font-weight:700">${mb(total)} MB / 約5 MB（${pct}%）</span>
         </div>
-        <div style="font-size:11px;color:var(--dim);line-height:1.7">
-          公演${S.shows.length}件・曲${S.songs.length}件・記録${S.notes.length}件<br>
-          ${over ? "<b style=\"color:var(--bad)\">いま上限を超えていて、保存できていません。</b>使わないグループや古い公演を消してください。"
+        <div style="font-size:11px;color:var(--dim);line-height:1.7;margin-bottom:${stray.length ? 10 : 0}px">
+          いまのデータ ${mb(mine)} MB（公演${S.shows.length}件・曲${S.songs.length}件・記録${S.notes.length}件）<br>
+          ${over ? "<b style=\"color:var(--bad)\">いま上限を超えていて、保存できていません。</b>下の「取り残し」を消すと空きます。"
                  : "上限に達すると保存できなくなります。"}
-        </div>`;
+        </div>
+        ${stray.length ? `<div style="font-size:11px;color:var(--accent);margin-bottom:6px">
+          取り残しのデータが ${stray.length}件 あります（合計 ${mb(stray.reduce((a, x) => a + x.b, 0))} MB）。<br>
+          読み込みでつまずいた時に、消さずに横へ避けたものです。中身が残っていれば戻せます。</div>
+        ${stray.map((x) => `<div class="row card" style="padding:8px 10px;margin-bottom:6px">
+          <div class="grow" style="min-width:0">
+            <div style="font-size:12px">${x.at ? new Date(x.at).toLocaleString("ja-JP") : "日時不明"}　${mb(x.b)} MB</div>
+            <div style="font-size:11px;color:var(--dim)">${x.n ? `公演${x.n.sh}件・曲${x.n.sg}件・記録${x.n.nt}件` : "中身を読み取れません"}</div>
+          </div>
+          ${x.n && (x.n.sg || x.n.nt) ? `<button class="chip sm" data-act="strayuse" data-id="${h(x.k)}">戻す</button>` : ""}
+          <button class="chip sm" data-act="straydel" data-id="${h(x.k)}" style="color:var(--bad)">消す</button>
+        </div>`).join("")}` : ""}`;
       })()}
     </div>
 
@@ -4907,21 +4936,50 @@ function viewSetup() {
     <h4 class="head">保存領域</h4>
     <div class="card" style="margin-bottom:22px">
       ${(() => {
-        // Safariは「バイト数」で数える。日本語は1文字3バイトなので、文字数だと実態を見誤る。
-        const txt = (() => { try { return localStorage.getItem(KEY) || ""; } catch (e) { return ""; } })();
-        const bytes = new TextEncoder().encode(txt).length;
-        const mb = (bytes / 1048576).toFixed(2);
-        const pct = Math.min(100, Math.round(bytes / 5242880 * 100));
+        // Safariは保存領域を「この場所ぜんぶ」で数える。今のデータだけ見ても実態は分からない。
+        const enc = new TextEncoder();
+        let total = 0, mine = 0;
+        const stray = [];
+        try {
+          for (let i = 0; i < localStorage.length; i++) {
+            const k = localStorage.key(i);
+            const v = localStorage.getItem(k) || "";
+            const b = enc.encode(k).length + enc.encode(v).length;
+            total += b;
+            if (k === KEY) mine = b;
+            else if (k.indexOf(KEY + ":broken:") === 0) {
+              const at = Number(k.split(":broken:")[1] || 0);
+              let n = null;
+              try { const o = unpackState(JSON.parse(v)); n = { sh: (o.shows || []).length, sg: (o.songs || []).length, nt: (o.notes || []).length }; }
+              catch (e) { /* 読めなくても大きさは分かる */ }
+              stray.push({ k, at, b, n });
+            }
+          }
+        } catch (e) { /* 数えられない端末もある */ }
+        stray.sort((a, b2) => b2.at - a.at);
+        const mb = (x) => (x / 1048576).toFixed(2);
+        const pct = Math.min(100, Math.round(total / 5242880 * 100));
         const over = saveErr;
         return `<div class="row" style="margin-bottom:6px">
-          <span class="grow" style="font-size:13px">いま使っている量</span>
-          <span style="font-size:13px;color:${over || pct > 80 ? "var(--bad)" : "var(--dim)"};font-weight:700">${mb} MB / 約5 MB（${pct}%）</span>
+          <span class="grow" style="font-size:13px">この場所の合計</span>
+          <span style="font-size:13px;color:${over || pct > 80 ? "var(--bad)" : "var(--dim)"};font-weight:700">${mb(total)} MB / 約5 MB（${pct}%）</span>
         </div>
-        <div style="font-size:11px;color:var(--dim);line-height:1.7">
-          公演${S.shows.length}件・曲${S.songs.length}件・記録${S.notes.length}件<br>
-          ${over ? "<b style=\"color:var(--bad)\">いま上限を超えていて、保存できていません。</b>使わないグループや古い公演を消してください。"
+        <div style="font-size:11px;color:var(--dim);line-height:1.7;margin-bottom:${stray.length ? 10 : 0}px">
+          いまのデータ ${mb(mine)} MB（公演${S.shows.length}件・曲${S.songs.length}件・記録${S.notes.length}件）<br>
+          ${over ? "<b style=\"color:var(--bad)\">いま上限を超えていて、保存できていません。</b>下の「取り残し」を消すと空きます。"
                  : "上限に達すると保存できなくなります。"}
-        </div>`;
+        </div>
+        ${stray.length ? `<div style="font-size:11px;color:var(--accent);margin-bottom:6px">
+          取り残しのデータが ${stray.length}件 あります（合計 ${mb(stray.reduce((a, x) => a + x.b, 0))} MB）。<br>
+          読み込みでつまずいた時に、消さずに横へ避けたものです。中身が残っていれば戻せます。</div>
+        ${stray.map((x) => `<div class="row card" style="padding:8px 10px;margin-bottom:6px">
+          <div class="grow" style="min-width:0">
+            <div style="font-size:12px">${x.at ? new Date(x.at).toLocaleString("ja-JP") : "日時不明"}　${mb(x.b)} MB</div>
+            <div style="font-size:11px;color:var(--dim)">${x.n ? `公演${x.n.sh}件・曲${x.n.sg}件・記録${x.n.nt}件` : "中身を読み取れません"}</div>
+          </div>
+          ${x.n && (x.n.sg || x.n.nt) ? `<button class="chip sm" data-act="strayuse" data-id="${h(x.k)}">戻す</button>` : ""}
+          <button class="chip sm" data-act="straydel" data-id="${h(x.k)}" style="color:var(--bad)">消す</button>
+        </div>`).join("")}` : ""}`;
       })()}
     </div>
 
@@ -5795,6 +5853,28 @@ document.addEventListener("click", (e) => {
     case "bkfind": findBackup(); break;
     case "bkfromid": restoreFromId(); break;
     case "bkfrompub": recoverFromDelivery(); break;
+    case "strayuse": {
+      let o = null;
+      try { o = unpackState(JSON.parse(localStorage.getItem(id) || "")); } catch (e) { alert("読み取れませんでした。"); break; }
+      if (!o) { alert("読み取れませんでした。"); break; }
+      if (!confirm(`この取り残しに戻します。\n公演${(o.shows || []).length}件・曲${(o.songs || []).length}件・記録${(o.notes || []).length}件\n\n今の内容は置き換わります。よろしいですか？`)) break;
+      const tk = S.ghToken, bk = S.bkGistId, bkk = S.bkKey;
+      Object.keys(S).forEach((k) => { delete S[k]; });
+      Object.assign(S, o);
+      S.ghToken = tk || S.ghToken; if (bk) S.bkGistId = bk; if (bkk) S.bkKey = bkk;
+      S.bkSeen = Date.now(); S.bkAt = S.bkSeen; S.bkHash = bkSignature();
+      otherAt = 0;
+      save();
+      alert("戻しました。");
+      location.reload();
+      break;
+    }
+    case "straydel": {
+      if (!confirm("この取り残しを消します。元に戻せません。よろしいですか？")) break;
+      try { localStorage.removeItem(id); } catch (e) { /* 消せなくても続ける */ }
+      save(); render();
+      break;
+    }
     case "ghclear":
       if (confirm("トークンを消して入れ直します。\n配信先の設定は残ります。")) { S.ghToken = ""; save(); render(); }
       break;
@@ -7058,6 +7138,9 @@ async function recoverInner() {
   S.viewer = false;
   S.pubNotes = [];
   sweep();
+  // 戻した直後に「別の端末で更新されています」と誤解されないようにする
+  S.bkSeen = Date.now(); S.bkAt = S.bkSeen; S.bkHash = bkSignature();
+  otherAt = 0;
   save();
   alert(`取り込みました。\n公演${S.shows.length}件・曲${S.songs.length}件・記録${S.notes.length}件\n\n※手書きと録音は配信に含まれないため戻りません。`);
   location.reload();
