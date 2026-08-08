@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "6.7";
+const APP_VER = "6.8";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -91,7 +91,7 @@ function load() {
   let raw = null;
   try {
     raw = localStorage.getItem(KEY);
-    if (raw) S = Object.assign(S, JSON.parse(raw));
+    if (raw) S = Object.assign(S, unpackState(JSON.parse(raw)));
   } catch (e) { /* 初回、または壊れている */ }
   try {
     migrate();
@@ -761,9 +761,43 @@ function pushUndo(songId) {
 }
 let saveErr = false;
 let preview = null;                    // メンバーの見え方を確認中は、手元に保存しない
+
+// 同じ曲を公演の数だけ持つと、歌詞が丸ごと複製されて保存領域を食い潰す。
+// 保存する時だけ歌詞を1か所にまとめ、読み込む時に配り直す。
+// （曲ごとに別の複製を渡すので、片方を直してももう片方は変わらない）
+function packState(src) {
+  const c = Object.assign({}, src);
+  const lib = [], seen = new Map();
+  c.songs = (src.songs || []).map((x) => {
+    const y = Object.assign({}, x);
+    const k = JSON.stringify(x.lines || []);
+    let i = seen.get(k);
+    if (i == null) { i = lib.length; lib.push(x.lines || []); seen.set(k, i); }
+    delete y.lines; y.L = i;
+    return y;
+  });
+  c.songLib = lib;
+  return c;
+}
+function unpackState(o) {
+  if (!o || !Array.isArray(o.songLib)) return o;
+  const lib = o.songLib;
+  o.songs = (o.songs || []).map((x) => {
+    const y = Object.assign({}, x);
+    if (y.L != null) {
+      y.lines = JSON.parse(JSON.stringify(lib[y.L] || []));
+      delete y.L;
+    }
+    if (!Array.isArray(y.lines)) y.lines = [];
+    return y;
+  });
+  delete o.songLib;
+  return o;
+}
+
 function save() {
   if (preview) return;
-  try { localStorage.setItem(KEY, JSON.stringify(S)); saveErr = false; }
+  try { localStorage.setItem(KEY, JSON.stringify(packState(S))); saveErr = false; }
   catch (e) { saveErr = true; }
 }
 
@@ -4065,16 +4099,20 @@ function viewSetupRec() {
     <h4 class="head">保存領域</h4>
     <div class="card" style="margin-bottom:22px">
       ${(() => {
-        const used = (() => { try { return (localStorage.getItem(KEY) || "").length; } catch (e) { return 0; } })();
-        const mb = (used / 1048576).toFixed(2);
+        // Safariは「バイト数」で数える。日本語は1文字3バイトなので、文字数だと実態を見誤る。
+        const txt = (() => { try { return localStorage.getItem(KEY) || ""; } catch (e) { return ""; } })();
+        const bytes = new TextEncoder().encode(txt).length;
+        const mb = (bytes / 1048576).toFixed(2);
+        const pct = Math.min(100, Math.round(bytes / 5242880 * 100));
         const over = saveErr;
         return `<div class="row" style="margin-bottom:6px">
           <span class="grow" style="font-size:13px">いま使っている量</span>
-          <span style="font-size:13px;color:${over ? "var(--bad)" : "var(--dim)"};font-weight:700">${mb} MB</span>
+          <span style="font-size:13px;color:${over || pct > 80 ? "var(--bad)" : "var(--dim)"};font-weight:700">${mb} MB / 約5 MB（${pct}%）</span>
         </div>
         <div style="font-size:11px;color:var(--dim);line-height:1.7">
           公演${S.shows.length}件・曲${S.songs.length}件・記録${S.notes.length}件<br>
-          端末の上限に達すると保存できなくなります。${over ? "<b style=\"color:var(--bad)\">いま上限を超えています。</b>使わないグループや古い公演を消してください。" : ""}
+          ${over ? "<b style=\"color:var(--bad)\">いま上限を超えていて、保存できていません。</b>使わないグループや古い公演を消してください。"
+                 : "上限に達すると保存できなくなります。"}
         </div>`;
       })()}
     </div>
@@ -4869,16 +4907,20 @@ function viewSetup() {
     <h4 class="head">保存領域</h4>
     <div class="card" style="margin-bottom:22px">
       ${(() => {
-        const used = (() => { try { return (localStorage.getItem(KEY) || "").length; } catch (e) { return 0; } })();
-        const mb = (used / 1048576).toFixed(2);
+        // Safariは「バイト数」で数える。日本語は1文字3バイトなので、文字数だと実態を見誤る。
+        const txt = (() => { try { return localStorage.getItem(KEY) || ""; } catch (e) { return ""; } })();
+        const bytes = new TextEncoder().encode(txt).length;
+        const mb = (bytes / 1048576).toFixed(2);
+        const pct = Math.min(100, Math.round(bytes / 5242880 * 100));
         const over = saveErr;
         return `<div class="row" style="margin-bottom:6px">
           <span class="grow" style="font-size:13px">いま使っている量</span>
-          <span style="font-size:13px;color:${over ? "var(--bad)" : "var(--dim)"};font-weight:700">${mb} MB</span>
+          <span style="font-size:13px;color:${over || pct > 80 ? "var(--bad)" : "var(--dim)"};font-weight:700">${mb} MB / 約5 MB（${pct}%）</span>
         </div>
         <div style="font-size:11px;color:var(--dim);line-height:1.7">
           公演${S.shows.length}件・曲${S.songs.length}件・記録${S.notes.length}件<br>
-          端末の上限に達すると保存できなくなります。${over ? "<b style=\"color:var(--bad)\">いま上限を超えています。</b>使わないグループや古い公演を消してください。" : ""}
+          ${over ? "<b style=\"color:var(--bad)\">いま上限を超えていて、保存できていません。</b>使わないグループや古い公演を消してください。"
+                 : "上限に達すると保存できなくなります。"}
         </div>`;
       })()}
     </div>
