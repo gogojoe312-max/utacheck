@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "8.9";
+const APP_VER = "9.0";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -3139,7 +3139,8 @@ function viewLive() {
       ${h(syncErr || (S.src ? "まだ受け取れていません。" : "接続リンクから開いてください。"))}
       ${syncAt ? `<div style="color:var(--dim);font-size:11px;margin-top:4px">最後に受け取れたのは ${new Date(syncAt).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}</div>` : ""}
       <div class="row" style="margin-top:8px">
-        <button class="chip sm" data-act="synow" style="background:var(--accent);color:#0A0A0A">今すぐ受け取る</button>
+        ${S.src ? `<button class="chip sm" data-act="synow" style="background:var(--accent);color:#0A0A0A">今すぐ受け取る</button>` : ""}
+        <button class="chip sm" data-act="pastelink" style="${S.src ? "" : "background:var(--accent);color:#0A0A0A"}">リンクを貼って つなぐ</button>
         ${/合言葉/.test(syncErr) ? `<button class="chip sm" data-act="askkey">合言葉を入れる</button>` : ""}
       </div>
     </div>` : ""}
@@ -5574,6 +5575,19 @@ document.addEventListener("click", (e) => {
       break;
     }
     case "synow": syncSetlist(true); break;
+    case "pastelink": {
+      // ホーム画面に追加すると、Safariで開いた時の接続情報が引き継がれない。
+      // その場でリンクを貼って つなぎ直せるようにする。
+      const t = prompt("配ってもらった接続リンクを貼ってください。", "");
+      if (t == null) break;
+      const m2 = /#g=([A-Za-z0-9\-_]+)/.exec(String(t));
+      if (!m2) { alert("リンクの形が違います。\n「#g=」から始まる部分を含めて、全部貼ってください。"); break; }
+      try {
+        location.hash = "#g=" + m2[1];
+        importFromLink();
+      } catch (e) { alert("読み取れませんでした。"); }
+      break;
+    }
     case "askkey": {
       const pw = prompt("合言葉を入れてください。", S.key || "");
       if (pw != null) { S.key = pw.trim(); askedKey = false; save(); keepLinkInURL(); syncSetlist(true); }

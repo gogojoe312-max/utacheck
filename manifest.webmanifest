@@ -1,7 +1,6 @@
 {
   "name": "歌チェック",
   "short_name": "歌チェック",
-  "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
