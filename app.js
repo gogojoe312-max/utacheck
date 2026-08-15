@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "9.4";
+const APP_VER = "9.5";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -4363,8 +4363,8 @@ function recBar() {
   <div class="aubar">
     ${live ? `<span id="pcd" style="font-size:13px;font-variant-numeric:tabular-nums">—</span>
       ${cur ? `<span style="font-size:11px;color:var(--dim)">${h(cur.name)}</span>` : ""}
-      <button class="tkbtn" data-act="takedown" ${tk > 1 ? "" : "style=opacity:.3"}>−</button>
-      <button class="tknow" data-act="takeup">T<b>${tk}</b></button>
+      <button class="tkbtn" data-act="takedown"${tk > 1 ? "" : ' style="opacity:.3"'}>−</button>
+      <button class="tknow" data-act="takeup"><i>テイク</i><b>${tk}</b></button>
       <span class="grow"></span>
       <button class="chip sm" data-act="pnextsec" style="background:var(--accent);color:#0A0A0A">次へ</button>`
     : next ? `<span style="color:var(--dim);font-size:12px">次 ${h(next.s.name)}　${min2hm(next.aS)}</span>
