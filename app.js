@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "9.2";
+const APP_VER = "9.3";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -3110,7 +3110,7 @@ function viewLive() {
       return `${newSec ? `<div class="secdiv" id="sec-${h(l.sec)}"><span>${h(l.sec)}</span></div>` : ""}
       <div class="ln${S.recMode && l.add ? " lnadd" : ""}${S.recMode && l.skip ? " lnskip" : ""}${isAgeri(l) ? " lnage" : ""}" style="${tint ? `background:color-mix(in srgb,${tint} ${strength}%,transparent)` : ""}">
         <button class="lbl" data-act="${S.recMode ? "rbar" : (st2 ? "assignline" : "noteblock")}" data-i="${i}"
-          style="${st2 ? `color:${st2 === "need" ? "var(--bad)" : "#F0B23C"}` : ""}">${S.recMode && l.solo ? `<b class="solomk">ソロ</b>` : ""}${labelHTML(s, i)}</button>
+          style="${st2 ? `color:${st2 === "need" ? "var(--bad)" : "#F0B23C"}` : ""}">${S.recMode && l.solo ? `<b class="solomk">ソロ</b>` : ""}${S.recMode && l.tag ? `<b class="tagmk">${h(l.tag)}</b>` : ""}${labelHTML(s, i)}</button>
         <div class="brk ${gp[i]}"></div>
         <div class="grow" style="min-width:0">
           <div class="txt" data-l="${i}" style="font-size:${S.size}px">${cells}</div>${pills}
@@ -3262,7 +3262,7 @@ function viewOverview(s) {
       const newSec = l.sec && l.sec !== (s.lines[i - 1] || {}).sec;
       return `${newSec ? `<div class="secdiv" id="sec-${h(l.sec)}"><span>${h(l.sec)}</span></div>` : ""}
         <button class="ovw${l.add ? " lnadd" : ""}${S.recMode && l.skip ? " lnskip" : ""}" data-act="jumpline" data-i="${i}">
-          <span class="ovwn">${l.solo ? `<b class="solomk">ソロ</b>` : ""}${S.recBars && bars[i] != null ? bars[i] : ""}</span>
+          <span class="ovwn">${l.solo ? `<b class="solomk">ソロ</b>` : ""}${l.tag ? `<b class="tagmk">${h(l.tag)}</b>` : ""}${S.recBars && bars[i] != null ? bars[i] : ""}</span>
           <span>${h(l.add ? "（" + l.t + "）" : l.t)}</span></button>`;
     };
     const brks = (s.colBreaks || []).filter((x) => x > 0 && x < s.lines.length);
@@ -3510,6 +3510,17 @@ function renderSheet() {
         <button class="chip sm" data-act="rintro" data-id="4">＋4</button>
       </div>
       <div style="font-size:10px;color:var(--dim);margin:-4px 0 10px 56px">歌い出しまでの長さ。全体の小節番号がずれます</div>
+      <div class="row" style="margin-bottom:6px">
+        <span style="font-size:11px;color:var(--dim);width:52px">表記</span>
+        <input class="field grow" id="rtag" placeholder="ガヤ / フェイク など" value="${h((l || {}).tag || "")}">
+        <button class="chip sm" data-act="rtagset">決定</button>
+      </div>
+      <div class="chips" style="margin-bottom:10px">
+        ${TAGDEF.concat((S.tagWords || []).filter((x) => TAGDEF.indexOf(x) < 0))
+          .map((x) => `<button class="chip sm" data-act="rtagq" data-id="${h(x)}"
+            style="${(l || {}).tag === x ? "background:var(--accent);color:#0A0A0A" : ""}">${h(x)}</button>`).join("")}
+      </div>
+      <div style="font-size:10px;color:var(--dim);margin:-6px 0 10px 56px">歌メロに足すもの。区切りは変わりません</div>
       <div class="row" style="margin-bottom:10px">
         <span style="font-size:11px;color:var(--dim);width:52px">区切り</span>
         <input class="field grow" id="rsec" placeholder="1A / 1C / 間奏 など" value="${h((l || {}).sec || "")}">
@@ -4418,6 +4429,15 @@ function sectionOrder() {
 // 区切りごとの持ち時間。既定は均等割り、直した分だけ覚える。
 const PREP = "準備";
 const SECDEF = ["1A", "1B", "1C", "2A", "2B", "2C", "D", "落ち", "大サビ", "間奏"];
+// 歌メロに足すもの。区切りとは別に、行へ付ける表記。
+const TAGDEF = ["ガヤ", "フェイク", "ハモ", "コーラス", "掛け声", "アドリブ"];
+function rememberTag(nm) {
+  const v = String(nm || "").trim();
+  if (!v || TAGDEF.indexOf(v) >= 0) return;
+  S.tagWords = (S.tagWords || []).filter((x) => x !== v);
+  S.tagWords.unshift(v);
+  if (S.tagWords.length > 12) S.tagWords.length = 12;
+}
 // 使った区切り名を覚えておき、次からボタンに出す
 function rememberSec(nm) {
   const v = String(nm || "").trim();
@@ -4662,7 +4682,7 @@ function viewRecPrint() {
   const bars = barsOf(so);
   const trs = so.lines.map((l, i) => {
     if (l.gap) return `<tr class="prz"><td class="prn"></td><td class="prx"></td></tr>`;
-    return `<tr><td class="prn">${l.solo ? "◆ " : ""}${l.sec ? h(l.sec) + " " : ""}${S.recBars && bars[i] != null ? bars[i] : ""}</td><td class="prx">${h(l.add ? "（" + l.t + "）" : l.t)}</td></tr>`;
+    return `<tr><td class="prn">${l.solo ? "◆ " : ""}${l.tag ? "［" + h(l.tag) + "］" : ""}${l.sec ? h(l.sec) + " " : ""}${S.recBars && bars[i] != null ? bars[i] : ""}</td><td class="prx">${h(l.add ? "（" + l.t + "）" : l.t)}</td></tr>`;
   });
   return `
   <div class="hd noprint"><button class="ic" data-act="recback">‹</button><b>PDF・印刷</b>
@@ -5812,6 +5832,22 @@ document.addEventListener("click", (e) => {
       pushUndo();
       const l2 = so.lines[U.menu.i];
       if (l2.solo) delete l2.solo; else l2.solo = 1;
+      save(); renderSheet(); render(); break;
+    }
+    case "rtagset": {
+      const so = recSong(); if (!so) break;
+      const el5 = document.getElementById("rtag");
+      const v = el5 ? String(el5.value || "").trim() : "";
+      pushUndo();
+      if (v) { so.lines[U.menu.i].tag = v; rememberTag(v); }
+      else delete so.lines[U.menu.i].tag;
+      save(); renderSheet(); render(); break;
+    }
+    case "rtagq": {
+      const so = recSong(); if (!so) break;
+      pushUndo();
+      const l3 = so.lines[U.menu.i];
+      if (l3.tag === id) delete l3.tag; else { l3.tag = id; rememberTag(id); }
       save(); renderSheet(); render(); break;
     }
     case "rsecset": {
