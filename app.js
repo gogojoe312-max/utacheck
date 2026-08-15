@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "9.5";
+const APP_VER = "9.6";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -314,6 +314,21 @@ function showsFor() {
 const showsNewestFirst = () => S.shows.slice().sort((a, b) => (b.ts || 0) - (a.ts || 0));
 const showName = (id) => (S.shows.find((x) => x.id === (id || S.showId)) || {}).name || "";
 const NOTES = () => S.notes.concat(S.pubNotes);
+// いま録っているテイク。指摘や手書きは、テイクごとに分けて覚える。
+// ライブモードでは使わない（空文字＝テイクの区別なし）。
+function takeCtx() {
+  if (!S.recMode || !S.plan) return "";
+  const live = (S.plan.slots || []).find((x) => x.a0 != null && x.a1 == null);
+  if (!live || !live.secCur) return "";
+  const n = Math.max(1, Number((live.takes || {})[live.secCur] || 1));
+  return live.id + "/" + live.secCur + "#" + n;
+}
+// その指摘が、いま見ているテイクのものか
+const inTake = (n) => {
+  const t = takeCtx();
+  if (!t) return !n.tk;             // ライブモードでは、テイク付きの記録は出さない
+  return (n.tk || "") === t;
+};
 
 /* ---- 欠席対応 ---- */
 const absentIds = (showId) => ((S.shows.find((x) => x.id === (showId || S.showId)) || {}).absent || []);
@@ -3055,7 +3070,7 @@ function viewLive() {
   if (!s) {
     body = `<div style="padding:64px 26px;text-align:center;color:var(--dim);font-size:14px">曲がありません</div>`;
   } else {
-    const ns0 = NOTES().filter((n) => n.songId === s.id && n.showId === S.showId);
+    const ns0 = NOTES().filter((n) => n.songId === s.id && n.showId === S.showId && inTake(n));
     const gp = groupPos(s.lines);
     body = s.lines.map((l, i) => {
       if (l.gap) {
@@ -3215,7 +3230,7 @@ function viewLive() {
 
 /* ---- 全体表示（1曲まるごと見渡す）---- */
 function viewOverview(s) {
-  const ns0 = NOTES().filter((n) => n.songId === s.id && n.showId === S.showId);
+  const ns0 = NOTES().filter((n) => n.songId === s.id && n.showId === S.showId && inTake(n));
   const gp = groupPos(s.lines);
   const rows = s.lines.map((l, i) => {
     if (l.gap) {
@@ -6460,6 +6475,7 @@ function commitNote() {
       lineEnd: sh.range ? null : (sh.lineEnd || null),   // 文字を選んだ時はその行だけ
       from: sh.range ? sh.range[0] : null, to: sh.range ? sh.range[1] : null,
       at: recAt(),
+      tk: takeCtx() || undefined,
       showId: S.showId, ts: Date.now(),
     });
     save();
@@ -6672,7 +6688,11 @@ document.addEventListener("pointerup", () => {
 
 /* ---- 手書き ---- */
 
-const drawKey = () => { const so = song(); return so ? S.showId + "|" + so.id : ""; };
+const drawKey = () => {
+  const so = song(); if (!so) return "";
+  const t = takeCtx();
+  return S.showId + "|" + so.id + (t ? "|" + t : "");
+};
 let inkPath = null;
 
 function paintInk() {
