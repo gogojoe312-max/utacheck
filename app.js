@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "9.0";
+const APP_VER = "9.1";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -4431,18 +4431,23 @@ function sectionsOf(slot) {
   const adj = slot.sec || {};
   const prep = adj[PREP] != null ? Number(adj[PREP]) : (slot.prep != null ? Number(slot.prep) : Number(S.planPrep || 0));
   const budget = Math.max(0, Number(slot.min || 0) - prep);   // 準備の分は配分から抜く
-  const fixed = names2.filter((n) => adj[n] != null);
+  // コピーで済ませる区切りは録らないので、時間を割り当てない。
+  // その分は残りの区切りに回る。
+  const skip = slot.skip || {};
+  const live2 = names2.filter((n) => !skip[n]);
+  const fixed = live2.filter((n) => adj[n] != null);
   const fixedSum = fixed.reduce((a, n) => a + Number(adj[n]), 0);
-  const rest = names2.length - fixed.length;
+  const rest = live2.length - fixed.length;
   const each = rest > 0 ? Math.max(1, Math.round((budget - fixedSum) / rest)) : 0;
   const mk = (nm, mi, isPrep) => ({
     name: nm, min: mi, prep: !!isPrep,
+    skip: !!skip[nm],
     live: slot.secCur === nm,
     done: log[nm] != null,
     used: log[nm] != null ? Number(log[nm]) : 0,
   });
   const out = prep > 0 ? [mk(PREP, prep, true)] : [];
-  names2.forEach((nm) => out.push(mk(nm, adj[nm] != null ? Number(adj[nm]) : each)));
+  names2.forEach((nm) => out.push(mk(nm, skip[nm] ? 0 : (adj[nm] != null ? Number(adj[nm]) : each))));
   return out;
 }
 // 録り終わった区切りの、予定と実際の差（−なら巻き）
@@ -4525,7 +4530,12 @@ function viewPlan() {
     </div>
     ${r.live && sectionsOf(s).length ? `<div class="card" style="margin:-4px 0 8px 14px;padding:10px 12px">
       <div style="font-size:10px;color:var(--dim);margin-bottom:6px">${h(recSong() ? recSong().title : "")} の配分</div>
-      ${sectionsOf(s).map((x) => `<div class="row" style="margin-bottom:6px">
+      ${sectionsOf(s).map((x) => x.skip ? `<div class="row" style="margin-bottom:6px;opacity:.4">
+        <span style="width:56px;font-size:12px;text-decoration:line-through">${h(x.name)}</span>
+        <span style="font-size:12px;color:var(--dim)">コピー（録らない）</span>
+        <span class="grow"></span>
+        <button class="chip sm" data-act="pskip" data-id="${h(x.name)}" style="color:var(--dim)">戻す</button>
+      </div>` : `<div class="row" style="margin-bottom:6px">
         <span style="width:56px;font-size:12px;color:${x.live ? "var(--accent)" : x.done ? "var(--dim)" : "var(--text)"}">${h(x.name)}</span>
         <button class="chip sm" data-act="psec" data-id="${h(x.name)}|-5">−5</button>
         <button class="chip sm" data-act="psec" data-id="${h(x.name)}|-1">−1</button>
@@ -4533,7 +4543,8 @@ function viewPlan() {
         <button class="chip sm" data-act="psec" data-id="${h(x.name)}|1">＋1</button>
         <button class="chip sm" data-act="psec" data-id="${h(x.name)}|5">＋5</button>
         <span class="grow"></span>
-        ${x.live ? `<span style="font-size:11px;color:var(--accent)">ここ</span>` : ""}
+        ${x.live ? `<span style="font-size:11px;color:var(--accent)">ここ</span>`
+          : x.prep ? "" : `<button class="chip sm" data-act="pskip" data-id="${h(x.name)}" style="color:var(--dim)">録らない</button>`}
       </div>`).join("")}
       <div class="row" style="margin-top:6px">
         <button class="chip sm grow" data-act="pseceven">均等に割り直す</button>
@@ -5819,6 +5830,23 @@ document.addEventListener("click", (e) => {
       live.s.sec[nm] = Math.max(1, (cur ? cur.min : 5) + Number(dv));
       save(); render(); break;
     }
+    case "pskip": {
+      const live = planRows().find((r) => r.live);
+      if (!live) break;
+      const nm = String(id);
+      live.s.skip = live.s.skip || {};
+      if (live.s.skip[nm]) delete live.s.skip[nm];
+      else {
+        live.s.skip[nm] = 1;
+        if (live.s.sec) delete live.s.sec[nm];      // 手で決めた分数は捨てる
+        // 録らない区切りを開いていたら、次の録る区切りへ移る
+        if (live.s.secCur === nm) {
+          const ns2 = sectionsOf(live.s).filter((x) => !x.prep && !x.skip && !x.done);
+          live.s.secCur = ns2.length ? ns2[0].name : "";
+        }
+      }
+      save(); render(); break;
+    }
     case "prebal": {
       const rows = planRows();
       if (!rows.length) break;
@@ -5841,7 +5869,7 @@ document.addEventListener("click", (e) => {
     case "pseceven": {
       const live = planRows().find((r) => r.live);
       if (!live) break;
-      delete live.s.sec;
+      delete live.s.sec;          // 手で決めた分数だけ捨てる（録らない指定はそのまま）
       save(); render(); break;
     }
     case "pnextsec": {
@@ -5855,7 +5883,8 @@ document.addEventListener("click", (e) => {
         live.s.secLog = live.s.secLog || {};
         live.s.secLog[live.s.secCur] = used;
       }
-      const nx = ss.find((x) => !x.done && x.name !== live.s.secCur);
+      // 録らない区切りは飛ばす
+      const nx = ss.find((x) => !x.done && !x.skip && x.name !== live.s.secCur);
       if (nx) {
         live.s.secCur = nx.name;
         live.s.secStart = Date.now();
@@ -5873,7 +5902,7 @@ document.addEventListener("click", (e) => {
       const nn = S.plan.slots[i3 + 1];
       if (nn && nn.a0 == null) {
         nn.a0 = live.s.a1; nn.startAt = Date.now(); nn.secStart = Date.now();
-        const first = (sectionsOf(nn)[0] || {}).name;
+        const first = (sectionsOf(nn).find((x) => !x.prep && !x.skip) || sectionsOf(nn)[0] || {}).name;
         if (first) nn.secCur = first;
       }
       save(); render(); break;
@@ -5931,7 +5960,8 @@ document.addEventListener("click", (e) => {
       const s2 = S.plan.slots.find((x) => x.id === id);
       if (s2) {
         s2.a0 = nowMin(); delete s2.a1; s2.startAt = Date.now(); s2.secStart = Date.now();
-        s2.secLog = {}; s2.secCur = (sectionsOf(s2)[0] || {}).name || "";
+        s2.secLog = {};
+        s2.secCur = (sectionsOf(s2).find((x) => !x.prep && !x.skip) || sectionsOf(s2)[0] || {}).name || "";
         save(); render();
       }
       break;
