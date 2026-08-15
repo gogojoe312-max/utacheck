@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "9.1";
+const APP_VER = "9.2";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -3108,7 +3108,7 @@ function viewLive() {
         : foc ? "#4C9BFF" : (ns.length ? noteColor(ns[0]) : "");
       const strength = (st2 || foc) ? 18 : 9;
       return `${newSec ? `<div class="secdiv" id="sec-${h(l.sec)}"><span>${h(l.sec)}</span></div>` : ""}
-      <div class="ln${S.recMode && l.add ? " lnadd" : ""}${isAgeri(l) ? " lnage" : ""}" style="${tint ? `background:color-mix(in srgb,${tint} ${strength}%,transparent)` : ""}">
+      <div class="ln${S.recMode && l.add ? " lnadd" : ""}${S.recMode && l.skip ? " lnskip" : ""}${isAgeri(l) ? " lnage" : ""}" style="${tint ? `background:color-mix(in srgb,${tint} ${strength}%,transparent)` : ""}">
         <button class="lbl" data-act="${S.recMode ? "rbar" : (st2 ? "assignline" : "noteblock")}" data-i="${i}"
           style="${st2 ? `color:${st2 === "need" ? "var(--bad)" : "#F0B23C"}` : ""}">${S.recMode && l.solo ? `<b class="solomk">ソロ</b>` : ""}${labelHTML(s, i)}</button>
         <div class="brk ${gp[i]}"></div>
@@ -3261,7 +3261,7 @@ function viewOverview(s) {
       if (l.gap) return `<div style="height:1em"></div>`;
       const newSec = l.sec && l.sec !== (s.lines[i - 1] || {}).sec;
       return `${newSec ? `<div class="secdiv" id="sec-${h(l.sec)}"><span>${h(l.sec)}</span></div>` : ""}
-        <button class="ovw${l.add ? " lnadd" : ""}" data-act="jumpline" data-i="${i}">
+        <button class="ovw${l.add ? " lnadd" : ""}${S.recMode && l.skip ? " lnskip" : ""}" data-act="jumpline" data-i="${i}">
           <span class="ovwn">${l.solo ? `<b class="solomk">ソロ</b>` : ""}${S.recBars && bars[i] != null ? bars[i] : ""}</span>
           <span>${h(l.add ? "（" + l.t + "）" : l.t)}</span></button>`;
     };
@@ -3492,6 +3492,8 @@ function renderSheet() {
         <span style="font-size:11px;color:var(--dim);width:52px">想定</span>
         <button class="chip sm grow" data-act="rsolo"
           style="${(l || {}).solo ? "background:var(--accent);color:#0A0A0A;font-weight:700" : ""}">ソロ想定</button>
+        <button class="chip sm grow" data-act="rskip"
+          style="${(l || {}).skip ? "background:var(--dim);color:#0A0A0A;font-weight:700" : ""}">コピー（録らない）</button>
       </div>
       <div class="row" style="margin-bottom:10px">
         <span style="font-size:11px;color:var(--dim);width:52px">行</span>
@@ -4431,14 +4433,37 @@ function sectionsOf(slot) {
   const adj = slot.sec || {};
   const prep = adj[PREP] != null ? Number(adj[PREP]) : (slot.prep != null ? Number(slot.prep) : Number(S.planPrep || 0));
   const budget = Math.max(0, Number(slot.min || 0) - prep);   // 準備の分は配分から抜く
-  // コピーで済ませる区切りは録らないので、時間を割り当てない。
-  // その分は残りの区切りに回る。
-  const skip = slot.skip || {};
+  // コピーで済ませるところは録らないので、時間を割り当てない。その分は残りに回る。
+  // 区切りごとの指定に加えて、歌詞の行ごとの「録らない」も見る。
+  const skip = Object.assign({}, slot.skip || {});
+  const so2 = recSong();
+  const barsBy = {};                       // 区切りごとの、録る小節数
+  if (so2) {
+    let cur = "";
+    (so2.lines || []).forEach((l) => {
+      if (l.gap) return;
+      if (l.sec) cur = l.sec;
+      if (!cur) return;
+      if (barsBy[cur] == null) barsBy[cur] = { all: 0, live: 0 };
+      const b = Number(l.bars || 4);
+      barsBy[cur].all += b;
+      if (!l.skip) barsBy[cur].live += b;
+    });
+    // その区切りの行が全部「録らない」なら、区切りごと外す
+    names2.forEach((n) => { const v = barsBy[n]; if (v && v.all > 0 && v.live === 0) skip[n] = 1; });
+  }
   const live2 = names2.filter((n) => !skip[n]);
   const fixed = live2.filter((n) => adj[n] != null);
   const fixedSum = fixed.reduce((a, n) => a + Number(adj[n]), 0);
-  const rest = live2.length - fixed.length;
-  const each = rest > 0 ? Math.max(1, Math.round((budget - fixedSum) / rest)) : 0;
+  const free = live2.filter((n) => adj[n] == null);
+  const pool = Math.max(0, budget - fixedSum);
+  // 録る小節数がわかる時は、その多さに応じて分ける（行を録らないにした分だけ短くなる）
+  const weight = {};
+  let wsum = 0;
+  free.forEach((n) => { const w = (barsBy[n] && barsBy[n].live) || 0; weight[n] = w; wsum += w; });
+  const each = free.length ? Math.max(1, Math.round(pool / free.length)) : 0;
+  const byBars = {};
+  if (wsum > 0) free.forEach((n) => { byBars[n] = Math.max(1, Math.round(pool * weight[n] / wsum)); });
   const mk = (nm, mi, isPrep) => ({
     name: nm, min: mi, prep: !!isPrep,
     skip: !!skip[nm],
@@ -4447,7 +4472,8 @@ function sectionsOf(slot) {
     used: log[nm] != null ? Number(log[nm]) : 0,
   });
   const out = prep > 0 ? [mk(PREP, prep, true)] : [];
-  names2.forEach((nm) => out.push(mk(nm, skip[nm] ? 0 : (adj[nm] != null ? Number(adj[nm]) : each))));
+  names2.forEach((nm) => out.push(mk(nm, skip[nm] ? 0
+    : (adj[nm] != null ? Number(adj[nm]) : (byBars[nm] != null ? byBars[nm] : each)))));
   return out;
 }
 // 録り終わった区切りの、予定と実際の差（−なら巻き）
@@ -5773,6 +5799,13 @@ document.addEventListener("click", (e) => {
         save(); renderSheet(); render();
       }
       break;
+    }
+    case "rskip": {
+      const so = recSong(); if (!so) break;
+      pushUndo();
+      const l2 = so.lines[U.menu.i];
+      if (l2.skip) delete l2.skip; else l2.skip = 1;
+      save(); renderSheet(); render(); break;
     }
     case "rsolo": {
       const so = recSong(); if (!so) break;

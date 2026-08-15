@@ -35,7 +35,10 @@ button{cursor:pointer}
 .hd .t1{font-size:11px;color:var(--dim)}
 .hd .t2{font-size:16px;font-weight:600}
 .ic{width:38px;height:38px;border-radius:10px;background:var(--panel);display:flex;align-items:center;justify-content:center;font-size:16px;flex:0 0 auto}
-.lnadd .txt, .lnadd{color:#7FB3FF}
+.lnadd .txt, /* コピーで済ませる行は、録らないので薄く出す */
+.lnskip{opacity:.35}
+.lnskip .txt,.lnskip .ovt{text-decoration:line-through;text-decoration-color:rgba(255,255,255,.55)}
+.lnadd{color:#7FB3FF}
 .lnage{background:rgba(240,178,60,.10);border-left:3px solid #F0B23C;border-radius:0 6px 6px 0}
 .lnage .txt{color:#F0B23C}
 .lnage .lbl{color:#F0B23C}
@@ -265,6 +268,6 @@ button{cursor:pointer}
 <div id="app"></div>
 <script src="vendor/pdf.min.js"></script>
 <script src="vendor/xlsx.full.min.js"></script>
-<script src="app.js?v=9.1"></script>
+<script src="app.js?v=9.2"></script>
 </body>
 </html>
