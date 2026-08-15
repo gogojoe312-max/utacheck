@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "9.3";
+const APP_VER = "9.4";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -4338,6 +4338,12 @@ function viewSetupRec() {
 }
 
 // 歌詞画面の下に、今の枠と残り時間を出す
+// 録りのテイク番号。区切りごとに数え、区切りが変わると1に戻る。
+function takeNo(slot) {
+  if (!slot || !slot.secCur) return 1;
+  return Math.max(1, Number((slot.takes || {})[slot.secCur] || 1));
+}
+
 function recBar() {
   const rows = planRows();
   const now = nowMin();
@@ -4345,6 +4351,7 @@ function recBar() {
   const next = rows.find((r) => !r.done && !r.live);
   const secs = live ? sectionsOf(live.s) : [];
   const cur = secs.find((x) => x.live);
+  const tk = live ? takeNo(live.s) : 1;
 
   const tabList = secs.length ? secs : sectionOrder().map((nm) => ({ name: nm }));
   const tabs = tabList.map((e) => {
@@ -4354,9 +4361,10 @@ function recBar() {
 
   return `${tabs ? `<div class="sectabs">${tabs}</div>` : ""}
   <div class="aubar">
-    ${live ? `<span style="color:var(--accent);font-weight:700">${h(live.s.name)}</span>
-      <span id="pcd" style="font-size:13px;font-variant-numeric:tabular-nums">—</span>
+    ${live ? `<span id="pcd" style="font-size:13px;font-variant-numeric:tabular-nums">—</span>
       ${cur ? `<span style="font-size:11px;color:var(--dim)">${h(cur.name)}</span>` : ""}
+      <button class="tkbtn" data-act="takedown" ${tk > 1 ? "" : "style=opacity:.3"}>−</button>
+      <button class="tknow" data-act="takeup">T<b>${tk}</b></button>
       <span class="grow"></span>
       <button class="chip sm" data-act="pnextsec" style="background:var(--accent);color:#0A0A0A">次へ</button>`
     : next ? `<span style="color:var(--dim);font-size:12px">次 ${h(next.s.name)}　${min2hm(next.aS)}</span>
@@ -5897,6 +5905,22 @@ document.addEventListener("click", (e) => {
       const cur = sectionsOf(live.s).find((x) => x.name === nm);
       live.s.sec = live.s.sec || {};
       live.s.sec[nm] = Math.max(1, (cur ? cur.min : 5) + Number(dv));
+      save(); render(); break;
+    }
+    case "takeup": {
+      const live = planRows().find((r) => r.live);
+      if (!live || !live.s.secCur) break;
+      live.s.takes = live.s.takes || {};
+      live.s.takes[live.s.secCur] = takeNo(live.s) + 1;
+      save(); render(); break;
+    }
+    case "takedown": {
+      const live = planRows().find((r) => r.live);
+      if (!live || !live.s.secCur) break;
+      const n = takeNo(live.s);
+      if (n <= 1) break;
+      live.s.takes = live.s.takes || {};
+      live.s.takes[live.s.secCur] = n - 1;
       save(); render(); break;
     }
     case "pskip": {
