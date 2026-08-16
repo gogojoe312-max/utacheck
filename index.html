@@ -21,9 +21,10 @@ body{
   background:var(--bg);color:var(--text);
   font-family:"Hiragino Sans","Noto Sans JP",system-ui,sans-serif;
   font-size:15px;-webkit-user-select:none;user-select:none;
-  padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
 }
-#app{height:100%;display:flex;flex-direction:column;overflow:hidden}
+/* 画面いっぱいに広げる。height:100% は親に頼るので端末によって短くなる。
+   安全余白（ノッチ・ホームバー）は、上下のバーの中で取る。 */
+#app{position:fixed;top:0;right:0;bottom:0;left:0;display:flex;flex-direction:column;overflow:hidden}
 button,input,textarea,select{font:inherit;color:inherit;background:none;border:none;outline:none}
 button{cursor:pointer}
 .row{display:flex;align-items:center;gap:8px;min-width:0}
@@ -32,8 +33,8 @@ button{cursor:pointer}
 .trunc{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* 長い曲名で後半が切れないよう、2行まで折り返して出す */
 .clamp2{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;white-space:normal;word-break:break-word;line-height:1.35}
-.hd{flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--line);
-  overflow:hidden}
+.hd{flex:0 0 auto;display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--line);overflow:hidden;
+  padding:calc(10px + env(safe-area-inset-top)) calc(14px + env(safe-area-inset-right)) 10px calc(14px + env(safe-area-inset-left))}
 .hd .grow,.hd .t1,.hd .t2{min-width:0}
 .hd .ic{flex:0 0 auto}
 .hd .t1{font-size:11px;color:var(--dim)}
@@ -95,8 +96,8 @@ button{cursor:pointer}
 .aub{width:38px;height:38px;border-radius:12px;background:var(--panel2);flex:0 0 auto;font-size:15px;display:flex;align-items:center;justify-content:center}
 .aubar input[type=range]{-webkit-appearance:none;height:4px;border-radius:2px;background:var(--line)}
 .aubar input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;border-radius:50%;background:var(--accent)}
-.bottom{flex:0 0 auto;display:flex;gap:6px;padding:6px 8px;border-top:1px solid var(--line);background:var(--panel);
-  overflow:hidden;padding-bottom:calc(6px + env(safe-area-inset-bottom))}
+.bottom{flex:0 0 auto;display:flex;gap:6px;border-top:1px solid var(--line);background:var(--panel);overflow:hidden;
+  padding:6px calc(8px + env(safe-area-inset-right)) calc(6px + env(safe-area-inset-bottom)) calc(8px + env(safe-area-inset-left))}
 /* ボタンは中身ぶんだけ。余りは間の空きが吸うので、広がりすぎず はみ出しもしない */
 .bottom button{flex:0 1 auto;min-width:0;background:var(--panel2);border-radius:11px;padding:9px 16px;
   display:flex;align-items:center;justify-content:center;white-space:nowrap;font-size:14px}
@@ -266,7 +267,7 @@ button{cursor:pointer}
   .pr.land .prbox{width:257mm;height:144mm}
 
 .pr{transform:none!important;width:170mm!important;margin:0 auto!important;padding:2mm 0 0!important}
-  #app{height:auto;display:block;overflow:visible}
+  #app{position:static;height:auto;display:block;overflow:visible}
   .noprint,.bottom,.hd{display:none!important}
   .scroll{overflow:visible!important;flex:none;padding:0!important;margin:0!important}
   .pr *{orphans:1;widows:1}
@@ -282,6 +283,6 @@ button{cursor:pointer}
 <div id="app"></div>
 <script src="vendor/pdf.min.js"></script>
 <script src="vendor/xlsx.full.min.js"></script>
-<script src="app.js?v=10.4"></script>
+<script src="app.js?v=10.5"></script>
 </body>
 </html>
