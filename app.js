@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "10.6";
+const APP_VER = "10.7";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -472,7 +472,9 @@ function labelOf(so, i) {
 function lineStatus(so, i) {
   const l = so.lines[i] || {};
   if (l.gap) return "";
-  if (/^全/.test(l.label || "")) return "";   // 「全」は見れば分かるので触らない
+  if (/^全/.test(l.labelRaw || l.label || "")) return "";   // 「全」は見れば分かるので触らない
+  // 歌割が書かれていない行（カットした所など）は触らない
+  if (!(l.parts || []).length && !(l.labelRaw || l.label)) return "";
   if (subOf(so.id, i)) return "changed";
   const ab = absentIds();
   if (!ab.length) return "";
@@ -534,7 +536,7 @@ function autoSubs() {
     });
     so.lines.forEach((l, i) => {
       if (l.gap || !l.parts || !l.parts.length) return;
-      if (/^全/.test(l.label || "")) return;   // 「全」は触らない
+      if (/^全/.test(l.labelRaw || l.label || "")) return;   // 「全」は触らない
       if (blockOf(so, i)) return;              // ブロックの行はブロック側で扱う
       if (S.subs[k] && S.subs[k][i]) return;
       if (!l.parts.some((p) => ab.includes(p))) return;
@@ -3160,7 +3162,7 @@ function viewLive() {
       const strength = (st2 || foc) ? 18 : 9;
       return `${newSec ? `<div class="secdiv" id="sec-${h(l.sec)}"><span>${h(l.sec)}</span></div>` : ""}
       <div class="ln${S.recMode && l.add ? " lnadd" : ""}${S.recMode && l.skip ? " lnskip" : ""}${isAgeri(l) ? " lnage" : ""}" style="${tint ? `background:color-mix(in srgb,${tint} ${strength}%,transparent)` : ""}">
-        <button class="lbl" data-act="${S.recMode ? "rbar" : (st2 ? "assignline" : "noteblock")}" data-i="${i}"
+        <button class="lbl" data-act="${S.recMode ? "rbar" : (VIEW() ? "noteblock" : "assignline")}" data-i="${i}"
           style="${st2 ? `color:${st2 === "need" ? "var(--bad)" : "#F0B23C"}` : ""}">${S.recMode && l.solo ? `<b class="solomk">ソロ</b>` : ""}${S.recMode && l.tag ? `<b class="tagmk">${h(l.tag)}</b>` : ""}${labelHTML(s, i)}</button>
         <div class="brk ${gp[i]}"></div>
         <div class="grow" style="min-width:0">
@@ -3642,7 +3644,9 @@ function renderSheet() {
         <div class="chips">${(so ? songRoster(so) : showRoster()).map((mid) => member(mid)).filter(Boolean)
           .map((m) => `<button class="chip sm" data-act="setassign" data-id="${m.id}"
           style="${cur5.includes(m.id) ? "background:var(--accent);color:#0A0A0A" : ab2.includes(m.id) ? "color:var(--bad);opacity:.5" : ""}">${h(m.name)}</button>`).join("")}</div>
-      </div></div>`;
+      </div>
+      ${subOf(so.id, U.menu.i) ? `<button class="ghost" data-act="unassign" style="color:var(--dim)">元の歌割に戻す</button>` : ""}
+      </div>`;
     document.body.appendChild(overlay);
     return;
   }
@@ -4128,6 +4132,13 @@ function absentEdits(so) {
   so.lines.forEach((l, i) => {
     if (blockOf(so, i)) return;   // ブロックの行は書き換えない
     if (!l.cell) return;
+    // 続きの行（結合セルの2行目以降）に書くと、まとまりが割れて2行に分かれる。
+    // 名前は先頭の行にだけ書く。
+    if (l.cont) return;
+    // 「全」はそのまま。欠席がいても書き換えない。
+    if (/^全/.test(l.labelRaw || l.label || "")) return;
+    // 歌割が書かれていない行（ワンハーフでカットした所など）は、誰の名前も入れない
+    if (!(l.main || l.parts || []).length && !(l.labelRaw || l.label)) return;
     const sub = subOf(so.id, i);
     if (!sub) return;
     const nm = (a) => a.map((x) => (member(x) || {}).name).filter(Boolean).join("・");
@@ -5540,6 +5551,9 @@ document.addEventListener("click", (e) => {
     case "assignline": {
       if (VIEW()) break;
       const so2 = song(); if (!so2) break;
+      const ln = so2.lines[i] || {};
+      // 歌詞だけで歌割が書かれていない行（カットした所など）は触らない
+      if (!(ln.parts || []).length && !(ln.labelRaw || ln.label)) { U.menu = null; renderSheet(); break; }
       const bb = blockOf(so2, i);
       if (bb) { U.menu = { kind: "block", id: so2.id, b: bb }; renderSheet(); break; }
       U.menu = { kind: "assign", id: so2.id, i, idx: runAt(so2, i) };
@@ -5870,6 +5884,14 @@ document.addEventListener("click", (e) => {
       const list = el2 && el2.dataset.idx ? el2.dataset.idx.split(",").map(Number) : [i];
       U.menu = { kind: "assign", id, i, idx: list };
       renderSheet(); break;
+    }
+    case "unassign": {
+      const sid = U.menu.id, list = U.menu.idx || [U.menu.i];
+      const k = subKey(sid);
+      if (S.subs[k]) list.forEach((li) => { delete S.subs[k][li]; });
+      if (S.subsMan[k]) list.forEach((li) => { delete S.subsMan[k][li]; });
+      U.menu = null; save(); schedulePush(); renderSheet(); render();
+      break;
     }
     case "setassign": {
       const sid = U.menu.id, list = U.menu.idx || [U.menu.i];
