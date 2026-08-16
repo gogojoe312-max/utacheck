@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "12.2";
+const APP_VER = "12.3";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -79,11 +79,11 @@ let S = {
   src: "", key: "", keyInLink: true,
   memos: {}, recs: {}, kbps: 128, preroll: 5, viewer: false, srcGroup: "",
   draws: {}, showFilter: "", folders: {}, folderOrder: [], rfolders: {}, rfolderOrder: [], subs: {}, subsMan: {}, subLib: {}, gsubs: {},
-  recMode: false, recOvSize: 14, rsongs: [], rsongId: "", recBars: true, liveShow: "", recEdit: false, linkSrc: "", groupOrder: [], pubAt: 0, syncAt: 0, seen: {}, planMin: 90, planPrep: 10, rosters: {}, secWords: [], trash: [], secAll: false,
+  recMode: false, recOvSize: 14, rsongs: [], rsongId: "", recBars: true, liveShow: "", recEdit: false, linkSrc: "", groupOrder: [], pubAt: 0, syncAt: 0, seen: {}, planMin: 90, planPrep: 10, rosters: {}, secWords: [], trash: [], secAll: false, secHide: [], tagHide: [],
   plan: { start: "10:00", slots: [] },
   size: 19,
 };
-let U = { view: "live", songIdx: 0, sheet: null, mode: "member", allShows: false, picker: false, overview: false, ovSize: 9, recPick: null, sumOpen: "", draw: false, erase: false, pick: [], menu: null, printPick: null, focus: "", busy: "", allShowList: false, pdfBack: "", swapId: "", markOnly: false, planDay: "", planSec: "", vtN: 1, rmore: false };
+let U = { view: "live", songIdx: 0, sheet: null, mode: "member", allShows: false, picker: false, overview: false, ovSize: 9, recPick: null, sumOpen: "", draw: false, erase: false, pick: [], menu: null, printPick: null, focus: "", busy: "", allShowList: false, pdfBack: "", swapId: "", markOnly: false, planDay: "", planSec: "", vtN: 1, rmore: false, wordEdit: "" };
 
 const S0 = JSON.parse(JSON.stringify(S));
 
@@ -180,6 +180,8 @@ function migrate() {
   if (!S.plan.slots) S.plan.slots = [];
   if (S.recBars == null) S.recBars = true;
   if (S.secAll == null) S.secAll = false;
+  if (!S.secHide) S.secHide = [];
+  if (!S.tagHide) S.tagHide = [];
   // 「ソロ想定」だけだった頃のデータを、想定の一つとして引き継ぐ
   [].concat(S.rsongs || [], S.songs || []).forEach((so) => {
     (so.lines || []).forEach((l) => { if (l.solo && !l.vt) l.vt = "ソロ"; });
@@ -3556,8 +3558,17 @@ function renderSheet() {
     const cur = so ? barsOf(so)[U.menu.i] : 0;
     const vt = (l || {}).vt || "";
     const hdr = (t) => `<div style="font-size:10px;color:var(--dim);margin:14px 0 6px">${t}</div>`;
-    const secs = SECDEF.concat((S.secWords || []).filter((x) => SECDEF.indexOf(x) < 0));
-    const tags = TAGDEF.concat((S.tagWords || []).filter((x) => TAGDEF.indexOf(x) < 0));
+    const secs = paletteSec();
+    const tags = paletteTag();
+    const edSec = U.wordEdit === "sec", edTag = U.wordEdit === "tag";
+    const hdr2 = (t, kind, hidden) => `<div class="row" style="margin:14px 0 6px">
+      <span class="grow" style="font-size:10px;color:var(--dim)">${t}</span>
+      ${hidden.length && U.wordEdit === kind ? `<button data-act="rwordback" data-id="${kind}"
+        style="font-size:11px;color:var(--dim);padding:2px 6px">消したのを戻す</button>` : ""}
+      <button data-act="rwordedit" data-id="${kind}"
+        style="font-size:11px;padding:2px 6px;color:${U.wordEdit === kind ? "var(--accent)" : "var(--dim)"}">${
+        U.wordEdit === kind ? "おわり" : "整理"}</button>
+    </div>`;
     overlay = document.createElement("div");
     overlay.className = "mask";
     overlay.innerHTML = `<button class="sp" data-act="closemenu"></button><div class="sheet">
@@ -3566,13 +3577,15 @@ function renderSheet() {
         <button data-act="closemenu" style="width:36px;height:36px;border-radius:10px;background:var(--panel2);font-size:17px">✕</button>
       </div>
 
-      ${hdr("区切り")}
+      ${hdr2("区切り", "sec", S.secHide || [])}
       <div class="chips">
-        ${secs.map((x) => `<button class="chip sm" data-act="rsecq" data-id="${h(x)}"
-          style="${(l || {}).sec === x ? "background:var(--accent);color:#0A0A0A;font-weight:700" : ""}">${h(x)}</button>`).join("")}
-        <button class="chip sm" data-act="rsecfree" style="color:var(--dim)">その他…</button>
-        ${(l || {}).sec ? `<button class="chip sm" data-act="rsecq" data-id="" style="color:var(--dim)">外す</button>` : ""}
+        ${secs.map((x) => `<button class="chip sm" data-act="${edSec ? "rworddel" : "rsecq"}" data-id="${edSec ? "sec|" : ""}${h(x)}"
+          style="${edSec ? "color:var(--bad);border:1px solid var(--bad)"
+            : (l || {}).sec === x ? "background:var(--accent);color:#0A0A0A;font-weight:700" : ""}">${h(x)}${edSec ? " ✕" : ""}</button>`).join("")}
+        ${edSec ? "" : `<button class="chip sm" data-act="rsecfree" style="color:var(--dim)">その他…</button>`}
+        ${!edSec && (l || {}).sec ? `<button class="chip sm" data-act="rsecq" data-id="" style="color:var(--dim)">外す</button>` : ""}
       </div>
+      ${edSec ? `<div style="font-size:10px;color:var(--dim);margin-top:6px">押すと選べる一覧から消えます。行に付いている区切りは消えません</div>` : ""}
 
       ${hdr(`想定　<b style="color:var(--text)">${U.vtN === "sec" ? "この区切り全部" : "ここから " + Number(U.vtN || 1) + "行"}</b> に付ける`)}
       <div class="row" style="margin-bottom:8px">
@@ -3607,11 +3620,12 @@ function renderSheet() {
 
       <button class="ghost" data-act="rmore" style="margin-top:12px;color:var(--dim);font-size:12px">${U.rmore ? "▲ とじる" : "▼ そのほか"}</button>
       ${U.rmore ? `
-        ${hdr("表記（歌メロに足すもの）")}
+        ${hdr2("表記（歌メロに足すもの）", "tag", S.tagHide || [])}
         <div class="chips">
-          ${tags.map((x) => `<button class="chip sm" data-act="rtagq" data-id="${h(x)}"
-            style="${(l || {}).tag === x ? "background:var(--accent);color:#0A0A0A;font-weight:700" : ""}">${h(x)}</button>`).join("")}
-          <button class="chip sm" data-act="rtagfree" style="color:var(--dim)">その他…</button>
+          ${tags.map((x) => `<button class="chip sm" data-act="${edTag ? "rworddel" : "rtagq"}" data-id="${edTag ? "tag|" : ""}${h(x)}"
+            style="${edTag ? "color:var(--bad);border:1px solid var(--bad)"
+              : (l || {}).tag === x ? "background:var(--accent);color:#0A0A0A;font-weight:700" : ""}">${h(x)}${edTag ? " ✕" : ""}</button>`).join("")}
+          ${edTag ? "" : `<button class="chip sm" data-act="rtagfree" style="color:var(--dim)">その他…</button>`}
         </div>
 
         ${hdr("下に行を足す")}
@@ -3629,10 +3643,9 @@ function renderSheet() {
           <button class="chip sm" data-act="rintro" data-id="4">＋4</button>
         </div>
 
-        <div class="row" style="margin-top:16px">
-          ${l && l.at != null ? `<button class="chip sm grow" data-act="rbarclear" style="color:var(--dim)">小節の手直しを取り消す</button>` : ""}
-          <button class="chip sm grow" data-act="rwordforget" style="color:var(--dim)">覚えた言葉を消す</button>
-        </div>
+        ${l && l.at != null ? `<div class="row" style="margin-top:16px">
+          <button class="chip sm grow" data-act="rbarclear" style="color:var(--dim)">小節の手直しを取り消す</button>
+        </div>` : ""}
         <button class="ghost" data-act="rdelline" style="margin-top:10px;color:var(--bad)">この行を消す</button>
       ` : ""}
     </div>`;
@@ -4618,15 +4631,18 @@ const SECDEF = ["1A", "1B", "1C", "2A", "2B", "2C", "D", "落ち", "大サビ", 
 const TAGDEF = ["ガヤ", "フェイク", "ハモ", "コーラス", "掛け声", "アドリブ"];
 // 録りの想定。行ごとに「どう歌うか」を決めておくと、当日その場で迷わない。
 // 色は行の左端の帯と、名前欄の札に出る。同じ想定が続けば一本の帯になって、まとまりが見える。
+// 選べるのはこの2つ。以前の版で付けた他の想定も、色だけは残して表示できるようにする。
 const VTDEF = [
   { id: "ソロ", c: "#F0B23C" },
   { id: "ユニゾン", c: "#5BC98A" },
+];
+const VTOLD = [
   { id: "掛け合い", c: "#C58BFF" },
   { id: "全員", c: "#FF8A5C" },
   { id: "ハモ", c: "#7FB3FF" },
   { id: "ダブル", c: "#E86FA8" },
 ];
-const vtColor = (v) => (VTDEF.find((x) => x.id === v) || {}).c || "";
+const vtColor = (v) => (v ? (VTDEF.concat(VTOLD).find((x) => x.id === v) || {}).c || "#8A8F99" : "");
 const vtOf = (l) => (l && l.vt) || "";
 // 「この行が入っている区切り」の範囲。区切り名は上から引き継がれる。
 function secRange(so, i) {
@@ -4676,14 +4692,21 @@ function vtMarks(so) {
 
 function rememberTag(nm) {
   const v = String(nm || "").trim();
+  if (v) S.tagHide = (S.tagHide || []).filter((x) => x !== v);
   if (!v || TAGDEF.indexOf(v) >= 0) return;
   S.tagWords = (S.tagWords || []).filter((x) => x !== v);
   S.tagWords.unshift(v);
   if (S.tagWords.length > 12) S.tagWords.length = 12;
 }
 // 使った区切り名を覚えておき、次からボタンに出す
+// palette に出す言葉。消したものは出さない。
+const paletteSec = () => SECDEF.concat((S.secWords || []).filter((x) => SECDEF.indexOf(x) < 0))
+  .filter((x) => (S.secHide || []).indexOf(x) < 0);
+const paletteTag = () => TAGDEF.concat((S.tagWords || []).filter((x) => TAGDEF.indexOf(x) < 0))
+  .filter((x) => (S.tagHide || []).indexOf(x) < 0);
 function rememberSec(nm) {
   const v = String(nm || "").trim();
+  if (v) S.secHide = (S.secHide || []).filter((x) => x !== v);   // 消したものを使い直したら戻す
   if (!v || SECDEF.indexOf(v) >= 0) return;
   S.secWords = (S.secWords || []).filter((x) => x !== v);
   S.secWords.push(v);
@@ -6264,12 +6287,26 @@ document.addEventListener("click", (e) => {
       if (t) { so.lines[U.menu.i].tag = t; rememberTag(t); } else delete so.lines[U.menu.i].tag;
       save(); U.menu = null; renderSheet(); render(); break;
     }
-    case "rwordforget": {
-      const cur = (S.secWords || []).concat((S.tagWords || []).map((x) => "表記:" + x));
-      if (!cur.length) { alert("覚えている言葉はありません。"); break; }
-      if (!confirm(`覚えた区切り名と表記を すべて忘れます。\n（${cur.length}件。行に付いているものは消えません）`)) break;
-      S.secWords = []; S.tagWords = [];
-      save(); renderSheet(); render(); break;
+    case "rwordedit": {
+      U.wordEdit = U.wordEdit === id ? "" : id;
+      renderSheet(); break;
+    }
+    case "rworddel": {
+      const ps = String(id).split("|");
+      const kind = ps.shift();
+      const nm = ps.join("|");
+      if (kind === "tag") {
+        S.tagHide = (S.tagHide || []).concat(TAGDEF.indexOf(nm) >= 0 ? [nm] : []);
+        S.tagWords = (S.tagWords || []).filter((x) => x !== nm);
+      } else {
+        S.secHide = (S.secHide || []).concat(SECDEF.indexOf(nm) >= 0 ? [nm] : []);
+        S.secWords = (S.secWords || []).filter((x) => x !== nm);
+      }
+      save(); renderSheet(); break;
+    }
+    case "rwordback": {
+      if (id === "tag") S.tagHide = []; else S.secHide = [];
+      save(); renderSheet(); break;
     }
     case "raddline": {
       const so = recSong(); if (!so) break;
