@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "10.8";
+const APP_VER = "10.9";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -461,6 +461,9 @@ function labelOf(so, i) {
     const b = barsOf(so)[i];
     return (l.sec ? l.sec + " " : "") + (S.recBars && b != null ? b : "");
   }
+  // 続きの行（結合セルの2行目以降）は、元と同じで名前を出さない。
+  // ここで名前を出すと、ひとまとまりの歌割が行ごとに分かれて見える。
+  if (l.cont) return l.label || "";
   if (subOf(so.id, i)) {
     const sp = splitAssign(so, i);
     return (names(sp.main) || "—") + (sp.extra.length ? "　ハモ " + names(sp.extra) : "");
