@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "11.8";
+const APP_VER = "11.9";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -3119,6 +3119,7 @@ function viewLive() {
   } else {
     const ns0 = NOTES().filter((n) => n.songId === s.id && n.showId === S.showId && inTake(n));
     const gp = groupPos(s.lines);
+    const vm = S.recMode ? vtMarks(s) : { head: [], info: [] };
     body = s.lines.map((l, i) => {
       if (l.gap) {
         const gns = ns0.filter((n) => covers(n, i));
@@ -3170,10 +3171,12 @@ function viewLive() {
         : foc ? "#4C9BFF" : (ns.length ? noteColor(ns[0]) : "");
       const strength = (st2 || foc) ? 18 : 9;
       const vtc = S.recMode ? vtColor(vtOf(l)) : "";
+      const vh = vm.info[i];
       return `${newSec ? `<div class="secdiv" id="sec-${h(l.sec)}"><span>${h(l.sec)}</span></div>` : ""}
+      ${vh ? `<div class="vtdiv" style="color:${vh.c}"><span>${h(vh.vt)}</span>${vh.who ? `<i>${h(vh.who)}</i>` : ""}<b>${vh.bars}小節</b></div>` : ""}
       <div class="ln${S.recMode && l.add ? " lnadd" : ""}${S.recMode && l.skip ? " lnskip" : ""}${isAgeri(l) ? " lnage" : ""}" style="${tint ? `background:color-mix(in srgb,${tint} ${strength}%,transparent);` : ""}${vtc ? `box-shadow:inset 3px 0 0 ${vtc}` : ""}">
         <button class="lbl" data-act="${S.recMode ? "rbar" : (VIEW() ? "noteblock" : "assignline")}" data-i="${i}"
-          style="${st2 ? `color:${st2 === "need" ? "var(--bad)" : "#F0B23C"}` : ""}">${S.recMode && vtc ? `<b class="vtmk" style="background:${vtc}">${h(vtOf(l))}</b>` : ""}${S.recMode && l.tag ? `<b class="tagmk">${h(l.tag)}</b>` : ""}${labelHTML(s, i)}</button>
+          style="${st2 ? `color:${st2 === "need" ? "var(--bad)" : "#F0B23C"}` : ""}">${S.recMode && l.tag ? `<b class="tagmk">${h(l.tag)}</b>` : ""}${labelHTML(s, i)}</button>
         <div class="brk ${gp[i]}"></div>
         <div class="grow" style="min-width:0">
           <div class="txt" data-l="${i}" style="font-size:${S.size}px">${cells}</div>${pills}
@@ -3318,14 +3321,17 @@ function viewOverview(s) {
   let bodyHTML;
   if (S.recMode) {
     const bars = barsOf(s);
+    const vm2 = vtMarks(s);
     const nc = Math.max(1, Math.min(4, Number(s.cols || 1)));
     const one = (l, i) => {
       if (l.gap) return `<div style="height:1em"></div>`;
       const newSec = l.sec && l.sec !== (s.lines[i - 1] || {}).sec;
+      const vh2 = vm2.info[i];
       return `${newSec ? `<div class="secdiv" id="sec-${h(l.sec)}"><span>${h(l.sec)}</span></div>` : ""}
+        ${vh2 ? `<div class="vtdiv vtdivov" style="color:${vh2.c}"><span>${h(vh2.vt)}</span>${vh2.who ? `<i>${h(vh2.who)}</i>` : ""}<b>${vh2.bars}小節</b></div>` : ""}
         <button class="ovw${l.add ? " lnadd" : ""}${S.recMode && l.skip ? " lnskip" : ""}" data-act="jumpline" data-i="${i}"
           style="${vtColor(vtOf(l)) ? `box-shadow:inset 3px 0 0 ${vtColor(vtOf(l))}` : ""}">
-          <span class="ovwn">${vtOf(l) ? `<b class="vtmk" style="background:${vtColor(vtOf(l))}">${h(vtOf(l))}</b>` : ""}${l.tag ? `<b class="tagmk">${h(l.tag)}</b>` : ""}${S.recBars && bars[i] != null ? bars[i] : ""}</span>
+          <span class="ovwn">${l.tag ? `<b class="tagmk">${h(l.tag)}</b>` : ""}${S.recBars && bars[i] != null ? bars[i] : ""}</span>
           <span>${h(l.add ? "（" + l.t + "）" : l.t)}</span></button>`;
     };
     const brks = (s.colBreaks || []).filter((x) => x > 0 && x < s.lines.length);
@@ -3577,8 +3583,13 @@ function renderSheet() {
           style="${(l || {}).vt === x.id ? `background:${x.c};color:#0A0A0A;font-weight:700` : `color:${x.c};border:1px solid ${x.c}`}">${h(x.id)}</button>`).join("")}
         ${(l || {}).vt ? `<button class="chip sm" data-act="rvt" data-id="" style="color:var(--dim)">外す</button>` : ""}
       </div>
-      <div style="font-size:10px;color:var(--dim);margin:-2px 0 10px 56px">${
-        U.vtN === "sec" ? "この行が入っている区切りの全部に付きます" : `ここから下 ${Number(U.vtN || 1)}行に付きます`}。行の左端に色の帯が出ます</div>
+      <div style="font-size:10px;color:var(--dim);margin:-2px 0 8px 56px">${
+        U.vtN === "sec" ? "この行が入っている区切りの全部に付きます" : `ここから下 ${Number(U.vtN || 1)}行に付きます`}。同じ想定でも歌う人が変われば、線で自動的に分かれます</div>
+      <div class="row" style="margin-bottom:10px">
+        <span style="font-size:11px;color:var(--dim);width:52px"></span>
+        <button class="chip sm grow" data-act="rvcut"
+          style="${(l || {}).vcut ? "background:var(--accent);color:#0A0A0A;font-weight:700" : ""}">この行から別のまとまりにする</button>
+      </div>
       <div class="row" style="margin-bottom:10px">
         <span style="font-size:11px;color:var(--dim);width:52px"></span>
         <button class="chip sm grow" data-act="rvtauto">歌割から自動で振る</button>
@@ -4623,6 +4634,38 @@ const VTDEF = [
 ];
 const vtColor = (v) => (VTDEF.find((x) => x.id === v) || {}).c || "";
 const vtOf = (l) => (l && l.vt) || "";
+// 想定のまとまり。同じ「ソロ」でも歌う人が変われば別のまとまりにする。
+// 前半2行が誰のソロで、後半2行が誰のソロなのかを、線と名前で分ける。
+function vtKey(so, i) {
+  const l = (so.lines || [])[i];
+  if (!l || l.gap || !vtOf(l)) return "";
+  return vtOf(l) + "\u0001" + partsOf(so, i).slice().sort().join(",");
+}
+// その行が、まとまりの先頭かどうか。先頭には線と見出しを出す。
+function vtMarks(so) {
+  const ls = so.lines || [];
+  const head = [], info = [];
+  const total = songRoster(so).length;
+  for (let i = 0; i < ls.length; i++) {
+    const k = vtKey(so, i);
+    if (!k) continue;
+    if (i > 0 && !ls[i].vcut && vtKey(so, i - 1) === k) continue;
+    head[i] = true;
+    // このまとまりの終わりまで見て、人と小節をまとめる
+    let bars = 0, n = 0;
+    for (let j = i; j < ls.length; j++) {
+      if (j > i && (ls[j].vcut || vtKey(so, j) !== k)) break;
+      if (ls[j].gap) break;
+      if (!ls[j].add) { bars += Number(ls[j].bars || 4); n++; }
+    }
+    const ids = partsOf(so, i);
+    const who = total && ids.length >= total ? "全員"
+      : ids.length > 4 ? ids.length + "人"
+      : (names(ids) || "");
+    info[i] = { vt: vtOf(ls[i]), c: vtColor(vtOf(ls[i])), who, bars, n };
+  }
+  return { head, info };
+}
 // 「この行が入っている区切り」の範囲。区切り名は上から引き継がれる。
 function secRange(so, i) {
   const ls = so.lines || [];
@@ -5058,9 +5101,12 @@ function viewRecPrint() {
   const so = recSong();
   if (!so) return `<div class="hd"><button class="ic" data-act="recback">‹</button><b>PDF</b></div>`;
   const bars = barsOf(so);
+  const vm3 = vtMarks(so);
   const trs = so.lines.map((l, i) => {
     if (l.gap) return `<tr class="prz"><td class="prn"></td><td class="prx"></td></tr>`;
-    return `<tr><td class="prn">${vtOf(l) ? "〈" + h(vtOf(l)) + "〉" : ""}${l.tag ? "［" + h(l.tag) + "］" : ""}${l.sec ? h(l.sec) + " " : ""}${S.recBars && bars[i] != null ? bars[i] : ""}</td><td class="prx">${h(l.add ? "（" + l.t + "）" : l.t)}</td></tr>`;
+    const vh3 = vm3.info[i];
+    const hd = vh3 ? `<tr class="prv"><td class="prn"></td><td class="prx"><b>${h(vh3.vt)}</b>${vh3.who ? "　" + h(vh3.who) : ""}<span>　${vh3.bars}小節</span></td></tr>` : "";
+    return hd + `<tr><td class="prn">${l.tag ? "［" + h(l.tag) + "］" : ""}${l.sec ? h(l.sec) + " " : ""}${S.recBars && bars[i] != null ? bars[i] : ""}</td><td class="prx">${h(l.add ? "（" + l.t + "）" : l.t)}</td></tr>`;
   });
   return `
   <div class="hd noprint"><button class="ic" data-act="recback">‹</button><b>PDF・印刷</b>
@@ -6264,6 +6310,13 @@ document.addEventListener("click", (e) => {
         delete l2.solo;
         if (off) delete l2.vt; else l2.vt = id;
       });
+      save(); renderSheet(); render(); break;
+    }
+    case "rvcut": {
+      const so = recSong(); if (!so) break;
+      pushUndo();
+      const l2 = so.lines[U.menu.i];
+      if (l2.vcut) delete l2.vcut; else l2.vcut = 1;
       save(); renderSheet(); render(); break;
     }
     case "rvtauto": {
