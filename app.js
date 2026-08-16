@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "9.9";
+const APP_VER = "10.0";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -165,6 +165,7 @@ function migrate() {
   if (!S.rsongs) S.rsongs = [];
   if (!S.recOvSize) S.recOvSize = 14;
   if (!S.plan) S.plan = { start: "10:00", slots: [] };
+  if (S.planAuto == null) S.planAuto = false;
   if (!S.planMin) S.planMin = 90;
   if (S.planPrep == null) S.planPrep = 10;
   if (!S.secWords) S.secWords = [];
@@ -4421,7 +4422,44 @@ function fmtLeft(sec) {
   const neg = sec < 0, v = Math.abs(Math.round(sec));
   return (neg ? "−" : "") + Math.floor(v / 60) + ":" + String(v % 60).padStart(2, "0");
 }
+// 予定の時刻になったら、その枠を自動で始める。
+// 自動を止めていれば何もしない。手で始めた枠には触らない。
+function autoPlan() {
+  if (!S.recMode || !S.planAuto || !S.plan) return;
+  const slots = S.plan.slots || [];
+  const now = nowMin();
+  const live = slots.find((x) => x.a0 != null && x.a1 == null);
+  if (live) {
+    // 次の枠の時刻が来たら、いまの枠を終えて次へ移る
+    const i = slots.indexOf(live);
+    const nx = slots.slice(i + 1).find((x) => x.at != null && x.a1 == null);
+    if (nx && nx.at != null && now >= nx.at && nx.a0 == null) {
+      live.a1 = now;
+      startSlot(nx, true);
+      save(); render();
+    }
+    return;
+  }
+  const nx = slots.find((x) => x.a0 == null && x.at != null && now >= x.at);
+  if (!nx) return;
+  // だいぶ過ぎている枠は勝手に始めない（アプリを開き直した時など）
+  if (now - nx.at > 30) return;
+  startSlot(nx, true);
+  save(); render();
+}
+
+function startSlot(s2, auto) {
+  s2.a0 = nowMin(); delete s2.a1;
+  s2.startAt = Date.now(); s2.secStart = Date.now();
+  s2.secLog = {}; s2.takes = {};
+  const ss1 = sectionsOf(s2);
+  s2.secCur = (ss1.find((x) => x.prep) || ss1.find((x) => !x.skip) || ss1[0] || {}).name || "";
+  if (auto) autoMsg = `${s2.name} を始めました（${min2hm(s2.a0)}）`;
+}
+let autoMsg = "";
+
 function tickPlan() {
+  autoPlan();
   const el = document.getElementById("pcd");
   const el2 = document.getElementById("pcd2");
   const live = planRows().find((r) => r.live);
@@ -4657,6 +4695,7 @@ function applySchedule(text) {
   S.plan.start = first && first.at != null ? min2hm(first.at) : (S.plan.start || "10:00");
   S.plan.slots = r.slots.map((x) => ({
     id: uid(), name: x.name, min: x.min, kind: x.kind,
+    at: x.at != null ? x.at : null,          // 予定の開始時刻（自動で始める時に使う）
     day: x.day || "", place: x.place || "",
   }));
   save(); render();
@@ -4675,6 +4714,20 @@ function viewPlan() {
   const nextIdx = rows.findIndex((r) => !r.done && !r.live);
   const last = rows[rows.length - 1];
   const gap = last ? last.aE - last.pE : 0;
+
+  const hasAt = allRows.some((r) => r.s.at != null);
+  const autoBar = hasAt ? `<div class="card" style="margin-bottom:10px;padding:10px 12px">
+    <div class="row">
+      <div class="grow" style="min-width:0">
+        <div style="font-size:13px">時刻になったら自動で始める</div>
+        <div style="font-size:11px;color:var(--dim);margin-top:2px">${S.planAuto
+          ? (autoMsg ? h(autoMsg) : "予定の時刻に、その枠へ自動で移ります")
+          : "いまは手で開始する設定です"}</div>
+      </div>
+      <button class="chip sm" data-act="autotoggle"
+        style="${S.planAuto ? "background:var(--accent);color:#0A0A0A" : ""}">${S.planAuto ? "自動オン" : "自動オフ"}</button>
+    </div>
+  </div>` : "";
 
   const dayBar = dayList.length > 1 ? `<div class="chips" style="margin-bottom:10px">
     <button class="chip sm" data-act="planday" data-id=""
@@ -4712,7 +4765,9 @@ function viewPlan() {
           ${!r.done && !r.live && i === nextIdx ? `　<span style="color:var(--accent)">次</span>` : ""}
         </div>
       </button>
-      ${r.live ? `<button class="chip sm" data-act="pnext" data-id="${s.id}" style="background:var(--accent);color:#0A0A0A">次へ</button>`
+      ${r.live ? `<button class="chip sm" data-act="pretry" data-id="${s.id}" style="color:var(--dim)">やり直す</button>
+          <button class="chip sm" data-act="pcancel" data-id="${s.id}" style="color:var(--bad)">取り消す</button>
+          <button class="chip sm" data-act="pnext" data-id="${s.id}" style="background:var(--accent);color:#0A0A0A">次へ</button>`
         : !r.done && i === nextIdx ? `<button class="chip sm" data-act="pstart" data-id="${s.id}">開始</button>`
         : r.done ? `<button class="chip sm" data-act="pundo" data-id="${s.id}" style="color:var(--dim)">戻す</button>` : ""}
     </div>
@@ -4802,7 +4857,7 @@ function viewPlan() {
       </div>
     </div>
     ${rows.some((r) => !r.done) ? `<button class="ghost" data-act="prebal" style="margin-bottom:10px">残り時間で振り直す</button>` : ""}
-    ${dayBar}${list || `<p class="note">まだ誰も入っていません</p>`}
+    ${autoBar}${dayBar}${list || `<p class="note">まだ誰も入っていません</p>`}
     <div class="card">
       ${memberPick || ""}
       <button class="ghost" data-act="prosternew" style="margin-top:10px">メンバーを登録する</button>
@@ -6144,6 +6199,32 @@ document.addEventListener("click", (e) => {
     }
     case "pastesched": U.menu = { kind: "sched" }; renderSheet(); break;
     case "planday": U.planDay = id || ""; render(); break;
+    case "autotoggle": {
+      S.planAuto = !S.planAuto;
+      autoMsg = "";
+      save(); render(); break;
+    }
+    case "pcancel": {
+      // いま動いている枠を、始める前の状態に戻す
+      const s2 = S.plan.slots.find((x) => x.id === id);
+      if (!s2) break;
+      if (!confirm(`「${s2.name}」を取り消して、始める前に戻します。\n\n記録した指摘や手書きは残ります。`)) break;
+      pushUndo();
+      delete s2.a0; delete s2.a1; delete s2.startAt; delete s2.secStart;
+      s2.secLog = {}; s2.takes = {}; s2.secCur = "";
+      autoMsg = "";
+      save(); render(); break;
+    }
+    case "pretry": {
+      // いまの枠を、いまからやり直す
+      const s2 = S.plan.slots.find((x) => x.id === id);
+      if (!s2) break;
+      if (!confirm(`「${s2.name}」をいまからやり直します。\n\n経過した時間と区切りの記録は消えます。\n指摘や手書きは残ります。`)) break;
+      pushUndo();
+      startSlot(s2);
+      autoMsg = "";
+      save(); render(); break;
+    }
     case "schedgo": {
       const el6 = document.getElementById("schedtx");
       const t = el6 ? String(el6.value || "") : "";
@@ -6198,13 +6279,7 @@ document.addEventListener("click", (e) => {
       save(); render(); break;
     case "pstart": {
       const s2 = S.plan.slots.find((x) => x.id === id);
-      if (s2) {
-        s2.a0 = nowMin(); delete s2.a1; s2.startAt = Date.now(); s2.secStart = Date.now();
-        s2.secLog = {};
-        const ss1 = sectionsOf(s2);
-        s2.secCur = (ss1.find((x) => x.prep) || ss1.find((x) => !x.skip) || ss1[0] || {}).name || "";
-        save(); render();
-      }
+      if (s2) { startSlot(s2); save(); render(); }
       break;
     }
     case "jumpsec": {
