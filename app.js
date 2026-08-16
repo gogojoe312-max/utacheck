@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "12.0";
+const APP_VER = "12.1";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -4631,6 +4631,31 @@ const VTDEF = [
 ];
 const vtColor = (v) => (VTDEF.find((x) => x.id === v) || {}).c || "";
 const vtOf = (l) => (l && l.vt) || "";
+// 「この行が入っている区切り」の範囲。区切り名は上から引き継がれる。
+function secRange(so, i) {
+  const ls = so.lines || [];
+  let a = i;
+  while (a > 0 && !ls[a].sec) a--;
+  let b = i + 1;
+  while (b < ls.length && !ls[b].sec) b++;
+  return [a, b - 1];
+}
+// 想定を書き込む行を決める。空行と、あとから足した行（フェイク等）は数に入れない。
+function vtTargets(so, i) {
+  const ls = so.lines || [];
+  const out = [];
+  if (U.vtN === "sec") {
+    const [a, b] = secRange(so, i);
+    for (let k = a; k <= b; k++) if (!ls[k].gap && !ls[k].add) out.push(k);
+    return out.length ? out : [i];
+  }
+  const want = Math.max(1, Number(U.vtN || 1));
+  for (let k = i; k < ls.length && out.length < want; k++) {
+    if (ls[k].gap || ls[k].add) continue;
+    out.push(k);
+  }
+  return out.length ? out : [i];
+}
 // 想定のまとまり。想定を付けた回ごとに一つのまとまりにする。
 // 同じ「ソロ」を続けて選んでも、選んだ回が違えばつながらない（頭に印を残す）。
 const vtHead = (so, i) => {
@@ -6290,7 +6315,8 @@ document.addEventListener("click", (e) => {
       pushUndo();
       const ks = vtTargets(so, U.menu.i);
       // 同じ想定が並んでいるところをもう一度押したら外す。押し間違いを一手で戻せる。
-      const off = !id || ks.every((k) => so.lines[k].vt === id && (k === ks[0] ? l.vh : !so.lines[k].vh));
+      const off = !id || ks.every((k) => so.lines[k].vt === id
+        && (k === ks[0] ? !!so.lines[k].vh : !so.lines[k].vh));
       ks.forEach((k, j) => {
         const l2 = so.lines[k];
         delete l2.solo; delete l2.vcut;
