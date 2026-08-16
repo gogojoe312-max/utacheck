@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "10.0";
+const APP_VER = "10.1";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -3171,6 +3171,7 @@ function viewLive() {
     ${S.recMode ? `<span id="pcd2" style="font-size:12px;color:var(--dim);font-variant-numeric:tabular-nums;margin-right:4px"></span>` : ""}
     <button class="ic" data-act="size">A</button>
     ${!VIEW() && !S.recMode && s ? `<button class="ic" data-act="songmenu" data-i="${U.songIdx}">⋯</button>` : ""}
+    <button class="ic" data-act="go-setup" style="font-size:12px">設定</button>
   </div>
   ${s ? blockBar(s) : ""}
   <div class="scroll" style="position:relative">
@@ -3186,18 +3187,6 @@ function viewLive() {
       <div class="pullbar"><i id="pullfill"></i></div>
       <div class="pulltx" id="pulltx">引き上げて テイク${nextTake(s)} を作る</div>
     </div>` : `<div style="height:120px"></div>`}</div>
-  ${U.draw && !VIEW() ? `<div class="aubar">
-    <button data-act="pen" class="aub" style="${U.erase ? "" : "background:var(--bad);color:#0A0A0A"}">✎</button>
-    <button data-act="eraser" class="aub" style="${U.erase ? "background:var(--accent);color:#0A0A0A" : ""}">
-      <svg viewBox="0 0 24 24" width="15" height="15" style="pointer-events:none">
-        <path d="M4 16.5 12.5 8l5 5L11 19.5H6.5z" fill="currentColor" opacity=".95"/>
-        <path d="M12.5 8 16 4.5a2 2 0 0 1 2.8 0l2.7 2.7a2 2 0 0 1 0 2.8L17.5 13z" fill="currentColor" opacity=".55"/>
-        <path d="M4 20.5h16" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/>
-      </svg></button>
-    <span class="grow"></span>
-    <button data-act="inkundo" class="aub" style="font-size:12px;width:auto;padding:0 12px;${(S.draws[drawKey()] || []).length ? "" : "opacity:.3"}">取消</button>
-    <button data-act="clearink" class="aub" style="font-size:12px;color:var(--dim)">全消</button>
-  </div>` : ""}
   ${S.recMode ? recBar() : (s && !VIEW() && !U.draw ? `<div class="aubar">
     ${REC
       ? `<button data-act="recstop" class="aub" style="background:var(--bad);color:#0A0A0A">■</button>
@@ -3220,12 +3209,22 @@ function viewLive() {
          <button data-act="rtakeup">›</button>`
       : `<button data-act="prev" class="${U.songIdx <= 0 ? "off" : ""}">‹</button>
          <button data-act="next" class="${U.songIdx >= SONGS().length - 1 ? "off" : ""}">›</button>`}
-    ${VIEW() ? "" : `<button data-act="draw" class="${U.draw ? "on" : ""}">${U.draw ? "✎中" : "✎"}</button>`}
+    ${VIEW() ? "" : `<button data-act="draw" class="${U.draw ? "on" : ""}">✎</button>`}
+    ${U.draw && !VIEW() ? `
+      <button data-act="eraser" class="${U.erase ? "on" : ""}">
+        <svg viewBox="0 0 24 24" width="16" height="16" style="pointer-events:none">
+          <path d="M4 16.5 12.5 8l5 5L11 19.5H6.5z" fill="currentColor" opacity=".95"/>
+          <path d="M12.5 8 16 4.5a2 2 0 0 1 2.8 0l2.7 2.7a2 2 0 0 1 0 2.8L17.5 13z" fill="currentColor" opacity=".55"/>
+          <path d="M4 20.5h16" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/>
+        </svg></button>
+      <button data-act="clearink" style="font-size:12px;color:var(--dim)">全消</button>` : ""}
     ${VIEW() && unreadSongs().length ? `<button data-act="nextunread" style="color:var(--accent);font-weight:700">未読${unreadSongs().length}</button>` : ""}
-    <button data-act="overview" class="wide">全体</button>
-    ${undoStack.length && !VIEW() ? `<button data-act="undo" style="color:var(--accent)">取消</button>` : ""}
+    <button data-act="overview">全体</button>
     ${S.recMode ? "" : `<button data-act="go-summary">集計</button>`}
-    <button data-act="go-setup">設定</button>
+    <span class="grow"></span>
+    ${(U.draw && (S.draws[drawKey()] || []).length) || (undoStack.length && !VIEW())
+      ? `<button data-act="undoall" class="wide" style="color:var(--accent)">取消</button>`
+      : `<button data-act="undoall" class="wide" style="opacity:.3">取消</button>`}
   </div>`;
 }
 
@@ -5524,6 +5523,16 @@ document.addEventListener("click", (e) => {
       const el = app.querySelector(`.txt[data-l="${i}"]`);
       if (el) el.scrollIntoView({ block: "center" });
       break;
+    }
+    case "undoall": {
+      // 手書き中で線があれば線を1本消す。それ以外は操作を1つ戻す。
+      if (U.draw && (S.draws[drawKey()] || []).length) {
+        const arr = S.draws[drawKey()];
+        arr.pop(); if (!arr.length) delete S.draws[drawKey()];
+        save(); paintInk(); render();
+        break;
+      }
+      // 続けて undo と同じ動きをする
     }
     case "undo":
       if (undoStack.length) {
