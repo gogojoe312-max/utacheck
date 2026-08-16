@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "11.9";
+const APP_VER = "12.0";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -83,7 +83,7 @@ let S = {
   plan: { start: "10:00", slots: [] },
   size: 19,
 };
-let U = { view: "live", songIdx: 0, sheet: null, mode: "member", allShows: false, picker: false, overview: false, ovSize: 9, recPick: null, sumOpen: "", draw: false, erase: false, pick: [], menu: null, printPick: null, focus: "", busy: "", allShowList: false, pdfBack: "", swapId: "", markOnly: false, planDay: "", planSec: "", vtN: 1 };
+let U = { view: "live", songIdx: 0, sheet: null, mode: "member", allShows: false, picker: false, overview: false, ovSize: 9, recPick: null, sumOpen: "", draw: false, erase: false, pick: [], menu: null, printPick: null, focus: "", busy: "", allShowList: false, pdfBack: "", swapId: "", markOnly: false, planDay: "", planSec: "", vtN: 1, rmore: false };
 
 const S0 = JSON.parse(JSON.stringify(S));
 
@@ -3173,7 +3173,7 @@ function viewLive() {
       const vtc = S.recMode ? vtColor(vtOf(l)) : "";
       const vh = vm.info[i];
       return `${newSec ? `<div class="secdiv" id="sec-${h(l.sec)}"><span>${h(l.sec)}</span></div>` : ""}
-      ${vh ? `<div class="vtdiv" style="color:${vh.c}"><span>${h(vh.vt)}</span>${vh.who ? `<i>${h(vh.who)}</i>` : ""}<b>${vh.bars}小節</b></div>` : ""}
+      ${vh ? `<div class="vtdiv" style="color:${vh.c}"><span>${h(vh.vt)}</span><b>${vh.bars}小節</b></div>` : ""}
       <div class="ln${S.recMode && l.add ? " lnadd" : ""}${S.recMode && l.skip ? " lnskip" : ""}${isAgeri(l) ? " lnage" : ""}" style="${tint ? `background:color-mix(in srgb,${tint} ${strength}%,transparent);` : ""}${vtc ? `box-shadow:inset 3px 0 0 ${vtc}` : ""}">
         <button class="lbl" data-act="${S.recMode ? "rbar" : (VIEW() ? "noteblock" : "assignline")}" data-i="${i}"
           style="${st2 ? `color:${st2 === "need" ? "var(--bad)" : "#F0B23C"}` : ""}">${S.recMode && l.tag ? `<b class="tagmk">${h(l.tag)}</b>` : ""}${labelHTML(s, i)}</button>
@@ -3328,7 +3328,7 @@ function viewOverview(s) {
       const newSec = l.sec && l.sec !== (s.lines[i - 1] || {}).sec;
       const vh2 = vm2.info[i];
       return `${newSec ? `<div class="secdiv" id="sec-${h(l.sec)}"><span>${h(l.sec)}</span></div>` : ""}
-        ${vh2 ? `<div class="vtdiv vtdivov" style="color:${vh2.c}"><span>${h(vh2.vt)}</span>${vh2.who ? `<i>${h(vh2.who)}</i>` : ""}<b>${vh2.bars}小節</b></div>` : ""}
+        ${vh2 ? `<div class="vtdiv vtdivov" style="color:${vh2.c}"><span>${h(vh2.vt)}</span><b>${vh2.bars}小節</b></div>` : ""}
         <button class="ovw${l.add ? " lnadd" : ""}${S.recMode && l.skip ? " lnskip" : ""}" data-act="jumpline" data-i="${i}"
           style="${vtColor(vtOf(l)) ? `box-shadow:inset 3px 0 0 ${vtColor(vtOf(l))}` : ""}">
           <span class="ovwn">${l.tag ? `<b class="tagmk">${h(l.tag)}</b>` : ""}${S.recBars && bars[i] != null ? bars[i] : ""}</span>
@@ -3554,93 +3554,90 @@ function renderSheet() {
     const so = recSong();
     const l = so ? so.lines[U.menu.i] : null;
     const cur = so ? barsOf(so)[U.menu.i] : 0;
+    const vt = (l || {}).vt || "";
+    const hdr = (t) => `<div style="font-size:10px;color:var(--dim);margin:14px 0 6px">${t}</div>`;
+    const secs = SECDEF.concat((S.secWords || []).filter((x) => SECDEF.indexOf(x) < 0));
+    const tags = TAGDEF.concat((S.tagWords || []).filter((x) => TAGDEF.indexOf(x) < 0));
     overlay = document.createElement("div");
     overlay.className = "mask";
     overlay.innerHTML = `<button class="sp" data-act="closemenu"></button><div class="sheet">
-      <div class="row" style="margin-bottom:12px"><span class="grow trunc" style="font-size:13px">${h(l ? l.t : "")}</span>
-      <button data-act="closemenu" style="width:36px;height:36px;border-radius:10px;background:var(--panel2);font-size:17px">✕</button></div>
-      <div style="text-align:center;font-size:44px;font-weight:700;line-height:1;margin-bottom:14px">${cur}</div>
-      <div class="row" style="margin-bottom:10px">
-        <button class="chip grow" data-act="rbarset" data-id="-4">−4</button>
-        <button class="chip grow" data-act="rbarset" data-id="-2">−2</button>
-        <button class="chip grow" data-act="rbarset" data-id="-1">−1</button>
-        <button class="chip grow" data-act="rbarset" data-id="1">＋1</button>
-        <button class="chip grow" data-act="rbarset" data-id="2">＋2</button>
-        <button class="chip grow" data-act="rbarset" data-id="4">＋4</button>
+      <div class="row" style="margin-bottom:4px">
+        <span class="grow trunc" style="font-size:13px">${h(l ? l.t : "")}</span>
+        <button data-act="closemenu" style="width:36px;height:36px;border-radius:10px;background:var(--panel2);font-size:17px">✕</button>
       </div>
-      <div class="row" style="margin-bottom:12px">
-        <input class="field grow" id="rbarnum" type="number" inputmode="numeric" placeholder="番号を直接入れる" value="${cur}">
-        <button class="chip sm" data-act="rbarnum">決定</button>
+
+      ${hdr("区切り")}
+      <div class="chips">
+        ${secs.map((x) => `<button class="chip sm" data-act="rsecq" data-id="${h(x)}"
+          style="${(l || {}).sec === x ? "background:var(--accent);color:#0A0A0A;font-weight:700" : ""}">${h(x)}</button>`).join("")}
+        <button class="chip sm" data-act="rsecfree" style="color:var(--dim)">その他…</button>
+        ${(l || {}).sec ? `<button class="chip sm" data-act="rsecq" data-id="" style="color:var(--dim)">外す</button>` : ""}
       </div>
-      <div class="row" style="margin-bottom:6px">
-        <span style="font-size:11px;color:var(--dim);width:52px">想定</span>
-        ${[{ v: 1, t: "この行" }, { v: 2, t: "2行" }, { v: 3, t: "3行" }, { v: 4, t: "4行" }, { v: "sec", t: "区切り" }]
+
+      ${hdr(`想定　<b style="color:var(--text)">${U.vtN === "sec" ? "この区切り全部" : "ここから " + Number(U.vtN || 1) + "行"}</b> に付ける`)}
+      <div class="row" style="margin-bottom:8px">
+        ${[{ v: 1, t: "1行" }, { v: 2, t: "2行" }, { v: 3, t: "3行" }, { v: 4, t: "4行" }, { v: "sec", t: "区切り" }]
           .map((x) => `<button class="chip sm grow" data-act="rvtn" data-id="${x.v}"
             style="${String(U.vtN || 1) === String(x.v) ? "background:var(--panel2);color:var(--text);font-weight:700;border:1px solid var(--accent)" : "color:var(--dim)"}">${x.t}</button>`).join("")}
       </div>
-      <div class="chips" style="margin-bottom:6px">
+      <div class="chips">
         ${VTDEF.map((x) => `<button class="chip sm" data-act="rvt" data-id="${h(x.id)}"
-          style="${(l || {}).vt === x.id ? `background:${x.c};color:#0A0A0A;font-weight:700` : `color:${x.c};border:1px solid ${x.c}`}">${h(x.id)}</button>`).join("")}
-        ${(l || {}).vt ? `<button class="chip sm" data-act="rvt" data-id="" style="color:var(--dim)">外す</button>` : ""}
+          style="${vt === x.id ? `background:${x.c};color:#0A0A0A;font-weight:700` : `color:${x.c};border:1px solid ${x.c}`}">${h(x.id)}</button>`).join("")}
+        ${vt ? `<button class="chip sm" data-act="rvt" data-id="" style="color:var(--dim)">外す</button>` : ""}
       </div>
-      <div style="font-size:10px;color:var(--dim);margin:-2px 0 8px 56px">${
-        U.vtN === "sec" ? "この行が入っている区切りの全部に付きます" : `ここから下 ${Number(U.vtN || 1)}行に付きます`}。同じ想定でも歌う人が変われば、線で自動的に分かれます</div>
-      <div class="row" style="margin-bottom:10px">
-        <span style="font-size:11px;color:var(--dim);width:52px"></span>
-        <button class="chip sm grow" data-act="rvcut"
-          style="${(l || {}).vcut ? "background:var(--accent);color:#0A0A0A;font-weight:700" : ""}">この行から別のまとまりにする</button>
-      </div>
-      <div class="row" style="margin-bottom:10px">
-        <span style="font-size:11px;color:var(--dim);width:52px"></span>
-        <button class="chip sm grow" data-act="rvtauto">歌割から自動で振る</button>
-        <button class="chip sm grow" data-act="rskip"
-          style="${(l || {}).skip ? "background:var(--dim);color:#0A0A0A;font-weight:700" : ""}">コピー（録らない）</button>
-      </div>
-      <div class="row" style="margin-bottom:10px">
-        <span style="font-size:11px;color:var(--dim);width:52px">行</span>
-        ${[1, 2, 4, 8].map((b) => `<button class="chip sm grow" data-act="rlen" data-id="${b}"
-          style="${Number((l || {}).bars || 4) === b ? "background:var(--accent);color:#0A0A0A" : ""}">${b}小節</button>`).join("")}
-      </div>
-      <div style="font-size:10px;color:var(--dim);margin:-4px 0 10px 56px">この行から下もすべて同じ小節数にします</div>
-      <div class="row" style="margin-bottom:10px">
-        <span style="font-size:11px;color:var(--dim);width:52px">イントロ</span>
-        <button class="chip sm" data-act="rintro" data-id="-4">−4</button>
-        <button class="chip sm" data-act="rintro" data-id="-1">−1</button>
-        <span class="grow" style="text-align:center;font-size:13px;font-weight:600">${Number((so || {}).intro || 0)}小節</span>
-        <button class="chip sm" data-act="rintro" data-id="1">＋1</button>
-        <button class="chip sm" data-act="rintro" data-id="4">＋4</button>
-      </div>
-      <div style="font-size:10px;color:var(--dim);margin:-4px 0 10px 56px">歌い出しまでの長さ。全体の小節番号がずれます</div>
-      <div class="row" style="margin-bottom:6px">
-        <span style="font-size:11px;color:var(--dim);width:52px">表記</span>
-        <input class="field grow" id="rtag" placeholder="ガヤ / フェイク など" value="${h((l || {}).tag || "")}">
-        <button class="chip sm" data-act="rtagset">決定</button>
-      </div>
-      <div class="chips" style="margin-bottom:10px">
-        ${TAGDEF.concat((S.tagWords || []).filter((x) => TAGDEF.indexOf(x) < 0))
-          .map((x) => `<button class="chip sm" data-act="rtagq" data-id="${h(x)}"
-            style="${(l || {}).tag === x ? "background:var(--accent);color:#0A0A0A" : ""}">${h(x)}</button>`).join("")}
-      </div>
-      <div style="font-size:10px;color:var(--dim);margin:-6px 0 10px 56px">歌メロに足すもの。区切りは変わりません</div>
-      <div class="row" style="margin-bottom:10px">
-        <span style="font-size:11px;color:var(--dim);width:52px">区切り</span>
-        <input class="field grow" id="rsec" placeholder="1A / 1C / 間奏 など" value="${h((l || {}).sec || "")}">
-        <button class="chip sm" data-act="rsecset">決定</button>
-      </div>
-      <div class="chips" style="margin-bottom:10px">
-        ${SECDEF.concat((S.secWords || []).filter((x) => SECDEF.indexOf(x) < 0))
-          .map((x) => `<button class="chip sm" data-act="rsecq" data-id="${h(x)}"
-            style="${(l || {}).sec === x ? "background:var(--accent);color:#0A0A0A" : ""}">${h(x)}</button>`).join("")}
-      </div>
-      ${(S.secWords || []).filter((x) => SECDEF.indexOf(x) < 0).length ? `<button class="ghost" data-act="rsecforget"
-        style="color:var(--dim);font-size:11px;margin-bottom:10px">覚えた区切り名を消す</button>` : ""}
+      ${vt ? `<button class="chip sm" data-act="rvh" style="width:100%;margin-top:8px;${
+        (l || {}).vh ? "background:var(--accent);color:#0A0A0A;font-weight:700" : "color:var(--dim)"}">${
+        (l || {}).vh ? "ここから別のまとまり（押すと前とつなぐ）" : "前のまとまりに続いています（押すと分ける）"}</button>` : ""}
+
+      ${hdr("小節")}
       <div class="row" style="margin-bottom:8px">
-        <span style="font-size:11px;color:var(--dim);width:52px">下に足す</span>
-        ${["フェイク", "ガヤ", "コーラス", "掛け声"].map((x) => `<button class="chip sm grow" data-act="raddline" data-id="${x}">${x}</button>`).join("")}
+        <button class="chip" data-act="rbarset" data-id="-4">−4</button>
+        <button class="chip" data-act="rbarset" data-id="-1">−1</button>
+        <button class="grow" data-act="rbarnum"
+          style="text-align:center;font-size:30px;font-weight:800;line-height:1.1;padding:4px 0;border-radius:10px;background:var(--panel2)">${cur}</button>
+        <button class="chip" data-act="rbarset" data-id="1">＋1</button>
+        <button class="chip" data-act="rbarset" data-id="4">＋4</button>
       </div>
-      <button class="ghost" data-act="raddfree" style="margin-bottom:10px;color:var(--dim)">下に自由に足す</button>
-      ${l && l.at != null ? `<button class="ghost" data-act="rbarclear" style="color:var(--dim);margin-bottom:8px">小節の手直しを取り消す</button>` : ""}
-      <button class="ghost" data-act="rdelline" style="color:var(--bad)">この行を消す</button>
+      <div class="row">
+        <span style="font-size:11px;color:var(--dim);width:64px">1行の長さ</span>
+        ${[1, 2, 4, 8].map((b) => `<button class="chip sm grow" data-act="rlen" data-id="${b}"
+          style="${Number((l || {}).bars || 4) === b ? "background:var(--accent);color:#0A0A0A" : ""}">${b}</button>`).join("")}
+      </div>
+
+      <button class="chip" data-act="rskip" style="width:100%;margin-top:14px;${
+        (l || {}).skip ? "background:var(--dim);color:#0A0A0A;font-weight:700" : ""}">${
+        (l || {}).skip ? "コピー扱い（録りません）" : "コピーで済ませる"}</button>
+
+      <button class="ghost" data-act="rmore" style="margin-top:12px;color:var(--dim);font-size:12px">${U.rmore ? "▲ とじる" : "▼ そのほか"}</button>
+      ${U.rmore ? `
+        ${hdr("表記（歌メロに足すもの）")}
+        <div class="chips">
+          ${tags.map((x) => `<button class="chip sm" data-act="rtagq" data-id="${h(x)}"
+            style="${(l || {}).tag === x ? "background:var(--accent);color:#0A0A0A;font-weight:700" : ""}">${h(x)}</button>`).join("")}
+          <button class="chip sm" data-act="rtagfree" style="color:var(--dim)">その他…</button>
+        </div>
+
+        ${hdr("下に行を足す")}
+        <div class="chips">
+          ${["フェイク", "ガヤ", "コーラス", "掛け声"].map((x) => `<button class="chip sm" data-act="raddline" data-id="${x}">${x}</button>`).join("")}
+          <button class="chip sm" data-act="raddfree" style="color:var(--dim)">自由に…</button>
+        </div>
+
+        ${hdr("イントロ（歌い出しまでの長さ）")}
+        <div class="row">
+          <button class="chip sm" data-act="rintro" data-id="-4">−4</button>
+          <button class="chip sm" data-act="rintro" data-id="-1">−1</button>
+          <span class="grow" style="text-align:center;font-size:13px;font-weight:600">${Number((so || {}).intro || 0)}小節</span>
+          <button class="chip sm" data-act="rintro" data-id="1">＋1</button>
+          <button class="chip sm" data-act="rintro" data-id="4">＋4</button>
+        </div>
+
+        <div class="row" style="margin-top:16px">
+          ${l && l.at != null ? `<button class="chip sm grow" data-act="rbarclear" style="color:var(--dim)">小節の手直しを取り消す</button>` : ""}
+          <button class="chip sm grow" data-act="rwordforget" style="color:var(--dim)">覚えた言葉を消す</button>
+        </div>
+        <button class="ghost" data-act="rdelline" style="margin-top:10px;color:var(--bad)">この行を消す</button>
+      ` : ""}
     </div>`;
     document.body.appendChild(overlay);
     return;
@@ -4634,63 +4631,33 @@ const VTDEF = [
 ];
 const vtColor = (v) => (VTDEF.find((x) => x.id === v) || {}).c || "";
 const vtOf = (l) => (l && l.vt) || "";
-// 想定のまとまり。同じ「ソロ」でも歌う人が変われば別のまとまりにする。
-// 前半2行が誰のソロで、後半2行が誰のソロなのかを、線と名前で分ける。
-function vtKey(so, i) {
-  const l = (so.lines || [])[i];
-  if (!l || l.gap || !vtOf(l)) return "";
-  return vtOf(l) + "\u0001" + partsOf(so, i).slice().sort().join(",");
-}
-// その行が、まとまりの先頭かどうか。先頭には線と見出しを出す。
+// 想定のまとまり。想定を付けた回ごとに一つのまとまりにする。
+// 同じ「ソロ」を続けて選んでも、選んだ回が違えばつながらない（頭に印を残す）。
+const vtHead = (so, i) => {
+  const ls = so.lines || [];
+  const l = ls[i];
+  if (!l || l.gap || !vtOf(l)) return false;
+  if (l.vh) return true;
+  const p = ls[i - 1];
+  return !p || p.gap || vtOf(p) !== vtOf(l);
+};
+// まとまりの頭の行に、見出し（想定と小節数）を持たせる
 function vtMarks(so) {
   const ls = so.lines || [];
-  const head = [], info = [];
-  const total = songRoster(so).length;
+  const info = [];
   for (let i = 0; i < ls.length; i++) {
-    const k = vtKey(so, i);
-    if (!k) continue;
-    if (i > 0 && !ls[i].vcut && vtKey(so, i - 1) === k) continue;
-    head[i] = true;
-    // このまとまりの終わりまで見て、人と小節をまとめる
+    if (!vtHead(so, i)) continue;
     let bars = 0, n = 0;
     for (let j = i; j < ls.length; j++) {
-      if (j > i && (ls[j].vcut || vtKey(so, j) !== k)) break;
       if (ls[j].gap) break;
+      if (j > i && (vtHead(so, j) || vtOf(ls[j]) !== vtOf(ls[i]))) break;
       if (!ls[j].add) { bars += Number(ls[j].bars || 4); n++; }
     }
-    const ids = partsOf(so, i);
-    const who = total && ids.length >= total ? "全員"
-      : ids.length > 4 ? ids.length + "人"
-      : (names(ids) || "");
-    info[i] = { vt: vtOf(ls[i]), c: vtColor(vtOf(ls[i])), who, bars, n };
+    info[i] = { vt: vtOf(ls[i]), c: vtColor(vtOf(ls[i])), bars, n };
   }
-  return { head, info };
+  return { info };
 }
-// 「この行が入っている区切り」の範囲。区切り名は上から引き継がれる。
-function secRange(so, i) {
-  const ls = so.lines || [];
-  let a = i;
-  while (a > 0 && !ls[a].sec) a--;
-  let b = i + 1;
-  while (b < ls.length && !ls[b].sec) b++;
-  return [a, b - 1];
-}
-// 想定を書き込む行を決める。gap と、あとから足した行（フェイク等）は数に入れない。
-function vtTargets(so, i) {
-  const ls = so.lines || [];
-  const out = [];
-  if (U.vtN === "sec") {
-    const [a, b] = secRange(so, i);
-    for (let k = a; k <= b; k++) if (!ls[k].gap && !ls[k].add) out.push(k);
-    return out.length ? out : [i];
-  }
-  const want = Math.max(1, Number(U.vtN || 1));
-  for (let k = i; k < ls.length && out.length < want; k++) {
-    if (ls[k].gap || ls[k].add) continue;
-    out.push(k);
-  }
-  return out.length ? out : [i];
-}
+
 function rememberTag(nm) {
   const v = String(nm || "").trim();
   if (!v || TAGDEF.indexOf(v) >= 0) return;
@@ -5105,7 +5072,7 @@ function viewRecPrint() {
   const trs = so.lines.map((l, i) => {
     if (l.gap) return `<tr class="prz"><td class="prn"></td><td class="prx"></td></tr>`;
     const vh3 = vm3.info[i];
-    const hd = vh3 ? `<tr class="prv"><td class="prn"></td><td class="prx"><b>${h(vh3.vt)}</b>${vh3.who ? "　" + h(vh3.who) : ""}<span>　${vh3.bars}小節</span></td></tr>` : "";
+    const hd = vh3 ? `<tr class="prv"><td class="prn"></td><td class="prx"><b>${h(vh3.vt)}</b><span>　${vh3.bars}小節</span></td></tr>` : "";
     return hd + `<tr><td class="prn">${l.tag ? "［" + h(l.tag) + "］" : ""}${l.sec ? h(l.sec) + " " : ""}${S.recBars && bars[i] != null ? bars[i] : ""}</td><td class="prx">${h(l.add ? "（" + l.t + "）" : l.t)}</td></tr>`;
   });
   return `
@@ -6255,10 +6222,38 @@ document.addEventListener("click", (e) => {
     }
     case "rbarnum": {
       const so = recSong(); if (!so) break;
-      const el = document.getElementById("rbarnum");
-      const v = el && Number(el.value);
-      if (v > 0) { pushUndo(); so.lines[U.menu.i].at = Math.round(v); save(); U.menu = null; renderSheet(); render(); }
+      const now = barsOf(so)[U.menu.i];
+      const v0 = prompt("この行の小節番号", String(now == null ? "" : now));
+      if (v0 == null) break;
+      const v = Math.round(Number(String(v0).replace(/[^\d]/g, "")) || 0);
+      if (v > 0) { pushUndo(); so.lines[U.menu.i].at = v; save(); renderSheet(); render(); }
       break;
+    }
+    case "rmore": U.rmore = !U.rmore; renderSheet(); break;
+    case "rsecfree": {
+      const so = recSong(); if (!so) break;
+      const v = prompt("区切りの名前", (so.lines[U.menu.i] || {}).sec || "");
+      if (v == null) break;
+      pushUndo();
+      const t = String(v).trim();
+      if (t) { so.lines[U.menu.i].sec = t; rememberSec(t); } else delete so.lines[U.menu.i].sec;
+      save(); renderSheet(); render(); break;
+    }
+    case "rtagfree": {
+      const so = recSong(); if (!so) break;
+      const v = prompt("表記（ガヤ / フェイク など）", (so.lines[U.menu.i] || {}).tag || "");
+      if (v == null) break;
+      pushUndo();
+      const t = String(v).trim();
+      if (t) { so.lines[U.menu.i].tag = t; rememberTag(t); } else delete so.lines[U.menu.i].tag;
+      save(); renderSheet(); render(); break;
+    }
+    case "rwordforget": {
+      const cur = (S.secWords || []).concat((S.tagWords || []).map((x) => "表記:" + x));
+      if (!cur.length) { alert("覚えている言葉はありません。"); break; }
+      if (!confirm(`覚えた区切り名と表記を すべて忘れます。\n（${cur.length}件。行に付いているものは消えません）`)) break;
+      S.secWords = []; S.tagWords = [];
+      save(); renderSheet(); render(); break;
     }
     case "raddline": {
       const so = recSong(); if (!so) break;
@@ -6279,15 +6274,6 @@ document.addEventListener("click", (e) => {
       so.lines.splice(U.menu.i, 1);
       save(); U.menu = null; renderSheet(); render(); break;
     }
-    case "rsecforget": {
-      const cur = (S.secWords || []).filter((x) => SECDEF.indexOf(x) < 0);
-      const v = prompt("覚えている区切り名（、で区切る）\n消したいものを取り除いてください", cur.join("、"));
-      if (v != null) {
-        S.secWords = v.split(/[、,・\s]+/).map((x) => x.trim()).filter(Boolean);
-        save(); renderSheet(); render();
-      }
-      break;
-    }
     case "rskip": {
       const so = recSong(); if (!so) break;
       pushUndo();
@@ -6304,44 +6290,24 @@ document.addEventListener("click", (e) => {
       pushUndo();
       const ks = vtTargets(so, U.menu.i);
       // 同じ想定が並んでいるところをもう一度押したら外す。押し間違いを一手で戻せる。
-      const off = !id || ks.every((k) => so.lines[k].vt === id);
-      ks.forEach((k) => {
+      const off = !id || ks.every((k) => so.lines[k].vt === id && (k === ks[0] ? l.vh : !so.lines[k].vh));
+      ks.forEach((k, j) => {
         const l2 = so.lines[k];
-        delete l2.solo;
-        if (off) delete l2.vt; else l2.vt = id;
+        delete l2.solo; delete l2.vcut;
+        if (off) { delete l2.vt; delete l2.vh; return; }
+        l2.vt = id;
+        if (j === 0) l2.vh = 1; else delete l2.vh;   // 選んだ回ごとに一つのまとまり
       });
+      // すぐ下が同じ想定なら、そこも頭にしてつながらないようにする
+      const nx = ks[ks.length - 1] + 1;
+      if (!off && so.lines[nx] && !so.lines[nx].gap && vtOf(so.lines[nx]) === id) so.lines[nx].vh = 1;
       save(); renderSheet(); render(); break;
     }
-    case "rvcut": {
+    case "rvh": {
       const so = recSong(); if (!so) break;
       pushUndo();
       const l2 = so.lines[U.menu.i];
-      if (l2.vcut) delete l2.vcut; else l2.vcut = 1;
-      save(); renderSheet(); render(); break;
-    }
-    case "rvtauto": {
-      const so = recSong(); if (!so) break;
-      pushUndo();
-      const total = songRoster(so).length;
-      let n = 0;
-      (so.lines || []).forEach((l2) => {
-        if (l2.gap || l2.add || l2.vt) return;
-        const mn = (l2.main && l2.main.length ? l2.main : l2.parts) || [];
-        if (!mn.length) return;
-        l2.vt = mn.length === 1 ? "ソロ" : (total && mn.length >= total ? "全員" : "ユニゾン");
-        n++;
-      });
-      save(); renderSheet(); render();
-      alert(n ? `${n}行に想定を入れました。\n（もともと入っていた行はそのままです）` : "入れられる行がありませんでした。\n歌割の名前が読めていないか、すべて入力済みです。");
-      break;
-    }
-    case "rtagset": {
-      const so = recSong(); if (!so) break;
-      const el5 = document.getElementById("rtag");
-      const v = el5 ? String(el5.value || "").trim() : "";
-      pushUndo();
-      if (v) { so.lines[U.menu.i].tag = v; rememberTag(v); }
-      else delete so.lines[U.menu.i].tag;
+      if (l2.vh) delete l2.vh; else l2.vh = 1;
       save(); renderSheet(); render(); break;
     }
     case "rtagq": {
@@ -6351,20 +6317,12 @@ document.addEventListener("click", (e) => {
       if (l3.tag === id) delete l3.tag; else { l3.tag = id; rememberTag(id); }
       save(); renderSheet(); render(); break;
     }
-    case "rsecset": {
-      const so = recSong(); if (!so) break;
-      const el = document.getElementById("rsec");
-      pushUndo();
-      so.lines[U.menu.i].sec = el ? el.value.trim() : "";
-      rememberSec(so.lines[U.menu.i].sec);
-      save(); U.menu = null; renderSheet(); render(); break;
-    }
     case "rsecq": {
       const so = recSong(); if (!so) break;
       pushUndo();
-      so.lines[U.menu.i].sec = id;
-      rememberSec(id);
-      save(); U.menu = null; renderSheet(); render(); break;
+      const l4 = so.lines[U.menu.i];
+      if (!id || l4.sec === id) delete l4.sec; else { l4.sec = id; rememberSec(id); }
+      save(); renderSheet(); render(); break;
     }
     case "rlen": {
       const so = recSong(); if (!so) break;
