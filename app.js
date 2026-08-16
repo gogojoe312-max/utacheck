@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "10.2";
+const APP_VER = "10.3";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -3170,6 +3170,7 @@ function viewLive() {
     </button>
     ${S.recMode ? `<span id="pcd2" style="font-size:12px;color:var(--dim);font-variant-numeric:tabular-nums;margin-right:4px"></span>` : ""}
     <button class="ic" data-act="size">A</button>
+    ${s ? `<button class="ic" data-act="overview" style="font-size:12px">全体</button>` : ""}
     ${!VIEW() && !S.recMode && s ? `<button class="ic" data-act="songmenu" data-i="${U.songIdx}">⋯</button>` : ""}
     <button class="ic" data-act="go-setup" style="font-size:12px">設定</button>
   </div>
@@ -3219,7 +3220,6 @@ function viewLive() {
         </svg></button>
       ` : ""}
     ${VIEW() && unreadSongs().length ? `<button data-act="nextunread" style="color:var(--accent);font-weight:700">未読${unreadSongs().length}</button>` : ""}
-    <button data-act="overview">全体</button>
     ${S.recMode ? "" : `<button data-act="go-summary">集計</button>`}
     ${(U.draw && (S.draws[drawKey()] || []).length) || (undoStack.length && !VIEW())
       ? `<button data-act="undoall" class="wide" style="color:var(--accent)">取消</button>`
