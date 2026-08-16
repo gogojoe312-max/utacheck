@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "11.7";
+const APP_VER = "11.8";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -79,11 +79,11 @@ let S = {
   src: "", key: "", keyInLink: true,
   memos: {}, recs: {}, kbps: 128, preroll: 5, viewer: false, srcGroup: "",
   draws: {}, showFilter: "", folders: {}, folderOrder: [], rfolders: {}, rfolderOrder: [], subs: {}, subsMan: {}, subLib: {}, gsubs: {},
-  recMode: false, recOvSize: 14, rsongs: [], rsongId: "", recBars: true, liveShow: "", recEdit: false, linkSrc: "", groupOrder: [], pubAt: 0, syncAt: 0, seen: {}, planMin: 90, planPrep: 10, rosters: {}, secWords: [], trash: [],
+  recMode: false, recOvSize: 14, rsongs: [], rsongId: "", recBars: true, liveShow: "", recEdit: false, linkSrc: "", groupOrder: [], pubAt: 0, syncAt: 0, seen: {}, planMin: 90, planPrep: 10, rosters: {}, secWords: [], trash: [], secAll: false,
   plan: { start: "10:00", slots: [] },
   size: 19,
 };
-let U = { view: "live", songIdx: 0, sheet: null, mode: "member", allShows: false, picker: false, overview: false, ovSize: 9, recPick: null, sumOpen: "", draw: false, erase: false, pick: [], menu: null, printPick: null, focus: "", busy: "", allShowList: false, pdfBack: "", swapId: "", markOnly: false, planDay: "" };
+let U = { view: "live", songIdx: 0, sheet: null, mode: "member", allShows: false, picker: false, overview: false, ovSize: 9, recPick: null, sumOpen: "", draw: false, erase: false, pick: [], menu: null, printPick: null, focus: "", busy: "", allShowList: false, pdfBack: "", swapId: "", markOnly: false, planDay: "", planSec: "", vtN: 1 };
 
 const S0 = JSON.parse(JSON.stringify(S));
 
@@ -179,6 +179,11 @@ function migrate() {
   purgeRecs();
   if (!S.plan.slots) S.plan.slots = [];
   if (S.recBars == null) S.recBars = true;
+  if (S.secAll == null) S.secAll = false;
+  // 「ソロ想定」だけだった頃のデータを、想定の一つとして引き継ぐ
+  [].concat(S.rsongs || [], S.songs || []).forEach((so) => {
+    (so.lines || []).forEach((l) => { if (l.solo && !l.vt) l.vt = "ソロ"; });
+  });
   // 古いデータにも、その曲に出てくる人の名簿を持たせる
   if (orderTakes()) save();
   S.songs.forEach((so) => {
@@ -3164,10 +3169,11 @@ function viewLive() {
       const tint = st2 === "need" ? "var(--bad)" : st2 === "changed" ? "#F0B23C"
         : foc ? "#4C9BFF" : (ns.length ? noteColor(ns[0]) : "");
       const strength = (st2 || foc) ? 18 : 9;
+      const vtc = S.recMode ? vtColor(vtOf(l)) : "";
       return `${newSec ? `<div class="secdiv" id="sec-${h(l.sec)}"><span>${h(l.sec)}</span></div>` : ""}
-      <div class="ln${S.recMode && l.add ? " lnadd" : ""}${S.recMode && l.skip ? " lnskip" : ""}${isAgeri(l) ? " lnage" : ""}" style="${tint ? `background:color-mix(in srgb,${tint} ${strength}%,transparent)` : ""}">
+      <div class="ln${S.recMode && l.add ? " lnadd" : ""}${S.recMode && l.skip ? " lnskip" : ""}${isAgeri(l) ? " lnage" : ""}" style="${tint ? `background:color-mix(in srgb,${tint} ${strength}%,transparent);` : ""}${vtc ? `box-shadow:inset 3px 0 0 ${vtc}` : ""}">
         <button class="lbl" data-act="${S.recMode ? "rbar" : (VIEW() ? "noteblock" : "assignline")}" data-i="${i}"
-          style="${st2 ? `color:${st2 === "need" ? "var(--bad)" : "#F0B23C"}` : ""}">${S.recMode && l.solo ? `<b class="solomk">ソロ</b>` : ""}${S.recMode && l.tag ? `<b class="tagmk">${h(l.tag)}</b>` : ""}${labelHTML(s, i)}</button>
+          style="${st2 ? `color:${st2 === "need" ? "var(--bad)" : "#F0B23C"}` : ""}">${S.recMode && vtc ? `<b class="vtmk" style="background:${vtc}">${h(vtOf(l))}</b>` : ""}${S.recMode && l.tag ? `<b class="tagmk">${h(l.tag)}</b>` : ""}${labelHTML(s, i)}</button>
         <div class="brk ${gp[i]}"></div>
         <div class="grow" style="min-width:0">
           <div class="txt" data-l="${i}" style="font-size:${S.size}px">${cells}</div>${pills}
@@ -3317,8 +3323,9 @@ function viewOverview(s) {
       if (l.gap) return `<div style="height:1em"></div>`;
       const newSec = l.sec && l.sec !== (s.lines[i - 1] || {}).sec;
       return `${newSec ? `<div class="secdiv" id="sec-${h(l.sec)}"><span>${h(l.sec)}</span></div>` : ""}
-        <button class="ovw${l.add ? " lnadd" : ""}${S.recMode && l.skip ? " lnskip" : ""}" data-act="jumpline" data-i="${i}">
-          <span class="ovwn">${l.solo ? `<b class="solomk">ソロ</b>` : ""}${l.tag ? `<b class="tagmk">${h(l.tag)}</b>` : ""}${S.recBars && bars[i] != null ? bars[i] : ""}</span>
+        <button class="ovw${l.add ? " lnadd" : ""}${S.recMode && l.skip ? " lnskip" : ""}" data-act="jumpline" data-i="${i}"
+          style="${vtColor(vtOf(l)) ? `box-shadow:inset 3px 0 0 ${vtColor(vtOf(l))}` : ""}">
+          <span class="ovwn">${vtOf(l) ? `<b class="vtmk" style="background:${vtColor(vtOf(l))}">${h(vtOf(l))}</b>` : ""}${l.tag ? `<b class="tagmk">${h(l.tag)}</b>` : ""}${S.recBars && bars[i] != null ? bars[i] : ""}</span>
           <span>${h(l.add ? "（" + l.t + "）" : l.t)}</span></button>`;
     };
     const brks = (s.colBreaks || []).filter((x) => x > 0 && x < s.lines.length);
@@ -3559,10 +3566,22 @@ function renderSheet() {
         <input class="field grow" id="rbarnum" type="number" inputmode="numeric" placeholder="番号を直接入れる" value="${cur}">
         <button class="chip sm" data-act="rbarnum">決定</button>
       </div>
-      <div class="row" style="margin-bottom:10px">
+      <div class="row" style="margin-bottom:6px">
         <span style="font-size:11px;color:var(--dim);width:52px">想定</span>
-        <button class="chip sm grow" data-act="rsolo"
-          style="${(l || {}).solo ? "background:var(--accent);color:#0A0A0A;font-weight:700" : ""}">ソロ想定</button>
+        ${[{ v: 1, t: "この行" }, { v: 2, t: "2行" }, { v: 3, t: "3行" }, { v: 4, t: "4行" }, { v: "sec", t: "区切り" }]
+          .map((x) => `<button class="chip sm grow" data-act="rvtn" data-id="${x.v}"
+            style="${String(U.vtN || 1) === String(x.v) ? "background:var(--panel2);color:var(--text);font-weight:700;border:1px solid var(--accent)" : "color:var(--dim)"}">${x.t}</button>`).join("")}
+      </div>
+      <div class="chips" style="margin-bottom:6px">
+        ${VTDEF.map((x) => `<button class="chip sm" data-act="rvt" data-id="${h(x.id)}"
+          style="${(l || {}).vt === x.id ? `background:${x.c};color:#0A0A0A;font-weight:700` : `color:${x.c};border:1px solid ${x.c}`}">${h(x.id)}</button>`).join("")}
+        ${(l || {}).vt ? `<button class="chip sm" data-act="rvt" data-id="" style="color:var(--dim)">外す</button>` : ""}
+      </div>
+      <div style="font-size:10px;color:var(--dim);margin:-2px 0 10px 56px">${
+        U.vtN === "sec" ? "この行が入っている区切りの全部に付きます" : `ここから下 ${Number(U.vtN || 1)}行に付きます`}。行の左端に色の帯が出ます</div>
+      <div class="row" style="margin-bottom:10px">
+        <span style="font-size:11px;color:var(--dim);width:52px"></span>
+        <button class="chip sm grow" data-act="rvtauto">歌割から自動で振る</button>
         <button class="chip sm grow" data-act="rskip"
           style="${(l || {}).skip ? "background:var(--dim);color:#0A0A0A;font-weight:700" : ""}">コピー（録らない）</button>
       </div>
@@ -4592,6 +4611,43 @@ const PREP = "準備";
 const SECDEF = ["1A", "1B", "1C", "2A", "2B", "2C", "D", "落ち", "大サビ", "間奏"];
 // 歌メロに足すもの。区切りとは別に、行へ付ける表記。
 const TAGDEF = ["ガヤ", "フェイク", "ハモ", "コーラス", "掛け声", "アドリブ"];
+// 録りの想定。行ごとに「どう歌うか」を決めておくと、当日その場で迷わない。
+// 色は行の左端の帯と、名前欄の札に出る。同じ想定が続けば一本の帯になって、まとまりが見える。
+const VTDEF = [
+  { id: "ソロ", c: "#F0B23C" },
+  { id: "ユニゾン", c: "#5BC98A" },
+  { id: "掛け合い", c: "#C58BFF" },
+  { id: "全員", c: "#FF8A5C" },
+  { id: "ハモ", c: "#7FB3FF" },
+  { id: "ダブル", c: "#E86FA8" },
+];
+const vtColor = (v) => (VTDEF.find((x) => x.id === v) || {}).c || "";
+const vtOf = (l) => (l && l.vt) || "";
+// 「この行が入っている区切り」の範囲。区切り名は上から引き継がれる。
+function secRange(so, i) {
+  const ls = so.lines || [];
+  let a = i;
+  while (a > 0 && !ls[a].sec) a--;
+  let b = i + 1;
+  while (b < ls.length && !ls[b].sec) b++;
+  return [a, b - 1];
+}
+// 想定を書き込む行を決める。gap と、あとから足した行（フェイク等）は数に入れない。
+function vtTargets(so, i) {
+  const ls = so.lines || [];
+  const out = [];
+  if (U.vtN === "sec") {
+    const [a, b] = secRange(so, i);
+    for (let k = a; k <= b; k++) if (!ls[k].gap && !ls[k].add) out.push(k);
+    return out.length ? out : [i];
+  }
+  const want = Math.max(1, Number(U.vtN || 1));
+  for (let k = i; k < ls.length && out.length < want; k++) {
+    if (ls[k].gap || ls[k].add) continue;
+    out.push(k);
+  }
+  return out.length ? out : [i];
+}
 function rememberTag(nm) {
   const v = String(nm || "").trim();
   if (!v || TAGDEF.indexOf(v) >= 0) return;
@@ -4656,6 +4712,24 @@ function sectionsOf(slot) {
   names2.forEach((nm) => out.push(mk(nm, skip[nm] ? 0
     : (adj[nm] != null ? Number(adj[nm]) : (byBars[nm] != null ? byBars[nm] : each)))));
   return out;
+}
+// 配分を直す相手。開いている枠、無ければ今やっている枠。
+function planSlot() {
+  const rows = planRows();
+  if (U.planSec) { const r = rows.find((x) => x.s.id === U.planSec); if (r) return r.s; }
+  const lv = rows.find((x) => x.live);
+  return lv ? lv.s : null;
+}
+// 「全員」にしている時は、同じ直しを他の人の枠にも入れる。休憩は触らない。
+function secApply(t, fn) {
+  if (!t) return;
+  fn(t);
+  if (!S.secAll) return;
+  (S.plan.slots || []).forEach((sl) => { if (sl !== t && sl.kind !== "break") fn(sl); });
+}
+// 区切りの合計と、その人の持ち時間（準備を含む）
+function secSum(slot) {
+  return sectionsOf(slot).reduce((a, x) => a + Number(x.min || 0), 0);
 }
 // 録り終わった区切りの、予定と実際の差（−なら巻き）
 function slotGap(slot) {
@@ -4795,6 +4869,9 @@ function viewPlan() {
   const pickDay = dayList.length > 1 && U.planDay && dayList.includes(U.planDay) ? U.planDay : "";
   const rows = pickDay ? allRows.filter((r) => r.s.day === pickDay) : allRows;
   const now = nowMin();
+  // 配分を開く枠。何も開いていなければ、今やっている枠を開いておく。
+  const liveSlotId = (rows.find((r) => r.live) || { s: {} }).s.id || "";
+  const openSlot = U.planSec && rows.some((r) => r.s.id === U.planSec) ? U.planSec : liveSlotId;
   const liveIdx = rows.findIndex((r) => r.live);
   const nextIdx = rows.findIndex((r) => !r.done && !r.live);
   const last = rows[rows.length - 1];
@@ -4854,14 +4931,26 @@ function viewPlan() {
           ${!r.done && !r.live && i === nextIdx ? `　<span style="color:var(--accent)">次</span>` : ""}
         </div>
       </button>
+      ${isBreak ? "" : `<button class="chip sm" data-act="psecopen" data-id="${s.id}"
+        style="${openSlot === s.id ? "background:var(--panel2);color:var(--accent);border:1px solid var(--accent)" : "color:var(--dim)"}">配分</button>`}
       ${r.live ? `<button class="chip sm" data-act="pretry" data-id="${s.id}" style="color:var(--dim)">やり直す</button>
           <button class="chip sm" data-act="pcancel" data-id="${s.id}" style="color:var(--bad)">取り消す</button>
           <button class="chip sm" data-act="pnext" data-id="${s.id}" style="background:var(--accent);color:#0A0A0A">次へ</button>`
         : !r.done && i === nextIdx ? `<button class="chip sm" data-act="pstart" data-id="${s.id}">開始</button>`
         : r.done ? `<button class="chip sm" data-act="pundo" data-id="${s.id}" style="color:var(--dim)">戻す</button>` : ""}
     </div>
-    ${r.live && sectionsOf(s).length ? `<div class="card" style="margin:-4px 0 8px 14px;padding:10px 12px">
-      <div style="font-size:10px;color:var(--dim);margin-bottom:6px">${h(recSong() ? recSong().title : "")} の配分</div>
+    ${openSlot === s.id && sectionsOf(s).length ? (() => {
+      const sum = secSum(s);
+      const cap = Number(s.min || 0);
+      const over = sum - cap;
+      return `<div class="card" style="margin:-4px 0 8px 14px;padding:10px 12px">
+      <div class="row" style="margin-bottom:8px">
+        <span class="grow trunc" style="font-size:10px;color:var(--dim);min-width:0">${h(recSong() ? recSong().title : "")} の配分</span>
+        <button class="chip sm" data-act="psecall" data-id="${s.id}"
+          style="${S.secAll ? "background:var(--accent);color:#0A0A0A;font-weight:700" : "color:var(--dim)"}">${S.secAll ? "全員に反映中" : "この人だけ"}</button>
+      </div>
+      <div style="font-size:11px;margin:-4px 0 8px;color:${over > 0 ? "var(--bad)" : over < 0 ? "var(--dim)" : "var(--good)"}">
+        合計 ${sum}分 ／ 持ち時間 ${cap}分${over > 0 ? `　${over}分 はみ出しています` : over < 0 ? `　${-over}分 余っています` : "　ぴったり"}</div>
       ${sectionsOf(s).map((x) => x.skip ? `<div class="row" style="margin-bottom:6px;opacity:.4">
         <span style="width:56px;font-size:12px;text-decoration:line-through">${h(x.name)}</span>
         <span style="font-size:12px;color:var(--dim)">コピー（録らない）</span>
@@ -4871,7 +4960,7 @@ function viewPlan() {
         <span style="width:56px;font-size:12px;color:${x.live ? "var(--accent)" : x.done ? "var(--dim)" : "var(--text)"}">${h(x.name)}</span>
         <button class="chip sm" data-act="psec" data-id="${h(x.name)}|-5">−5</button>
         <button class="chip sm" data-act="psec" data-id="${h(x.name)}|-1">−1</button>
-        <b style="min-width:44px;text-align:center;font-size:13px">${x.min}分</b>
+        <button data-act="psecnum" data-id="${h(x.name)}" style="min-width:52px;text-align:center;font-size:13px;font-weight:700;padding:3px 0;border-radius:6px;background:var(--panel2)">${x.min}分</button>
         <button class="chip sm" data-act="psec" data-id="${h(x.name)}|1">＋1</button>
         <button class="chip sm" data-act="psec" data-id="${h(x.name)}|5">＋5</button>
         <span class="grow"></span>
@@ -4879,10 +4968,12 @@ function viewPlan() {
           : x.prep ? "" : `<button class="chip sm" data-act="pskip" data-id="${h(x.name)}" style="color:var(--dim)">録らない</button>`}
       </div>`).join("")}
       <div class="row" style="margin-top:6px">
-        <button class="chip sm grow" data-act="pseceven">均等に割り直す</button>
-        <button class="chip sm grow" data-act="pnextsec">次へ</button>
+        <button class="chip sm grow" data-act="pseceven">小節数どおりに割り直す</button>
+        ${r.live ? `<button class="chip sm grow" data-act="pnextsec">次へ</button>` : ""}
       </div>
-    </div>` : ""}`;
+      ${S.secAll ? `<div style="font-size:10px;color:var(--accent);margin-top:6px">直した分は、休憩をのぞく全員の枠に同じように入ります</div>`
+        : `<button class="chip sm" data-act="pseccopy" style="margin-top:6px;color:var(--dim);width:100%">いまの配分をほかの全員にも配る</button>`}
+    </div>`; })() : ""}`;
   }).join("");
 
   // 誰を足すかを、読み込んだ曲のグループから拾う
@@ -4969,7 +5060,7 @@ function viewRecPrint() {
   const bars = barsOf(so);
   const trs = so.lines.map((l, i) => {
     if (l.gap) return `<tr class="prz"><td class="prn"></td><td class="prx"></td></tr>`;
-    return `<tr><td class="prn">${l.solo ? "◆ " : ""}${l.tag ? "［" + h(l.tag) + "］" : ""}${l.sec ? h(l.sec) + " " : ""}${S.recBars && bars[i] != null ? bars[i] : ""}</td><td class="prx">${h(l.add ? "（" + l.t + "）" : l.t)}</td></tr>`;
+    return `<tr><td class="prn">${vtOf(l) ? "〈" + h(vtOf(l)) + "〉" : ""}${l.tag ? "［" + h(l.tag) + "］" : ""}${l.sec ? h(l.sec) + " " : ""}${S.recBars && bars[i] != null ? bars[i] : ""}</td><td class="prx">${h(l.add ? "（" + l.t + "）" : l.t)}</td></tr>`;
   });
   return `
   <div class="hd noprint"><button class="ic" data-act="recback">‹</button><b>PDF・印刷</b>
@@ -6158,12 +6249,38 @@ document.addEventListener("click", (e) => {
       if (l2.skip) delete l2.skip; else l2.skip = 1;
       save(); renderSheet(); render(); break;
     }
-    case "rsolo": {
+    case "rvtn": {
+      U.vtN = id === "sec" ? "sec" : Number(id) || 1;
+      renderSheet(); break;
+    }
+    case "rvt": {
       const so = recSong(); if (!so) break;
       pushUndo();
-      const l2 = so.lines[U.menu.i];
-      if (l2.solo) delete l2.solo; else l2.solo = 1;
+      const ks = vtTargets(so, U.menu.i);
+      // 同じ想定が並んでいるところをもう一度押したら外す。押し間違いを一手で戻せる。
+      const off = !id || ks.every((k) => so.lines[k].vt === id);
+      ks.forEach((k) => {
+        const l2 = so.lines[k];
+        delete l2.solo;
+        if (off) delete l2.vt; else l2.vt = id;
+      });
       save(); renderSheet(); render(); break;
+    }
+    case "rvtauto": {
+      const so = recSong(); if (!so) break;
+      pushUndo();
+      const total = songRoster(so).length;
+      let n = 0;
+      (so.lines || []).forEach((l2) => {
+        if (l2.gap || l2.add || l2.vt) return;
+        const mn = (l2.main && l2.main.length ? l2.main : l2.parts) || [];
+        if (!mn.length) return;
+        l2.vt = mn.length === 1 ? "ソロ" : (total && mn.length >= total ? "全員" : "ユニゾン");
+        n++;
+      });
+      save(); renderSheet(); render();
+      alert(n ? `${n}行に想定を入れました。\n（もともと入っていた行はそのままです）` : "入れられる行がありませんでした。\n歌割の名前が読めていないか、すべて入力済みです。");
+      break;
     }
     case "rtagset": {
       const so = recSong(); if (!so) break;
@@ -6222,12 +6339,46 @@ document.addEventListener("click", (e) => {
     }
     case "goplan": U.view = "recplan"; render(); break;
     case "psec": {
-      const [nm, dv] = String(id).split("|");
-      const live = planRows().find((r) => r.live);
-      if (!live) break;
-      const cur = sectionsOf(live.s).find((x) => x.name === nm);
-      live.s.sec = live.s.sec || {};
-      live.s.sec[nm] = Math.max(1, (cur ? cur.min : 5) + Number(dv));
+      const ps = String(id).split("|");
+      const dv = Number(ps.pop());
+      const nm = ps.join("|");                 // 区切り名に | が入っていても壊さない
+      const t = planSlot(); if (!t) break;
+      pushUndo();
+      const cur = sectionsOf(t).find((x) => x.name === nm);
+      const v = Math.max(1, (cur ? cur.min : 5) + dv);
+      secApply(t, (sl) => { sl.sec = sl.sec || {}; sl.sec[nm] = v; });
+      save(); render(); break;
+    }
+    case "psecnum": {
+      const t = planSlot(); if (!t) break;
+      const nm = String(id);
+      const cur = sectionsOf(t).find((x) => x.name === nm);
+      const v0 = prompt(`「${nm}」に何分あてますか`, String(cur ? cur.min : 5));
+      if (v0 == null) break;
+      const v = Math.max(1, Math.round(Number(String(v0).replace(/[^\d.]/g, "")) || 0));
+      if (!v) break;
+      pushUndo();
+      secApply(t, (sl) => { sl.sec = sl.sec || {}; sl.sec[nm] = v; });
+      save(); render(); break;
+    }
+    case "psecall": {
+      U.planSec = id || "";
+      S.secAll = !S.secAll;
+      save(); render(); break;
+    }
+    case "psecopen": {
+      U.planSec = U.planSec === id ? "" : id;
+      render(); break;
+    }
+    case "pseccopy": {
+      const t = planSlot(); if (!t) break;
+      const others = (S.plan.slots || []).filter((sl) => sl !== t && sl.kind !== "break");
+      if (!others.length) { alert("ほかに配れる枠がありません。"); break; }
+      if (!confirm(`この配分を ほかの${others.length}人にも同じにします。\nそれぞれの手直しは上書きされます。`)) break;
+      pushUndo();
+      const sec = JSON.parse(JSON.stringify(t.sec || {}));
+      const skip = JSON.parse(JSON.stringify(t.skip || {}));
+      others.forEach((sl) => { sl.sec = JSON.parse(JSON.stringify(sec)); sl.skip = JSON.parse(JSON.stringify(skip)); });
       save(); render(); break;
     }
     case "takeup": {
@@ -6247,20 +6398,23 @@ document.addEventListener("click", (e) => {
       save(); render(); break;
     }
     case "pskip": {
-      const live = planRows().find((r) => r.live);
-      if (!live) break;
+      const t = planSlot(); if (!t) break;
       const nm = String(id);
-      live.s.skip = live.s.skip || {};
-      if (live.s.skip[nm]) delete live.s.skip[nm];
-      else {
-        live.s.skip[nm] = 1;
-        if (live.s.sec) delete live.s.sec[nm];      // 手で決めた分数は捨てる
-        // 録らない区切りを開いていたら、次の録る区切りへ移る
-        if (live.s.secCur === nm) {
-          const ns2 = sectionsOf(live.s).filter((x) => !x.prep && !x.skip && !x.done);
-          live.s.secCur = ns2.length ? ns2[0].name : "";
+      const off = !!(t.skip || {})[nm];
+      pushUndo();
+      secApply(t, (sl) => {
+        sl.skip = sl.skip || {};
+        if (off) delete sl.skip[nm];
+        else {
+          sl.skip[nm] = 1;
+          if (sl.sec) delete sl.sec[nm];            // 手で決めた分数は捨てる
+          // 録らない区切りを開いていたら、次の録る区切りへ移る
+          if (sl.secCur === nm) {
+            const ns2 = sectionsOf(sl).filter((x) => !x.prep && !x.skip && !x.done);
+            sl.secCur = ns2.length ? ns2[0].name : "";
+          }
         }
-      }
+      });
       save(); render(); break;
     }
     case "prebal": {
@@ -6283,9 +6437,9 @@ document.addEventListener("click", (e) => {
       save(); render(); break;
     }
     case "pseceven": {
-      const live = planRows().find((r) => r.live);
-      if (!live) break;
-      delete live.s.sec;          // 手で決めた分数だけ捨てる（録らない指定はそのまま）
+      const t = planSlot(); if (!t) break;
+      pushUndo();
+      secApply(t, (sl) => { delete sl.sec; });   // 手で決めた分数だけ捨てる（録らない指定はそのまま）
       save(); render(); break;
     }
     case "pnextsec": {
