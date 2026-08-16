@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "11.5";
+const APP_VER = "11.6";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -8728,12 +8728,40 @@ function readViewport() {
     const el = document.getElementById("app");
     const r = el ? el.getBoundingClientRect() : null;
     const sc = window.screen || {};
+    let safeT = "-", safeB = "-";
+    const pr = document.getElementById("safeprobe");
+    if (pr && window.getComputedStyle) {
+      const cs = window.getComputedStyle(pr);
+      safeT = parseInt(cs.paddingTop, 10) || 0;
+      safeB = parseInt(cs.paddingBottom, 10) || 0;
+    }
     vpInfo = `内 ${Math.round(window.innerHeight || 0)}`
-      + ` / 文 ${Math.round((document.documentElement || {}).clientHeight || 0)}`
-      + ` / 画面 ${Math.round(sc.width || 0)}x${Math.round(sc.height || 0)}`
       + ` / 実 ${r ? Math.round(r.height) : "-"}`
+      + ` / 画面 ${Math.round(sc.width || 0)}x${Math.round(sc.height || 0)}`
+      + ` / 余白 上${safeT} 下${safeB}`
       + ` / 比 ${window.devicePixelRatio || "-"}`;
   } catch (e) { vpInfo = "測れません"; }
+  fitBottom();
+}
+
+// ホーム画面から開いた時、端末によっては使える範囲が画面より小さく報告され、
+// その分だけ下が余る。実際に余っているぶんだけ、下へ伸ばす。
+function fitBottom() {
+  try {
+    const el = document.getElementById("app");
+    if (!el) return;
+    el.style.bottom = "0px";
+    const standalone = (window.navigator || {}).standalone === true
+      || (typeof window.matchMedia === "function" && window.matchMedia("(display-mode: standalone)").matches);
+    if (!standalone) return;
+    const sc = window.screen || {};
+    if (!sc.width || !sc.height) return;
+    const portrait = (window.innerWidth || 0) <= (window.innerHeight || 0);
+    const screenH = portrait ? Math.max(sc.width, sc.height) : Math.min(sc.width, sc.height);
+    const r = el.getBoundingClientRect();
+    const gap = Math.round(screenH - r.bottom);       // 画面の下端までの余り
+    if (gap > 4 && gap < 120) el.style.bottom = -gap + "px";
+  } catch (e) { /* 測れなければ、いまのままで表示を続ける */ }
 }
 readViewport();
 window.addEventListener("resize", readViewport);
