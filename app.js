@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "10.9";
+const APP_VER = "11.0";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -5510,7 +5510,7 @@ function viewSetup() {
                MacとiPhoneで同じつなぎ先にすると、公演も曲も揃います。`}
         </div>
         <button class="primary" data-act="syncnow" style="margin-bottom:8px">今すぐ揃える</button>
-        ${linked ? "" : `<button class="ghost" data-act="bkfind" style="margin-bottom:8px">つなぎ先を探す</button>`}
+        <button class="ghost" data-act="bkpick" style="margin-bottom:8px">つなぎ先を変える</button>
         <div style="font-size:11px;color:var(--dim)">つなぎ先がずれていると、片方の内容はもう片方に出てきません。<br>
           両方の端末でこの番号が同じか確かめてください。</div>`;
       })()}
@@ -6518,6 +6518,7 @@ document.addEventListener("click", (e) => {
     case "bkfile": backupToFile(); break;
     case "bkrestore": restoreBackup(); break;
     case "bkfind": findBackup(); break;
+    case "bkpick": pickTarget(); break;
     case "syncnow": syncNow(); break;
     case "bkfromid": restoreFromId(); break;
     case "bkfrompub": recoverFromDelivery(); break;
@@ -8091,6 +8092,48 @@ async function restoreFromId() {
     }
     alert("このGistから使える版が見つかりませんでした。");
   } catch (e) { alert("開けませんでした。\n" + ((e && e.message) || e)); }
+}
+
+// つなぎ先を選び直す。中身を入れ替えるか、こちらの内容を送るかを選べる。
+async function pickTarget() {
+  if (!S.ghToken) { alert("先にGitHubのトークンを入れてください。"); return; }
+  let list;
+  U.busy = "つなぎ先を探しています…"; render();
+  try { list = await gh("/gists?per_page=100"); }
+  catch (e) { U.busy = ""; render(); alert("GitHubに接続できませんでした。\n" + e.message); return; }
+  U.busy = ""; render();
+  const cands = (list || []).filter((g) => Object.keys(g.files || {}).some((n) => /backup/i.test(n)));
+  if (!cands.length) { alert("つなぎ先が見つかりませんでした。\n「今すぐバックアップ」を押すと新しく作られます。"); return; }
+  cands.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
+
+  for (const g of cands) {
+    let n = "中身を読み取れません";
+    try {
+      const full = await gh("/gists/" + g.id);
+      const key = Object.keys(full.files).find((x) => /backup/i.test(x));
+      const obj = await unpackWithPass(JSON.parse(full.files[key].content), S.bkKey, true);
+      const st = (obj && obj.state) || {};
+      n = `公演${(st.shows || []).length}件・曲${(st.songs || []).length}件・記録${(st.notes || []).length}件`;
+    } catch (e) { /* 読めなくても、つなぎ先としては選べる */ }
+    const cur = g.id === S.bkGistId ? "（いまのつなぎ先）" : "";
+    if (!confirm(`${g.id.slice(0, 7)}…${cur}\n${new Date(g.updated_at).toLocaleString("ja-JP")}\n${n}\n\nこれをつなぎ先にしますか？\n（「いいえ」で次の候補）`)) continue;
+
+    const mine = `この端末は 公演${S.shows.length}件・曲${S.songs.length}件・記録${S.notes.length}件`;
+    const useThere = confirm(`${mine}\n\nどちらの内容にしますか？\n\n「OK」＝ つなぎ先の内容にする（この端末の内容は置き換わります）\n「キャンセル」＝ この端末の内容を送る（つなぎ先が置き換わります）`);
+    S.bkGistId = g.id;
+    save();
+    if (useThere) {
+      S.bkSeen = 0;
+      await restoreBackup(true);
+    } else {
+      S.bkHash = 0;                 // 送るべきものとして扱う
+      await doBackup(false);
+      alert("この端末の内容を送りました。\nもう一方の端末で「今すぐ揃える」を押してください。");
+    }
+    render();
+    return;
+  }
+  alert("ほかに候補はありませんでした。");
 }
 
 async function findBackup() {
