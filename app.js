@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "11.4";
+const APP_VER = "11.5";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1971,7 +1971,8 @@ const footerHTML = () => `
     <div style="text-align:center;color:var(--dim);font-size:11px;letter-spacing:.04em;margin:26px 0 4px">
       Created by Joe Takasaki
     </div>
-    <div style="text-align:center;color:var(--dim);font-size:10px;opacity:.6;margin-bottom:10px">${APP_VER}</div>`;
+    <div style="text-align:center;color:var(--dim);font-size:10px;opacity:.6;margin-bottom:2px">${APP_VER}</div>
+    <div style="text-align:center;color:var(--dim);font-size:10px;opacity:.5;margin-bottom:10px">${h(vpInfo)}</div>`;
 
 function pianoHTML(sel) {
   const W = ["C", "D", "E", "F", "G", "A", "B"], B = ["C", "D", "F", "G", "A"];
@@ -8719,38 +8720,26 @@ function copyText(t, msg) {
   ta.select(); document.execCommand("copy"); ta.remove(); done();
 }
 
-/* ---------------- 画面の高さを実測して合わせる ---------------- */
-// 端末によっては指定だけでは画面いっぱいにならず、下が余る。
-// 実際の見えている高さを測って入れるのが確実。
-function fitApp() {
-  try { fitAppInner(); } catch (e) { /* 測れなくても、CSSの指定で表示は続く */ }
+/* ---------------- 画面の大きさを調べる（表示には使わない） ---------------- */
+// 高さは CSS の inset で決める。ここでは、うまく合わない時の手がかりを控えるだけ。
+let vpInfo = "";
+function readViewport() {
+  try {
+    const el = document.getElementById("app");
+    const r = el ? el.getBoundingClientRect() : null;
+    const sc = window.screen || {};
+    vpInfo = `内 ${Math.round(window.innerHeight || 0)}`
+      + ` / 文 ${Math.round((document.documentElement || {}).clientHeight || 0)}`
+      + ` / 画面 ${Math.round(sc.width || 0)}x${Math.round(sc.height || 0)}`
+      + ` / 実 ${r ? Math.round(r.height) : "-"}`
+      + ` / 比 ${window.devicePixelRatio || "-"}`;
+  } catch (e) { vpInfo = "測れません"; }
 }
-function fitAppInner() {
-  const el = document.getElementById("app");
-  if (!el) return;
-  let h = Math.max(window.innerHeight || 0, (document.documentElement || {}).clientHeight || 0);
-  // ホーム画面から開いた時は画面いっぱいになる。
-  // 端末によっては上の値が小さく返るので、画面そのものの大きさも見る。
-  const nav = window.navigator || {};
-  const standalone = nav.standalone === true
-    || (typeof window.matchMedia === "function" && window.matchMedia("(display-mode: standalone)").matches);
-  const sc = window.screen;
-  if (standalone && sc && sc.width && sc.height) {
-    // iOSでは画面を回しても screen の値は入れ替わらないので、向きから選ぶ
-    const portrait = (window.innerHeight || 0) >= (window.innerWidth || 0);
-    const sh = portrait ? Math.max(sc.width, sc.height) : Math.min(sc.width, sc.height);
-    if (sh > h && sh - h < 260) h = sh;      // かけ離れた値は使わない
-  }
-  h = Math.round(h);
-  if (h > 200) el.style.height = h + "px";
-}
-fitApp();
-window.addEventListener("resize", fitApp);
-window.addEventListener("orientationchange", () => setTimeout(fitApp, 250));
-window.addEventListener("pageshow", fitApp);
-document.addEventListener("visibilitychange", () => { if (!document.hidden) setTimeout(fitApp, 60); });
-if (window.visualViewport) window.visualViewport.addEventListener("resize", fitApp);
-setTimeout(fitApp, 300);          // 起動直後は値が確定していないことがある
+readViewport();
+window.addEventListener("resize", readViewport);
+window.addEventListener("orientationchange", () => setTimeout(readViewport, 250));
+setTimeout(readViewport, 400);
+
 
 /* ---------------- boot ---------------- */
 (async () => {
