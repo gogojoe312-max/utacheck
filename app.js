@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "12.1";
+const APP_VER = "12.2";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -3173,7 +3173,7 @@ function viewLive() {
       const vtc = S.recMode ? vtColor(vtOf(l)) : "";
       const vh = vm.info[i];
       return `${newSec ? `<div class="secdiv" id="sec-${h(l.sec)}"><span>${h(l.sec)}</span></div>` : ""}
-      ${vh ? `<div class="vtdiv" style="color:${vh.c}"><span>${h(vh.vt)}</span><b>${vh.bars}小節</b></div>` : ""}
+      ${vh ? `<div class="vtdiv" style="color:${vh.c}"><span>${h(vh.vt)}</span></div>` : ""}
       <div class="ln${S.recMode && l.add ? " lnadd" : ""}${S.recMode && l.skip ? " lnskip" : ""}${isAgeri(l) ? " lnage" : ""}" style="${tint ? `background:color-mix(in srgb,${tint} ${strength}%,transparent);` : ""}${vtc ? `box-shadow:inset 3px 0 0 ${vtc}` : ""}">
         <button class="lbl" data-act="${S.recMode ? "rbar" : (VIEW() ? "noteblock" : "assignline")}" data-i="${i}"
           style="${st2 ? `color:${st2 === "need" ? "var(--bad)" : "#F0B23C"}` : ""}">${S.recMode && l.tag ? `<b class="tagmk">${h(l.tag)}</b>` : ""}${labelHTML(s, i)}</button>
@@ -3328,7 +3328,7 @@ function viewOverview(s) {
       const newSec = l.sec && l.sec !== (s.lines[i - 1] || {}).sec;
       const vh2 = vm2.info[i];
       return `${newSec ? `<div class="secdiv" id="sec-${h(l.sec)}"><span>${h(l.sec)}</span></div>` : ""}
-        ${vh2 ? `<div class="vtdiv vtdivov" style="color:${vh2.c}"><span>${h(vh2.vt)}</span><b>${vh2.bars}小節</b></div>` : ""}
+        ${vh2 ? `<div class="vtdiv vtdivov" style="color:${vh2.c}"><span>${h(vh2.vt)}</span></div>` : ""}
         <button class="ovw${l.add ? " lnadd" : ""}${S.recMode && l.skip ? " lnskip" : ""}" data-act="jumpline" data-i="${i}"
           style="${vtColor(vtOf(l)) ? `box-shadow:inset 3px 0 0 ${vtColor(vtOf(l))}` : ""}">
           <span class="ovwn">${l.tag ? `<b class="tagmk">${h(l.tag)}</b>` : ""}${S.recBars && bars[i] != null ? bars[i] : ""}</span>
@@ -3585,9 +3585,6 @@ function renderSheet() {
           style="${vt === x.id ? `background:${x.c};color:#0A0A0A;font-weight:700` : `color:${x.c};border:1px solid ${x.c}`}">${h(x.id)}</button>`).join("")}
         ${vt ? `<button class="chip sm" data-act="rvt" data-id="" style="color:var(--dim)">外す</button>` : ""}
       </div>
-      ${vt ? `<button class="chip sm" data-act="rvh" style="width:100%;margin-top:8px;${
-        (l || {}).vh ? "background:var(--accent);color:#0A0A0A;font-weight:700" : "color:var(--dim)"}">${
-        (l || {}).vh ? "ここから別のまとまり（押すと前とつなぐ）" : "前のまとまりに続いています（押すと分ける）"}</button>` : ""}
 
       ${hdr("小節")}
       <div class="row" style="margin-bottom:8px">
@@ -4672,13 +4669,7 @@ function vtMarks(so) {
   const info = [];
   for (let i = 0; i < ls.length; i++) {
     if (!vtHead(so, i)) continue;
-    let bars = 0, n = 0;
-    for (let j = i; j < ls.length; j++) {
-      if (ls[j].gap) break;
-      if (j > i && (vtHead(so, j) || vtOf(ls[j]) !== vtOf(ls[i]))) break;
-      if (!ls[j].add) { bars += Number(ls[j].bars || 4); n++; }
-    }
-    info[i] = { vt: vtOf(ls[i]), c: vtColor(vtOf(ls[i])), bars, n };
+    info[i] = { vt: vtOf(ls[i]), c: vtColor(vtOf(ls[i])) };
   }
   return { info };
 }
@@ -5097,7 +5088,7 @@ function viewRecPrint() {
   const trs = so.lines.map((l, i) => {
     if (l.gap) return `<tr class="prz"><td class="prn"></td><td class="prx"></td></tr>`;
     const vh3 = vm3.info[i];
-    const hd = vh3 ? `<tr class="prv"><td class="prn"></td><td class="prx"><b>${h(vh3.vt)}</b><span>　${vh3.bars}小節</span></td></tr>` : "";
+    const hd = vh3 ? `<tr class="prv"><td class="prn"></td><td class="prx"><b>${h(vh3.vt)}</b></td></tr>` : "";
     return hd + `<tr><td class="prn">${l.tag ? "［" + h(l.tag) + "］" : ""}${l.sec ? h(l.sec) + " " : ""}${S.recBars && bars[i] != null ? bars[i] : ""}</td><td class="prx">${h(l.add ? "（" + l.t + "）" : l.t)}</td></tr>`;
   });
   return `
@@ -6262,7 +6253,7 @@ document.addEventListener("click", (e) => {
       pushUndo();
       const t = String(v).trim();
       if (t) { so.lines[U.menu.i].sec = t; rememberSec(t); } else delete so.lines[U.menu.i].sec;
-      save(); renderSheet(); render(); break;
+      save(); U.menu = null; renderSheet(); render(); break;
     }
     case "rtagfree": {
       const so = recSong(); if (!so) break;
@@ -6271,7 +6262,7 @@ document.addEventListener("click", (e) => {
       pushUndo();
       const t = String(v).trim();
       if (t) { so.lines[U.menu.i].tag = t; rememberTag(t); } else delete so.lines[U.menu.i].tag;
-      save(); renderSheet(); render(); break;
+      save(); U.menu = null; renderSheet(); render(); break;
     }
     case "rwordforget": {
       const cur = (S.secWords || []).concat((S.tagWords || []).map((x) => "表記:" + x));
@@ -6304,7 +6295,7 @@ document.addEventListener("click", (e) => {
       pushUndo();
       const l2 = so.lines[U.menu.i];
       if (l2.skip) delete l2.skip; else l2.skip = 1;
-      save(); renderSheet(); render(); break;
+      save(); U.menu = null; renderSheet(); render(); break;
     }
     case "rvtn": {
       U.vtN = id === "sec" ? "sec" : Number(id) || 1;
@@ -6327,28 +6318,21 @@ document.addEventListener("click", (e) => {
       // すぐ下が同じ想定なら、そこも頭にしてつながらないようにする
       const nx = ks[ks.length - 1] + 1;
       if (!off && so.lines[nx] && !so.lines[nx].gap && vtOf(so.lines[nx]) === id) so.lines[nx].vh = 1;
-      save(); renderSheet(); render(); break;
-    }
-    case "rvh": {
-      const so = recSong(); if (!so) break;
-      pushUndo();
-      const l2 = so.lines[U.menu.i];
-      if (l2.vh) delete l2.vh; else l2.vh = 1;
-      save(); renderSheet(); render(); break;
+      save(); U.menu = null; renderSheet(); render(); break;
     }
     case "rtagq": {
       const so = recSong(); if (!so) break;
       pushUndo();
       const l3 = so.lines[U.menu.i];
       if (l3.tag === id) delete l3.tag; else { l3.tag = id; rememberTag(id); }
-      save(); renderSheet(); render(); break;
+      save(); U.menu = null; renderSheet(); render(); break;
     }
     case "rsecq": {
       const so = recSong(); if (!so) break;
       pushUndo();
       const l4 = so.lines[U.menu.i];
       if (!id || l4.sec === id) delete l4.sec; else { l4.sec = id; rememberSec(id); }
-      save(); renderSheet(); render(); break;
+      save(); U.menu = null; renderSheet(); render(); break;
     }
     case "rlen": {
       const so = recSong(); if (!so) break;
@@ -6360,7 +6344,7 @@ document.addEventListener("click", (e) => {
         if (l3.gap || l3.add) continue;
         l3.bars = v;
       }
-      save(); renderSheet(); render(); break;
+      save(); U.menu = null; renderSheet(); render(); break;
     }
     case "rpdf": {
       if (id) {
