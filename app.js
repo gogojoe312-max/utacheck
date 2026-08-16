@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "11.0";
+const APP_VER = "11.1";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -7865,10 +7865,14 @@ async function unsqueeze(u8) {
 
 // トークンは入れない。それ以外の全部（公演・曲・記録・総括・手書き・設定）を1つにまとめる。
 function backupState() {
-  const c = JSON.parse(JSON.stringify(S));
+  // 同じ歌詞を曲の数だけ持つと、送る量が何倍にも膨らむ。
+  // 保存の時と同じように、歌詞は1か所にまとめてから送る。
+  const c = packState(JSON.parse(JSON.stringify(S)));
   delete c.ghToken;
   return c;
 }
+// 受け取った側で元に戻す
+const fromBackup = (st) => unpackState(st || {});
 // 署名に自分の値（前回時刻・前回署名）が混ざると毎回変わるので外す
 const bkSignature = () => {
   const c = backupState();
@@ -8077,7 +8081,7 @@ async function restoreFromId() {
         }
       }
       if (!obj) continue;
-      const st = obj.state || {};
+      const st = fromBackup(obj.state);
       const when = new Date(obj.at || v.at).toLocaleString("ja-JP");
       const n = `公演${(st.shows || []).length}件・曲${(st.songs || []).length}件・記録${(st.notes || []).length}件`;
       if (!confirm(`${when}\n${n}\n\nこれで戻しますか？\n（「いいえ」でもっと古い版を見ます）`)) continue;
@@ -8112,7 +8116,7 @@ async function pickTarget() {
       const full = await gh("/gists/" + g.id);
       const key = Object.keys(full.files).find((x) => /backup/i.test(x));
       const obj = await unpackWithPass(JSON.parse(full.files[key].content), S.bkKey, true);
-      const st = (obj && obj.state) || {};
+      const st = fromBackup(obj && obj.state);
       n = `公演${(st.shows || []).length}件・曲${(st.songs || []).length}件・記録${(st.notes || []).length}件`;
     } catch (e) { /* 読めなくても、つなぎ先としては選べる */ }
     const cur = g.id === S.bkGistId ? "（いまのつなぎ先）" : "";
@@ -8193,7 +8197,7 @@ async function findBackupInner() {
         }
       }
       if (!obj) continue;
-      const st = (obj && obj.state) || {};
+      const st = fromBackup(obj && obj.state);
       const cnt = (st.shows || []).length + (st.songs || []).length + (st.notes || []).length;
       if (!cnt) continue;                       // 空の版は飛ばす
       seen++;
@@ -8225,10 +8229,21 @@ async function findBackupInner() {
 async function doBackup(silent) {
   if (!S.ghToken) { if (!silent) alert("先に自動公開のトークンを入れてください。"); return; }
   try {
-    const content = JSON.stringify(await packBackup());
+    let content = JSON.stringify(await packBackup());
     if (content.length > 950000) {
-      if (!silent) alert("データが大きすぎてバックアップできません。古い公演を減らしてください。");
-      return;
+      // 手書きは容量を食うわりに、他の端末で使うことが少ない。外して入るなら外して送る。
+      const keep = S.draws;
+      S.draws = {};
+      const slim = JSON.stringify(await packBackup());
+      S.draws = keep;
+      if (slim.length <= 950000) {
+        content = slim;
+        if (!silent) alert("手書きが大きいので、手書きだけ外して送りました。\n（手書きはこの端末には残っています）");
+      } else {
+        const mb = (content.length / 1048576).toFixed(1);
+        if (!silent) alert(`大きすぎて送れません（${mb} MB）。\n\n公演${S.shows.length}件・曲${S.songs.length}件・記録${S.notes.length}件\n\n設定の「保存領域」から、使わないグループや古い公演を消してください。`);
+        return;
+      }
     }
     const files = { "utacheck-backup.json": { content } };
     if (S.bkGistId) {
@@ -8257,7 +8272,7 @@ async function restoreBackup(silent) {
     const f = g.files && g.files["utacheck-backup.json"];
     if (!f) throw new Error("中身が見つかりません。");
     const obj = await unpackBackup(JSON.parse(f.content));
-    const st = obj.state || {};
+    const st = fromBackup(obj.state);
     const when = new Date(obj.at || 0).toLocaleString("ja-JP");
     if (!silent && !confirm(`${when} のバックアップから戻します。\n公演${(st.shows || []).length}件・曲${(st.songs || []).length}件・記録${(st.notes || []).length}件\n\n今この端末にある内容は置き換わります。よろしいですか？`)) return;
     const tk = S.ghToken, bk = S.bkGistId, bkk = S.bkKey;
@@ -8576,7 +8591,7 @@ async function checkOther() {
     if (!dirty) {
       const tk = S.ghToken, bk = S.bkGistId, bkk = S.bkKey, ep = S.editPass;
       Object.keys(S).forEach((k) => { delete S[k]; });
-      Object.assign(S, obj.state || {});
+      Object.assign(S, fromBackup(obj.state));
       S.ghToken = tk; S.bkGistId = bk; S.bkKey = bkk; S.editPass = ep;
       S.bkSeen = at; S.bkAt = at; S.bkHash = bkSignature();
       save(); otherAt = 0; render();
