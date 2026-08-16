@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "11.1";
+const APP_VER = "11.2";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -8112,14 +8112,18 @@ async function pickTarget() {
 
   for (const g of cands) {
     let n = "中身を読み取れません";
+    let locked = false;
     try {
       const full = await gh("/gists/" + g.id);
       const key = Object.keys(full.files).find((x) => /backup/i.test(x));
       const obj = await unpackWithPass(JSON.parse(full.files[key].content), S.bkKey, true);
       const st = fromBackup(obj && obj.state);
       n = `公演${(st.shows || []).length}件・曲${(st.songs || []).length}件・記録${(st.notes || []).length}件`;
-    } catch (e) { /* 読めなくても、つなぎ先としては選べる */ }
+    } catch (e) {
+      if (e && e.badKey) { locked = true; n = "合言葉がかかっています（選ぶと聞きます）"; }
+    }
     const cur = g.id === S.bkGistId ? "（いまのつなぎ先）" : "";
+    void locked;
     if (!confirm(`${g.id.slice(0, 7)}…${cur}\n${new Date(g.updated_at).toLocaleString("ja-JP")}\n${n}\n\nこれをつなぎ先にしますか？\n（「いいえ」で次の候補）`)) continue;
 
     const mine = `この端末は 公演${S.shows.length}件・曲${S.songs.length}件・記録${S.notes.length}件`;
@@ -8271,7 +8275,20 @@ async function restoreBackup(silent) {
     const g = await gh("/gists/" + S.bkGistId);
     const f = g.files && g.files["utacheck-backup.json"];
     if (!f) throw new Error("中身が見つかりません。");
-    const obj = await unpackBackup(JSON.parse(f.content));
+    const raw = JSON.parse(f.content);
+    let obj = null;
+    for (let tryN = 0; tryN < 4 && !obj; tryN++) {
+      try { obj = await unpackWithPass(raw, S.bkKey, true); }
+      catch (e) {
+        if (!e.badKey) throw e;                 // 合言葉以外の理由はそのまま知らせる
+        if (!raw || !raw.enc) throw e;
+        const pw = prompt("このバックアップの合言葉を入れてください。"
+          + (tryN ? "\n（合いませんでした）" : ""), S.bkKey || "");
+        if (pw == null) return;                 // やめた
+        S.bkKey = pw.trim();
+      }
+    }
+    if (!obj) { alert("合言葉が合わないため、戻せませんでした。"); return; }
     const st = fromBackup(obj.state);
     const when = new Date(obj.at || 0).toLocaleString("ja-JP");
     if (!silent && !confirm(`${when} のバックアップから戻します。\n公演${(st.shows || []).length}件・曲${(st.songs || []).length}件・記録${(st.notes || []).length}件\n\n今この端末にある内容は置き換わります。よろしいですか？`)) return;
