@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "11.2";
+const APP_VER = "11.3";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -8705,6 +8705,23 @@ function copyText(t, msg) {
   const ta = document.createElement("textarea"); ta.value = t; document.body.appendChild(ta);
   ta.select(); document.execCommand("copy"); ta.remove(); done();
 }
+
+/* ---------------- 画面の高さを実測して合わせる ---------------- */
+// 端末によっては指定だけでは画面いっぱいにならず、下が余る。
+// 実際の見えている高さを測って入れるのが確実。
+function fitApp() {
+  const el = document.getElementById("app");
+  if (!el) return;
+  const h = Math.round(window.innerHeight || 0);
+  if (h > 200) el.style.height = h + "px";
+}
+fitApp();
+window.addEventListener("resize", fitApp);
+window.addEventListener("orientationchange", () => setTimeout(fitApp, 250));
+window.addEventListener("pageshow", fitApp);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) setTimeout(fitApp, 60); });
+if (window.visualViewport) window.visualViewport.addEventListener("resize", fitApp);
+setTimeout(fitApp, 300);          // 起動直後は値が確定していないことがある
 
 /* ---------------- boot ---------------- */
 (async () => {
