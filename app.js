@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "10.7";
+const APP_VER = "10.8";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -5490,6 +5490,29 @@ function viewSetup() {
       })()}
     </div>
 
+    <h4 class="head">ほかの端末と揃える</h4>
+    <div class="card" style="margin-bottom:22px">
+      ${(() => {
+        const linked = !!(S.ghToken && S.bkGistId);
+        return `<div class="row" style="margin-bottom:8px">
+          <span class="grow" style="font-size:13px">${linked ? "つながっています" : "つながっていません"}</span>
+          <span style="font-size:11px;color:${linked ? "var(--good)" : "var(--bad)"};font-weight:700">${linked ? "同期あり" : "同期なし"}</span>
+        </div>
+        <div style="font-size:11px;color:var(--dim);line-height:1.7;margin-bottom:8px">
+          ${linked
+            ? `つなぎ先 ${h(String(S.bkGistId).slice(0, 7))}…<br>
+               最後のやりとり ${S.bkAt ? new Date(S.bkAt).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "まだありません"}<br>
+               この端末の内容は ${bkSignature() === S.bkHash ? "送信済みです" : "<b style=\"color:var(--accent)\">まだ送っていません</b>"}`
+            : `${S.ghToken ? "つなぎ先が決まっていません。" : "GitHubのトークンが入っていません。"}
+               MacとiPhoneで同じつなぎ先にすると、公演も曲も揃います。`}
+        </div>
+        <button class="primary" data-act="syncnow" style="margin-bottom:8px">今すぐ揃える</button>
+        ${linked ? "" : `<button class="ghost" data-act="bkfind" style="margin-bottom:8px">つなぎ先を探す</button>`}
+        <div style="font-size:11px;color:var(--dim)">つなぎ先がずれていると、片方の内容はもう片方に出てきません。<br>
+          両方の端末でこの番号が同じか確かめてください。</div>`;
+      })()}
+    </div>
+
     <h4 class="head">バックアップ</h4>
     <div class="card">
       <div class="row" style="margin-bottom:10px">
@@ -6492,6 +6515,7 @@ document.addEventListener("click", (e) => {
     case "bkfile": backupToFile(); break;
     case "bkrestore": restoreBackup(); break;
     case "bkfind": findBackup(); break;
+    case "syncnow": syncNow(); break;
     case "bkfromid": restoreFromId(); break;
     case "bkfrompub": recoverFromDelivery(); break;
     case "alertok": {
@@ -8473,6 +8497,24 @@ function endPreview() {
 // 別の端末で更新されていないか見に行く。
 // 手元に変更が無ければそのまま取り込み、両方変わっていれば選んでもらう。
 let otherAt = 0, syncing = false;
+// その場で両方向に揃える
+async function syncNow() {
+  if (!S.ghToken) { alert("GitHubのトークンを入れてください。"); return; }
+  if (!S.bkGistId) { alert("つなぎ先がありません。\n「つなぎ先を探す」を押すか、Macで「自分用リンクを作る」を使ってください。"); return; }
+  U.busy = "揃えています…"; render();
+  try {
+    if (bkSignature() !== S.bkHash) await doBackup(true);   // こちらが新しければ送る
+    await checkOther();                                      // 向こうが新しければ受け取る
+    U.busy = ""; render();
+    alert(otherAt
+      ? "両方の端末に変更があります。\n上に出る案内から、どちらを採るか選んでください。"
+      : `揃いました。\n公演${S.shows.length}件・曲${S.songs.length}件・記録${S.notes.length}件`);
+  } catch (e) {
+    U.busy = ""; render();
+    alert("揃えられませんでした。\n" + ((e && e.message) || e));
+  }
+}
+
 async function checkOther() {
   if (syncing || preview) return;
   if (!S.ghToken || !S.bkGistId) return;
