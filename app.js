@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "9.7";
+const APP_VER = "9.8";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -4565,6 +4565,83 @@ function planRows() {
   });
 }
 
+// 送られてきた予定表の文をそのまま読み取る。
+//   8/19＠高輪スタジオ
+//   11:00~12:30 斉藤
+//   (休憩)
+// のような形。日付ごとにまとめ、時刻の空きは休憩として入れる。
+function parseSchedule(text) {
+  const zen = (t) => String(t).replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
+    .replace(/[：]/g, ":").replace(/[〜～－ー–—]/g, "~").replace(/[＠]/g, "@");
+  const lines = zen(text).split(/\r?\n/).map((x) => x.trim());
+  const days = [];
+  let day = null;
+  let title = "";
+  lines.forEach((raw) => {
+    if (!raw) return;
+    const d = /^(\d{1,2})\s*[\/月]\s*(\d{1,2})日?\s*(?:\(.\)|（.）)?\s*@?\s*(.*)$/.exec(raw);
+    const tm = /^(\d{1,2}):(\d{2})\s*~\s*(\d{1,2}):(\d{2})\s*(.*)$/.exec(raw);
+    if (tm) {
+      if (!day) { day = { label: "", place: "", items: [] }; days.push(day); }
+      const a = Number(tm[1]) * 60 + Number(tm[2]);
+      let b = Number(tm[3]) * 60 + Number(tm[4]);
+      if (b <= a) b += 1440;                       // 日をまたぐ
+      const nm = tm[5].replace(/[（(].*?[）)]/g, "").trim();
+      day.items.push({ a, b, name: nm });
+      return;
+    }
+    if (d) {                                       // 日付の行
+      day = { label: `${Number(d[1])}/${Number(d[2])}`, place: (d[3] || "").trim(), items: [] };
+      days.push(day);
+      return;
+    }
+    if (/^[（(]?\s*(休憩|休み|昼|昼食|夕食|ブレイク)\s*[）)]?$/.test(raw)) {
+      if (day) day.items.push({ brk: true });
+      return;
+    }
+    if (!day && !title) title = raw;               // いちばん上は見出しとみなす
+  });
+  const out = [];
+  days.forEach((dd) => {
+    const items = dd.items.filter((x) => !x.brk || true);
+    let prev = null;
+    items.forEach((x) => {
+      if (x.brk) return;                           // 空きから自動で作るので、印だけの行は使わない
+      if (prev != null && x.a > prev) {
+        out.push({ kind: "break", name: "休憩", min: x.a - prev, day: dd.label, place: dd.place });
+      }
+      out.push({ kind: "member", name: x.name || "（名前なし）", min: x.b - x.a,
+        at: x.a, day: dd.label, place: dd.place });
+      prev = x.b;
+    });
+  });
+  return { title, days, slots: out };
+}
+
+function applySchedule(text) {
+  const r = parseSchedule(text);
+  if (!r.slots.length) { alert("予定を読み取れませんでした。\n「11:00~12:30 斉藤」のような行が要ります。"); return null; }
+  const nPerson = r.slots.filter((x) => x.kind === "member").length;
+  const brk = r.slots.length - nPerson;
+  const dayList = r.days.filter((d) => d.items.length).map((d) => d.label || "（日付なし）").join("、");
+  const first = r.slots.find((x) => x.kind === "member");
+  const msg = `${r.title ? r.title + "\n\n" : ""}${dayList}\n`
+    + `${nPerson}人ぶん・休憩${brk}回\n\n`
+    + r.slots.map((x) => `${x.day ? x.day + " " : ""}${x.at != null ? min2hm(x.at) + " " : ""}${x.name}（${x.min}分）`).join("\n")
+    + `\n\nこの通りに組みますか？\n（いまの進行表は置き換わります）`;
+  if (!confirm(msg)) return null;
+  pushUndo();
+  S.plan = S.plan || { slots: [] };
+  S.plan.start = first && first.at != null ? min2hm(first.at) : (S.plan.start || "10:00");
+  S.plan.slots = r.slots.map((x) => ({
+    id: uid(), name: x.name, min: x.min, kind: x.kind,
+    day: x.day || "", place: x.place || "",
+  }));
+  save(); render();
+  alert(`組みました。\n${dayList}　${nPerson}人ぶん`);
+  return r;
+}
+
 function viewPlan() {
   const rows = planRows();
   const now = nowMin();
@@ -4575,11 +4652,16 @@ function viewPlan() {
 
   const list = rows.map((r, i) => {
     const s = r.s;
+    const newDay = s.day && s.day !== ((rows[i - 1] || {}).s || {}).day;
+    const dayHead = newDay ? `<div class="row" style="margin:14px 0 6px">
+      <b style="font-size:12px;color:var(--accent)">${h(s.day)}</b>
+      ${s.place ? `<span style="font-size:11px;color:var(--dim)">${h(s.place)}</span>` : ""}
+    </div>` : "";
     const isBreak = s.kind === "break";
     const col = r.live ? "var(--accent)" : r.done ? "var(--dim)" : isBreak ? "#7FB3FF" : "var(--text)";
     const diff = r.done ? (r.aE - r.aS) - Number(s.min || 0) : 0;
     const rest = r.live ? r.aE - now : 0;
-    return `<div class="row card" data-drop="p:${s.id}" style="margin-bottom:8px;padding:11px 12px;${r.live ? "outline:1px solid var(--accent)" : ""}">
+    return `${dayHead}<div class="row card" data-drop="p:${s.id}" style="margin-bottom:8px;padding:11px 12px;${r.live ? "outline:1px solid var(--accent)" : ""}">
       <span class="grip" data-drag="plan:${s.id}">⣿</span>
       <button class="grow" style="text-align:left;min-width:0" data-act="pedit" data-id="${s.id}">
         <div class="row" style="gap:8px">
@@ -4693,6 +4775,7 @@ function viewPlan() {
         <button class="chip sm" data-act="padd">追加</button>
       </div>
       <button class="ghost" data-act="pbreak" style="margin-top:8px">休憩を入れる</button>
+      <button class="ghost" data-act="pastesched" style="margin-top:8px;color:var(--accent)">予定表を貼って組む</button>
     </div>
     <div style="height:40px"></div>
   </div>`;
@@ -6010,7 +6093,9 @@ document.addEventListener("click", (e) => {
       const nn = S.plan.slots[i3 + 1];
       if (nn && nn.a0 == null) {
         nn.a0 = live.s.a1; nn.startAt = Date.now(); nn.secStart = Date.now();
-        const first = (sectionsOf(nn).find((x) => !x.prep && !x.skip) || sectionsOf(nn)[0] || {}).name;
+        // 準備があれば準備から始める
+        const ss0 = sectionsOf(nn);
+        const first = (ss0.find((x) => x.prep) || ss0.find((x) => !x.skip) || ss0[0] || {}).name;
         if (first) nn.secCur = first;
       }
       save(); render(); break;
@@ -6018,6 +6103,12 @@ document.addEventListener("click", (e) => {
     case "psetstart": {
       const el = document.getElementById("pstarttime");
       if (el && el.value.trim()) { S.plan.start = min2hm(hm2min(el.value)); save(); render(); }
+      break;
+    }
+    case "pastesched": {
+      const t = prompt("予定表を貼ってください。\n例：\n8/19＠高輪スタジオ\n11:00~12:30 斉藤\n（休憩）", "");
+      if (t == null || !t.trim()) break;
+      applySchedule(t);
       break;
     }
     case "padd": {
@@ -6069,7 +6160,8 @@ document.addEventListener("click", (e) => {
       if (s2) {
         s2.a0 = nowMin(); delete s2.a1; s2.startAt = Date.now(); s2.secStart = Date.now();
         s2.secLog = {};
-        s2.secCur = (sectionsOf(s2).find((x) => !x.prep && !x.skip) || sectionsOf(s2)[0] || {}).name || "";
+        const ss1 = sectionsOf(s2);
+        s2.secCur = (ss1.find((x) => x.prep) || ss1.find((x) => !x.skip) || ss1[0] || {}).name || "";
         save(); render();
       }
       break;
