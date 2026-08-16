@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "10.5";
+const APP_VER = "10.6";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -100,11 +100,14 @@ async function loadRaw() {
   } catch (e) { idbOK = false; }
   try { return localStorage.getItem(KEY); } catch (e) { return null; }
 }
+let booted = false;      // 起動の読み込みが済んだか
+let touched = false;     // 読み込みの前に、こちらで何か触ったか
 async function load() {
   let raw = null;
   try {
     raw = await loadRaw();
-    if (raw) S = Object.assign(S, unpackState(JSON.parse(raw)));
+    // 読み込みを待っている間に取り込みなどをしていたら、その内容を消さない
+    if (raw && !touched) S = Object.assign(S, unpackState(JSON.parse(raw)));
   } catch (e) { /* 初回、または壊れている */ }
   try {
     migrate();
@@ -870,6 +873,7 @@ async function flushSave() {
 }
 function save() {
   if (preview) return;
+  if (!booted) touched = true;      // 起動の読み込みより先に触った
   const txt = JSON.stringify(packState(S));
   if (!idbOK) {                    // IndexedDBが使えない時だけ、今まで通り
     try { localStorage.setItem(KEY, txt); saveErr = false; return; }
@@ -1016,7 +1020,8 @@ function buildSong(parsed) {
       main: parts.slice(), extra: exIds, cell: r[2] || "", lcell: r[3] || "", extraCell: r[5] || "" };
   });
   const so = { id: uid(), title: parsed.title || "無題", credit: parsed.credit || "", lines,
-    roster, blocks: groups, blockCells: parsed.groupCells || {}, blockRows: parsed.groupRows || [], sheetName: parsed.sheetName || "" };
+    roster, blocks: groups, blockCells: parsed.groupCells || {}, blockRows: parsed.groupRows || [], sheetName: parsed.sheetName || "",
+    micSheet: parsed.micSheet || "", micMap: parsed.micMap || null };
   so.sig = songSig(so);
   return so;
 }
@@ -1387,15 +1392,20 @@ const esc = (s) => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(
 
 // 元のExcelに「○○欠席ver」タブを一番左に足す。元のタブと書式には一切触らない。
 // edits: { "A7": "島川", "E12": "" } セル番地 → 新しい名前
-async function addVersionTab(buf, tabName, edits) {
+async function addVersionTab(buf, tabName, edits, srcSheet) {
   const { files, order } = await unzip(buf);
   const names = order.slice();
   const wbxml = dec(files['xl/workbook.xml']);
   const rels  = dec(files['xl/_rels/workbook.xml.rels']);
   const ct    = dec(files['[Content_Types].xml']);
 
-  // 一番左のシートが元ネタ
-  const first = wbxml.match(/<sheet [^>]*r:id="([^"]+)"/);
+  // 元にするシート。指定がなければ一番左。
+  let first = null;
+  if (srcSheet) {
+    const re = new RegExp('<sheet [^>]*name="' + srcSheet.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + '"[^>]*r:id="([^"]+)"');
+    first = wbxml.match(re);
+  }
+  if (!first) first = wbxml.match(/<sheet [^>]*r:id="([^"]+)"/);
   if (!first) throw new Error('シートが見つかりません。');
   const relm = new RegExp('Id="' + first[1] + '"[^>]*Target="([^"]+)"').exec(rels);
   const srcPath = 'xl/' + relm[1].replace(/^\/?xl\//, '');
@@ -1566,6 +1576,10 @@ function pickSheet(wb) {
     let pt = 0;
     if (/歌割|唄割|うたわり/.test(sn)) pt += 1000;
     if (/マイク|ﾏｲｸ|番号|MC|表紙|メモ/i.test(sn)) pt -= 800;
+    if (/^(sheet|シート)\s*\d*$/i.test(sn.trim())) pt -= 600;   // 名前を付けていない予備のシート
+    // グループ名が付いたシートは、その曲の歌割である見込みが高い
+    if ((S.groups || []).some((g) => g.name && sn.indexOf(g.name) >= 0)) pt += 500;
+    (Object.keys(S.rosters || {})).forEach((gn) => { if (gn && sn.indexOf(gn) >= 0) pt += 500; });
     // 名前らしい文字（漢字・かな）が入った短いセルを数える
     const g = XLSX.utils.sheet_to_json(sh2, { header: 1, blankrows: false, defval: "" });
     let nameLike = 0, numLike = 0;
@@ -1730,11 +1744,32 @@ async function parseXLSX(file, buf) {
   lead.reverse().forEach((x) => rows.unshift(x));
   // 一番左のシートを読んでいる
   const sheetName = pickedName;
+  // マイク番号のシートは歌割と同じ並びで、名前の代わりに番号が入っている。
+  // 書き出しの時に、そちらも直せるよう覚えておく。
+  const micName = wb.SheetNames.find((n) => n !== pickedName && /マイク|ﾏｲｸ/i.test(n)) || "";
   // どの行にも当てはまらなかった吹き出しは、最後にまとめて入れる
   Object.keys(bubbleAt).forEach((k) => bubbleAt[k].forEach((t2) => rows.push(["煽り", softText(t2), "", "", "", "", "煽り", ""])));
   const parsed0 = finalize(cleanName(file.name), head.join("　"), rows);
   if (cutRows) parsed0.cutRows = cutRows;   // グレー＝カットとして外した行数
   parsed0.sheetName = sheetName;
+  parsed0.micSheet = micName;
+  if (micName) {
+    // 名前 ↔ マイク番号 の対応を、同じ行の同じ列から拾う
+    const msh = wb.Sheets[micName];
+    const mg = XLSX.utils.sheet_to_json(msh, { header: 1, blankrows: true, defval: "" })
+      .map((r) => (r || []).map((v) => String(v == null ? "" : v).trim()));
+    const map = {};
+    grid.forEach((r, ri) => {
+      const mr = mg[ri]; if (!mr) return;
+      r.forEach((v, ci) => {
+        const nm = cleanText(v), mv = mr[ci];
+        if (!nm || !mv || nm === mv) return;
+        if (!looksName(nm)) return;
+        splitNames(nm).forEach((one) => { if (!map[one]) map[one] = mv; });
+      });
+    });
+    parsed0.micMap = map;
+  }
   return parsed0;
 }
 
@@ -4160,14 +4195,41 @@ async function exportAbsentXlsx(songId) {
   const tab = absentTab();
   try {
     U.busy = "Excelを作成中…"; render();
-    const buf = new Uint8Array(await blob.arrayBuffer());
-    const res = await addVersionTab(buf, tab, edits);
-    downloadBlob(`${so.title}_${tab}.xlsx`, new Blob([res.data], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+    let data = new Uint8Array(await blob.arrayBuffer());
+    // 歌割のシートを直したタブ
+    data = (await addVersionTab(data, tab, edits, so.sheetName)).data;
+    // マイク番号のシートがあれば、そちらも同じ行を直したタブを足す
+    if (so.micSheet) {
+      const me = micEdits(so, edits);
+      if (Object.keys(me).length) {
+        data = (await addVersionTab(data, tab + " マイク", me, so.micSheet)).data;
+      }
+    }
+    downloadBlob(`${so.title}_${tab}.xlsx`,
+      new Blob([data], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
     U.busy = ""; render();
   } catch (e) {
     U.busy = ""; render();
     alert("Excelを作れませんでした。\n" + e.message);
   }
+}
+
+// 歌割の直しを、マイク番号のシート用に置き換える。
+// 「橋田」→「3」のように、覚えておいた対応で名前を番号にする。
+function micEdits(so, edits) {
+  const map = so.micMap || {};
+  const out = {};
+  Object.keys(edits).forEach((ref) => {
+    const e = edits[ref];
+    const v = (e && typeof e === "object") ? e.v : e;
+    const names = splitNames(String(v == null ? "" : v));
+    if (!names.length) return;
+    // 全員ぶんの番号が分かる時だけ直す（分からないまま書くと誤りになる）
+    const nums = names.map((n) => map[n]).filter(Boolean);
+    if (nums.length !== names.length) return;
+    out[ref] = { v: nums.join("・"), fill: (e && e.fill) || "FFFFF3B0" };
+  });
+  return out;
 }
 
 /* ---- 欠席対応 ---- */
@@ -6724,6 +6786,7 @@ function dupShow(fromId) {
       lines: x.lines.map((l) => Object.assign({}, l, { parts: (l.parts || []).slice() })),
       roster: (x.roster || []).slice(), blocks,
       blockCells: x.blockCells, blockRows: x.blockRows, sheetName: x.sheetName,
+      micSheet: x.micSheet, micMap: x.micMap,
       take: x.take || 1, sig: x.sig, cols: x.cols,
       impAt: impOf(x),
     });
@@ -7283,6 +7346,7 @@ async function swapSong(songId, file) {
   so.blockCells = ns.blockCells;
   so.blockRows = ns.blockRows;
   so.sheetName = ns.sheetName;
+  so.micSheet = ns.micSheet; so.micMap = ns.micMap;
   so.cols = ns.cols;
   so.title = ns.title;
   so.sig = songSig(so);
@@ -8503,6 +8567,7 @@ function copyText(t, msg) {
 /* ---------------- boot ---------------- */
 (async () => {
   await load();
+  booted = true;
   // 前まで localStorage に置いていた分は、IndexedDB へ引っ越す。
   // 移し終えてから消すので、途中で止まっても元は残る。
   if (idbOK) {
