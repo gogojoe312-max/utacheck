@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "10.1";
+const APP_VER = "10.2";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -3217,11 +3217,10 @@ function viewLive() {
           <path d="M12.5 8 16 4.5a2 2 0 0 1 2.8 0l2.7 2.7a2 2 0 0 1 0 2.8L17.5 13z" fill="currentColor" opacity=".55"/>
           <path d="M4 20.5h16" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/>
         </svg></button>
-      <button data-act="clearink" style="font-size:12px;color:var(--dim)">全消</button>` : ""}
+      ` : ""}
     ${VIEW() && unreadSongs().length ? `<button data-act="nextunread" style="color:var(--accent);font-weight:700">未読${unreadSongs().length}</button>` : ""}
     <button data-act="overview">全体</button>
     ${S.recMode ? "" : `<button data-act="go-summary">集計</button>`}
-    <span class="grow"></span>
     ${(U.draw && (S.draws[drawKey()] || []).length) || (undoStack.length && !VIEW())
       ? `<button data-act="undoall" class="wide" style="color:var(--accent)">取消</button>`
       : `<button data-act="undoall" class="wide" style="opacity:.3">取消</button>`}
