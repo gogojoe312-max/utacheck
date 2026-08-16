@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "11.3";
+const APP_VER = "11.4";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -4499,6 +4499,15 @@ function fmtLeft(sec) {
 }
 // 予定の時刻になったら、その枠を自動で始める。
 // 自動を止めていれば何もしない。手で始めた枠には触らない。
+// その枠が今日のものか。日付が書かれていなければ、いつでも良いものとして扱う。
+function isToday(sw) {
+  if (!sw || !sw.day) return true;
+  const m = /^(\d{1,2})\s*\/\s*(\d{1,2})$/.exec(String(sw.day).trim());
+  if (!m) return true;
+  const d = new Date();
+  return Number(m[1]) === d.getMonth() + 1 && Number(m[2]) === d.getDate();
+}
+
 function autoPlan() {
   if (!S.recMode || !S.planAuto || !S.plan) return;
   const slots = S.plan.slots || [];
@@ -4507,7 +4516,7 @@ function autoPlan() {
   if (live) {
     // 次の枠の時刻が来たら、いまの枠を終えて次へ移る
     const i = slots.indexOf(live);
-    const nx = slots.slice(i + 1).find((x) => x.at != null && x.a1 == null);
+    const nx = slots.slice(i + 1).find((x) => x.at != null && x.a1 == null && isToday(x));
     if (nx && nx.at != null && now >= nx.at && nx.a0 == null) {
       live.a1 = now;
       startSlot(nx, true);
@@ -4515,7 +4524,7 @@ function autoPlan() {
     }
     return;
   }
-  const nx = slots.find((x) => x.a0 == null && x.at != null && now >= x.at);
+  const nx = slots.find((x) => x.a0 == null && x.at != null && now >= x.at && isToday(x));
   if (!nx) return;
   // だいぶ過ぎている枠は勝手に始めない（アプリを開き直した時など）
   if (now - nx.at > 30) return;
@@ -4796,7 +4805,11 @@ function viewPlan() {
       <div class="grow" style="min-width:0">
         <div style="font-size:13px">時刻になったら自動で始める</div>
         <div style="font-size:11px;color:var(--dim);margin-top:2px">${S.planAuto
-          ? (autoMsg ? h(autoMsg) : "予定の時刻に、その枠へ自動で移ります")
+          ? (autoMsg ? h(autoMsg) : (() => {
+              const n = allRows.filter((r) => r.s.at != null && isToday(r.s)).length;
+              return n ? `今日の予定 ${n}件。時刻になったら自動で移ります`
+                       : "今日の予定はありません。別の日の枠は自動で始めません";
+            })())
           : "いまは手で開始する設定です"}</div>
       </div>
       <button class="chip sm" data-act="autotoggle"
@@ -8710,9 +8723,25 @@ function copyText(t, msg) {
 // 端末によっては指定だけでは画面いっぱいにならず、下が余る。
 // 実際の見えている高さを測って入れるのが確実。
 function fitApp() {
+  try { fitAppInner(); } catch (e) { /* 測れなくても、CSSの指定で表示は続く */ }
+}
+function fitAppInner() {
   const el = document.getElementById("app");
   if (!el) return;
-  const h = Math.round(window.innerHeight || 0);
+  let h = Math.max(window.innerHeight || 0, (document.documentElement || {}).clientHeight || 0);
+  // ホーム画面から開いた時は画面いっぱいになる。
+  // 端末によっては上の値が小さく返るので、画面そのものの大きさも見る。
+  const nav = window.navigator || {};
+  const standalone = nav.standalone === true
+    || (typeof window.matchMedia === "function" && window.matchMedia("(display-mode: standalone)").matches);
+  const sc = window.screen;
+  if (standalone && sc && sc.width && sc.height) {
+    // iOSでは画面を回しても screen の値は入れ替わらないので、向きから選ぶ
+    const portrait = (window.innerHeight || 0) >= (window.innerWidth || 0);
+    const sh = portrait ? Math.max(sc.width, sc.height) : Math.min(sc.width, sc.height);
+    if (sh > h && sh - h < 260) h = sh;      // かけ離れた値は使わない
+  }
+  h = Math.round(h);
   if (h > 200) el.style.height = h + "px";
 }
 fitApp();
