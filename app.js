@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "10.3";
+const APP_VER = "10.4";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -3221,6 +3221,7 @@ function viewLive() {
       ` : ""}
     ${VIEW() && unreadSongs().length ? `<button data-act="nextunread" style="color:var(--accent);font-weight:700">未読${unreadSongs().length}</button>` : ""}
     ${S.recMode ? "" : `<button data-act="go-summary">集計</button>`}
+    <span class="grow"></span>
     ${(U.draw && (S.draws[drawKey()] || []).length) || (undoStack.length && !VIEW())
       ? `<button data-act="undoall" class="wide" style="color:var(--accent)">取消</button>`
       : `<button data-act="undoall" class="wide" style="opacity:.3">取消</button>`}
