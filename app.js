@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "9.8";
+const APP_VER = "9.9";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -83,7 +83,7 @@ let S = {
   plan: { start: "10:00", slots: [] },
   size: 19,
 };
-let U = { view: "live", songIdx: 0, sheet: null, mode: "member", allShows: false, picker: false, overview: false, ovSize: 9, recPick: null, sumOpen: "", draw: false, erase: false, pick: [], menu: null, printPick: null, focus: "", busy: "", allShowList: false, pdfBack: "", swapId: "", markOnly: false };
+let U = { view: "live", songIdx: 0, sheet: null, mode: "member", allShows: false, picker: false, overview: false, ovSize: 9, recPick: null, sumOpen: "", draw: false, erase: false, pick: [], menu: null, printPick: null, focus: "", busy: "", allShowList: false, pdfBack: "", swapId: "", markOnly: false, planDay: "" };
 
 const S0 = JSON.parse(JSON.stringify(S));
 
@@ -3390,6 +3390,21 @@ function renderSheet() {
   if (typingNow() && overlay && overlay.contains(document.activeElement)) { pendingRender = true; return; }
   if (overlay) { overlay.remove(); overlay = null; }
 
+  if (U.menu && U.menu.kind === "sched") {
+    overlay = document.createElement("div");
+    overlay.className = "mask";
+    overlay.innerHTML = `<button class="sp" data-act="closemenu"></button><div class="sheet">
+      <div class="row" style="margin-bottom:8px"><span class="grow" style="font-size:13px;font-weight:700">予定表を貼る</span>
+        <button class="chip sm" data-act="closemenu">閉じる</button></div>
+      <textarea class="field" id="schedtx" rows="10" style="resize:none;line-height:1.6"
+        placeholder="8/19＠高輪スタジオ&#10;11:00~12:30 斉藤&#10;12:45~14:15 筒井&#10;（休憩）&#10;14:45~16:15 米村"></textarea>
+      <button class="primary" data-act="schedgo" style="margin-top:10px">この内容で組む</button>
+    </div>`;
+    document.body.appendChild(overlay);
+    setTimeout(() => { const e2 = document.getElementById("schedtx"); if (e2) e2.focus(); }, 30);
+    return;
+  }
+
   if (U.menu && U.menu.kind === "pedit") {
     const s2 = S.plan.slots.find((x) => x.id === U.menu.id) || {};
     overlay = document.createElement("div");
@@ -4573,7 +4588,12 @@ function planRows() {
 function parseSchedule(text) {
   const zen = (t) => String(t).replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
     .replace(/[：]/g, ":").replace(/[〜～－ー–—]/g, "~").replace(/[＠]/g, "@");
-  const lines = zen(text).split(/\r?\n/).map((x) => x.trim());
+  // 貼り付けで改行が消えることがあるので、日付と時刻の前で切り直す
+  let body = zen(text)
+    .replace(/(\d{1,2}\s*[\/月]\s*\d{1,2}日?\s*(?:\(.\)|（.）)?\s*@)/g, "\n$1")
+    .replace(/(\d{1,2}:\d{2}\s*~\s*\d{1,2}:\d{2})/g, "\n$1")
+    .replace(/([（(]\s*(?:休憩|休み|昼|昼食|夕食|ブレイク)\s*[）)])/g, "\n$1\n");
+  const lines = body.split(/\r?\n/).map((x) => x.trim());
   const days = [];
   let day = null;
   let title = "";
@@ -4586,7 +4606,9 @@ function parseSchedule(text) {
       const a = Number(tm[1]) * 60 + Number(tm[2]);
       let b = Number(tm[3]) * 60 + Number(tm[4]);
       if (b <= a) b += 1440;                       // 日をまたぐ
-      const nm = tm[5].replace(/[（(].*?[）)]/g, "").trim();
+      let nm = tm[5].replace(/[（(].*?[）)]/g, "").trim();
+      nm = nm.split(/[\s　]+/)[0] || nm;        // 「斉藤 ○○」なら先頭だけ
+      nm = nm.replace(/^[@＠].*$/, "").trim();
       day.items.push({ a, b, name: nm });
       return;
     }
@@ -4643,12 +4665,27 @@ function applySchedule(text) {
 }
 
 function viewPlan() {
-  const rows = planRows();
+  const allRows = planRows();
+  const dayList = [...new Set(allRows.map((r) => r.s.day).filter(Boolean))];
+  // 日付が複数ある時は、その日だけを見られるようにする
+  const pickDay = dayList.length > 1 && U.planDay && dayList.includes(U.planDay) ? U.planDay : "";
+  const rows = pickDay ? allRows.filter((r) => r.s.day === pickDay) : allRows;
   const now = nowMin();
   const liveIdx = rows.findIndex((r) => r.live);
   const nextIdx = rows.findIndex((r) => !r.done && !r.live);
   const last = rows[rows.length - 1];
   const gap = last ? last.aE - last.pE : 0;
+
+  const dayBar = dayList.length > 1 ? `<div class="chips" style="margin-bottom:10px">
+    <button class="chip sm" data-act="planday" data-id=""
+      style="${pickDay ? "" : "background:var(--accent);color:#0A0A0A"}">すべて</button>
+    ${dayList.map((d) => {
+      const n = allRows.filter((r) => r.s.day === d && r.s.kind !== "break").length;
+      const pl = (allRows.find((r) => r.s.day === d && r.s.place) || { s: {} }).s.place || "";
+      return `<button class="chip sm" data-act="planday" data-id="${h(d)}"
+        style="${pickDay === d ? "background:var(--accent);color:#0A0A0A" : ""}">${h(d)}${pl ? " " + h(pl) : ""}　${n}人</button>`;
+    }).join("")}
+  </div>` : "";
 
   const list = rows.map((r, i) => {
     const s = r.s;
@@ -4765,7 +4802,7 @@ function viewPlan() {
       </div>
     </div>
     ${rows.some((r) => !r.done) ? `<button class="ghost" data-act="prebal" style="margin-bottom:10px">残り時間で振り直す</button>` : ""}
-    ${list || `<p class="note">まだ誰も入っていません</p>`}
+    ${dayBar}${list || `<p class="note">まだ誰も入っていません</p>`}
     <div class="card">
       ${memberPick || ""}
       <button class="ghost" data-act="prosternew" style="margin-top:10px">メンバーを登録する</button>
@@ -6105,9 +6142,13 @@ document.addEventListener("click", (e) => {
       if (el && el.value.trim()) { S.plan.start = min2hm(hm2min(el.value)); save(); render(); }
       break;
     }
-    case "pastesched": {
-      const t = prompt("予定表を貼ってください。\n例：\n8/19＠高輪スタジオ\n11:00~12:30 斉藤\n（休憩）", "");
-      if (t == null || !t.trim()) break;
+    case "pastesched": U.menu = { kind: "sched" }; renderSheet(); break;
+    case "planday": U.planDay = id || ""; render(); break;
+    case "schedgo": {
+      const el6 = document.getElementById("schedtx");
+      const t = el6 ? String(el6.value || "") : "";
+      if (!t.trim()) { alert("予定表を貼ってください。"); break; }
+      U.menu = null; renderSheet();
       applySchedule(t);
       break;
     }
