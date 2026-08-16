@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "12.4";
+const APP_VER = "12.5";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -3122,6 +3122,12 @@ function viewLive() {
     const ns0 = NOTES().filter((n) => n.songId === s.id && n.showId === S.showId && inTake(n));
     const gp = groupPos(s.lines);
     const vm = S.recMode ? vtMarks(s) : { head: [], info: [] };
+    // 表記の枠（ガヤなど）から飛べるよう、最初に出てくる行に目印を置く
+    const tanc = {};
+    if (S.recMode) {
+      const tg = tagSecNames();
+      s.lines.forEach((l, k) => { if (l.tag && tg.includes(l.tag) && tanc[l.tag] == null) tanc[l.tag] = k; });
+    }
     body = s.lines.map((l, i) => {
       if (l.gap) {
         const gns = ns0.filter((n) => covers(n, i));
@@ -3176,7 +3182,8 @@ function viewLive() {
       const vh = vm.info[i];
       return `${newSec ? `<div class="secdiv" id="sec-${h(l.sec)}"><span>${h(l.sec)}</span></div>` : ""}
       ${vh ? `<div class="vtdiv" style="color:${vh.c}"><span>${h(vh.vt)}</span></div>` : ""}
-      <div class="ln${S.recMode && l.add ? " lnadd" : ""}${S.recMode && l.skip ? " lnskip" : ""}${isAgeri(l) ? " lnage" : ""}" style="${tint ? `background:color-mix(in srgb,${tint} ${strength}%,transparent);` : ""}${vtc ? `box-shadow:inset 3px 0 0 ${vtc}` : ""}">
+      <div class="ln${S.recMode && l.add ? " lnadd" : ""}${S.recMode && l.skip ? " lnskip" : ""}${isAgeri(l) ? " lnage" : ""}"${
+        l.tag && tanc[l.tag] === i ? ` id="sec-${h(l.tag)}"` : ""} style="${tint ? `background:color-mix(in srgb,${tint} ${strength}%,transparent);` : ""}${vtc ? `box-shadow:inset 3px 0 0 ${vtc}` : ""}">
         <button class="lbl" data-act="${S.recMode ? "rbar" : (VIEW() ? "noteblock" : "assignline")}" data-i="${i}"
           style="${st2 ? `color:${st2 === "need" ? "var(--bad)" : "#F0B23C"}` : ""}">${S.recMode && l.tag ? `<b class="tagmk">${h(l.tag)}</b>` : ""}${labelHTML(s, i)}</button>
         <div class="brk ${gp[i]}"></div>
@@ -4612,9 +4619,24 @@ function sectionNames() {
   so.lines.forEach((l) => { if (!l.gap && l.sec && !out.includes(l.sec)) out.push(l.sec); });
   return out;
 }
-// 録る順（1A → 2A → 1B → 2B …）
+// 区切りになっていない表記（ガヤ・フェイクなど）も、録る時間が要るので枠として立てる。
+// 歌詞の行にちょこちょこ付けているだけでも、まとめて録る分の時間を見込む。
+function tagSecNames() {
+  const so = recSong();
+  if (!so) return [];
+  const secs = sectionNames();
+  const out = [];
+  (so.lines || []).forEach((l) => {
+    if (l.gap || !l.tag) return;
+    if (secs.includes(l.tag) || out.includes(l.tag)) return;
+    out.push(l.tag);
+  });
+  return out;
+}
+const isTagSec = (nm) => tagSecNames().includes(nm);
+// 録る順（1A → 2A → 1B → 2B … 最後に ガヤ・フェイク）
 function sectionOrder() {
-  const ns = sectionNames();
+  const ns = sectionNames().concat(tagSecNames());
   // 手で並べ替えた順があればそれを使う。曲に無い区切りは飛ばし、後から増えた分は末尾に足す。
   const cust = ((recSong() || {}).secOrder || []).filter((x) => ns.includes(x));
   if (cust.length) return cust.concat(ns.filter((x) => !cust.includes(x)));
@@ -4729,12 +4751,19 @@ function sectionsOf(slot) {
   const barsBy = {};                       // 区切りごとの、録る小節数
   if (so2) {
     let cur = "";
+    const tg = tagSecNames();
     (so2.lines || []).forEach((l) => {
       if (l.gap) return;
+      const b = Number(l.bars || 4);
+      // 表記が付いている行は、その表記の枠にも小節を足す（本編の分はそのまま）
+      if (l.tag && tg.includes(l.tag)) {
+        if (barsBy[l.tag] == null) barsBy[l.tag] = { all: 0, live: 0 };
+        barsBy[l.tag].all += b || 4;
+        if (!l.skip) barsBy[l.tag].live += b || 4;
+      }
       if (l.sec) cur = l.sec;
       if (!cur) return;
       if (barsBy[cur] == null) barsBy[cur] = { all: 0, live: 0 };
-      const b = Number(l.bars || 4);
       barsBy[cur].all += b;
       if (!l.skip) barsBy[cur].live += b;
     });
@@ -4746,13 +4775,20 @@ function sectionsOf(slot) {
   const fixedSum = fixed.reduce((a, n) => a + Number(adj[n]), 0);
   const free = live2.filter((n) => adj[n] == null);
   const pool = Math.max(0, budget - fixedSum);
-  // 録る小節数がわかる時は、その多さに応じて分ける（行を録らないにした分だけ短くなる）
-  const weight = {};
-  let wsum = 0;
-  free.forEach((n) => { const w = (barsBy[n] && barsBy[n].live) || 0; weight[n] = w; wsum += w; });
-  const each = free.length ? Math.max(1, Math.round(pool / free.length)) : 0;
+  // 録る小節数がわかる時は、その多さに応じて分ける（行を録らないにした分だけ短くなる）。
+  // 端数は大きい順に1分ずつ配って、合計が持ち時間とぴったり合うようにする。
   const byBars = {};
-  if (wsum > 0) free.forEach((n) => { byBars[n] = Math.max(1, Math.round(pool * weight[n] / wsum)); });
+  if (free.length) {
+    let wsum = 0;
+    const raw = free.map((n) => { const w = (barsBy[n] && barsBy[n].live) || 0; wsum += w; return { n, w }; });
+    if (wsum <= 0) { raw.forEach((r) => { r.w = 1; }); wsum = raw.length; }
+    let acc = 0;
+    raw.forEach((r) => { r.v = pool * r.w / wsum; r.f = Math.max(1, Math.floor(r.v)); acc += r.f; });
+    let rest = pool - acc;
+    const byFrac = raw.slice().sort((a, b) => (b.v - Math.floor(b.v)) - (a.v - Math.floor(a.v)));
+    while (rest > 0) { let moved = 0; byFrac.forEach((r) => { if (rest > 0) { r.f++; rest--; moved++; } }); if (!moved) break; }
+    raw.forEach((r) => { byBars[r.n] = r.f; });
+  }
   const mk = (nm, mi, isPrep) => ({
     name: nm, min: mi, prep: !!isPrep,
     skip: !!skip[nm],
@@ -4762,7 +4798,7 @@ function sectionsOf(slot) {
   });
   const out = prep > 0 ? [mk(PREP, prep, true)] : [];
   names2.forEach((nm) => out.push(mk(nm, skip[nm] ? 0
-    : (adj[nm] != null ? Number(adj[nm]) : (byBars[nm] != null ? byBars[nm] : each)))));
+    : (adj[nm] != null ? Number(adj[nm]) : (byBars[nm] != null ? byBars[nm] : 0)))));
   return out;
 }
 // 配分を直す相手。開いている枠、無ければ今やっている枠。
@@ -5003,18 +5039,18 @@ function viewPlan() {
         ${U.secOrd ? "" : `<button class="chip sm" data-act="psecall" data-id="${s.id}"
           style="${S.secAll ? "background:var(--accent);color:#0A0A0A;font-weight:700" : "color:var(--dim)"}">${S.secAll ? "全員に反映中" : "この人だけ"}</button>`}
       </div>
-      ${U.secOrd ? `<div style="font-size:10px;color:var(--dim);margin:-4px 0 8px">上から順に録ります。▲▼で入れ替え。曲ごとに覚えます</div>`
+      ${U.secOrd ? `<div style="font-size:10px;color:var(--dim);margin:-4px 0 8px">上から順に録ります。⣿ をつまんで入れ替え。曲ごとに覚えます</div>`
         : `<div style="font-size:11px;margin:-4px 0 8px;color:${over > 0 ? "var(--bad)" : over < 0 ? "var(--dim)" : "var(--good)"}">
         合計 ${sum}分 ／ 持ち時間 ${cap}分${over > 0 ? `　${over}分 はみ出しています` : over < 0 ? `　${-over}分 余っています` : "　ぴったり"}</div>`}
       ${U.secOrd ? (() => {
         const ord = sectionOrder();
-        return ord.map((nm, k) => `<div class="row" style="margin-bottom:6px">
-          <span style="width:26px;font-size:11px;color:var(--dim);text-align:right">${k + 1}</span>
+        const tg = tagSecNames();
+        return ord.map((nm, k) => `<div class="row" data-drop="sc:${h(nm)}"
+          style="margin-bottom:6px;padding:7px 8px;border-radius:8px;background:var(--panel2)">
+          <span class="grip" data-drag="sec:${h(nm)}">⣿</span>
+          <span style="width:20px;font-size:11px;color:var(--dim);text-align:right">${k + 1}</span>
           <span class="grow trunc" style="font-size:13px;font-weight:600">${h(nm)}</span>
-          <button class="chip sm" data-act="psecmv" data-id="${h(nm)}|-1"
-            style="${k === 0 ? "opacity:.25" : ""}">▲</button>
-          <button class="chip sm" data-act="psecmv" data-id="${h(nm)}|1"
-            style="${k === ord.length - 1 ? "opacity:.25" : ""}">▼</button>
+          ${tg.includes(nm) ? `<span style="font-size:10px;color:var(--dim)">表記</span>` : ""}
         </div>`).join("") + ((recSong() || {}).secOrder ? `<button class="chip sm" data-act="psecord0"
           style="margin-top:4px;width:100%;color:var(--dim)">曲の並び順に戻す</button>` : "");
       })() : sectionsOf(s).map((x) => x.skip ? `<div class="row" style="margin-bottom:6px;opacity:.4">
@@ -6443,20 +6479,6 @@ document.addEventListener("click", (e) => {
       delete so.secOrder;
       save(); render(); break;
     }
-    case "psecmv": {
-      const so = recSong(); if (!so) break;
-      const ps = String(id).split("|");
-      const dv = Number(ps.pop());
-      const nm = ps.join("|");
-      const ord = sectionOrder().slice();
-      const k = ord.indexOf(nm);
-      const to = k + dv;
-      if (k < 0 || to < 0 || to >= ord.length) break;
-      pushUndo();
-      ord.splice(to, 0, ord.splice(k, 1)[0]);
-      so.secOrder = ord;
-      save(); render(); break;
-    }
     case "psecall": {
       U.planSec = id || "";
       S.secAll = !S.secAll;
@@ -7194,6 +7216,17 @@ function onDrop(from, target) {
       return;
     }
     S.rsongs.splice(b, 0, S.rsongs.splice(a, 1)[0]);
+    save(); render();
+    return;
+  }
+  if (from.slice(0, 4) === "sec:" && target.slice(0, 3) === "sc:") {
+    const so = recSong(); if (!so) return;
+    const ord = sectionOrder().slice();
+    const a = ord.indexOf(from.slice(4)), b = ord.indexOf(target.slice(3));
+    if (a < 0 || b < 0 || a === b) return;
+    pushUndo();
+    ord.splice(b, 0, ord.splice(a, 1)[0]);
+    so.secOrder = ord;
     save(); render();
     return;
   }
