@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "12.3";
+const APP_VER = "12.4";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -83,7 +83,7 @@ let S = {
   plan: { start: "10:00", slots: [] },
   size: 19,
 };
-let U = { view: "live", songIdx: 0, sheet: null, mode: "member", allShows: false, picker: false, overview: false, ovSize: 9, recPick: null, sumOpen: "", draw: false, erase: false, pick: [], menu: null, printPick: null, focus: "", busy: "", allShowList: false, pdfBack: "", swapId: "", markOnly: false, planDay: "", planSec: "", vtN: 1, rmore: false, wordEdit: "" };
+let U = { view: "live", songIdx: 0, sheet: null, mode: "member", allShows: false, picker: false, overview: false, ovSize: 9, recPick: null, sumOpen: "", draw: false, erase: false, pick: [], menu: null, printPick: null, focus: "", busy: "", allShowList: false, pdfBack: "", swapId: "", markOnly: false, planDay: "", planSec: "", vtN: 1, rmore: false, wordEdit: "", secOrd: false };
 
 const S0 = JSON.parse(JSON.stringify(S));
 
@@ -4615,6 +4615,9 @@ function sectionNames() {
 // 録る順（1A → 2A → 1B → 2B …）
 function sectionOrder() {
   const ns = sectionNames();
+  // 手で並べ替えた順があればそれを使う。曲に無い区切りは飛ばし、後から増えた分は末尾に足す。
+  const cust = ((recSong() || {}).secOrder || []).filter((x) => ns.includes(x));
+  if (cust.length) return cust.concat(ns.filter((x) => !cust.includes(x)));
   const key = (x) => {
     const m = /^(\d+)\s*([A-Za-zＡ-Ｚａ-ｚ])/.exec(x);
     return m ? { g: m[2].toUpperCase(), n: Number(m[1]) } : null;
@@ -4995,12 +4998,26 @@ function viewPlan() {
       return `<div class="card" style="margin:-4px 0 8px 14px;padding:10px 12px">
       <div class="row" style="margin-bottom:8px">
         <span class="grow trunc" style="font-size:10px;color:var(--dim);min-width:0">${h(recSong() ? recSong().title : "")} の配分</span>
-        <button class="chip sm" data-act="psecall" data-id="${s.id}"
-          style="${S.secAll ? "background:var(--accent);color:#0A0A0A;font-weight:700" : "color:var(--dim)"}">${S.secAll ? "全員に反映中" : "この人だけ"}</button>
+        <button class="chip sm" data-act="psecord"
+          style="${U.secOrd ? "color:var(--accent);border:1px solid var(--accent)" : "color:var(--dim)"}">${U.secOrd ? "おわり" : "録る順"}</button>
+        ${U.secOrd ? "" : `<button class="chip sm" data-act="psecall" data-id="${s.id}"
+          style="${S.secAll ? "background:var(--accent);color:#0A0A0A;font-weight:700" : "color:var(--dim)"}">${S.secAll ? "全員に反映中" : "この人だけ"}</button>`}
       </div>
-      <div style="font-size:11px;margin:-4px 0 8px;color:${over > 0 ? "var(--bad)" : over < 0 ? "var(--dim)" : "var(--good)"}">
-        合計 ${sum}分 ／ 持ち時間 ${cap}分${over > 0 ? `　${over}分 はみ出しています` : over < 0 ? `　${-over}分 余っています` : "　ぴったり"}</div>
-      ${sectionsOf(s).map((x) => x.skip ? `<div class="row" style="margin-bottom:6px;opacity:.4">
+      ${U.secOrd ? `<div style="font-size:10px;color:var(--dim);margin:-4px 0 8px">上から順に録ります。▲▼で入れ替え。曲ごとに覚えます</div>`
+        : `<div style="font-size:11px;margin:-4px 0 8px;color:${over > 0 ? "var(--bad)" : over < 0 ? "var(--dim)" : "var(--good)"}">
+        合計 ${sum}分 ／ 持ち時間 ${cap}分${over > 0 ? `　${over}分 はみ出しています` : over < 0 ? `　${-over}分 余っています` : "　ぴったり"}</div>`}
+      ${U.secOrd ? (() => {
+        const ord = sectionOrder();
+        return ord.map((nm, k) => `<div class="row" style="margin-bottom:6px">
+          <span style="width:26px;font-size:11px;color:var(--dim);text-align:right">${k + 1}</span>
+          <span class="grow trunc" style="font-size:13px;font-weight:600">${h(nm)}</span>
+          <button class="chip sm" data-act="psecmv" data-id="${h(nm)}|-1"
+            style="${k === 0 ? "opacity:.25" : ""}">▲</button>
+          <button class="chip sm" data-act="psecmv" data-id="${h(nm)}|1"
+            style="${k === ord.length - 1 ? "opacity:.25" : ""}">▼</button>
+        </div>`).join("") + ((recSong() || {}).secOrder ? `<button class="chip sm" data-act="psecord0"
+          style="margin-top:4px;width:100%;color:var(--dim)">曲の並び順に戻す</button>` : "");
+      })() : sectionsOf(s).map((x) => x.skip ? `<div class="row" style="margin-bottom:6px;opacity:.4">
         <span style="width:56px;font-size:12px;text-decoration:line-through">${h(x.name)}</span>
         <span style="font-size:12px;color:var(--dim)">コピー（録らない）</span>
         <span class="grow"></span>
@@ -5016,12 +5033,12 @@ function viewPlan() {
         ${x.live ? `<span style="font-size:11px;color:var(--accent)">ここ</span>`
           : x.prep ? "" : `<button class="chip sm" data-act="pskip" data-id="${h(x.name)}" style="color:var(--dim)">録らない</button>`}
       </div>`).join("")}
-      <div class="row" style="margin-top:6px">
+      ${U.secOrd ? "" : `<div class="row" style="margin-top:6px">
         <button class="chip sm grow" data-act="pseceven">小節数どおりに割り直す</button>
         ${r.live ? `<button class="chip sm grow" data-act="pnextsec">次へ</button>` : ""}
       </div>
       ${S.secAll ? `<div style="font-size:10px;color:var(--accent);margin-top:6px">直した分は、休憩をのぞく全員の枠に同じように入ります</div>`
-        : `<button class="chip sm" data-act="pseccopy" style="margin-top:6px;color:var(--dim);width:100%">いまの配分をほかの全員にも配る</button>`}
+        : `<button class="chip sm" data-act="pseccopy" style="margin-top:6px;color:var(--dim);width:100%">いまの配分をほかの全員にも配る</button>`}`}
     </div>`; })() : ""}`;
   }).join("");
 
@@ -6417,6 +6434,27 @@ document.addEventListener("click", (e) => {
       if (!v) break;
       pushUndo();
       secApply(t, (sl) => { sl.sec = sl.sec || {}; sl.sec[nm] = v; });
+      save(); render(); break;
+    }
+    case "psecord": U.secOrd = !U.secOrd; render(); break;
+    case "psecord0": {
+      const so = recSong(); if (!so) break;
+      pushUndo();
+      delete so.secOrder;
+      save(); render(); break;
+    }
+    case "psecmv": {
+      const so = recSong(); if (!so) break;
+      const ps = String(id).split("|");
+      const dv = Number(ps.pop());
+      const nm = ps.join("|");
+      const ord = sectionOrder().slice();
+      const k = ord.indexOf(nm);
+      const to = k + dv;
+      if (k < 0 || to < 0 || to >= ord.length) break;
+      pushUndo();
+      ord.splice(to, 0, ord.splice(k, 1)[0]);
+      so.secOrder = ord;
       save(); render(); break;
     }
     case "psecall": {
