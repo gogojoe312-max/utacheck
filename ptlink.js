@@ -10,7 +10,7 @@
   "use strict";
 
   var PT_VER = 2;
-  var PT_APPVER = "4.1";
+  var PT_APPVER = "4.2";
 
   /* 区切り名は Pro Tools のマーカー名と同一。送るのはこの配列の位置(index)で、
      名前からロケーション番号への解決は SoundFlow 側がやる。
@@ -308,6 +308,8 @@
   /* ---------------- 送る ---------------- */
   function mode() {
     var p = cfg();
+    return "direct";
+    /* 直結のみ使う */
     if (p.mode !== "auto") return p.mode;
     if (p.gistId) return "direct";
     return midiUsable() ? "midi" : "gist";
@@ -668,24 +670,9 @@
       + (lastErr ? '<div class="note bad" style="margin-top:6px">' + esc(lastErr) + '</div>' : '')
       + '</div>'
 
-      + '<div class="grp"><div class="lbl">送り方</div>'
-      + '<div class="fld"><div class="seg">'
-      + ["auto", "direct", "gist", "midi"].map(function (m) {
-        return '<button data-mode="' + m + '" class="' + (p.mode === m ? "on" : "") + '">'
-          + { auto: "自動", direct: "直結", gist: "Gist", midi: "MIDI" }[m] + '</button>';
-      }).join("") + '</div></div>'
-      + '<div class="note">'
-      + ({ midi: "いまは MIDI で送っています。", direct: "Mac と直接繋ぎます。クラウドを通らないので遅延はほぼゼロです。", gist: "Gist 経由です。1秒前後の遅れが出ます。", bridge: "ブリッジ経由です。" }[md] || "")
-      + (midiUsable() ? "" : " このブラウザは Web MIDI 非対応です（iPhone / iPad は全ブラウザが対象外）。")
-      + '</div></div>'
 
       + '<div class="grp"><div class="lbl">' + (md === "midi" ? "MIDI の送り先" : "ブリッジ") + '</div>' + wayHtml + '</div>'
 
-      + '<div class="grp"><div class="lbl">区切り</div>'
-      + '<div class="note">区切りの名前で、そのまま Pro Tools のマーカーを探します。'
-      + '番号の設定は要りません。曲を変えても、同じ名前のマーカーがあれば飛びます。'
-      + '同じ名前が複数ある時は、選択範囲つき（プリロールとトラック表示を持つほう）を優先します。</div>'
-      + '<div class="note" style="margin-top:8px">対象：<b>' + SECTIONS.join(" / ") + '</b></div></div>'
 
       + (md !== "midi" ? '<div class="grp"><div class="lbl">テイク同期</div>'
         + '<div class="fld">'

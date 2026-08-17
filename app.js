@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "13.3";
+const APP_VER = "13.4";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -4642,7 +4642,7 @@ function tickPlan() {
   if (el2) {
     const all = Number(live.s.min || 0) * 60 - (live.s.startAt ? (Date.now() - live.s.startAt) / 1000 : 0);
     const g = slotGap(live.s);
-    el2.textContent = live.s.name + " " + fmtLeft(all) + (g != null && g !== 0 ? (g > 0 ? "  +" + g + "分" : "  −" + (-g) + "分") : "");
+    el2.textContent = fmtLeft(all) + (g != null && g !== 0 ? (g > 0 ? "  +" + g + "分" : "  −" + (-g) + "分") : "");
     el2.style.color = g != null && g !== 0 ? (g > 0 ? "var(--bad)" : "var(--good)") : (all < 0 ? "var(--bad)" : "var(--dim)");
   }
   if (!el) return;
@@ -6799,7 +6799,11 @@ document.addEventListener("click", (e) => {
       }
       break;
     }
-    case "pedit": U.menu = { kind: "pedit", id }; renderSheet(); break;
+    case "pedit": {
+      const _sl = (S.plan.slots || []).find((x) => x.id === id);
+      if (_sl && _sl.kind !== "break") { S.planFocus = _sl.id; U.view = "live"; save(); render(); break; }
+    }
+    case "peditbreak": U.menu = { kind: "pedit", id }; renderSheet(); break;
     case "pset": {
       const s2 = S.plan.slots.find((x) => x.id === U.menu.id);
       if (s2) { s2.min = Math.max(1, Number(s2.min || 0) + Number(id)); save(); renderSheet(); render(); }
