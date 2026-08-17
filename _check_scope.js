@@ -37,27 +37,46 @@ function declNames(node, out) {
   }
 }
 
-// その場所で宣言されるものを、関数スコープ/ブロックスコープ両方まとめて集める
+// その場所で宣言されるものを集める。
+// let/const は「そのブロックだけ」。var と関数宣言だけが内側のブロックから外へ出てくる。
+// ここを取り違えると、ブロックの外に漏れた const を見逃す（v12.7 の fset がこれだった）。
 function collect(body, scope, hoistVarInto) {
-  const walkStmt = (n) => {
+  const own = (n) => {                      // 直下の宣言（let/const/function）
     if (!n || typeof n.type !== "string") return;
     if (n.type === "VariableDeclaration") {
-      const target = n.kind === "var" ? hoistVarInto : scope;
-      n.declarations.forEach((d) => { const o = []; declNames(d.id, o); o.forEach((x) => target.add(x)); });
-      if (n.kind === "var") n.declarations.forEach((d) => { const o = []; declNames(d.id, o); o.forEach((x) => scope.add(x)); });
+      n.declarations.forEach((d) => { const o = []; declNames(d.id, o); o.forEach((x) => scope.add(x)); });
+      if (n.kind === "var") n.declarations.forEach((d) => { const o = []; declNames(d.id, o); o.forEach((x) => hoistVarInto.add(x)); });
     } else if (n.type === "FunctionDeclaration" || n.type === "ClassDeclaration") {
       if (n.id) scope.add(n.id.name);
     }
-    // var は関数スコープなので、内側のブロックも掘る（関数の中には入らない）
-    if (n.type === "BlockStatement" || n.type === "Program") n.body.forEach(walkStmt);
-    else if (n.type === "IfStatement") { walkStmt(n.consequent); walkStmt(n.alternate); }
-    else if (n.type === "ForStatement") { walkStmt(n.init); walkStmt(n.body); }
-    else if (n.type === "ForInStatement" || n.type === "ForOfStatement") { walkStmt(n.left); walkStmt(n.body); }
-    else if (n.type === "WhileStatement" || n.type === "DoWhileStatement" || n.type === "LabeledStatement") walkStmt(n.body);
-    else if (n.type === "TryStatement") { walkStmt(n.block); if (n.handler) walkStmt(n.handler.body); walkStmt(n.finalizer); }
-    else if (n.type === "SwitchStatement") n.cases.forEach((c) => c.consequent.forEach(walkStmt));
+    deeper(n);
   };
-  body.forEach(walkStmt);
+  // 内側のブロックからは var と関数宣言だけを拾う
+  const deeper = (n) => {
+    const vs = (m) => {
+      if (!m || typeof m.type !== "string") return;
+      if (m.type === "VariableDeclaration" && m.kind === "var") {
+        m.declarations.forEach((d) => { const o = []; declNames(d.id, o); o.forEach((x) => { scope.add(x); hoistVarInto.add(x); }); });
+      }
+      if (m.type === "FunctionDeclaration" && m.id) { scope.add(m.id.name); hoistVarInto.add(m.id.name); }
+      if (m.type === "FunctionExpression" || m.type === "ArrowFunctionExpression" || m.type === "ClassDeclaration") return;
+      if (m.type === "BlockStatement" || m.type === "Program") m.body.forEach(vs);
+      else if (m.type === "IfStatement") { vs(m.consequent); vs(m.alternate); }
+      else if (m.type === "ForStatement") { vs(m.init); vs(m.body); }
+      else if (m.type === "ForInStatement" || m.type === "ForOfStatement") { vs(m.left); vs(m.body); }
+      else if (m.type === "WhileStatement" || m.type === "DoWhileStatement" || m.type === "LabeledStatement") vs(m.body);
+      else if (m.type === "TryStatement") { vs(m.block); if (m.handler) vs(m.handler.body); vs(m.finalizer); }
+      else if (m.type === "SwitchStatement") m.cases.forEach((c) => c.consequent.forEach(vs));
+    };
+    if (n.type === "BlockStatement") n.body.forEach(vs);
+    else if (n.type === "IfStatement") { vs(n.consequent); vs(n.alternate); }
+    else if (n.type === "ForStatement") { vs(n.init); vs(n.body); }
+    else if (n.type === "ForInStatement" || n.type === "ForOfStatement") { vs(n.left); vs(n.body); }
+    else if (n.type === "WhileStatement" || n.type === "DoWhileStatement" || n.type === "LabeledStatement") vs(n.body);
+    else if (n.type === "TryStatement") { vs(n.block); if (n.handler) vs(n.handler.body); vs(n.finalizer); }
+    else if (n.type === "SwitchStatement") n.cases.forEach((c) => c.consequent.forEach(vs));
+  };
+  body.forEach(own);
 }
 
 function run(node, scopes) {
