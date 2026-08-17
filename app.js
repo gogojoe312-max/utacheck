@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "12.5";
+const APP_VER = "12.6";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -4737,58 +4737,44 @@ function rememberSec(nm) {
   S.secWords.push(v);
   if (S.secWords.length > 20) S.secWords.shift();
 }
+// 区切り（と表記）ごとの、録る小節数
+function secBars() {
+  const so2 = recSong();
+  const out = {};
+  if (!so2) return out;
+  const tg = tagSecNames();
+  let cur = "";
+  (so2.lines || []).forEach((l) => {
+    if (l.gap) return;
+    const b = Number(l.bars || 4);
+    // 表記が付いている行は、その表記の枠にも小節を足す（本編の分はそのまま）
+    if (l.tag && tg.includes(l.tag)) {
+      if (out[l.tag] == null) out[l.tag] = { all: 0, live: 0 };
+      out[l.tag].all += b || 4;
+      if (!l.skip) out[l.tag].live += b || 4;
+    }
+    if (l.sec) cur = l.sec;
+    if (!cur) return;
+    if (out[cur] == null) out[cur] = { all: 0, live: 0 };
+    out[cur].all += b;
+    if (!l.skip) out[cur].live += b;
+  });
+  return out;
+}
+// 何も指定していない区切りの、既定の持ち時間
+const SEC_MIN = 5;
 function sectionsOf(slot) {
   if (!slot) return [];
   const names2 = sectionOrder();
   const log = slot.secLog || {};
   const adj = slot.sec || {};
   const prep = adj[PREP] != null ? Number(adj[PREP]) : (slot.prep != null ? Number(slot.prep) : Number(S.planPrep || 0));
-  const budget = Math.max(0, Number(slot.min || 0) - prep);   // 準備の分は配分から抜く
-  // コピーで済ませるところは録らないので、時間を割り当てない。その分は残りに回る。
+  // コピーで済ませるところは録らないので、時間を割り当てない。
   // 区切りごとの指定に加えて、歌詞の行ごとの「録らない」も見る。
   const skip = Object.assign({}, slot.skip || {});
-  const so2 = recSong();
-  const barsBy = {};                       // 区切りごとの、録る小節数
-  if (so2) {
-    let cur = "";
-    const tg = tagSecNames();
-    (so2.lines || []).forEach((l) => {
-      if (l.gap) return;
-      const b = Number(l.bars || 4);
-      // 表記が付いている行は、その表記の枠にも小節を足す（本編の分はそのまま）
-      if (l.tag && tg.includes(l.tag)) {
-        if (barsBy[l.tag] == null) barsBy[l.tag] = { all: 0, live: 0 };
-        barsBy[l.tag].all += b || 4;
-        if (!l.skip) barsBy[l.tag].live += b || 4;
-      }
-      if (l.sec) cur = l.sec;
-      if (!cur) return;
-      if (barsBy[cur] == null) barsBy[cur] = { all: 0, live: 0 };
-      barsBy[cur].all += b;
-      if (!l.skip) barsBy[cur].live += b;
-    });
-    // その区切りの行が全部「録らない」なら、区切りごと外す
-    names2.forEach((n) => { const v = barsBy[n]; if (v && v.all > 0 && v.live === 0) skip[n] = 1; });
-  }
-  const live2 = names2.filter((n) => !skip[n]);
-  const fixed = live2.filter((n) => adj[n] != null);
-  const fixedSum = fixed.reduce((a, n) => a + Number(adj[n]), 0);
-  const free = live2.filter((n) => adj[n] == null);
-  const pool = Math.max(0, budget - fixedSum);
-  // 録る小節数がわかる時は、その多さに応じて分ける（行を録らないにした分だけ短くなる）。
-  // 端数は大きい順に1分ずつ配って、合計が持ち時間とぴったり合うようにする。
-  const byBars = {};
-  if (free.length) {
-    let wsum = 0;
-    const raw = free.map((n) => { const w = (barsBy[n] && barsBy[n].live) || 0; wsum += w; return { n, w }; });
-    if (wsum <= 0) { raw.forEach((r) => { r.w = 1; }); wsum = raw.length; }
-    let acc = 0;
-    raw.forEach((r) => { r.v = pool * r.w / wsum; r.f = Math.max(1, Math.floor(r.v)); acc += r.f; });
-    let rest = pool - acc;
-    const byFrac = raw.slice().sort((a, b) => (b.v - Math.floor(b.v)) - (a.v - Math.floor(a.v)));
-    while (rest > 0) { let moved = 0; byFrac.forEach((r) => { if (rest > 0) { r.f++; rest--; moved++; } }); if (!moved) break; }
-    raw.forEach((r) => { byBars[r.n] = r.f; });
-  }
+  const barsBy = secBars();
+  // その区切りの行が全部「録らない」なら、区切りごと外す
+  names2.forEach((n) => { const v = barsBy[n]; if (v && v.all > 0 && v.live === 0) skip[n] = 1; });
   const mk = (nm, mi, isPrep) => ({
     name: nm, min: mi, prep: !!isPrep,
     skip: !!skip[nm],
@@ -4796,9 +4782,33 @@ function sectionsOf(slot) {
     done: log[nm] != null,
     used: log[nm] != null ? Number(log[nm]) : 0,
   });
+  // 既定は 準備10分＋区切りごと5分。余りは埋めずにそのまま残す（押した時の余裕になる）。
   const out = prep > 0 ? [mk(PREP, prep, true)] : [];
   names2.forEach((nm) => out.push(mk(nm, skip[nm] ? 0
-    : (adj[nm] != null ? Number(adj[nm]) : (byBars[nm] != null ? byBars[nm] : 0)))));
+    : (adj[nm] != null ? Number(adj[nm]) : SEC_MIN))));
+  return out;
+}
+// 持ち時間いっぱいを、録る小節数の多さで割り振る。端数は大きい順に1分ずつ。
+function secSplitByBars(slot) {
+  const names2 = sectionOrder();
+  const skip = Object.assign({}, slot.skip || {});
+  const barsBy = secBars();
+  names2.forEach((n) => { const v = barsBy[n]; if (v && v.all > 0 && v.live === 0) skip[n] = 1; });
+  const prep = (slot.sec || {})[PREP] != null ? Number(slot.sec[PREP])
+    : (slot.prep != null ? Number(slot.prep) : Number(S.planPrep || 0));
+  const pool = Math.max(0, Number(slot.min || 0) - prep);
+  const free = names2.filter((n) => !skip[n]);
+  const out = {};
+  if (!free.length) return out;
+  let wsum = 0;
+  const raw = free.map((n) => { const w = (barsBy[n] && barsBy[n].live) || 0; wsum += w; return { n, w }; });
+  if (wsum <= 0) { raw.forEach((r) => { r.w = 1; }); wsum = raw.length; }
+  let acc = 0;
+  raw.forEach((r) => { r.v = pool * r.w / wsum; r.f = Math.max(1, Math.floor(r.v)); acc += r.f; });
+  let rest = pool - acc;
+  const byFrac = raw.slice().sort((a, b) => (b.v - Math.floor(b.v)) - (a.v - Math.floor(a.v)));
+  while (rest > 0) { let moved = 0; byFrac.forEach((r) => { if (rest > 0) { r.f++; rest--; moved++; } }); if (!moved) break; }
+  raw.forEach((r) => { out[r.n] = r.f; });
   return out;
 }
 // 配分を直す相手。開いている枠、無ければ今やっている枠。
@@ -5041,7 +5051,7 @@ function viewPlan() {
       </div>
       ${U.secOrd ? `<div style="font-size:10px;color:var(--dim);margin:-4px 0 8px">上から順に録ります。⣿ をつまんで入れ替え。曲ごとに覚えます</div>`
         : `<div style="font-size:11px;margin:-4px 0 8px;color:${over > 0 ? "var(--bad)" : over < 0 ? "var(--dim)" : "var(--good)"}">
-        合計 ${sum}分 ／ 持ち時間 ${cap}分${over > 0 ? `　${over}分 はみ出しています` : over < 0 ? `　${-over}分 余っています` : "　ぴったり"}</div>`}
+        使う ${sum}分 ／ 持ち時間 ${cap}分${over > 0 ? `　${over}分 はみ出しています` : over < 0 ? `　余裕 ${-over}分` : "　余裕なし"}</div>`}
       ${U.secOrd ? (() => {
         const ord = sectionOrder();
         const tg = tagSecNames();
@@ -5070,7 +5080,8 @@ function viewPlan() {
           : x.prep ? "" : `<button class="chip sm" data-act="pskip" data-id="${h(x.name)}" style="color:var(--dim)">録らない</button>`}
       </div>`).join("")}
       ${U.secOrd ? "" : `<div class="row" style="margin-top:6px">
-        <button class="chip sm grow" data-act="pseceven">小節数どおりに割り直す</button>
+        <button class="chip sm grow" data-act="pseceven">${SEC_MIN}分ずつに戻す</button>
+        <button class="chip sm grow" data-act="psecbars">持ち時間いっぱいに割る</button>
         ${r.live ? `<button class="chip sm grow" data-act="pnextsec">次へ</button>` : ""}
       </div>
       ${S.secAll ? `<div style="font-size:10px;color:var(--accent);margin-top:6px">直した分は、休憩をのぞく全員の枠に同じように入ります</div>`
@@ -6551,6 +6562,16 @@ document.addEventListener("click", (e) => {
         if (r.live) r.s.min = Math.max(1, (now - r.aS) + share);   // 今の人は「ここから share 分」
         else r.s.min = share;
         delete r.s.sec;                                            // 区切りの配分は割り直す
+      });
+      save(); render(); break;
+    }
+    case "psecbars": {
+      const t = planSlot(); if (!t) break;
+      pushUndo();
+      secApply(t, (sl) => {
+        const v = secSplitByBars(sl);
+        sl.sec = sl.sec || {};
+        Object.keys(v).forEach((k) => { sl.sec[k] = v[k]; });
       });
       save(); render(); break;
     }
