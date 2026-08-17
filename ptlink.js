@@ -10,7 +10,7 @@
   "use strict";
 
   var PT_VER = 2;
-  var PT_APPVER = "4.2";
+  var PT_APPVER = "4.3";
 
   /* 区切り名は Pro Tools のマーカー名と同一。送るのはこの配列の位置(index)で、
      名前からロケーション番号への解決は SoundFlow 側がやる。
@@ -352,10 +352,9 @@
     return run.then(function () {
       ok(sec + " → " + num);
       if (p.autoSync && md === "bridge") return syncPlaylist(take);
-      if (md === "direct" && rtcReady() && p.autoSync) {
-        var tgt = Math.max(1, Math.min(p.plMax, take)), d = tgt - p.plCur;
-        if (d) { rtcSend({ t: "pl", d: d }); p.plCur = tgt; store(); }
-      } else if (md === "gist" || md === "direct") { p.plCur = Math.max(1, Math.min(p.plMax, take)); store(); }
+      /* ロケートだけ送る。プレイリストは録音時に合わせるので、ここでは動かさない。
+         2つ続けて送ると SoundFlow が二重に起動してトラック移動が重なる。 */
+      p.plCur = Math.max(0, Math.min(p.plMax, take)); store();
     }).catch(function (e) { lastSent = ""; ng(e); });
   }
 
