@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "13.1";
+const APP_VER = "13.2";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -4523,7 +4523,10 @@ function viewSetupRec() {
 // 録りのテイク番号。区切りごとに数え、区切りが変わると1に戻る。
 function takeNo(slot) {
   if (!slot || !slot.secCur) return 1;
-  return Math.max(1, Number((slot.takes || {})[slot.secCur] || 1));
+  const v = (slot.takes || {})[slot.secCur];
+    // RH（リハ）はテイク0。Pro Tools のプレイリスト無印に当たる。
+    if (v == null) return slot.secCur === PREP ? 0 : 1;
+    return Math.max(0, Number(v));
 }
 
 function recBar() {
@@ -4545,7 +4548,7 @@ function recBar() {
   <div class="aubar">
     ${live ? `<span id="pcd" style="font-size:13px;font-variant-numeric:tabular-nums">—</span>
       ${cur ? `<span style="font-size:11px;color:var(--dim)">${h(cur.name)}</span>` : ""}
-      <button class="tkbtn" data-act="takedown"${tk > 1 ? "" : ' style="opacity:.3"'}>−</button>
+      <button class="tkbtn" data-act="takedown"${tk > 0 ? "" : ' style="opacity:.3"'}>−</button>
       <button class="tknow" data-act="takeup"><i>テイク</i><b>${tk}</b></button>
       <span class="grow"></span>
       <button class="chip sm" data-act="pnextsec" style="background:var(--accent);color:#0A0A0A">次へ</button>`
