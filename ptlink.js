@@ -10,7 +10,7 @@
   "use strict";
 
   var PT_VER = 2;
-  var PT_APPVER = "4.7";
+  var PT_APPVER = "4.8";
 
   /* 区切り名は Pro Tools のマーカー名と同一。送るのはこの配列の位置(index)で、
      名前からロケーション番号への解決は SoundFlow 側がやる。
@@ -37,6 +37,7 @@
     if (typeof p.url !== "string") p.url = "";
     if (typeof p.token !== "string") p.token = "";
     if (typeof p.portName !== "string") p.portName = "";
+    if (typeof p.lastSec !== "string") p.lastSec = "";
     if (!(p.ch >= 1 && p.ch <= 16)) p.ch = 1;
     if (!(p.ccSec >= 0 && p.ccSec <= 127)) p.ccSec = 20;
     if (!(p.ccTake >= 0 && p.ccTake <= 127)) p.ccTake = 21;
@@ -390,9 +391,19 @@
     return run.then(function () {
       lastErr = ""; paint();
       if (p.autoSync && md === "bridge") return syncPlaylist(take);
-      /* ロケートだけ送る。プレイリストは録音時に合わせるので、ここでは動かさない。
-         2つ続けて送ると SoundFlow が二重に起動してトラック移動が重なる。 */
-      p.plCur = Math.max(0, Math.min(p.plMax, take)); store();
+      /* RH（テイク0）から他の区切り（テイク1）へ移った時だけ、
+         プレイリストを1つ下げる。毎回この流れになるため。 */
+      var prevSec = p.lastSec || "";
+      p.lastSec = sec;
+      if (prevSec === "RH" && sec !== "RH" && take === 1 && p.plCur === 0) {
+        setTimeout(function () {
+          if (!rtcReady()) return;
+          rtcSend({ t: "pl", d: 1 }).then(function () { p.plCur = 1; store(); }).catch(function () {});
+        }, 400);
+      } else {
+        p.plCur = Math.max(0, Math.min(p.plMax, take));
+      }
+      store();
     }).catch(function (e) { lastSent = ""; ng(e); });
   }
 
@@ -520,7 +531,13 @@
     }, true);
     document.addEventListener("touchend", function (e) {
       cancel();
-      if (fired) { e.preventDefault(); e.stopPropagation(); fired = false; }
+      if (fired) { e.preventDefault(); e.stopPropagation(); }
+    }, true);
+    /* 長押しの後に来るクリックも止める。これがないと設定シートが開く。 */
+    document.addEventListener("click", function (e) {
+      if (!fired) return;
+      fired = false;
+      e.preventDefault(); e.stopPropagation();
     }, true);
     document.addEventListener("touchmove", cancel, true);
     document.addEventListener("mousedown", function (e) {
