@@ -10,7 +10,7 @@
   "use strict";
 
   var PT_VER = 2;
-  var PT_APPVER = "3.8";
+  var PT_APPVER = "3.9";
 
   /* 区切り名は Pro Tools のマーカー名と同一。送るのはこの配列の位置(index)で、
      名前からロケーション番号への解決は SoundFlow 側がやる。
@@ -315,6 +315,7 @@
   function sendLocate(force, loud) {
     var p = cfg();
     if (!p) return Promise.resolve();
+    if (!recMode()) return Promise.resolve();
     if (!p.on) { if (loud) flash("連動がオフです"); return Promise.resolve(); }
     var sec = curSec();
     if (!sec) { if (loud) flash("進行中の曲がありません"); return Promise.resolve(); }
@@ -514,8 +515,21 @@
     return p.url ? { cls: "on", txt: "PT ブリッジ" } : { cls: "err", txt: "PT 未設定" };
   }
 
+  /* Pro Tools 連動はレコーディング専用。ライブモードでは一切出さない。 */
+  function recMode() {
+    try { return !!S.recMode; } catch (e) { return false; }
+  }
+
   function paint() {
     var p = cfg(); if (!p) return;
+    if (!recMode()) {
+      if (pill) pill.style.display = "none";
+      if (bar) bar.style.display = "none";
+      document.body.classList.remove("ptbar-on");
+      document.documentElement.style.removeProperty("--ptbar-h");
+      if (panel) panel.style.display = "none";
+      return;
+    }
     if (!pill) {
       pill = document.createElement("button");
       pill.id = "ptpill";
@@ -560,6 +574,7 @@
   }
 
   function open() {
+    if (!recMode()) return;
     injectCSS(); resetArm = false;
     if (!panel) {
       panel = document.createElement("div");
