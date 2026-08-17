@@ -10,7 +10,7 @@
   "use strict";
 
   var PT_VER = 2;
-  var PT_APPVER = "5.0";
+  var PT_APPVER = "5.1";
 
   /* 区切り名は Pro Tools のマーカー名と同一。送るのはこの配列の位置(index)で、
      名前からロケーション番号への解決は SoundFlow 側がやる。
@@ -361,12 +361,14 @@
     if (!sec) { if (loud) flash("進行中の曲がありません"); return Promise.resolve(); }
     var num = secIndex(sec);   /* 旧経路（MIDI直送）用。無くても送る */
     if (mode() === "direct" && !rtcReady()) { if (loud) flash("Mac と繋がっていません"); return Promise.resolve(); }
-    /* 初めて選んだ区切りには既定のテイクを入れておく。RH は 0、他は 1。 */
+    /* 区切りを移ったら、その区切りのテイクを必ず先頭に戻す。
+       RH は 0（プレイリスト無印）、他は 1（.01）。過去に何本録っていても戻す。 */
     var ls = liveSlot();
     if (ls) {
       if (!ls.takes) ls.takes = {};
-      if (ls.takes[sec] == null) {
-        ls.takes[sec] = (sec === REH ? 0 : 1);
+      var want = (sec === REH ? 0 : 1);
+      if (ls.takes[sec] !== want && p.lastSec !== sec) {
+        ls.takes[sec] = want;
         store();
         if (typeof render === "function") { try { render(); } catch (e) { /* 描画失敗は無視 */ } }
       }
