@@ -10,7 +10,7 @@
   "use strict";
 
   var PT_VER = 2;
-  var PT_APPVER = "4.3";
+  var PT_APPVER = "4.4";
 
   /* 区切り名は Pro Tools のマーカー名と同一。送るのはこの配列の位置(index)で、
      名前からロケーション番号への解決は SoundFlow 側がやる。
@@ -18,7 +18,7 @@
   var SECTIONS = ["RH","1A","1B","1C","2A","2B","2C","T","TRap","2ARap","D","DRap","3C","3C'","Inter","Outro"];
 
   var midi = null, midiErr = "";
-  var lastSent = "", lastErr = "";
+  var lastSent = "", lastSentAt = 0, lastErr = "";
   var panel = null, pill = null, bar = null;
   var resetArm = false;
   var lastRecMode = null;
@@ -337,8 +337,12 @@
       }
     }
     var take = curTake(), sig = sec + "#" + take;
+    /* クリック検知と save() フックの両方から呼ばれるので、
+       同じ区切りへの連続した送信は 800ms 以内なら捨てる。 */
+    var now = Date.now();
+    if (sig === lastSent && now - (lastSentAt || 0) < 800) return Promise.resolve();
     if (!force && sig === lastSent) return Promise.resolve();
-    lastSent = sig;
+    lastSent = sig; lastSentAt = now;
 
     var md = mode();
     var run = md === "midi"

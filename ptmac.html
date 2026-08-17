@@ -141,7 +141,7 @@ function cc(num, val) {
 }
 function handle(msg) {
   if (msg.t === "locate") {
-    if (msg.take != null) cc(21, msg.take);
+    /* テイク番号は SoundFlow 側で使っていないので送らない。送ると余計に起動する。 */
     if (typeof msg.hash === "number") {
       /* 区切り名の14bitハッシュを、CC番号(40〜103)と値(0〜127)に分けて1発で送る。
          SoundFlow 側は1メッセージだけで名前を復元できる。 */
