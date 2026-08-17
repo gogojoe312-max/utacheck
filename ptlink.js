@@ -10,7 +10,7 @@
   "use strict";
 
   var PT_VER = 2;
-  var PT_APPVER = "4.4";
+  var PT_APPVER = "4.5";
 
   /* 区切り名は Pro Tools のマーカー名と同一。送るのはこの配列の位置(index)で、
      名前からロケーション番号への解決は SoundFlow 側がやる。
@@ -74,6 +74,40 @@
 
   /* 区切り名を14bitの数値にする。CC番号と値に分けて1メッセージで運べる。
      SoundFlow はメッセージごとに状態を保持できないため、必ず1発で送りきる。 */
+  /* 区切りの先頭小節。イントロの次から数え、各行の bars を積む。 */
+  function secHeads(song) {
+    var out = [], seen = {}, bar = Number(song.intro || 0) + 1;
+    (song.lines || []).forEach(function (l) {
+      if (!l) return;
+      if (l.sec && seen[l.sec] == null) { seen[l.sec] = 1; out.push({ name: l.sec, bar: bar }); }
+      bar += Number(l.bars || 0);
+    });
+    return out;
+  }
+
+  function curSong() {
+    try {
+      if (S.recMode) return (S.rsongs || []).find(function (x) { return x.id === S.rsongId; }) || (S.rsongs || [])[0];
+    } catch (e) { /* まだ用意ができていない */ }
+    return null;
+  }
+
+  function gotoBar(bar) {
+    if (!rtcReady()) { flash("Mac と繋がっていません"); return; }
+    rtcSend({ t: "bar", bar: Math.max(1, Math.round(Number(bar) || 1)) })
+      .then(function () { ok(bar + " 小節へ"); }).catch(ng);
+  }
+
+  function makeMarkers() {
+    var so = curSong();
+    if (!so) { flash("曲がありません"); return; }
+    if (!rtcReady()) { flash("Mac と繋がっていません"); return; }
+    var heads = secHeads(so);
+    if (!heads.length) { flash("区切りがありません"); return; }
+    rtcSend({ t: "marks", list: heads })
+      .then(function () { ok(heads.length + " 個のマーカーを送りました"); }).catch(ng);
+  }
+
   function secHash(name) {
     var x = 0;
     for (var i = 0; i < name.length; i++) x = (x * 131 + name.charCodeAt(i)) % 8192;
@@ -448,6 +482,34 @@
     if (b) setTimeout(function () { sendLocate(true, true); }, 0);
   }, true);
 
+  /* 小節番号を長押しすると、その小節へ飛ぶ。短押しは今まで通り。 */
+  (function () {
+    var timer = null, fired = false;
+    function barEl(t) { return t && t.closest ? t.closest('[data-act="rbar"]') : null; }
+    function start(el) {
+      timer = setTimeout(function () {
+        fired = true;
+        var n = parseInt((el.textContent || "").trim(), 10);
+        if (n > 0) gotoBar(n);
+      }, 550);
+    }
+    function cancel() { if (timer) { clearTimeout(timer); timer = null; } }
+    document.addEventListener("touchstart", function (e) {
+      var el = barEl(e.target); if (!el || !recMode()) return;
+      fired = false; start(el);
+    }, true);
+    document.addEventListener("touchend", function (e) {
+      cancel();
+      if (fired) { e.preventDefault(); e.stopPropagation(); fired = false; }
+    }, true);
+    document.addEventListener("touchmove", cancel, true);
+    document.addEventListener("mousedown", function (e) {
+      var el = barEl(e.target); if (!el || !recMode()) return;
+      fired = false; start(el);
+    }, true);
+    document.addEventListener("mouseup", cancel, true);
+  })();
+
   /* ---------------- 見た目 ---------------- */
   var CSS = ''
     + '#ptpill{position:fixed;left:10px;bottom:calc(10px + env(safe-area-inset-bottom));z-index:9998;'
@@ -689,6 +751,10 @@
         + '<div class="note">区切りを選んだ時と録音する時に、プレイリストをテイク番号へ合わせます。'
         + 'Pro Tools 側で手動でプレイリストを動かした後は、上の数字を実際の表示に直すか「合わせ直す」を押してください。</div></div>' : '')
 
+      + '<div class="grp"><div class="lbl">マーカー</div>'
+      + '<div class="fld"><button class="btn" id="ptmk">区切りのマーカーを Pro Tools に打つ</button></div>'
+      + '<div class="note">いま開いている曲の区切りを、先頭の小節にまとめて作ります。</div></div>'
+
       + '<div class="grp"><div class="lbl">表示</div><div class="fld">'
       + '<button class="btn" id="ptbart">操作ボタンを' + (p.bar ? "隠す" : "出す") + '</button>'
       + '</div><div class="note">操作ボタンは画面下部に出ます。右端の「設定」からいつでもここに戻れます。</div></div>'
@@ -718,6 +784,9 @@
     if (u) u.onchange = function () { p.url = u.value.trim(); lastErr = ""; store(); paint(); };
     var t = box.querySelector("#pttok");
     if (t) t.onchange = function () { p.token = t.value.trim(); lastErr = ""; store(); paint(); };
+    var mk = box.querySelector("#ptmk");
+    if (mk) mk.onclick = function () { makeMarkers(); };
+
     var gn = box.querySelector("#ptgnew");
     if (gn) gn.onclick = function () {
       gn.disabled = true; gn.textContent = "作っています…";

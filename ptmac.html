@@ -134,6 +134,15 @@ async function initMidi() {
 
 /* CC番号の割り当て。SoundFlow 側と揃える
    20=ロケーション番号  21=テイク番号  22=プレイリスト移動(64が0)  23=指示(1再生 2停止 3録音) */
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/* ptlink.js の secHash と同じ計算 */
+function hashOf(name) {
+  let x = 0;
+  for (let i = 0; i < name.length; i++) x = (x * 131 + name.charCodeAt(i)) % 8192;
+  return x;
+}
+
 function cc(num, val) {
   const p = outPort();
   if (!p) { log("MIDI ポートがありません", true); return; }
@@ -152,6 +161,28 @@ function handle(msg) {
     log((msg.sec || "") + " → 送信");
   }
   else if (msg.t === "pl") { cc(22, 64 + msg.d); log(`プレイリスト ${msg.d > 0 ? "+" : ""}${msg.d}`); }
+  else if (msg.t === "bar") {
+    const b = Math.max(1, Math.min(2303, msg.bar | 0));
+    cc(110 + (b >> 7), b & 0x7F);
+    log("小節 " + b + " へ");
+  }
+  else if (msg.t === "marks") {
+    (async () => {
+      for (const it of (msg.list || [])) {
+        const hv = hashOf(it.name);
+        const b = Math.max(1, Math.min(2303, it.bar | 0));
+        cc(104, (hv >> 7) & 0x7F);
+        await sleep(30);
+        cc(105, hv & 0x7F);
+        await sleep(30);
+        cc(106, (b >> 7) & 0x7F);
+        await sleep(30);
+        cc(107, b & 0x7F);
+        await sleep(280);
+      }
+      log((msg.list || []).length + " 個のマーカーを送りました");
+    })();
+  }
   else if (msg.t === "cmd") { cc(23, { play: 1, stop: 2, record: 3, ok: 4 }[msg.c] || 0); log("指示 " + msg.c); }
   else if (msg.t === "ping" && dc && dc.readyState === "open") dc.send(JSON.stringify({ t: "pong", at: msg.at }));
 }
