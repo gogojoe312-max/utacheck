@@ -10,12 +10,12 @@
   "use strict";
 
   var PT_VER = 2;
-  var PT_APPVER = "3.7";
+  var PT_APPVER = "3.8";
 
   /* 区切り名は Pro Tools のマーカー名と同一。送るのはこの配列の位置(index)で、
      名前からロケーション番号への解決は SoundFlow 側がやる。
      番号を持たないので、曲が変わっても設定は要らない。 */
-  var SECTIONS = ["1A","1B","1C","2A","2B","2C","T","Rap","D","DRap","3C","3C'","Inter"];
+  var SECTIONS = ["RH","1A","1B","1C","2A","2B","2C","T","TRap","2ARap","D","DRap","3C","3C'","Inter","Outro"];
 
   var midi = null, midiErr = "";
   var lastSent = "", lastErr = "";
@@ -42,7 +42,7 @@
     p.pill = true;   /* 隠せると PWA で戻せなくなるので、常に出す */
     if (typeof p.bar !== "boolean") p.bar = false;
     /* Pro Tools がいま表示していると思われるプレイリストの番号（1始まり） */
-    if (!(p.plCur >= 1 && p.plCur <= 32)) p.plCur = 1;
+    if (!(p.plCur >= 0 && p.plCur <= 32)) p.plCur = 1;
     if (typeof p.autoSync !== "boolean") p.autoSync = true;
     if (!(p.plMax >= 1 && p.plMax <= 32)) p.plMax = 10;
     p.ver = PT_VER;
@@ -63,7 +63,9 @@
   function curTake() {
     var s = liveSlot();
     if (!s || !s.secCur) return 1;
-    return Math.max(1, Number((s.takes || {})[s.secCur] || 1));
+    var v = (s.takes || {})[s.secCur];
+    /* テイク0はリハ用。プレイリストの無印（Saito）に当たる。 */
+    return v == null ? 1 : Math.max(0, Number(v));
   }
   function secIndex(name) { return SECTIONS.indexOf(name); }
 
@@ -345,7 +347,7 @@
      Shift+↑/↓ は相対移動しかできないので、こちらで現在位置を覚えて差分だけ送る。 */
   function syncPlaylist(target) {
     var p = cfg();
-    var n = Math.max(1, Math.min(p.plMax, Math.round(Number(target) || 1)));
+    var n = Math.max(0, Math.min(p.plMax, Math.round(Number(target) || 0)));
     var delta = n - p.plCur;
     if (!delta) return Promise.resolve({ moved: 0 });
     return bridgeSend({ type: "playlist", delta: delta }).then(function (r) {
