@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>歌チェック 受け側</title>
+<style>
+  :root{--bg:#07080A;--panel:#13151A;--panel2:#1B1E25;--line:#242830;
+        --text:#EAE6DE;--dim:#79808B;--accent:#F0B23C;--good:#5BC98A;--bad:#FF5C42}
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-font-smoothing:antialiased}
+  body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans",sans-serif;
+       min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+  .card{width:100%;max-width:460px;background:var(--panel);border:1px solid var(--line);
+        border-radius:16px;padding:24px}
+  h1{font-size:15px;font-weight:700;letter-spacing:.02em}
+  .sub{font-size:11px;color:var(--dim);margin-top:2px;margin-bottom:20px}
+  .state{display:flex;align-items:center;gap:10px;padding:16px;border-radius:12px;
+         background:var(--panel2);border:1px solid var(--line);margin-bottom:16px}
+  .dot{width:10px;height:10px;border-radius:50%;background:var(--dim);flex:0 0 auto}
+  .state.on .dot{background:var(--good)}
+  .state.wait .dot{background:var(--accent)}
+  .state.err .dot{background:var(--bad)}
+  .state b{font-size:14px;font-weight:700}
+  .state span{font-size:11px;color:var(--dim);display:block;margin-top:3px;line-height:1.6}
+  .grp{margin-bottom:16px}
+  .lbl{font-size:11px;color:var(--dim);font-weight:700;margin-bottom:6px}
+  input,select{width:100%;background:var(--panel2);border:1px solid var(--line);border-radius:9px;
+               padding:10px;font-size:13px;color:var(--text);font-family:inherit}
+  input:focus-visible,select:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  button{background:var(--accent);color:#0A0A0A;border:0;border-radius:9px;padding:11px 18px;
+         font-size:13px;font-weight:700;font-family:inherit;cursor:pointer;width:100%}
+  button.ghost{background:var(--panel2);color:var(--text);border:1px solid var(--line)}
+  button:disabled{opacity:.45;cursor:default}
+  .note{font-size:11px;color:var(--dim);line-height:1.7;margin-top:8px}
+  .empty{padding:14px;border:1px dashed var(--line);border-radius:10px;font-size:12px;
+         color:var(--dim);line-height:1.7}
+  .log{margin-top:16px;max-height:150px;overflow:auto;font-size:11px;color:var(--dim);
+       font-variant-numeric:tabular-nums;line-height:1.9}
+  .log div{border-bottom:1px solid var(--line);padding:3px 0}
+  .bad{color:var(--bad)}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>歌チェック 受け側</h1>
+  <div class="sub">このページを開いたままにしてください</div>
+
+  <div class="state" id="state"><span class="dot"></span><div><b id="stTitle">準備中</b><span id="stSub"></span></div></div>
+
+  <div class="grp">
+    <div class="lbl">MIDI の送り先</div>
+    <div id="portWrap"></div>
+  </div>
+
+  <div class="grp">
+    <div class="lbl">Gist ID（歌チェックの設定画面に出るもの）</div>
+    <input id="gid" type="text" spellcheck="false" placeholder="例 a1b2c3d4...">
+    <div class="lbl" style="margin-top:10px">トークン（自動公開のもの）</div>
+    <input id="tok" type="password" spellcheck="false" placeholder="ghp_...">
+    <div class="note">この2つはこのMacのブラウザにだけ保存されます。ペアリングの合図にだけ使い、繋がった後は一切通りません。</div>
+  </div>
+
+  <button id="go">待ち受けを始める</button>
+  <button id="stop" class="ghost" style="margin-top:8px;display:none">止める</button>
+
+  <div class="log" id="log"></div>
+</div>
+
+<script>
+"use strict";
+const FILE = "utacheck-pt.json";
+const $ = (id) => document.getElementById(id);
+let midi = null, pc = null, dc = null, running = false, pollTimer = null, lastOffer = "";
+
+/* ---------- 表示 ---------- */
+function setState(cls, title, sub) {
+  $("state").className = "state " + (cls || "");
+  $("stTitle").textContent = title;
+  $("stSub").textContent = sub || "";
+}
+function log(msg, bad) {
+  const d = new Date();
+  const t = [d.getHours(), d.getMinutes(), d.getSeconds()].map(x => String(x).padStart(2, "0")).join(":");
+  const el = document.createElement("div");
+  el.textContent = t + "  " + msg;
+  if (bad) el.className = "bad";
+  $("log").prepend(el);
+  while ($("log").children.length > 60) $("log").lastChild.remove();
+}
+
+/* ---------- 覚えておく ---------- */
+function load() {
+  try {
+    const v = JSON.parse(localStorage.getItem("utacheck.ptmac") || "{}");
+    $("gid").value = v.gid || ""; $("tok").value = v.tok || "";
+    return v;
+  } catch (e) { return {}; }
+}
+function save() {
+  try {
+    localStorage.setItem("utacheck.ptmac", JSON.stringify({
+      gid: $("gid").value.trim(), tok: $("tok").value.trim(), port: portName()
+    }));
+  } catch (e) { /* 保存できなくても動作には支障なし */ }
+}
+
+/* ---------- MIDI ---------- */
+function portName() { const s = $("portWrap").querySelector("select"); return s ? s.value : ""; }
+function outPort() {
+  if (!midi) return null;
+  const list = []; midi.outputs.forEach(p => list.push(p));
+  return list.find(p => p.name === portName()) || list.find(p => /IAC/i.test(p.name)) || list[0] || null;
+}
+function drawPorts() {
+  const wrap = $("portWrap");
+  if (!midi) { wrap.innerHTML = '<div class="empty">MIDI をまだ許可していません。「待ち受けを始める」を押すと確認が出ます。</div>'; return; }
+  const list = []; midi.outputs.forEach(p => list.push(p));
+  if (!list.length) {
+    wrap.innerHTML = '<div class="empty">送り先がありません。<br>「Audio MIDI 設定」→ ウインドウ →「MIDI スタジオを表示」→ IAC ドライバをダブルクリック →「装置はオンライン」にチェック。<br>その後このページを再読み込みしてください。</div>';
+    return;
+  }
+  const want = (load().port) || "";
+  wrap.innerHTML = "<select>" + list.map(p =>
+    `<option${p.name === want || (!want && /IAC/i.test(p.name)) ? " selected" : ""}>${p.name.replace(/[<>&]/g, "")}</option>`
+  ).join("") + "</select>";
+  wrap.querySelector("select").onchange = save;
+}
+async function initMidi() {
+  if (!navigator.requestMIDIAccess) { throw new Error("このブラウザは Web MIDI に対応していません。Mac の Chrome で開いてください。"); }
+  midi = await navigator.requestMIDIAccess({ sysex: false });
+  midi.onstatechange = drawPorts;
+  drawPorts();
+}
+
+/* CC番号の割り当て。SoundFlow 側と揃える
+   20=ロケーション番号  21=テイク番号  22=プレイリスト移動(64が0)  23=指示(1再生 2停止 3録音) */
+function cc(num, val) {
+  const p = outPort();
+  if (!p) { log("MIDI ポートがありません", true); return; }
+  p.send([0xB0, num, Math.max(0, Math.min(127, val | 0))]);
+}
+function handle(msg) {
+  if (msg.t === "locate") { if (msg.take != null) cc(21, msg.take); cc(20, msg.n); log(`${msg.sec || ""} → ロケーション ${msg.n}`); }
+  else if (msg.t === "pl") { cc(22, 64 + msg.d); log(`プレイリスト ${msg.d > 0 ? "+" : ""}${msg.d}`); }
+  else if (msg.t === "cmd") { cc(23, { play: 1, stop: 2, record: 3 }[msg.c] || 0); log("指示 " + msg.c); }
+  else if (msg.t === "ping" && dc && dc.readyState === "open") dc.send(JSON.stringify({ t: "pong", at: msg.at }));
+}
+
+/* ---------- 合図のやりとり（Gist） ---------- */
+async function gist(method, body) {
+  const r = await fetch("https://api.github.com/gists/" + $("gid").value.trim(), {
+    method,
+    headers: {
+      "Authorization": "Bearer " + $("tok").value.trim(),
+      "Accept": "application/vnd.github+json",
+      ...(body ? { "Content-Type": "application/json" } : {}),
+    },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+    cache: "no-store",
+  });
+  if (!r.ok) throw new Error("Gist が読めません（" + r.status + "）");
+  return r.json();
+}
+async function readSignal() {
+  const j = await gist("GET");
+  const f = j.files && j.files[FILE];
+  if (!f || !f.content) return null;
+  try { return JSON.parse(f.content); } catch (e) { return null; }
+}
+async function writeAnswer(answer, state) {
+  const files = {};
+  files[FILE] = { content: JSON.stringify(Object.assign({}, state, { answer, answeredAt: Date.now() })) };
+  await gist("PATCH", { files });
+}
+
+/* ---------- 接続 ---------- */
+async function connectTo(state) {
+  if (pc) { try { pc.close(); } catch (e) {} }
+  pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
+
+  pc.ondatachannel = (e) => {
+    dc = e.channel;
+    dc.onopen = () => { setState("on", "繋がりました", "Pro Tools を操作できます"); log("接続"); };
+    dc.onclose = () => { setState("wait", "切れました", "iPhone 側の再接続を待っています"); log("切断"); };
+    dc.onmessage = (ev) => { try { handle(JSON.parse(ev.data)); } catch (err) { /* 壊れた指示は捨てる */ } };
+  };
+  pc.onconnectionstatechange = () => {
+    if (pc.connectionState === "failed") { setState("err", "繋がりません", "同じ Wi-Fi にいるか確認してください"); log("接続失敗", true); }
+  };
+
+  await pc.setRemoteDescription({ type: "offer", sdp: state.offer });
+  const answer = await pc.createAnswer();
+  await pc.setLocalDescription(answer);
+
+  /* ICE を集めきってから一度だけ返す。やりとりが1往復で済む */
+  await new Promise((res) => {
+    if (pc.iceGatheringState === "complete") return res();
+    const t = setTimeout(res, 3000);
+    pc.onicegatheringstatechange = () => { if (pc.iceGatheringState === "complete") { clearTimeout(t); res(); } };
+  });
+
+  await writeAnswer(pc.localDescription.sdp, state);
+  setState("wait", "応答しました", "iPhone と繋がるのを待っています");
+  log("応答を返しました");
+}
+
+async function poll() {
+  if (!running) return;
+  try {
+    const s = await readSignal();
+    if (s && s.offer && s.offer !== lastOffer) {
+      lastOffer = s.offer;
+      log("iPhone からの呼び出し");
+      await connectTo(s);
+    }
+  } catch (e) {
+    log(String(e.message || e), true);
+  }
+  if (running) pollTimer = setTimeout(poll, dc && dc.readyState === "open" ? 5000 : 1500);
+}
+
+/* ---------- 起動 ---------- */
+$("go").onclick = async () => {
+  if (!$("gid").value.trim() || !$("tok").value.trim()) { setState("err", "入力が足りません", "Gist ID とトークンを入れてください"); return; }
+  save();
+  $("go").disabled = true;
+  try {
+    if (!midi) await initMidi();
+    running = true;
+    $("go").style.display = "none";
+    $("stop").style.display = "block";
+    setState("wait", "待ち受け中", "iPhone の歌チェックで連動をオンにしてください");
+    log("待ち受け開始");
+    poll();
+  } catch (e) {
+    setState("err", "始められません", String(e.message || e));
+    log(String(e.message || e), true);
+  }
+  $("go").disabled = false;
+};
+$("stop").onclick = () => {
+  running = false; clearTimeout(pollTimer);
+  if (pc) { try { pc.close(); } catch (e) {} pc = null; dc = null; }
+  $("go").style.display = "block"; $("stop").style.display = "none";
+  setState("", "止めました", "");
+  log("停止");
+};
+
+load();
+drawPorts();
+setState("", "待機中", "Gist ID とトークンを入れて始めてください");
+</script>
+</body>
+</html>
