@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "12.6";
+const APP_VER = "12.7";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -83,7 +83,7 @@ let S = {
   plan: { start: "10:00", slots: [] },
   size: 19,
 };
-let U = { view: "live", songIdx: 0, sheet: null, mode: "member", allShows: false, picker: false, overview: false, ovSize: 9, recPick: null, sumOpen: "", draw: false, erase: false, pick: [], menu: null, printPick: null, focus: "", busy: "", allShowList: false, pdfBack: "", swapId: "", markOnly: false, planDay: "", planSec: "", vtN: 1, rmore: false, wordEdit: "", secOrd: false };
+let U = { view: "live", songIdx: 0, sheet: null, mode: "member", allShows: false, picker: false, overview: false, ovSize: 9, recPick: null, sumOpen: "", draw: false, erase: false, pick: [], menu: null, printPick: null, focus: "", busy: "", allShowList: false, pdfBack: "", swapId: "", markOnly: false, planDay: "", planSec: "", vtN: 1, rmore: false, wordEdit: "", secOrd: false, secOnly: false, secView: "" };
 
 const S0 = JSON.parse(JSON.stringify(S));
 
@@ -3106,6 +3106,34 @@ function groupPos(lines) {
   return pos;
 }
 
+// その行が属している区切り（区切り名は上から引き継がれる）。
+// 表記の枠（ガヤなど）は、その表記が付いている行だけを見る。
+function secOfLine(so, i) {
+  const ls = so.lines || [];
+  for (let k = i; k >= 0; k--) if (ls[k].sec) return ls[k].sec;
+  return "";
+}
+function linesInSec(so, nm) {
+  const ls = so.lines || [];
+  const out = [];
+  if (!nm) return out;
+  const isTag = tagSecNames().includes(nm);
+  ls.forEach((l, i) => {
+    if (l.gap) return;
+    if (isTag ? l.tag === nm : secOfLine(so, i) === nm) out.push(i);
+  });
+  return out;
+}
+// いま集中して見ている区切り
+function focusSec() {
+  if (!S.recMode || !U.secOnly) return "";
+  const ord = sectionOrder();
+  if (U.secView && ord.includes(U.secView)) return U.secView;
+  const live = planRows().find((r) => r.live);
+  const c = live && live.s.secCur;
+  if (c && ord.includes(c)) return c;
+  return ord[0] || "";
+}
 function markStyle(n) {
   const c = noteColor(n);
   return `border-bottom-color:${c};background:color-mix(in srgb,${c} 22%,transparent)`;
@@ -3122,6 +3150,8 @@ function viewLive() {
     const ns0 = NOTES().filter((n) => n.songId === s.id && n.showId === S.showId && inTake(n));
     const gp = groupPos(s.lines);
     const vm = S.recMode ? vtMarks(s) : { head: [], info: [] };
+    const fsec = focusSec();
+    const fset = fsec ? new Set(linesInSec(s, fsec)) : null;
     // 表記の枠（ガヤなど）から飛べるよう、最初に出てくる行に目印を置く
     const tanc = {};
     if (S.recMode) {
@@ -3129,6 +3159,7 @@ function viewLive() {
       s.lines.forEach((l, k) => { if (l.tag && tg.includes(l.tag) && tanc[l.tag] == null) tanc[l.tag] = k; });
     }
     body = s.lines.map((l, i) => {
+      if (fset && !fset.has(i)) return "";
       if (l.gap) {
         const gns = ns0.filter((n) => covers(n, i));
         if (VIEW() && !gns.length) return `<div class="gap"></div>`;
@@ -3193,6 +3224,10 @@ function viewLive() {
     }).join("");
   }
 
+  if (fset && !body.trim()) {
+    body = `<div style="padding:56px 26px;text-align:center;color:var(--dim);font-size:14px">
+      「${h(fsec)}」の歌詞がありません</div>`;
+  }
   const noSong = VIEW() && !SONGS().length;
   return `
   ${preview ? `<div class="noprint" style="padding:10px 12px;background:#1F2E24;color:#8FD9A8;font-size:12px">
@@ -4510,7 +4545,12 @@ function recBar() {
     return `<button class="sectab ${cls}" id="tab-${h(e.name)}" data-act="jumpsec" data-id="${h(e.name)}">${e.done ? "✓" : ""}${h(e.name)}${e.min != null ? `<i>${e.done ? e.used : e.min}</i>` : ""}</button>`;
   }).join("");
 
-  return `${tabs ? `<div class="sectabs">${tabs}</div>` : ""}
+  const fs = focusSec();
+  return `${tabs ? `<div class="secrow">
+    <button class="secfoc" data-act="secfoc" style="${U.secOnly ? "color:#0A0A0A;background:var(--accent);font-weight:700" : ""}">集中</button>
+    <div class="sectabs">${tabs}</div></div>` : ""}
+  ${U.secOnly && fs ? `<div class="focbar"><b>${h(fs)}</b> だけを出しています
+    <button data-act="secfoc" style="float:right;color:var(--accent);font-weight:700">やめる</button></div>` : ""}
   <div class="aubar">
     ${live ? `<span id="pcd" style="font-size:13px;font-variant-numeric:tabular-nums">—</span>
       ${cur ? `<span style="font-size:11px;color:var(--dim)">${h(cur.name)}</span>` : ""}
@@ -4583,6 +4623,7 @@ function startSlot(s2, auto) {
   s2.secLog = {}; s2.takes = {};
   const ss1 = sectionsOf(s2);
   s2.secCur = (ss1.find((x) => x.prep) || ss1.find((x) => !x.skip) || ss1[0] || {}).name || "";
+  U.secView = s2.secCur;
   if (auto) autoMsg = `${s2.name} を始めました（${min2hm(s2.a0)}）`;
 }
 let autoMsg = "";
@@ -5929,6 +5970,14 @@ document.addEventListener("click", (e) => {
       break;
     }
     case "markonly": U.markOnly = !U.markOnly; render(); break;
+    case "secfoc": {
+      U.secOnly = !U.secOnly;
+      if (U.secOnly && !U.secView) {
+        const live = planRows().find((r) => r.live);
+        U.secView = (live && live.s.secCur) || sectionOrder()[0] || "";
+      }
+      render(); break;
+    }
     case "m-rename": {
       const x = S.songs.find((y) => y.id === U.menu.id); U.menu = null;
       if (x) { const nm = prompt("曲名", x.title); if (nm && nm.trim()) { x.title = nm.trim(); save(); schedulePush(); } }
@@ -6597,6 +6646,7 @@ document.addEventListener("click", (e) => {
       if (nx) {
         live.s.secCur = nx.name;
         live.s.secStart = Date.now();
+        U.secView = nx.name;
         save(); render();
         setTimeout(() => {
           const el = document.getElementById("sec-" + nx.name);
@@ -6709,6 +6759,7 @@ document.addEventListener("click", (e) => {
       break;
     }
     case "jumpsec": {
+      U.secView = id;
       const live = planRows().find((r) => r.live);
       if (live) {
         pushUndo();
@@ -7153,6 +7204,31 @@ function dupShow(fromId) {
   save(); schedulePush(); render();
 }
 
+// なぞっただけで残す印。中身は空で、色と場所だけ。
+// 同じところをもう一度なぞれば消える（中身のある指摘は消さない）。
+function quickMark(lineIdx, range) {
+  const s = song(); if (!s) return;
+  const a = range ? range[0] : null, b = range ? range[1] : null;
+  const plain = (n) => !n.tags.length && !String(n.memo || "").trim() && !n.pitch;
+  const same = NOTES().filter((n) => n.songId === s.id && n.showId === S.showId
+    && n.lineIdx === lineIdx && inTake(n) && plain(n)
+    && (a == null ? n.from == null : (n.from != null && n.from <= b && n.to >= a)));
+  pushUndo();
+  if (same.length) {
+    const ids = same.map((n) => n.id);
+    S.notes = S.notes.filter((n) => !ids.includes(n.id));
+  } else {
+    S.notes.push({
+      id: uid(), songId: s.id, lineIdx,
+      memberIds: partsOf(s, lineIdx).slice(), tags: [], memo: "", pitch: null,
+      lineEnd: null, from: a, to: b,
+      at: recAt(), tk: takeCtx() || undefined,
+      showId: S.showId, ts: Date.now(),
+    });
+  }
+  save(); schedulePush(); render();
+}
+
 function openSheet(lineIdx, range, lineEnd) {
   if (VIEW()) return;
   const s = song(); if (!s) return;
@@ -7563,28 +7639,47 @@ document.addEventListener("pointerdown", (e) => {
   dragOn = false;
 });
 
+let holdTimer = null;
+const clearHold = () => { clearTimeout(holdTimer); holdTimer = null; };
+// なぞったまま指を止めたら、これまでどおりの指摘画面を出す
+function armHold() {
+  if (!S.recMode) return;
+  clearHold();
+  holdTimer = setTimeout(() => {
+    const o = org;
+    if (!o || !dragOn) return;
+    const a = o.c == null ? 0 : o.c;
+    const b = o.end == null ? a : o.end;
+    org = null; dragOn = false;
+    clearHl();
+    openSheet(o.l, [Math.min(a, b), Math.max(a, b)]);
+  }, 500);
+}
+
 document.addEventListener("pointermove", (e) => {
   if (!org) return;
   const dx = e.clientX - org.x, dy = e.clientY - org.y;
   if (!dragOn) {
-    if (Math.abs(dy) > 14 && Math.abs(dy) > Math.abs(dx)) { org = null; clearHl(); return; }
+    if (Math.abs(dy) > 14 && Math.abs(dy) > Math.abs(dx)) { org = null; clearHl(); clearHold(); return; }
     if (Math.abs(dx) < 8) return;
     dragOn = true;
     if (org.c == null) org.c = 0;
   }
   e.preventDefault();
   const c = charAtX(org.row, e.clientX, e.clientY);
-  if (c != null) { org.end = c; highlight(org.l, org.c, c); }
+  if (c != null && c !== org.end) { org.end = c; highlight(org.l, org.c, c); armHold(); }
 }, { passive: false });
 
 document.addEventListener("pointerup", (e) => {
   const o = org; org = null;
+  clearHold();
   if (!o) { dragOn = false; return; }
   if (dragOn) {
-    // 指を離した時点でそのまま選択画面へ。もう一度タップする必要はない。
     const a = o.c == null ? 0 : o.c;
     const b = o.end == null ? a : o.end;
-    openSheet(o.l, [Math.min(a, b), Math.max(a, b)]);
+    // レコーディング中は、なぞったら印だけ。指を止めれば指摘画面が出る（上の armHold）。
+    if (S.recMode) quickMark(o.l, [Math.min(a, b), Math.max(a, b)]);
+    else openSheet(o.l, [Math.min(a, b), Math.max(a, b)]);
   } else {
     openSheet(o.l, null);
   }
