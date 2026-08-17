@@ -10,7 +10,7 @@
   "use strict";
 
   var PT_VER = 2;
-  var PT_APPVER = "3.9";
+  var PT_APPVER = "4.0";
 
   /* 区切り名は Pro Tools のマーカー名と同一。送るのはこの配列の位置(index)で、
      名前からロケーション番号への解決は SoundFlow 側がやる。
@@ -21,6 +21,7 @@
   var lastSent = "", lastErr = "";
   var panel = null, pill = null, bar = null;
   var resetArm = false;
+  var lastRecMode = null;
 
   /* ---------------- 設定 ---------------- */
   function cfg() {
@@ -418,6 +419,7 @@
     var orig = save;
     var w = function () {
       var r = orig.apply(this, arguments);
+      try { paint(); } catch (e) { /* 描画の失敗で保存を壊さない */ }
       try { sendLocate(false); } catch (e) { /* 送信の失敗で保存を壊さない */ }
       return r;
     };
@@ -779,6 +781,13 @@
     if (location.hash === "#ptlink") open();
   }
   window.addEventListener("hashchange", function () { if (location.hash === "#ptlink") open(); });
+
+  /* レコーディング／ライブの切り替えは save() を伴わないことがあるので、
+     モードが変わった時だけ描画し直す。 */
+  setInterval(function () {
+    var now = recMode();
+    if (now !== lastRecMode) { lastRecMode = now; try { paint(); } catch (e) { /* 無視 */ } }
+  }, 700);
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", function () { setTimeout(boot, 600); });
   else setTimeout(boot, 600);
 
