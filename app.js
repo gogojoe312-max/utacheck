@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "12.9";
+const APP_VER = "13.0";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -3274,7 +3274,7 @@ function viewLive() {
         ? `<div style="font-size:13px;white-space:pre-wrap">${h(songMemo(s.id)) || "—"}</div>`
         : `<textarea class="field" id="songmemo" rows="4" style="resize:none">${h(songMemo(s.id))}</textarea>`}
     </div>` : ""}
-    ${s && !VIEW() ? `<div class="pull" id="pull">
+    ${s && !VIEW() && !S.recMode ? `<div class="pull" id="pull">
       <div class="pullbar"><i id="pullfill"></i></div>
       <div class="pulltx" id="pulltx">引き上げて テイク${nextTake(s)} を作る</div>
     </div>` : `<div style="height:120px"></div>`}</div>
@@ -4541,10 +4541,7 @@ function recBar() {
     return `<button class="sectab ${cls}" id="tab-${h(e.name)}" data-act="jumpsec" data-id="${h(e.name)}">${e.done ? "✓" : ""}${h(e.name)}${e.min != null ? `<i>${e.done ? e.used : e.min}</i>` : ""}</button>`;
   }).join("");
 
-  const fs = focusSec();
-  return `${tabs ? `<div class="secrow">
-    <button class="secfoc" data-act="secall" style="${fs ? "" : "background:var(--accent);color:#0A0A0A;font-weight:700"}">全部</button>
-    <div class="sectabs">${tabs}</div></div>` : ""}
+  return `${tabs ? `<div class="sectabs">${tabs}</div>` : ""}
   <div class="aubar">
     ${live ? `<span id="pcd" style="font-size:13px;font-variant-numeric:tabular-nums">—</span>
       ${cur ? `<span style="font-size:11px;color:var(--dim)">${h(cur.name)}</span>` : ""}
@@ -5964,7 +5961,6 @@ document.addEventListener("click", (e) => {
       break;
     }
     case "markonly": U.markOnly = !U.markOnly; render(); break;
-    case "secall": U.secView = ""; render(); break;
     case "m-rename": {
       const x = S.songs.find((y) => y.id === U.menu.id); U.menu = null;
       if (x) { const nm = prompt("曲名", x.title); if (nm && nm.trim()) { x.title = nm.trim(); save(); schedulePush(); } }
