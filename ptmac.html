@@ -140,7 +140,18 @@ function cc(num, val) {
   p.send([0xB0, num, Math.max(0, Math.min(127, val | 0))]);
 }
 function handle(msg) {
-  if (msg.t === "locate") { if (msg.take != null) cc(21, msg.take); cc(20, msg.n); log(`${msg.sec || ""} → ロケーション ${msg.n}`); }
+  if (msg.t === "locate") {
+    if (msg.take != null) cc(21, msg.take);
+    if (Array.isArray(msg.codes) && msg.codes.length) {
+      /* 区切り名を CC24 で1文字ずつ送り、CC25 で「名前おわり」を知らせる。
+         固定リストに無い区切り（2ARap など）もそのまま扱える。 */
+      msg.codes.forEach(function (v) { cc(24, v); });
+      cc(25, 1);
+    } else {
+      cc(20, msg.n);
+    }
+    log((msg.sec || "") + " → 送信");
+  }
   else if (msg.t === "pl") { cc(22, 64 + msg.d); log(`プレイリスト ${msg.d > 0 ? "+" : ""}${msg.d}`); }
   else if (msg.t === "cmd") { cc(23, { play: 1, stop: 2, record: 3 }[msg.c] || 0); log("指示 " + msg.c); }
   else if (msg.t === "ping" && dc && dc.readyState === "open") dc.send(JSON.stringify({ t: "pong", at: msg.at }));

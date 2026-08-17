@@ -10,7 +10,7 @@
   "use strict";
 
   var PT_VER = 2;
-  var PT_APPVER = "3.4";
+  var PT_APPVER = "3.5";
 
   /* 区切り名は Pro Tools のマーカー名と同一。送るのはこの配列の位置(index)で、
      名前からロケーション番号への解決は SoundFlow 側がやる。
@@ -66,6 +66,16 @@
     return Math.max(1, Number((s.takes || {})[s.secCur] || 1));
   }
   function secIndex(name) { return SECTIONS.indexOf(name); }
+
+  /* 区切り名を1文字ずつのコードにして送る。固定リストに縛られない。 */
+  function secToCodes(name) {
+    var out = [];
+    for (var i = 0; i < name.length && out.length < 24; i++) {
+      var c = name.charCodeAt(i);
+      out.push((c >> 7) & 0x7F, c & 0x7F);   // 上位7bit / 下位7bit
+    }
+    return out;
+  }
 
   /* app.js の SECDEF を正準リストに揃える。const でも中身の差し替えは効く。
      歌詞データは区切り名を文字列で持っているので壊れない。 */
@@ -308,8 +318,7 @@
     if (!p.on) { if (loud) flash("連動がオフです"); return Promise.resolve(); }
     var sec = curSec();
     if (!sec) { if (loud) flash("進行中の曲がありません"); return Promise.resolve(); }
-    var num = secIndex(sec);
-    if (num < 0) { if (loud) flash("「" + sec + "」は対象外の区切りです"); return Promise.resolve(); }
+    var num = secIndex(sec);   /* 旧経路（MIDI直送）用。無くても送る */
     if (mode() === "direct" && !rtcReady()) { if (loud) flash("Mac と繋がっていません"); return Promise.resolve(); }
     var take = curTake(), sig = sec + "#" + take;
     if (!force && sig === lastSent) return Promise.resolve();
@@ -319,7 +328,7 @@
     var run = md === "midi"
       ? connectMidi().then(function () { return midiSend(num, take); })
       : md === "direct" && rtcReady()
-        ? rtcSend({ t: "locate", n: num, take: take, sec: sec })
+        ? rtcSend({ t: "locate", n: num, take: take, sec: sec, codes: secToCodes(sec) })
         : (md === "direct" || md === "gist")
           ? gistWrite(null)
           : bridgeSend({ type: "locate", n: num, take: take });
