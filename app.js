@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "12.8";
+const APP_VER = "12.9";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -83,7 +83,7 @@ let S = {
   plan: { start: "10:00", slots: [] },
   size: 19,
 };
-let U = { view: "live", songIdx: 0, sheet: null, mode: "member", allShows: false, picker: false, overview: false, ovSize: 9, recPick: null, sumOpen: "", draw: false, erase: false, pick: [], menu: null, printPick: null, focus: "", busy: "", allShowList: false, pdfBack: "", swapId: "", markOnly: false, planDay: "", planSec: "", vtN: 1, rmore: false, wordEdit: "", secOrd: false, secOnly: false, secView: "" };
+let U = { view: "live", songIdx: 0, sheet: null, mode: "member", allShows: false, picker: false, overview: false, ovSize: 9, recPick: null, sumOpen: "", draw: false, erase: false, pick: [], menu: null, printPick: null, focus: "", busy: "", allShowList: false, pdfBack: "", swapId: "", markOnly: false, planDay: "", planSec: "", vtN: 1, rmore: false, wordEdit: "", secOrd: false, secView: "" };
 
 const S0 = JSON.parse(JSON.stringify(S));
 
@@ -3124,15 +3124,11 @@ function linesInSec(so, nm) {
   });
   return out;
 }
-// いま集中して見ている区切り
+// いま出している区切り。選んでいなければ全部出す。
 function focusSec() {
-  if (!S.recMode || !U.secOnly) return "";
+  if (!S.recMode) return "";
   const ord = sectionOrder();
-  if (U.secView && ord.includes(U.secView)) return U.secView;
-  const live = planRows().find((r) => r.live);
-  const c = live && live.s.secCur;
-  if (c && ord.includes(c)) return c;
-  return ord[0] || "";
+  return U.secView && ord.includes(U.secView) ? U.secView : "";
 }
 function markStyle(n) {
   const c = noteColor(n);
@@ -3272,7 +3268,7 @@ function viewLive() {
   <div class="scroll" style="position:relative">
     <canvas id="ink" class="ink" style="pointer-events:${U.draw && !VIEW() ? "auto" : "none"};touch-action:${U.draw ? "none" : "auto"}"></canvas>
     ${body}
-    ${s ? `<div class="card" style="margin:18px 12px 0">
+    ${s && !S.recMode ? `<div class="card" style="margin:18px 12px 0">
       <h4 style="font-size:11px;color:var(--dim);margin-bottom:8px">総括</h4>
       ${VIEW()
         ? `<div style="font-size:13px;white-space:pre-wrap">${h(songMemo(s.id)) || "—"}</div>`
@@ -3470,7 +3466,7 @@ function viewOverview(s) {
   </div>
   ${blockBar(s)}
   <div class="scroll" style="padding:8px 10px">${bodyHTML}
-    ${songMemo(s.id) ? `<div class="card" style="margin-top:12px">
+    ${songMemo(s.id) && !S.recMode ? `<div class="card" style="margin-top:12px">
       <h4 style="font-size:11px;color:var(--dim);margin-bottom:6px">総括</h4>
       <div style="font-size:13px;white-space:pre-wrap">${h(songMemo(s.id))}</div></div>` : ""}
     <div style="height:30px"></div></div>
@@ -4541,16 +4537,14 @@ function recBar() {
 
   const tabList = secs.length ? secs : sectionOrder().map((nm) => ({ name: nm }));
   const tabs = tabList.map((e) => {
-    const cls = e.live ? "on" : e.done ? "dn" : "";
+    const cls = (e.live || e.name === U.secView) ? "on" : e.done ? "dn" : "";
     return `<button class="sectab ${cls}" id="tab-${h(e.name)}" data-act="jumpsec" data-id="${h(e.name)}">${e.done ? "✓" : ""}${h(e.name)}${e.min != null ? `<i>${e.done ? e.used : e.min}</i>` : ""}</button>`;
   }).join("");
 
   const fs = focusSec();
   return `${tabs ? `<div class="secrow">
-    <button class="secfoc" data-act="secfoc" style="${U.secOnly ? "color:#0A0A0A;background:var(--accent);font-weight:700" : ""}">集中</button>
+    <button class="secfoc" data-act="secall" style="${fs ? "" : "background:var(--accent);color:#0A0A0A;font-weight:700"}">全部</button>
     <div class="sectabs">${tabs}</div></div>` : ""}
-  ${U.secOnly && fs ? `<div class="focbar"><b>${h(fs)}</b> だけを出しています
-    <button data-act="secfoc" style="float:right;color:var(--accent);font-weight:700">やめる</button></div>` : ""}
   <div class="aubar">
     ${live ? `<span id="pcd" style="font-size:13px;font-variant-numeric:tabular-nums">—</span>
       ${cur ? `<span style="font-size:11px;color:var(--dim)">${h(cur.name)}</span>` : ""}
@@ -5970,14 +5964,7 @@ document.addEventListener("click", (e) => {
       break;
     }
     case "markonly": U.markOnly = !U.markOnly; render(); break;
-    case "secfoc": {
-      U.secOnly = !U.secOnly;
-      if (U.secOnly && !U.secView) {
-        const live = planRows().find((r) => r.live);
-        U.secView = (live && live.s.secCur) || sectionOrder()[0] || "";
-      }
-      render(); break;
-    }
+    case "secall": U.secView = ""; render(); break;
     case "m-rename": {
       const x = S.songs.find((y) => y.id === U.menu.id); U.menu = null;
       if (x) { const nm = prompt("曲名", x.title); if (nm && nm.trim()) { x.title = nm.trim(); save(); schedulePush(); } }
@@ -6759,7 +6746,7 @@ document.addEventListener("click", (e) => {
       break;
     }
     case "jumpsec": {
-      U.secView = id;
+      U.secView = U.secView === id ? "" : id;
       const live = planRows().find((r) => r.live);
       if (live) {
         pushUndo();
