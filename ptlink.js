@@ -10,7 +10,7 @@
   "use strict";
 
   var PT_VER = 2;
-  var PT_APPVER = "4.6";
+  var PT_APPVER = "4.7";
 
   /* 区切り名は Pro Tools のマーカー名と同一。送るのはこの配列の位置(index)で、
      名前からロケーション番号への解決は SoundFlow 側がやる。
@@ -388,7 +388,7 @@
           : bridgeSend({ type: "locate", n: num, take: take });
 
     return run.then(function () {
-      ok(sec + " → " + num);
+      lastErr = ""; paint();
       if (p.autoSync && md === "bridge") return syncPlaylist(take);
       /* ロケートだけ送る。プレイリストは録音時に合わせるので、ここでは動かさない。
          2つ続けて送ると SoundFlow が二重に起動してトラック移動が重なる。 */
@@ -481,21 +481,24 @@
     var b = e.target.closest && e.target.closest('[data-act="jumpsec"]');
     if (b) setTimeout(function () { sendLocate(true, true); }, 0);
 
-    /* アプリ本来のテイク増減ボタン。押した後の値でプレイリストを合わせる。 */
+    /* アプリ本来のテイク増減ボタン。押す前後の差だけプレイリストを動かす。 */
     var t = e.target.closest && e.target.closest('[data-act="takeup"],[data-act="takedown"]');
-    if (t) setTimeout(function () { syncTake(); }, 60);
+    if (t) {
+      var was = curTake();
+      setTimeout(function () { stepTake(was); }, 80);
+    }
   }, true);
 
-  /* いまのテイク番号にプレイリストを合わせる */
-  function syncTake() {
+  /* 押す前のテイクと今のテイクの差だけ、プレイリストを動かす */
+  function stepTake(was) {
     var p = cfg();
     if (!p || !p.on || !recMode()) return;
-    if (!rtcReady()) { flash("Mac と繋がっていません"); return; }
-    var tgt = Math.max(0, Math.min(p.plMax, curTake()));
-    var d = tgt - p.plCur;
+    var now = curTake();
+    var d = now - was;
     if (!d) return;
+    if (!rtcReady()) { flash("Mac と繋がっていません"); return; }
     rtcSend({ t: "pl", d: d })
-      .then(function () { p.plCur = tgt; store(); ok("テイク" + tgt); })
+      .then(function () { p.plCur = now; store(); })
       .catch(ng);
   }
 
