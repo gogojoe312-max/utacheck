@@ -10,7 +10,7 @@
   "use strict";
 
   var PT_VER = 2;
-  var PT_APPVER = "3.0";
+  var PT_APPVER = "3.1";
 
   /* 区切り名は Pro Tools のマーカー名と同一。送るのはこの配列の位置(index)で、
      名前からロケーション番号への解決は SoundFlow 側がやる。
@@ -567,10 +567,10 @@
         + '<span class="note">区切りCC</span><input id="ptccs" type="number" min="0" max="127" style="width:68px" value="' + p.ccSec + '">'
         + '<span class="note">テイクCC</span><input id="ptcct" type="number" min="0" max="127" style="width:68px" value="' + p.ccTake + '"></div>';
     } else if (md === "direct") {
-      wayHtml = (p.gistId
-        ? '<div class="fld"><input id="ptgid" type="text" style="flex:1 1 100%" value="' + esc(p.gistId) + '" readonly aria-label="Gist ID"></div>'
-        : '<div class="empty">まだ Gist がありません。顔合わせに使うので先に作ってください。</div>'
-          + '<div class="fld"><button class="btn acc" id="ptgnew">Gist を作る</button></div>')
+      wayHtml = '<div class="fld"><input id="ptgid" type="text" inputmode="text" autocapitalize="off" autocorrect="off" spellcheck="false" '
+        + 'style="flex:1 1 100%" placeholder="Gist ID（もう一方の端末に出ているもの）" value="' + esc(p.gistId) + '" aria-label="Gist ID"></div>'
+        + (p.gistId ? '' : '<div class="empty">まだ Gist がありません。片方の端末で作り、出てきた ID をもう一方に貼ってください。</div>'
+          + '<div class="fld"><button class="btn acc" id="ptgnew">この端末で作る</button></div>')
         + '<div class="fld">'
         + '<button class="btn ' + (rtcState === "on" ? "" : "acc") + '" id="ptrtc">'
         + (rtcState === "on" ? "繋ぎ直す" : rtcState === "connecting" ? "接続中…" : "Mac に繋ぐ") + '</button>'
@@ -690,7 +690,12 @@
     if (pb) pb.onclick = function () { rtcPing(); setTimeout(drawPanel, 400); };
 
     var gi = box.querySelector("#ptgid");
-    if (gi) gi.onclick = function () { gi.select(); };
+    if (gi) {
+      gi.onfocus = function () { gi.select(); };
+      gi.onchange = function () {
+        p.gistId = gi.value.trim(); lastErr = ""; rtcStop(); store(); paint(); drawPanel();
+      };
+    }
 
     var ps = box.querySelector("#ptport");
     if (ps) ps.onchange = function () { p.portName = ps.value; store(); paint(); };
