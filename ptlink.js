@@ -10,7 +10,7 @@
   "use strict";
 
   var PT_VER = 2;
-  var PT_APPVER = "5.2";
+  var PT_APPVER = "5.3";
 
   /* 区切り名は Pro Tools のマーカー名と同一。送るのはこの配列の位置(index)で、
      名前からロケーション番号への解決は SoundFlow 側がやる。
@@ -466,8 +466,10 @@
   function resetTakeOnSecChange() {
     var ls = liveSlot();
     if (!ls || !ls.secCur) return;
-    if (seenSec === ls.secCur) return;
+    if (seenSec === ls.secCur) return;   /* 同じ区切りに留まっている間は触らない */
+    var first = (seenSec === null);
     seenSec = ls.secCur;
+    if (first) return;                   /* 起動直後は今の状態をそのまま使う */
     if (!ls.takes) ls.takes = {};
     var want = (ls.secCur === REH ? 0 : 1);
     if (ls.takes[ls.secCur] !== want) {
