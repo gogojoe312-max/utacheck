@@ -10,7 +10,7 @@
   "use strict";
 
   var PT_VER = 2;
-  var PT_APPVER = "3.3";
+  var PT_APPVER = "3.4";
 
   /* 区切り名は Pro Tools のマーカー名と同一。送るのはこの配列の位置(index)で、
      名前からロケーション番号への解決は SoundFlow 側がやる。
@@ -353,15 +353,10 @@
     if (md === "midi") { flash("再生・録音は Gist かブリッジで動きます"); return; }
 
     if (md === "direct" && rtcReady()) {
-      var tgt = Math.max(1, Math.min(p.plMax, curTake()));
-      if (kind === "record" && p.autoSync && tgt !== p.plCur) {
-        rtcSend({ t: "pl", d: tgt - p.plCur }); p.plCur = tgt; store();
-      }
+      /* 1操作＝1メッセージにする。録音中に別の指示が割り込むと音が途切れるため、
+         プレイリスト合わせもテイク送りもここでは送らない。 */
       return rtcSend({ t: "cmd", c: kind })
-        .then(function () {
-          ok({ play: "再生", stop: "停止", record: "録音 テイク" + curTake() }[kind] || kind);
-          if (kind === "record") setTimeout(function(){ takeStep(1); }, 400);
-        })
+        .then(function () { ok({ play: "再生", stop: "停止", record: "録音" }[kind] || kind); })
         .catch(ng);
     }
 
