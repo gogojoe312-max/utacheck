@@ -10,7 +10,7 @@
   "use strict";
 
   var PT_VER = 2;
-  var PT_APPVER = "4.8";
+  var PT_APPVER = "4.9";
 
   /* 区切り名は Pro Tools のマーカー名と同一。送るのはこの配列の位置(index)で、
      名前からロケーション番号への解決は SoundFlow 側がやる。
@@ -383,7 +383,8 @@
     var run = md === "midi"
       ? connectMidi().then(function () { return midiSend(num, take); })
       : md === "direct" && rtcReady()
-        ? rtcSend({ t: "locate", n: num, take: take, sec: sec, hash: secHash(sec) })
+        ? rtcSend({ t: "locate", n: num, take: take, sec: sec, hash: secHash(sec),
+                     pl: Math.max(0, Math.min(p.plMax, take)) - p.plCur })
         : (md === "direct" || md === "gist")
           ? gistWrite(null)
           : bridgeSend({ type: "locate", n: num, take: take });
@@ -391,18 +392,10 @@
     return run.then(function () {
       lastErr = ""; paint();
       if (p.autoSync && md === "bridge") return syncPlaylist(take);
-      /* RH（テイク0）から他の区切り（テイク1）へ移った時だけ、
-         プレイリストを1つ下げる。毎回この流れになるため。 */
-      var prevSec = p.lastSec || "";
+      /* 区切りを移ったら、その区切りのテイク番号までプレイリストを合わせる。
+         2A に行けば テイク1 = .01 に戻る。 */
       p.lastSec = sec;
-      if (prevSec === "RH" && sec !== "RH" && take === 1 && p.plCur === 0) {
-        setTimeout(function () {
-          if (!rtcReady()) return;
-          rtcSend({ t: "pl", d: 1 }).then(function () { p.plCur = 1; store(); }).catch(function () {});
-        }, 400);
-      } else {
-        p.plCur = Math.max(0, Math.min(p.plMax, take));
-      }
+      p.plCur = Math.max(0, Math.min(p.plMax, take));
       store();
     }).catch(function (e) { lastSent = ""; ng(e); });
   }
@@ -513,38 +506,41 @@
       .catch(ng);
   }
 
-  /* 小節番号を長押しすると、その小節へ飛ぶ。短押しは今まで通り。 */
+  /* 小節番号を長押しすると、その小節へ飛ぶ。
+     アプリは pointerdown/pointerup を使うので、こちらも pointer で拾って先に止める。 */
   (function () {
-    var timer = null, fired = false;
+    var timer = null, fired = false, target = null;
     function barEl(t) { return t && t.closest ? t.closest('[data-act="rbar"]') : null; }
-    function start(el) {
+
+    document.addEventListener("pointerdown", function (e) {
+      var el = barEl(e.target);
+      if (!el || !recMode()) return;
+      fired = false; target = el;
+      clearTimeout(timer);
       timer = setTimeout(function () {
         fired = true;
         var n = parseInt((el.textContent || "").trim(), 10);
         if (n > 0) gotoBar(n);
-      }, 550);
+      }, 500);
+    }, true);
+
+    function stop(e) {
+      clearTimeout(timer); timer = null;
+      if (!fired) return;
+      /* 長押しで飛んだ後は、アプリ側の処理を全部止める */
+      e.preventDefault(); e.stopPropagation();
+      if (e.stopImmediatePropagation) e.stopImmediatePropagation();
     }
-    function cancel() { if (timer) { clearTimeout(timer); timer = null; } }
-    document.addEventListener("touchstart", function (e) {
-      var el = barEl(e.target); if (!el || !recMode()) return;
-      fired = false; start(el);
-    }, true);
-    document.addEventListener("touchend", function (e) {
-      cancel();
-      if (fired) { e.preventDefault(); e.stopPropagation(); }
-    }, true);
-    /* 長押しの後に来るクリックも止める。これがないと設定シートが開く。 */
+    document.addEventListener("pointerup", stop, true);
+    document.addEventListener("pointercancel", function () { clearTimeout(timer); fired = false; }, true);
+    document.addEventListener("pointermove", function () { clearTimeout(timer); }, true);
+    document.addEventListener("touchend", stop, true);
     document.addEventListener("click", function (e) {
       if (!fired) return;
       fired = false;
       e.preventDefault(); e.stopPropagation();
+      if (e.stopImmediatePropagation) e.stopImmediatePropagation();
     }, true);
-    document.addEventListener("touchmove", cancel, true);
-    document.addEventListener("mousedown", function (e) {
-      var el = barEl(e.target); if (!el || !recMode()) return;
-      fired = false; start(el);
-    }, true);
-    document.addEventListener("mouseup", cancel, true);
   })();
 
   /* ---------------- 見た目 ---------------- */

@@ -155,6 +155,11 @@ function handle(msg) {
       /* 区切り名の14bitハッシュを、CC番号(40〜103)と値(0〜127)に分けて1発で送る。
          SoundFlow 側は1メッセージだけで名前を復元できる。 */
       cc(40 + (msg.hash >> 7), msg.hash & 0x7F);
+      /* 続けてプレイリストも合わせる。間を空けないと SoundFlow の処理が重なる。 */
+      if (msg.pl) {
+        const d = Math.max(-32, Math.min(32, msg.pl | 0));
+        sleep(700).then(() => cc(22, 64 + d));
+      }
     } else {
       cc(20, msg.n);
     }
