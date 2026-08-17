@@ -10,7 +10,7 @@
   "use strict";
 
   var PT_VER = 2;
-  var PT_APPVER = "5.1";
+  var PT_APPVER = "5.2";
 
   /* 区切り名は Pro Tools のマーカー名と同一。送るのはこの配列の位置(index)で、
      名前からロケーション番号への解決は SoundFlow 側がやる。
@@ -361,18 +361,7 @@
     if (!sec) { if (loud) flash("進行中の曲がありません"); return Promise.resolve(); }
     var num = secIndex(sec);   /* 旧経路（MIDI直送）用。無くても送る */
     if (mode() === "direct" && !rtcReady()) { if (loud) flash("Mac と繋がっていません"); return Promise.resolve(); }
-    /* 区切りを移ったら、その区切りのテイクを必ず先頭に戻す。
-       RH は 0（プレイリスト無印）、他は 1（.01）。過去に何本録っていても戻す。 */
-    var ls = liveSlot();
-    if (ls) {
-      if (!ls.takes) ls.takes = {};
-      var want = (sec === REH ? 0 : 1);
-      if (ls.takes[sec] !== want && p.lastSec !== sec) {
-        ls.takes[sec] = want;
-        store();
-        if (typeof render === "function") { try { render(); } catch (e) { /* 描画失敗は無視 */ } }
-      }
-    }
+
     var take = curTake(), sig = sec + "#" + take;
     /* クリック検知と save() フックの両方から呼ばれるので、
        同じ区切りへの連続した送信は 800ms 以内なら捨てる。 */
@@ -471,11 +460,28 @@
   }
 
   /* 区切りが変わったら送る。save() を包んで拾う */
+  /* 区切りが変わったらテイクを先頭に戻す。RH は 0、他は 1。
+     接続の有無に関係なく必ず走らせたいので、送信処理とは切り離して save() 側で行う。 */
+  var seenSec = null;
+  function resetTakeOnSecChange() {
+    var ls = liveSlot();
+    if (!ls || !ls.secCur) return;
+    if (seenSec === ls.secCur) return;
+    seenSec = ls.secCur;
+    if (!ls.takes) ls.takes = {};
+    var want = (ls.secCur === REH ? 0 : 1);
+    if (ls.takes[ls.secCur] !== want) {
+      ls.takes[ls.secCur] = want;
+      try { if (typeof render === "function") render(); } catch (e) { /* 描画失敗は無視 */ }
+    }
+  }
+
   function hookSave() {
     if (typeof save !== "function" || save.__pt) return;
     var orig = save;
     var w = function () {
       var r = orig.apply(this, arguments);
+      try { resetTakeOnSecChange(); } catch (e) { /* 失敗で保存を壊さない */ }
       try { paint(); } catch (e) { /* 描画の失敗で保存を壊さない */ }
       try { sendLocate(false); } catch (e) { /* 送信の失敗で保存を壊さない */ }
       return r;
