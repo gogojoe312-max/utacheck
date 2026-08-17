@@ -10,7 +10,7 @@
   "use strict";
 
   var PT_VER = 2;
-  var PT_APPVER = "3.5";
+  var PT_APPVER = "3.6";
 
   /* 区切り名は Pro Tools のマーカー名と同一。送るのはこの配列の位置(index)で、
      名前からロケーション番号への解決は SoundFlow 側がやる。
@@ -365,7 +365,7 @@
       /* 1操作＝1メッセージにする。録音中に別の指示が割り込むと音が途切れるため、
          プレイリスト合わせもテイク送りもここでは送らない。 */
       return rtcSend({ t: "cmd", c: kind })
-        .then(function () { ok({ play: "再生", stop: "停止", record: "録音" }[kind] || kind); })
+        .then(function () { ok({ play: "再生", stop: "停止", record: "録音", ok: "OKトラックへ" }[kind] || kind); })
         .catch(ng);
     }
 
@@ -445,7 +445,7 @@
     + 'display:flex;align-items:center;justify-content:center}'
     + '#ptbar button.rec{color:var(--bad,#FF5C42);font-size:30px;flex:1.4}'
     + '#ptbar button.tk{flex:.7;font-size:20px;color:var(--dim,#79808B)}'
-    + '#ptbar button.cfg{flex:.55;font-size:15px;color:var(--dim,#79808B)}'
+    + '#ptbar button.ok{flex:1;font-size:18px;font-weight:700;color:var(--good,#5BC98A)}'
     + '#ptbar button:active{background:var(--accent,#F0B23C);color:#0A0A0A}'
     + '#ptwrap{position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.62);display:flex;align-items:flex-end;justify-content:center}'
     + '#ptbox{width:100%;max-width:520px;max-height:90vh;overflow:auto;background:var(--panel,#13151A);'
@@ -533,17 +533,13 @@
       bar = document.createElement("div");
       bar.id = "ptbar";
       bar.innerHTML =
-        '<button data-t="-1" class="tk" aria-label="テイクを1つ戻す">－</button>'
-        + '<button data-t="1" class="tk" aria-label="テイクを1つ進める">＋</button>'
-        + '<button data-k="stop" aria-label="停止">■</button>'
+        '<button data-k="stop" aria-label="停止">■</button>'
         + '<button data-k="play" aria-label="再生">▶</button>'
-        + '<button data-k="record" class="rec" aria-label="いまのテイク番号で録音">●</button>'
-        + '<button data-cfg="1" class="cfg" aria-label="Pro Tools 連動の設定">設定</button>';
+        + '<button data-k="record" class="rec" aria-label="録音">●</button>'
+        + '<button data-k="ok" class="ok" aria-label="OKトラックへ送る">OK</button>';
       bar.addEventListener("click", function (e) {
         var b = e.target.closest("button"); if (!b) return;
-        if (b.dataset.cfg) open();
-        else if (b.dataset.t) takeStep(Number(b.dataset.t));
-        else transport(b.dataset.k);
+        transport(b.dataset.k);
       });
       document.body.appendChild(bar);
     }

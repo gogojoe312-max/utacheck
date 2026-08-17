@@ -153,7 +153,7 @@ function handle(msg) {
     log((msg.sec || "") + " → 送信");
   }
   else if (msg.t === "pl") { cc(22, 64 + msg.d); log(`プレイリスト ${msg.d > 0 ? "+" : ""}${msg.d}`); }
-  else if (msg.t === "cmd") { cc(23, { play: 1, stop: 2, record: 3 }[msg.c] || 0); log("指示 " + msg.c); }
+  else if (msg.t === "cmd") { cc(23, { play: 1, stop: 2, record: 3, ok: 4 }[msg.c] || 0); log("指示 " + msg.c); }
   else if (msg.t === "ping" && dc && dc.readyState === "open") dc.send(JSON.stringify({ t: "pong", at: msg.at }));
 }
 
