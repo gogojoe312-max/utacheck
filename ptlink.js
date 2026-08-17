@@ -10,7 +10,7 @@
   "use strict";
 
   var PT_VER = 2;
-  var PT_APPVER = "4.5";
+  var PT_APPVER = "4.6";
 
   /* 区切り名は Pro Tools のマーカー名と同一。送るのはこの配列の位置(index)で、
      名前からロケーション番号への解決は SoundFlow 側がやる。
@@ -480,7 +480,24 @@
   document.addEventListener("click", function (e) {
     var b = e.target.closest && e.target.closest('[data-act="jumpsec"]');
     if (b) setTimeout(function () { sendLocate(true, true); }, 0);
+
+    /* アプリ本来のテイク増減ボタン。押した後の値でプレイリストを合わせる。 */
+    var t = e.target.closest && e.target.closest('[data-act="takeup"],[data-act="takedown"]');
+    if (t) setTimeout(function () { syncTake(); }, 60);
   }, true);
+
+  /* いまのテイク番号にプレイリストを合わせる */
+  function syncTake() {
+    var p = cfg();
+    if (!p || !p.on || !recMode()) return;
+    if (!rtcReady()) { flash("Mac と繋がっていません"); return; }
+    var tgt = Math.max(0, Math.min(p.plMax, curTake()));
+    var d = tgt - p.plCur;
+    if (!d) return;
+    rtcSend({ t: "pl", d: d })
+      .then(function () { p.plCur = tgt; store(); ok("テイク" + tgt); })
+      .catch(ng);
+  }
 
   /* 小節番号を長押しすると、その小節へ飛ぶ。短押しは今まで通り。 */
   (function () {
