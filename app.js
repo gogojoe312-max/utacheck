@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "13.0";
+const APP_VER = "13.1";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -4682,7 +4682,7 @@ function sectionOrder() {
   return named.concat(rest).map((v) => v.x);
 }
 // 区切りごとの持ち時間。既定は均等割り、直した分だけ覚える。
-const PREP = "準備";
+const PREP = "RH";
 const SECDEF = ["1A", "1B", "1C", "2A", "2B", "2C", "D", "落ち", "大サビ", "間奏"];
 // 歌メロに足すもの。区切りとは別に、行へ付ける表記。
 const TAGDEF = ["ガヤ", "フェイク", "ハモ", "コーラス", "掛け声", "アドリブ"];
@@ -5163,7 +5163,7 @@ function viewPlan() {
         <button class="chip sm" data-act="psetdef" data-id="-15">−15</button>
         <b style="min-width:38px;text-align:center">${S.planMin}分</b>
         <button class="chip sm" data-act="psetdef" data-id="15">＋15</button>
-        <span style="font-size:11px;color:var(--dim)">準備</span>
+        <span style="font-size:11px;color:var(--dim)">RH</span>
         <button class="chip sm" data-act="psetprep" data-id="-5">−5</button>
         <b style="min-width:34px;text-align:center">${S.planPrep}分</b>
         <button class="chip sm" data-act="psetprep" data-id="5">＋5</button>
