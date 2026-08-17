@@ -10,7 +10,7 @@
   "use strict";
 
   var PT_VER = 2;
-  var PT_APPVER = "3.2";
+  var PT_APPVER = "3.3";
 
   /* 区切り名は Pro Tools のマーカー名と同一。送るのはこの配列の位置(index)で、
      名前からロケーション番号への解決は SoundFlow 側がやる。
@@ -433,10 +433,10 @@
     + '#ptpill .dot{width:7px;height:7px;border-radius:50%;background:currentColor}'
     + '#ptpill.on{color:var(--good,#5BC98A)}#ptpill.err{color:var(--bad,#FF5C42)}'
     + '#ptbar{position:fixed;left:0;right:0;bottom:0;z-index:9998;display:flex;gap:6px;'
-    + 'padding:8px 8px calc(8px + env(safe-area-inset-bottom));'
+    + 'padding:6px 8px calc(6px + env(safe-area-inset-bottom));box-sizing:border-box;'
     + 'background:rgba(7,8,10,.92);border-top:1px solid var(--line,#242830);'
     + '-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}'
-    + '#ptbar button{flex:1;height:60px;border-radius:12px;background:var(--panel2,#1B1E25);'
+    + '#ptbar button{flex:1;height:56px;border-radius:12px;background:var(--panel2,#1B1E25);'
     + 'border:1px solid var(--line,#242830);color:var(--text,#EAE6DE);font-size:22px;'
     + 'display:flex;align-items:center;justify-content:center}'
     + '#ptbar button.rec{color:var(--bad,#FF5C42);font-size:30px;flex:1.4}'
@@ -470,7 +470,11 @@
     + '#pttoast{position:fixed;left:50%;transform:translateX(-50%);bottom:64px;z-index:10000;max-width:88vw;'
     + 'background:var(--accent,#F0B23C);color:#0A0A0A;font-size:12px;font-weight:700;padding:8px 14px;'
     + 'border-radius:999px;pointer-events:none;transition:opacity .25s;text-align:center}'
-    + '@media (prefers-reduced-motion:reduce){#pttoast{transition:none}}';
+    + '@media (prefers-reduced-motion:reduce){#pttoast{transition:none}}'
+    /* 操作バーがアプリの下端を隠さないよう、実測した高さぶん下げる */
+    + 'body.ptbar-on #app{bottom:var(--ptbar-h,68px)!important}'
+    + 'body.ptbar-on .bottom{padding-bottom:6px}'
+    + '#ptpill{bottom:calc(var(--ptbar-h,68px) + 8px)}';
 
   function injectCSS() {
     if (document.getElementById("ptcss")) return;
@@ -539,7 +543,18 @@
       });
       document.body.appendChild(bar);
     }
-    bar.style.display = (p.on && p.bar && mode() !== "midi") ? "flex" : "none";
+    var showBar = (p.on && p.bar && mode() !== "midi");
+    bar.style.display = showBar ? "flex" : "none";
+    document.body.classList.toggle("ptbar-on", showBar);
+    if (showBar) {
+      /* 実際に描かれた高さを測る。端末のセーフエリアぶんも込みになる */
+      requestAnimationFrame(function () {
+        var h = bar.offsetHeight;
+        if (h) document.documentElement.style.setProperty("--ptbar-h", h + "px");
+      });
+    } else {
+      document.documentElement.style.removeProperty("--ptbar-h");
+    }
 
     if (panel && panel.style.display !== "none") drawPanel();
   }
