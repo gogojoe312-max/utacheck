@@ -10,14 +10,12 @@
   "use strict";
 
   var PT_VER = 2;
-  var PT_APPVER = "2.0";
+  var PT_APPVER = "3.0";
 
-  var DEF_MAP = {
-    "1A": 11, "1B": 12, "1C": 13,
-    "2A": 21, "2B": 22, "2C": 23,
-    "D": 31, "落ち": 32, "大サビ": 33, "間奏": 41
-  };
-  var DEF_PRE = 1;              // プリロールの既定（小節）
+  /* 区切り名は Pro Tools のマーカー名と同一。送るのはこの配列の位置(index)で、
+     名前からロケーション番号への解決は SoundFlow 側がやる。
+     番号を持たないので、曲が変わっても設定は要らない。 */
+  var SECTIONS = ["1A","1B","1C","2A","2B","2C","T","Rap","D","DRap","3C","3C'","Inter"];
 
   var midi = null, midiErr = "";
   var lastSent = "", lastErr = "";
@@ -30,8 +28,7 @@
     var p = S.pt;
     if (!p || typeof p !== "object") p = S.pt = { ver: PT_VER };
     /* 移行：足りないものを足すだけ。既存の値は消さない */
-    if (p.map == null || typeof p.map !== "object") p.map = copy(DEF_MAP);
-    if (p.pre == null || typeof p.pre !== "object") p.pre = {};
+    /* 旧版の map / pre は使わなくなった。消さずに残す（巻き戻せるように） */
     if (typeof p.on !== "boolean") p.on = false;
     if (["auto", "direct", "gist", "bridge", "midi"].indexOf(p.mode) < 0) p.mode = "auto";
     if (typeof p.gistId !== "string") p.gistId = "";
@@ -68,18 +65,22 @@
     if (!s || !s.secCur) return 1;
     return Math.max(1, Number((s.takes || {})[s.secCur] || 1));
   }
-  function preOf(sec) {
-    var p = cfg(); if (!p) return DEF_PRE;
-    var v = p.pre[sec];
-    return v == null ? DEF_PRE : Number(v);
+  function secIndex(name) { return SECTIONS.indexOf(name); }
+
+  /* app.js の SECDEF を正準リストに揃える。const でも中身の差し替えは効く。
+     歌詞データは区切り名を文字列で持っているので壊れない。 */
+  function alignSecdef() {
+    if (typeof SECDEF === "undefined" || !Array.isArray(SECDEF)) return false;
+    var same = SECDEF.length === SECTIONS.length &&
+      SECDEF.every(function (v, i) { return v === SECTIONS[i]; });
+    if (same) return true;
+    try {
+      SECDEF.length = 0;
+      SECTIONS.forEach(function (x) { SECDEF.push(x); });
+      return true;
+    } catch (e) { return false; }
   }
-  function secNames() {
-    var base = (typeof SECDEF !== "undefined" && SECDEF) ? SECDEF.slice() : Object.keys(DEF_MAP);
-    var out = base.slice();
-    [].concat((S && S.secWords) || [], Object.keys((cfg() || {}).map || {}))
-      .forEach(function (n) { if (n && out.indexOf(n) < 0) out.push(n); });
-    return out;
-  }
+
 
   /* ---------------- 送り口：MIDI ---------------- */
   function midiUsable() { return !!navigator.requestMIDIAccess; }
@@ -241,9 +242,9 @@
     var body = Object.assign({
       seq: p.seq,
       sec: sec,
-      loc: sec && p.map[sec] != null ? Number(p.map[sec]) : null,
+      loc: sec ? secIndex(sec) : -1,
       take: curTake(),
-      pre: preOf(sec),
+      sections: SECTIONS,
       plMax: p.plMax,
       at: Date.now(),
     }, extra || {});
@@ -304,8 +305,8 @@
   function sendLocate(force) {
     var p = cfg(); if (!p || !p.on) return Promise.resolve();
     var sec = curSec(); if (!sec) return Promise.resolve();
-    var num = Number(p.map[sec]);
-    if (!(num >= 0 && num <= 999)) return Promise.resolve();   // 対応表にない区切りは送らない
+    var num = secIndex(sec);
+    if (num < 0) return Promise.resolve();   // 知らない区切りは送らない
     var take = curTake(), sig = sec + "#" + take;
     if (!force && sig === lastSent) return Promise.resolve();
     lastSent = sig;
@@ -317,7 +318,7 @@
         ? rtcSend({ t: "locate", n: num, take: take, sec: sec })
         : (md === "direct" || md === "gist")
           ? gistWrite(null)
-          : bridgeSend({ type: "locate", n: num, take: take, pre: preOf(sec) });
+          : bridgeSend({ type: "locate", n: num, take: take });
 
     return run.then(function () {
       ok(sec + " → " + num);
@@ -371,7 +372,7 @@
         .then(function () { ok("録音 テイク" + t + "（.0" + t + "）"); })
         .catch(ng);
     }
-    bridgeSend({ type: kind, pre: preOf(curSec()) })
+    bridgeSend({ type: kind })
       .then(function () { ok({ play: "再生", stop: "停止" }[kind] || kind); })
       .catch(ng);
   }
@@ -594,20 +595,10 @@
           + 'そのアドレスと、画面に出る合言葉をここに入れます。</div>');
     }
 
-    var names = secNames();
-    var mapHtml = names.map(function (n) {
-      var v = p.map[n], pr = p.pre[n];
-      return '<div class="maprow"><b>' + esc(n) + '</b>'
-        + '<input type="number" inputmode="numeric" min="0" max="999" data-sec="' + esc(n) + '" value="' + (v == null ? "" : v) + '" placeholder="—" aria-label="' + esc(n) + ' のロケーション番号">'
-        + '<span>番</span>'
-        + '<input type="number" inputmode="numeric" min="0" max="16" data-pre="' + esc(n) + '" value="' + (pr == null ? "" : pr) + '" placeholder="' + DEF_PRE + '" aria-label="' + esc(n) + ' のプリロール小節数">'
-        + '<span>小節前</span></div>';
-    }).join("");
-
     var sec = curSec();
     var nowTxt = sec
       ? esc(sec) + "（テイク " + curTake() + " / プレイリスト .0" + p.plCur + "）"
-        + (p.map[sec] != null ? " → ロケーション " + p.map[sec] + "・" + preOf(sec) + "小節前" : " → 対応表が空です")
+        + (secIndex(sec) >= 0 ? " → Pro Tools の「" + esc(sec) + "」へ" : " → この区切りは送りません")
       : "進行中の曲がありません。録音モードで曲を始めると、選んだ区切りをここに出します。";
 
     box.innerHTML =
@@ -634,10 +625,11 @@
 
       + '<div class="grp"><div class="lbl">' + (md === "midi" ? "MIDI の送り先" : "ブリッジ") + '</div>' + wayHtml + '</div>'
 
-      + '<div class="grp"><div class="lbl">区切り → ロケーション番号 / プリロール</div>'
-      + (names.length ? mapHtml : '<div class="empty">区切りがまだありません。曲に区切りを入れると、ここに並びます。</div>')
-      + '<div class="note" style="margin-top:8px">番号を空欄にすると、その区切りでは何も送りません。'
-      + 'プリロールは Pro Tools 側のメモリーロケーションに持たせる値の控えです。</div></div>'
+      + '<div class="grp"><div class="lbl">区切り</div>'
+      + '<div class="note">区切りの名前で、そのまま Pro Tools のマーカーを探します。'
+      + '番号の設定は要りません。曲を変えても、同じ名前のマーカーがあれば飛びます。'
+      + '同じ名前が複数ある時は、選択範囲つき（プリロールとトラック表示を持つほう）を優先します。</div>'
+      + '<div class="note" style="margin-top:8px">対象：<b>' + SECTIONS.join(" / ") + '</b></div></div>'
 
       + (md !== "midi" ? '<div class="grp"><div class="lbl">テイク同期</div>'
         + '<div class="fld">'
@@ -659,10 +651,7 @@
 
       + '<div class="grp"><div class="fld">'
       + '<button class="btn" id="ptclose" style="flex:1">閉じる</button>'
-      + '<button class="btn warn" id="ptreset">' + (resetArm ? "本当に初期化する" : "対応表を初期化") + '</button>'
-      + '</div>'
-      + (resetArm ? '<div class="note">対応表とプリロールを既定に戻します。もう一度押すと実行します。</div>' : '')
-      + '</div>';
+      + '</div></div>';
 
     /* --- 操作 --- */
     box.querySelector("#pton").onclick = function () {
@@ -674,10 +663,6 @@
     box.querySelector("#ptclose").onclick = close;
     box.querySelector("#ptbart").onclick = function () { p.bar = !p.bar; store(); paint(); drawPanel(); };
     box.querySelector("#ptpillt").onclick = function () { p.pill = !p.pill; store(); paint(); drawPanel(); };
-    box.querySelector("#ptreset").onclick = function () {
-      if (!resetArm) { resetArm = true; drawPanel(); return; }
-      p.map = copy(DEF_MAP); p.pre = {}; resetArm = false; store(); drawPanel(); flash("対応表を戻しました");
-    };
     Array.prototype.forEach.call(box.querySelectorAll("[data-mode]"), function (b) {
       b.onclick = function () {
         p.mode = b.dataset.mode; lastErr = ""; store();
@@ -726,22 +711,6 @@
     bindNum(box.querySelector("#ptccs"), 0, 127, function (v) { p.ccSec = v; });
     bindNum(box.querySelector("#ptcct"), 0, 127, function (v) { p.ccTake = v; });
 
-    Array.prototype.forEach.call(box.querySelectorAll("[data-sec]"), function (i) {
-      i.onchange = function () {
-        var k = i.dataset.sec, s = i.value.trim();
-        if (s === "") delete p.map[k];
-        else p.map[k] = Math.max(0, Math.min(999, Math.round(Number(s) || 0)));
-        store(); drawPanel();
-      };
-    });
-    Array.prototype.forEach.call(box.querySelectorAll("[data-pre]"), function (i) {
-      i.onchange = function () {
-        var k = i.dataset.pre, s = i.value.trim();
-        if (s === "") delete p.pre[k];
-        else p.pre[k] = Math.max(0, Math.min(16, Math.round(Number(s) || 0)));
-        store(); drawPanel();
-      };
-    });
   }
 
   function bindNum(el, lo, hi, set) {
@@ -760,7 +729,7 @@
   /* ---------------- 起動 ---------------- */
   function boot() {
     if (typeof S === "undefined") { setTimeout(boot, 400); return; }
-    injectCSS(); hookSave();
+    injectCSS(); alignSecdef(); hookSave();
     var p = cfg();
     if (p && p.on && mode() === "midi") connectMidi().then(paint); else paint();
     if (location.hash === "#ptlink") open();
