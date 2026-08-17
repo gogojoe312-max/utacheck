@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "13.2";
+const APP_VER = "13.3";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -3254,7 +3254,7 @@ function viewLive() {
     <button class="grow" style="text-align:left" data-act="picker">
       <div class="t1 clamp2">${S.recMode
         ? `<b style="color:var(--accent)">レコーディングモード</b>${s && s.folder ? " ・ " + h(s.folder) : ""}`
-        : `<b style="color:var(--accent)">ライブモード</b>${s ? " ・ " + h((S.groups.find((x) => x.id === s.groupId) || {}).name || "") : ""} ・ ${h(showName() || "公演名未設定")}`}${SONGS().length ? ` ・ ${U.songIdx + 1}/${SONGS().length}` : ""}${pushState ? ` ・ <span style="color:${pushState === "未送信" ? "var(--bad)" : "var(--dim)"}">${h(pushState)}</span>` : ""}</div>
+        : `<b style="color:var(--accent)">ライブモード</b>${s ? " ・ " + h((S.groups.find((x) => x.id === s.groupId) || {}).name || "") : ""} ・ ${h(showName() || "公演名未設定")}`}${SONGS().length ? ` ・ ${U.songIdx + 1}/${SONGS().length}` : ""}${pushState ? ` ・ <span style="color:${pushState === "未送信" ? "var(--bad)" : "var(--dim)"}">${h(pushState)}</span>` : ""}</div>${recWho()}
       ${VIEW() && S.pubAt ? `<div style="font-size:10px;line-height:1.4">${freshLine()}</div>` : ""}
       <div class="t2 clamp2">${s && s.mark ? `<b style="color:var(--accent)">★</b> ` : ""}${s && takeLabel(s) ? `<b class="tkmk">${h(takeLabel(s))}</b>` : ""}${h(s ? s.title : "曲がありません")}</div>
     </button>
@@ -4519,6 +4519,17 @@ function viewSetupRec() {
   </div>`;
 }
 
+// いま録っている人（進行で開いた人があればその人）。曲名と同じ大きさで出す。
+function recWho() {
+  if (!S.recMode) return "";
+  const rows = planRows();
+  const foc = S.planFocus ? rows.find((r) => r.s.id === S.planFocus) : null;
+  const r = foc || rows.find((x) => x.live);
+  if (!r || r.s.kind === "break") return "";
+  const tail = foc && !foc.live ? "" : "";
+  return `<div class="t1" style="color:var(--accent);font-weight:700">${h(r.s.name)}${tail}</div>`;
+}
+
 // 歌詞画面の下に、今の枠と残り時間を出す
 // 録りのテイク番号。区切りごとに数え、区切りが変わると1に戻る。
 function takeNo(slot) {
@@ -4541,7 +4552,7 @@ function recBar() {
   const tabList = secs.length ? secs : sectionOrder().map((nm) => ({ name: nm }));
   const tabs = tabList.map((e) => {
     const cls = (e.live || e.name === U.secView) ? "on" : e.done ? "dn" : "";
-    return `<button class="sectab ${cls}" id="tab-${h(e.name)}" data-act="jumpsec" data-id="${h(e.name)}">${e.done ? "✓" : ""}${h(e.name)}${e.min != null ? `<i>${e.done ? e.used : e.min}</i>` : ""}</button>`;
+    return `<button class="sectab ${cls}" id="tab-${h(e.name)}" data-act="jumpsec" data-id="${h(e.name)}">${e.done ? "✓" : ""}${h(e.name)}${false ? `<i>${e.done ? e.used : e.min}</i>` : ""}</button>`;
   }).join("");
 
   return `${tabs ? `<div class="sectabs">${tabs}</div>` : ""}
@@ -5064,7 +5075,7 @@ function viewPlan() {
           ${!r.done && !r.live && i === nextIdx ? `　<span style="color:var(--accent)">次</span>` : ""}
         </div>
       </button>
-      ${isBreak ? "" : `<button class="chip sm" data-act="psecopen" data-id="${s.id}"
+      ${isBreak ? "" : `<button class="chip sm" data-act="psecgo" data-id="${s.id}"
         style="${openSlot === s.id ? "background:var(--panel2);color:var(--accent);border:1px solid var(--accent)" : "color:var(--dim)"}">配分</button>`}
       ${r.live ? `<button class="chip sm" data-act="pretry" data-id="${s.id}" style="color:var(--dim)">やり直す</button>
           <button class="chip sm" data-act="pcancel" data-id="${s.id}" style="color:var(--bad)">取り消す</button>
@@ -6529,6 +6540,12 @@ document.addEventListener("click", (e) => {
       U.planSec = id || "";
       S.secAll = !S.secAll;
       save(); render(); break;
+    }
+    case "psecgo": {
+      // 人名を押したら、その人の歌詞画面へ行く。テイクは自分で選ぶ。
+      const sl = (S.plan.slots || []).find((x) => x.id === id);
+      if (sl) { S.planFocus = sl.id; U.view = "live"; save(); render(); }
+      break;
     }
     case "psecopen": {
       U.planSec = U.planSec === id ? "" : id;
