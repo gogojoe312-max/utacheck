@@ -142,11 +142,10 @@ function cc(num, val) {
 function handle(msg) {
   if (msg.t === "locate") {
     if (msg.take != null) cc(21, msg.take);
-    if (Array.isArray(msg.codes) && msg.codes.length) {
-      /* 区切り名を CC24 で1文字ずつ送り、CC25 で「名前おわり」を知らせる。
-         固定リストに無い区切り（2ARap など）もそのまま扱える。 */
-      msg.codes.forEach(function (v) { cc(24, v); });
-      cc(25, 1);
+    if (typeof msg.hash === "number") {
+      /* 区切り名の14bitハッシュを、CC番号(40〜103)と値(0〜127)に分けて1発で送る。
+         SoundFlow 側は1メッセージだけで名前を復元できる。 */
+      cc(40 + (msg.hash >> 7), msg.hash & 0x7F);
     } else {
       cc(20, msg.n);
     }

@@ -10,7 +10,7 @@
   "use strict";
 
   var PT_VER = 2;
-  var PT_APPVER = "3.6";
+  var PT_APPVER = "3.7";
 
   /* 区切り名は Pro Tools のマーカー名と同一。送るのはこの配列の位置(index)で、
      名前からロケーション番号への解決は SoundFlow 側がやる。
@@ -67,14 +67,12 @@
   }
   function secIndex(name) { return SECTIONS.indexOf(name); }
 
-  /* 区切り名を1文字ずつのコードにして送る。固定リストに縛られない。 */
-  function secToCodes(name) {
-    var out = [];
-    for (var i = 0; i < name.length && out.length < 24; i++) {
-      var c = name.charCodeAt(i);
-      out.push((c >> 7) & 0x7F, c & 0x7F);   // 上位7bit / 下位7bit
-    }
-    return out;
+  /* 区切り名を14bitの数値にする。CC番号と値に分けて1メッセージで運べる。
+     SoundFlow はメッセージごとに状態を保持できないため、必ず1発で送りきる。 */
+  function secHash(name) {
+    var x = 0;
+    for (var i = 0; i < name.length; i++) x = (x * 131 + name.charCodeAt(i)) % 8192;
+    return x;
   }
 
   /* app.js の SECDEF を正準リストに揃える。const でも中身の差し替えは効く。
@@ -328,7 +326,7 @@
     var run = md === "midi"
       ? connectMidi().then(function () { return midiSend(num, take); })
       : md === "direct" && rtcReady()
-        ? rtcSend({ t: "locate", n: num, take: take, sec: sec, codes: secToCodes(sec) })
+        ? rtcSend({ t: "locate", n: num, take: take, sec: sec, hash: secHash(sec) })
         : (md === "direct" || md === "gist")
           ? gistWrite(null)
           : bridgeSend({ type: "locate", n: num, take: take });
