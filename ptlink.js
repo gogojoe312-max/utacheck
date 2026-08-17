@@ -10,7 +10,7 @@
   "use strict";
 
   var PT_VER = 2;
-  var PT_APPVER = "4.0";
+  var PT_APPVER = "4.1";
 
   /* 区切り名は Pro Tools のマーカー名と同一。送るのはこの配列の位置(index)で、
      名前からロケーション番号への解決は SoundFlow 側がやる。
@@ -61,12 +61,14 @@
     return null;
   }
   function curSec() { var s = liveSlot(); return (s && s.secCur) || ""; }
+  var REH = "RH";   /* リハーサル。テイク0（プレイリストの無印）で録る */
+
   function curTake() {
     var s = liveSlot();
     if (!s || !s.secCur) return 1;
     var v = (s.takes || {})[s.secCur];
-    /* テイク0はリハ用。プレイリストの無印（Saito）に当たる。 */
-    return v == null ? 1 : Math.max(0, Number(v));
+    if (v == null) return s.secCur === REH ? 0 : 1;   /* 未設定なら RH は 0、他は 1 */
+    return Math.max(0, Number(v));
   }
   function secIndex(name) { return SECTIONS.indexOf(name); }
 
@@ -322,6 +324,16 @@
     if (!sec) { if (loud) flash("進行中の曲がありません"); return Promise.resolve(); }
     var num = secIndex(sec);   /* 旧経路（MIDI直送）用。無くても送る */
     if (mode() === "direct" && !rtcReady()) { if (loud) flash("Mac と繋がっていません"); return Promise.resolve(); }
+    /* 初めて選んだ区切りには既定のテイクを入れておく。RH は 0、他は 1。 */
+    var ls = liveSlot();
+    if (ls) {
+      if (!ls.takes) ls.takes = {};
+      if (ls.takes[sec] == null) {
+        ls.takes[sec] = (sec === REH ? 0 : 1);
+        store();
+        if (typeof render === "function") { try { render(); } catch (e) { /* 描画失敗は無視 */ } }
+      }
+    }
     var take = curTake(), sig = sec + "#" + take;
     if (!force && sig === lastSent) return Promise.resolve();
     lastSent = sig;
