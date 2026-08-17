@@ -10,7 +10,7 @@
   "use strict";
 
   var PT_VER = 2;
-  var PT_APPVER = "4.9";
+  var PT_APPVER = "5.0";
 
   /* 区切り名は Pro Tools のマーカー名と同一。送るのはこの配列の位置(index)で、
      名前からロケーション番号への解決は SoundFlow 側がやる。
@@ -519,7 +519,8 @@
       clearTimeout(timer);
       timer = setTimeout(function () {
         fired = true;
-        var n = parseInt((el.textContent || "").trim(), 10);
+        var mm = String(el.textContent || "").trim().match(/(\d+)\s*$/);
+        var n = mm ? Number(mm[1]) : 0;
         if (n > 0) gotoBar(n);
       }, 500);
     }, true);
@@ -895,5 +896,9 @@
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", function () { setTimeout(boot, 600); });
   else setTimeout(boot, 600);
 
-  window.PTLink = { open: open, locate: function () { return sendLocate(true); }, transport: transport, cfg: cfg };
+  window.PTLink = { open: open, locate: function () { return sendLocate(true); }, transport: transport, cfg: cfg,
+                    gotoBar: gotoBar, barOf: function (el) {
+                      var mm = String((el && el.textContent) || "").trim().match(/(\d+)\s*$/);
+                      return mm ? Number(mm[1]) : 0;
+                    } };
 })();
