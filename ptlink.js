@@ -10,7 +10,7 @@
   "use strict";
 
   var PT_VER = 2;
-  var PT_APPVER = "3.1";
+  var PT_APPVER = "3.2";
 
   /* 区切り名は Pro Tools のマーカー名と同一。送るのはこの配列の位置(index)で、
      名前からロケーション番号への解決は SoundFlow 側がやる。
@@ -39,7 +39,7 @@
     if (!(p.ch >= 1 && p.ch <= 16)) p.ch = 1;
     if (!(p.ccSec >= 0 && p.ccSec <= 127)) p.ccSec = 20;
     if (!(p.ccTake >= 0 && p.ccTake <= 127)) p.ccTake = 21;
-    if (typeof p.pill !== "boolean") p.pill = true;
+    p.pill = true;   /* 隠せると PWA で戻せなくなるので、常に出す */
     if (typeof p.bar !== "boolean") p.bar = false;
     /* Pro Tools がいま表示していると思われるプレイリストの番号（1始まり） */
     if (!(p.plCur >= 1 && p.plCur <= 32)) p.plCur = 1;
@@ -302,11 +302,15 @@
   function ok(msg) { lastErr = ""; flash(msg); paint(); }
   function ng(e) { lastErr = String(e.message || e); flash(lastErr); paint(); }
 
-  function sendLocate(force) {
-    var p = cfg(); if (!p || !p.on) return Promise.resolve();
-    var sec = curSec(); if (!sec) return Promise.resolve();
+  function sendLocate(force, loud) {
+    var p = cfg();
+    if (!p) return Promise.resolve();
+    if (!p.on) { if (loud) flash("連動がオフです"); return Promise.resolve(); }
+    var sec = curSec();
+    if (!sec) { if (loud) flash("進行中の曲がありません"); return Promise.resolve(); }
     var num = secIndex(sec);
-    if (num < 0) return Promise.resolve();   // 知らない区切りは送らない
+    if (num < 0) { if (loud) flash("「" + sec + "」は対象外の区切りです"); return Promise.resolve(); }
+    if (mode() === "direct" && !rtcReady()) { if (loud) flash("Mac と繋がっていません"); return Promise.resolve(); }
     var take = curTake(), sig = sec + "#" + take;
     if (!force && sig === lastSent) return Promise.resolve();
     lastSent = sig;
@@ -354,7 +358,10 @@
         rtcSend({ t: "pl", d: tgt - p.plCur }); p.plCur = tgt; store();
       }
       return rtcSend({ t: "cmd", c: kind })
-        .then(function () { ok({ play: "再生", stop: "停止", record: "録音 テイク" + curTake() }[kind] || kind); })
+        .then(function () {
+          ok({ play: "再生", stop: "停止", record: "録音 テイク" + curTake() }[kind] || kind);
+          if (kind === "record") setTimeout(function(){ takeStep(1); }, 400);
+        })
         .catch(ng);
     }
 
@@ -369,7 +376,7 @@
       var t = curTake();
       return syncPlaylist(t)
         .then(function () { return bridgeSend({ type: "record" }); })
-        .then(function () { ok("録音 テイク" + t + "（.0" + t + "）"); })
+        .then(function () { ok("録音 テイク" + t); setTimeout(function(){ takeStep(1); }, 400); })
         .catch(ng);
     }
     bridgeSend({ type: kind })
@@ -414,7 +421,7 @@
   }
   document.addEventListener("click", function (e) {
     var b = e.target.closest && e.target.closest('[data-act="jumpsec"]');
-    if (b) setTimeout(function () { sendLocate(true); }, 0);
+    if (b) setTimeout(function () { sendLocate(true, true); }, 0);
   }, true);
 
   /* ---------------- 見た目 ---------------- */
@@ -425,13 +432,16 @@
     + 'border:1px solid var(--line,#242830);opacity:.9}'
     + '#ptpill .dot{width:7px;height:7px;border-radius:50%;background:currentColor}'
     + '#ptpill.on{color:var(--good,#5BC98A)}#ptpill.err{color:var(--bad,#FF5C42)}'
-    + '#ptbar{position:fixed;right:10px;bottom:calc(10px + env(safe-area-inset-bottom));z-index:9998;'
-    + 'display:flex;flex-direction:column;gap:8px}'
-    + '#ptbar button{width:46px;height:46px;border-radius:50%;background:var(--panel2,#1B1E25);'
-    + 'border:1px solid var(--line,#242830);color:var(--text,#EAE6DE);font-size:16px;'
-    + 'display:flex;align-items:center;justify-content:center;opacity:.94}'
-    + '#ptbar button.rec{color:var(--bad,#FF5C42);font-size:22px}'
-    + '#ptbar button.tk{width:38px;height:38px;font-size:15px;color:var(--dim,#79808B);align-self:flex-end}'
+    + '#ptbar{position:fixed;left:0;right:0;bottom:0;z-index:9998;display:flex;gap:6px;'
+    + 'padding:8px 8px calc(8px + env(safe-area-inset-bottom));'
+    + 'background:rgba(7,8,10,.92);border-top:1px solid var(--line,#242830);'
+    + '-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}'
+    + '#ptbar button{flex:1;height:60px;border-radius:12px;background:var(--panel2,#1B1E25);'
+    + 'border:1px solid var(--line,#242830);color:var(--text,#EAE6DE);font-size:22px;'
+    + 'display:flex;align-items:center;justify-content:center}'
+    + '#ptbar button.rec{color:var(--bad,#FF5C42);font-size:30px;flex:1.4}'
+    + '#ptbar button.tk{flex:.7;font-size:20px;color:var(--dim,#79808B)}'
+    + '#ptbar button.cfg{flex:.55;font-size:15px;color:var(--dim,#79808B)}'
     + '#ptbar button:active{background:var(--accent,#F0B23C);color:#0A0A0A}'
     + '#ptwrap{position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.62);display:flex;align-items:flex-end;justify-content:center}'
     + '#ptbox{width:100%;max-width:520px;max-height:90vh;overflow:auto;background:var(--panel,#13151A);'
@@ -515,14 +525,16 @@
       bar = document.createElement("div");
       bar.id = "ptbar";
       bar.innerHTML =
-        '<button data-t="1" class="tk" aria-label="テイクを1つ進める">＋</button>'
-        + '<button data-k="record" class="rec" aria-label="いまのテイク番号で録音">●</button>'
-        + '<button data-k="play" aria-label="再生">▶</button>'
+        '<button data-t="-1" class="tk" aria-label="テイクを1つ戻す">－</button>'
+        + '<button data-t="1" class="tk" aria-label="テイクを1つ進める">＋</button>'
         + '<button data-k="stop" aria-label="停止">■</button>'
-        + '<button data-t="-1" class="tk" aria-label="テイクを1つ戻す">－</button>';
+        + '<button data-k="play" aria-label="再生">▶</button>'
+        + '<button data-k="record" class="rec" aria-label="いまのテイク番号で録音">●</button>'
+        + '<button data-cfg="1" class="cfg" aria-label="Pro Tools 連動の設定">設定</button>';
       bar.addEventListener("click", function (e) {
         var b = e.target.closest("button"); if (!b) return;
-        if (b.dataset.t) takeStep(Number(b.dataset.t));
+        if (b.dataset.cfg) open();
+        else if (b.dataset.t) takeStep(Number(b.dataset.t));
         else transport(b.dataset.k);
       });
       document.body.appendChild(bar);
@@ -645,9 +657,7 @@
 
       + '<div class="grp"><div class="lbl">表示</div><div class="fld">'
       + '<button class="btn" id="ptbart">操作ボタンを' + (p.bar ? "隠す" : "出す") + '</button>'
-      + '<button class="btn" id="ptpillt">バッジを' + (p.pill ? "隠す" : "出す") + '</button>'
-      + '</div><div class="note">操作ボタンは再生・停止・録音。ブリッジで繋がっている時だけ出ます。'
-      + 'バッジを隠した後は、アドレスの末尾に <b>#ptlink</b> を付けて開き直すとここに戻れます。</div></div>'
+      + '</div><div class="note">操作ボタンは画面下部に出ます。右端の「設定」からいつでもここに戻れます。</div></div>'
 
       + '<div class="grp"><div class="fld">'
       + '<button class="btn" id="ptclose" style="flex:1">閉じる</button>'
@@ -659,10 +669,9 @@
       if (p.on && mode() === "midi") connectMidi().then(paint); else paint();
       drawPanel();
     };
-    box.querySelector("#pttest").onclick = function () { sendLocate(true); };
+    box.querySelector("#pttest").onclick = function () { sendLocate(true, true); };
     box.querySelector("#ptclose").onclick = close;
     box.querySelector("#ptbart").onclick = function () { p.bar = !p.bar; store(); paint(); drawPanel(); };
-    box.querySelector("#ptpillt").onclick = function () { p.pill = !p.pill; store(); paint(); drawPanel(); };
     Array.prototype.forEach.call(box.querySelectorAll("[data-mode]"), function (b) {
       b.onclick = function () {
         p.mode = b.dataset.mode; lastErr = ""; store();
