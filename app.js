@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "12.7";
+const APP_VER = "12.8";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -3144,14 +3144,14 @@ function viewLive() {
   if (U.overview && s) return viewOverview(s);
 
   let body = "";
+  const fsec = s ? focusSec() : "";
+  const fset = fsec ? new Set(linesInSec(s, fsec)) : null;
   if (!s) {
     body = `<div style="padding:64px 26px;text-align:center;color:var(--dim);font-size:14px">曲がありません</div>`;
   } else {
     const ns0 = NOTES().filter((n) => n.songId === s.id && n.showId === S.showId && inTake(n));
     const gp = groupPos(s.lines);
     const vm = S.recMode ? vtMarks(s) : { head: [], info: [] };
-    const fsec = focusSec();
-    const fset = fsec ? new Set(linesInSec(s, fsec)) : null;
     // 表記の枠（ガヤなど）から飛べるよう、最初に出てくる行に目印を置く
     const tanc = {};
     if (S.recMode) {
