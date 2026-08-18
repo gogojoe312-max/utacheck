@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "13.5";
+const APP_VER = "13.6";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -4905,7 +4905,16 @@ function planRows() {
   const start = hm2min(p.start);
   const now = nowMin();
   let plan = start, cursor = start;
+  let lastDay = null;
   return slots.map((s) => {
+    // 予定表から取り込んだ枠は自分の開始時刻を持っている。
+    // 日が変わった時や、前の枠と繋がっていない時は、その時刻から数え直す。
+    if (s.at != null) {
+      const dayChanged = s.day && s.day !== lastDay;
+      if (dayChanged || plan !== s.at) { plan = s.at; cursor = s.at; }
+    }
+    if (s.day) lastDay = s.day;
+
     const pS = plan, pE = plan + Number(s.min || 0);
     plan = pE;
     const r = { s, pS, pE };
