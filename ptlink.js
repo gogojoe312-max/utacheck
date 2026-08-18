@@ -10,7 +10,7 @@
   "use strict";
 
   var PT_VER = 2;
-  var PT_APPVER = "5.3";
+  var PT_APPVER = "5.4";
 
   /* 区切り名は Pro Tools のマーカー名と同一。送るのはこの配列の位置(index)で、
      名前からロケーション番号への解決は SoundFlow 側がやる。
@@ -682,7 +682,12 @@
       });
       document.body.appendChild(bar);
     }
-    var showBar = (p.on && p.bar && mode() !== "midi");
+    /* 文字を打っている間は操作バーを引っ込める。
+       出したままだとシートの決定ボタンやキーボードの上に被さる。 */
+    var typing = !!(document.activeElement &&
+      /^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName));
+    var sheetOpen = !!document.querySelector(".mask");
+    var showBar = (p.on && p.bar && mode() !== "midi" && !typing && !sheetOpen);
     bar.style.display = showBar ? "flex" : "none";
     document.body.classList.toggle("ptbar-on", showBar);
     if (showBar) {
@@ -896,6 +901,10 @@
     if (location.hash === "#ptlink") open();
   }
   window.addEventListener("hashchange", function () { if (location.hash === "#ptlink") open(); });
+
+  /* 入力欄に入った・出た時に、操作バーの出し入れを合わせる */
+  document.addEventListener("focusin", function () { setTimeout(paint, 30); }, true);
+  document.addEventListener("focusout", function () { setTimeout(paint, 120); }, true);
 
   /* レコーディング／ライブの切り替えは save() を伴わないことがあるので、
      モードが変わった時だけ描画し直す。 */
