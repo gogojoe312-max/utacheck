@@ -10,7 +10,7 @@
   "use strict";
 
   var PT_VER = 2;
-  var PT_APPVER = "5.4";
+  var PT_APPVER = "5.5";
 
   /* 区切り名は Pro Tools のマーカー名と同一。送るのはこの配列の位置(index)で、
      名前からロケーション番号への解決は SoundFlow 側がやる。
@@ -556,7 +556,7 @@
 
   /* ---------------- 見た目 ---------------- */
   var CSS = ''
-    + '#ptpill{position:fixed;left:10px;bottom:calc(10px + env(safe-area-inset-bottom));z-index:9998;'
+    + '#ptpill{flex:0 0 auto;margin-left:4px;'
     + 'height:26px;padding:0 10px;border-radius:999px;background:var(--panel2,#1B1E25);color:var(--dim,#79808B);'
     + 'font-size:11px;font-weight:700;letter-spacing:.04em;display:flex;align-items:center;gap:6px;'
     + 'border:1px solid var(--line,#242830);opacity:.9}'
@@ -603,8 +603,7 @@
     + '@media (prefers-reduced-motion:reduce){#pttoast{transition:none}}'
     /* 操作バーがアプリの下端を隠さないよう、実測した高さぶん下げる */
     + 'body.ptbar-on #app{bottom:var(--ptbar-h,68px)!important}'
-    + 'body.ptbar-on .bottom{padding-bottom:6px}'
-    + '#ptpill{bottom:calc(var(--ptbar-h,68px) + 8px)}';
+    + 'body.ptbar-on .bottom{padding-bottom:6px}';
 
   function injectCSS() {
     if (document.getElementById("ptcss")) return;
@@ -632,9 +631,10 @@
       return o ? { cls: "on", txt: "PT " + o.name.slice(0, 10) } : { cls: "err", txt: "PT 未接続" };
     }
     if (mode() === "direct") {
-      if (rtcState === "on") return { cls: "on", txt: "PT 直結" + (rtcRtt != null ? " " + rtcRtt + "ms" : "") };
-      if (rtcState === "connecting") return { cls: "", txt: "PT 接続中" };
-      return p.gistId ? { cls: "err", txt: "PT 未接続" } : { cls: "err", txt: "PT 未設定" };
+      /* ヘッダーに並べるので短く出す */
+      if (rtcState === "on") return { cls: "on", txt: "PT" };
+      if (rtcState === "connecting") return { cls: "", txt: "PT…" };
+      return { cls: "err", txt: "PT" };
     }
     if (mode() === "gist") return p.gistId ? { cls: "on", txt: "PT Gist" } : { cls: "err", txt: "PT 未設定" };
     return p.url ? { cls: "on", txt: "PT ブリッジ" } : { cls: "err", txt: "PT 未設定" };
@@ -660,7 +660,13 @@
       pill.id = "ptpill";
       pill.innerHTML = '<span class="dot"></span><span class="tx"></span>';
       pill.addEventListener("click", open);
-      document.body.appendChild(pill);
+    }
+    /* 画面上部のボタン列に並べる。左下に浮かせるとアプリのボタンが押せなくなるため。
+       アプリが描き直すと消えるので、その都度入れ直す。 */
+    var hd = document.querySelector(".hd");
+    if (hd && pill.parentElement !== hd) {
+      var setBtn = hd.querySelector('[data-act="go-setup"]');
+      if (setBtn) hd.insertBefore(pill, setBtn); else hd.appendChild(pill);
     }
     var st = status();
     pill.className = st.cls;
@@ -911,6 +917,7 @@
   setInterval(function () {
     var now = recMode();
     if (now !== lastRecMode) { lastRecMode = now; try { paint(); } catch (e) { /* 無視 */ } }
+    else if (now && pill && !pill.isConnected) { try { paint(); } catch (e) { /* 無視 */ } }
   }, 700);
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", function () { setTimeout(boot, 600); });
   else setTimeout(boot, 600);
