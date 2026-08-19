@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "14.4";
+const APP_VER = "14.5";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -3285,7 +3285,7 @@ function viewLive() {
     <button class="grow" style="text-align:left" data-act="picker">
       <div class="t1" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px">${S.recMode
         ? `<b style="color:var(--accent)">レコーディングモード</b>${s ? " ・ " + h((S.groups.find((x) => x.id === s.groupId) || {}).name || s.folder || "") : ""}`
-        : `<b style="color:var(--accent)">ライブモード</b>${s ? " ・ " + h((S.groups.find((x) => x.id === s.groupId) || {}).name || "") : ""} ・ ${h(showName() || "公演名未設定")}${SONGS().length ? ` ・ ${U.songIdx + 1}/${SONGS().length}` : ""}${pushState ? ` ・ <span style="color:${pushState === "未送信" ? "var(--bad)" : "var(--dim)"}">${h(pushState)}</span>` : ""}`}</div>${recWho()}
+        : `<b style="color:var(--accent)">ライブモード</b>${s ? " ・ " + h((S.groups.find((x) => x.id === s.groupId) || {}).name || "") : ""} ・ ${h(showName() || "公演名未設定")}${SONGS().length ? ` ・ ${U.songIdx + 1}/${SONGS().length}` : ""}${pushState ? ` ・ <span style="color:${pushState === "未送信" ? "var(--bad)" : "var(--dim)"}">${h(pushState)}</span>` : ""}`}${recWho()}</div>
       ${VIEW() && S.pubAt ? `<div style="font-size:10px;line-height:1.4">${freshLine()}</div>` : ""}
       <div class="t2 clamp2">${s && s.mark ? `<b style="color:var(--accent)">★</b> ` : ""}${s && takeLabel(s) ? `<b class="tkmk">${h(takeLabel(s))}</b>` : ""}${h(s ? s.title : "曲がありません")}</div>
     </button>
@@ -4557,7 +4557,7 @@ function recWho() {
   const r = foc || rows.find((x) => x.live);
   if (!r || r.s.kind === "break") return "";
   const tail = foc && !foc.live ? "" : "";
-  return `<div class="t1" style="color:var(--accent);font-weight:700">${h(r.s.name)}${tail}</div>`;
+  return `<span style="color:var(--accent);font-weight:700">　${h(r.s.name)}${tail}</span>`;
 }
 
 // 歌詞画面の下に、今の枠と残り時間を出す
