@@ -10,7 +10,7 @@
   "use strict";
 
   var PT_VER = 2;
-  var PT_APPVER = "5.6";
+  var PT_APPVER = "5.7";
 
   /* 区切り名は Pro Tools のマーカー名と同一。送るのはこの配列の位置(index)で、
      名前からロケーション番号への解決は SoundFlow 側がやる。
@@ -557,8 +557,8 @@
   /* ---------------- 見た目 ---------------- */
   var CSS = ''
     + '#ptpill{flex:0 0 auto;margin-left:4px;'
-    + 'height:26px;padding:0 10px;border-radius:999px;background:var(--panel2,#1B1E25);color:var(--dim,#79808B);'
-    + 'font-size:11px;font-weight:700;letter-spacing:.04em;display:flex;align-items:center;gap:6px;'
+    + 'height:26px;padding:0 8px;border-radius:999px;white-space:nowrap;background:var(--panel2,#1B1E25);color:var(--dim,#79808B);'
+    + 'font-size:10px;font-weight:700;letter-spacing:0;display:flex;align-items:center;gap:6px;'
     + 'border:1px solid var(--line,#242830);opacity:.9}'
     + '#ptpill .dot{width:7px;height:7px;border-radius:50%;background:currentColor}'
     + '#ptpill.on{color:var(--good,#5BC98A)}#ptpill.err{color:var(--bad,#FF5C42)}'
@@ -631,10 +631,9 @@
       return o ? { cls: "on", txt: "PT " + o.name.slice(0, 10) } : { cls: "err", txt: "PT 未接続" };
     }
     if (mode() === "direct") {
-      /* ヘッダーに並べるので短く出す */
-      if (rtcState === "on") return { cls: "on", txt: "PT" };
-      if (rtcState === "connecting") return { cls: "", txt: "PT…" };
-      return { cls: "err", txt: "PT" };
+      if (rtcState === "on") return { cls: "on", txt: "PT接続" };
+      if (rtcState === "connecting") return { cls: "", txt: "PT接続中" };
+      return { cls: "err", txt: "PT未接続" };
     }
     if (mode() === "gist") return p.gistId ? { cls: "on", txt: "PT Gist" } : { cls: "err", txt: "PT 未設定" };
     return p.url ? { cls: "on", txt: "PT ブリッジ" } : { cls: "err", txt: "PT 未設定" };
@@ -665,8 +664,9 @@
        アプリが描き直すと消えるので、その都度入れ直す。 */
     var hd = document.querySelector(".hd");
     if (hd && pill.parentElement !== hd) {
-      var setBtn = hd.querySelector('[data-act="go-setup"]');
-      if (setBtn) hd.insertBefore(pill, setBtn); else hd.appendChild(pill);
+      var anchor = hd.querySelector('[data-act="overview"]')
+        || hd.querySelector('[data-act="go-setup"]');
+      if (anchor) hd.insertBefore(pill, anchor); else hd.appendChild(pill);
     }
     var st = status();
     pill.className = st.cls;
