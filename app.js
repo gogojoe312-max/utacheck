@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "14.5";
+const APP_VER = "14.6";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -4581,13 +4581,13 @@ function recBar() {
 
   const tabList = secs.length ? secs : sectionOrder().map((nm) => ({ name: nm }));
   const tabs = tabList.map((e) => {
-    const cls = (e.live || e.name === U.secView) ? "on" : e.done ? "dn" : "";
+    const cls = (e.live || e.name === U.secView || tagBase(U.secView) === e.name) ? "on" : e.done ? "dn" : "";
     return `<button class="sectab ${cls}" id="tab-${h(e.name)}" data-act="jumpsec" data-id="${h(e.name)}">${e.done ? "✓" : ""}${h(e.name)}${false ? `<i>${e.done ? e.used : e.min}</i>` : ""}</button>`;
   }).join("");
 
   /* Gaya のような表記を選んでいる時は、Gaya1 Gaya2 … を小さく並べる。
      ひとつずつ順に録れるようにするため。 */
-  const openTag = tagBase(U.secView || (cur ? cur.name : "")) ;
+  const openTag = tagBase(U.secView || (cur ? cur.name : ""));
   let subTabs = "";
   if (openTag && isTagSec(openTag)) {
     const so2 = recSong();
