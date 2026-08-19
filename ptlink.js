@@ -10,7 +10,7 @@
   "use strict";
 
   var PT_VER = 2;
-  var PT_APPVER = "5.8";
+  var PT_APPVER = "5.9";
 
   /* 区切り名は Pro Tools のマーカー名と同一。送るのはこの配列の位置(index)で、
      名前からロケーション番号への解決は SoundFlow 側がやる。
@@ -363,6 +363,9 @@
     if (mode() === "direct" && !rtcReady()) { if (loud) flash("Mac と繋がっていません"); return Promise.resolve(); }
 
     var take = curTake(), sig = sec + "#" + take;
+    /* 区切りが変わった時だけプレイリストを合わせる。
+       テイク増減で呼ばれた時に送ると、増減の分と二重になる。 */
+    var secChanged = (p.lastSec !== sec);
     /* クリック検知と save() フックの両方から呼ばれるので、
        同じ区切りへの連続した送信は 800ms 以内なら捨てる。 */
     var now = Date.now();
@@ -375,7 +378,7 @@
       ? connectMidi().then(function () { return midiSend(num, take); })
       : md === "direct" && rtcReady()
         ? rtcSend({ t: "locate", n: num, take: take, sec: sec, hash: secHash(sec),
-                     pl: Math.max(0, Math.min(p.plMax, take)) - p.plCur })
+                     pl: secChanged ? Math.max(0, Math.min(p.plMax, take)) - p.plCur : 0 })
         : (md === "direct" || md === "gist")
           ? gistWrite(null)
           : bridgeSend({ type: "locate", n: num, take: take });
@@ -386,7 +389,7 @@
       /* 区切りを移ったら、その区切りのテイク番号までプレイリストを合わせる。
          2A に行けば テイク1 = .01 に戻る。 */
       p.lastSec = sec;
-      p.plCur = Math.max(0, Math.min(p.plMax, take));
+      if (secChanged) p.plCur = Math.max(0, Math.min(p.plMax, take));
       store();
     }).catch(function (e) { lastSent = ""; ng(e); });
   }
