@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "14.0";
+const APP_VER = "14.1";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -911,13 +911,14 @@ const SONGS = () => (S.recMode
   : S.songs.filter((x) => x.showId === S.showId));
 // 同じ曲に複数テイクがあれば、テイク1にも番号を出す。
 // 1本しかない曲には付けない（全曲に「テイク1」が並ぶと読みにくいため）。
+// レコーディングでは常に番号を出す（テイク1も）。
+// ライブでは、同じ曲に複数テイクがある時だけ出す。
 const takeLabel = (x) => {
   if (!x) return "";
   const n = Number(x.take || 1);
-  if (n > 1) return `テイク${n}`;
-  const list = S.recMode ? (S.rsongs || []) : (S.songs || []);
-  const same = list.filter((y) => y && y.title === x.title
-    && (S.recMode || (y.showId === x.showId && y.groupId === x.groupId)));
+  if (S.recMode || n > 1) return `テイク${n}`;
+  const same = (S.songs || []).filter((y) => y && y.title === x.title
+    && y.showId === x.showId && y.groupId === x.groupId);
   return same.length > 1 ? `テイク${n}` : "";
 };
 const songName = (x) => x ? ((takeLabel(x) ? takeLabel(x) + "　" : "") + x.title) : "";
@@ -3262,7 +3263,7 @@ function viewLive() {
     </div>` : ""}
   <div class="hd">
     <button class="grow" style="text-align:left" data-act="picker">
-      <div class="t1" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${S.recMode
+      <div class="t1" style="word-break:break-word">${S.recMode
         ? `<b style="color:var(--accent)">レコーディングモード</b>${s ? " ・ " + h((S.groups.find((x) => x.id === s.groupId) || {}).name || s.folder || "") : ""}`
         : `<b style="color:var(--accent)">ライブモード</b>${s ? " ・ " + h((S.groups.find((x) => x.id === s.groupId) || {}).name || "") : ""} ・ ${h(showName() || "公演名未設定")}${SONGS().length ? ` ・ ${U.songIdx + 1}/${SONGS().length}` : ""}${pushState ? ` ・ <span style="color:${pushState === "未送信" ? "var(--bad)" : "var(--dim)"}">${h(pushState)}</span>` : ""}`}</div>${recWho()}
       ${VIEW() && S.pubAt ? `<div style="font-size:10px;line-height:1.4">${freshLine()}</div>` : ""}
@@ -3798,7 +3799,7 @@ function renderSheet() {
       ${VIEW() && unreadSongs().length ? `<div class="sec">
         <button class="ghost" data-act="readall" style="text-align:left;color:var(--accent)">未読 ${unreadSongs().length}曲 をすべて既読にする</button>
       </div>` : ""}
-      ${S.members.length ? `<div class="sec"><h4>注目するメンバー</h4><div class="chips">
+      ${S.members.length && !S.recMode ? `<div class="sec"><h4>注目するメンバー</h4><div class="chips">
         <button class="chip sm" data-act="focus" data-id="" style="${!U.focus ? "background:var(--accent);color:#0A0A0A" : ""}">なし</button>
         ${focusList().map((m) => `<button class="chip sm" data-act="focus" data-id="${m.id}"
             style="${U.focus === m.id ? "background:#4C9BFF;color:#0A0A0A" : ""}">${h(m.name)}</button>`).join("")}
@@ -3848,7 +3849,7 @@ ${shows}</div>
       ${VIEW() && unreadSongs().length ? `<div class="sec">
         <button class="ghost" data-act="readall" style="text-align:left;color:var(--accent)">未読 ${unreadSongs().length}曲 をすべて既読にする</button>
       </div>` : ""}
-      ${S.members.length ? `<div class="sec"><h4>注目するメンバー</h4><div class="chips">
+      ${S.members.length && !S.recMode ? `<div class="sec"><h4>注目するメンバー</h4><div class="chips">
         <button class="chip sm" data-act="focus" data-id="" style="${!U.focus ? "background:var(--accent);color:#0A0A0A" : ""}">なし</button>
         ${focusList().map((m) => `<button class="chip sm" data-act="focus" data-id="${m.id}"
             style="${U.focus === m.id ? "background:#4C9BFF;color:#0A0A0A" : ""}">${h(m.name)}</button>`).join("")}
