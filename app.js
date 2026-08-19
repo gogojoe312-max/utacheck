@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "15.4";
+const APP_VER = "15.5";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -5091,8 +5091,10 @@ function viewPlan() {
   const dayList = [...new Set(allRows.map((r) => r.s.day).filter(Boolean))];
   // 日付が複数ある時は、その日だけを見られるようにする
   const pickDay = dayList.length > 1 && U.planDay && dayList.includes(U.planDay) ? U.planDay : "";
-  /* 終わった枠は出さない。残っているものだけ見えれば足りる。 */
-  const shown = allRows.filter((r) => !r.done);
+  /* 終わった枠は隠す。ただし今日の分は、終わっても残しておく。 */
+  const td = new Date();
+  const todayStr = `${td.getMonth() + 1}/${td.getDate()}`;
+  const shown = allRows.filter((r) => !r.done || r.s.day === todayStr);
   const rows = pickDay ? shown.filter((r) => r.s.day === pickDay) : shown;
   const now = nowMin();
   // 配分を開く枠。何も開いていなければ、今やっている枠を開いておく。
