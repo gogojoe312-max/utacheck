@@ -10,7 +10,7 @@
   "use strict";
 
   var PT_VER = 2;
-  var PT_APPVER = "5.5";
+  var PT_APPVER = "5.6";
 
   /* 区切り名は Pro Tools のマーカー名と同一。送るのはこの配列の位置(index)で、
      名前からロケーション番号への解決は SoundFlow 側がやる。
@@ -785,7 +785,6 @@
 
       + '<div class="grp"><div class="fld">'
       + '<button class="btn ' + (p.on ? "acc" : "") + '" id="pton">' + (p.on ? "オン" : "オフ") + '</button>'
-      + '<button class="btn" id="pttest">いまの区切りを送る</button>'
       + '</div><div class="note">' + nowTxt + '</div>'
       + (lastErr ? '<div class="note bad" style="margin-top:6px">' + esc(lastErr) + '</div>' : '')
       + '</div>'
@@ -824,7 +823,6 @@
       if (p.on && mode() === "midi") connectMidi().then(paint); else paint();
       drawPanel();
     };
-    box.querySelector("#pttest").onclick = function () { sendLocate(true, true); };
     box.querySelector("#ptclose").onclick = close;
     box.querySelector("#ptbart").onclick = function () { p.bar = !p.bar; store(); paint(); drawPanel(); };
     Array.prototype.forEach.call(box.querySelectorAll("[data-mode]"), function (b) {
