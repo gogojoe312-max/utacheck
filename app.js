@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "15.2";
+const APP_VER = "15.3";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -5134,11 +5134,7 @@ function viewPlan() {
 
   const list = rows.map((r, i) => {
     const s = r.s;
-    const newDay = s.day && s.day !== ((rows[i - 1] || {}).s || {}).day;
-    const dayHead = newDay ? `<div class="row" style="margin:14px 0 6px">
-      <b style="font-size:12px;color:var(--accent)">${h(s.day)}</b>
-      ${s.place ? `<span style="font-size:11px;color:var(--dim)">${h(s.place)}</span>` : ""}
-    </div>` : "";
+    const dayHead = "";   /* 日付の見出しは出さない */
     const isBreak = s.kind === "break";
     const col = r.live ? "var(--accent)" : r.done ? "var(--dim)" : isBreak ? "#7FB3FF" : "var(--text)";
     const diff = r.done ? (r.aE - r.aS) - Number(s.min || 0) : 0;
