@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "15.5";
+const APP_VER = "15.6";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -4575,7 +4575,9 @@ function takeNo(slot) {
 function recBar() {
   const rows = planRows();
   const now = nowMin();
-  const live = rows.find((r) => r.live);
+  /* 進行で人を押していればその人。押していなければ進行中の人。 */
+  const foc = S.planFocus ? rows.find((r) => r.s.id === S.planFocus) : null;
+  const live = (foc && foc.s.kind !== "break") ? foc : rows.find((r) => r.live);
   const next = rows.find((r) => !r.done && !r.live);
   const secs = live ? sectionsOf(live.s) : [];
   const cur = secs.find((x) => x.live);
