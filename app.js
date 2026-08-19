@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "15.1";
+const APP_VER = "15.2";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -4691,7 +4691,8 @@ function tickPlan() {
   const el2 = document.getElementById("pcd2");
   const live = planRows().find((r) => r.live);
   if (!live) { if (el) el.textContent = "—"; if (el2) el2.textContent = ""; return; }
-  if (el2) {
+  if (el2 && !live.s.startAt) { el2.textContent = ""; }
+  else if (el2) {
     const all = Number(live.s.min || 0) * 60 - (live.s.startAt ? (Date.now() - live.s.startAt) / 1000 : 0);
     const g = slotGap(live.s);
     el2.textContent = fmtLeft(all) + (g != null && g !== 0 ? (g > 0 ? "  +" + g + "分" : "  −" + (-g) + "分") : "");
@@ -5090,7 +5091,9 @@ function viewPlan() {
   const dayList = [...new Set(allRows.map((r) => r.s.day).filter(Boolean))];
   // 日付が複数ある時は、その日だけを見られるようにする
   const pickDay = dayList.length > 1 && U.planDay && dayList.includes(U.planDay) ? U.planDay : "";
-  const rows = pickDay ? allRows.filter((r) => r.s.day === pickDay) : allRows;
+  /* 終わった枠は出さない。残っているものだけ見えれば足りる。 */
+  const shown = allRows.filter((r) => !r.done);
+  const rows = pickDay ? shown.filter((r) => r.s.day === pickDay) : shown;
   const now = nowMin();
   // 配分を開く枠。何も開いていなければ、今やっている枠を開いておく。
   const liveSlotId = (rows.find((r) => r.live) || { s: {} }).s.id || "";
