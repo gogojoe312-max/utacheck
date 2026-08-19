@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "14.7";
+const APP_VER = "14.8";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -3146,7 +3146,8 @@ function linesInSec(so, nm) {
   const ls = so.lines || [];
   const out = [];
   if (!nm) return out;
-  const isTag = tagSecNames().includes(nm);
+  // Gaya1 のような枝番も、表記の枠として扱う
+  const isTag = tagSecNames().includes(nm) || tagSecNames().includes(tagBase(nm));
   ls.forEach((l, i) => {
     if (l.gap) return;
     /* Gaya を選べば Gaya1 も Gaya2 も出す。Gaya2 を選べばその分だけ。 */
