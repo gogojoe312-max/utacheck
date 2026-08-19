@@ -10,7 +10,7 @@
   "use strict";
 
   var PT_VER = 2;
-  var PT_APPVER = "6.0";
+  var PT_APPVER = "6.1";
 
   /* 区切り名は Pro Tools のマーカー名と同一。送るのはこの配列の位置(index)で、
      名前からロケーション番号への解決は SoundFlow 側がやる。
@@ -378,7 +378,7 @@
       ? connectMidi().then(function () { return midiSend(num, take); })
       : md === "direct" && rtcReady()
         ? rtcSend({ t: "locate", n: num, take: take, sec: sec, hash: secHash(sec),
-                     pl: secChanged ? Math.max(0, Math.min(p.plMax, take)) - p.plCur : 0 })
+                     pl: 0 })
         : (md === "direct" || md === "gist")
           ? gistWrite(null)
           : bridgeSend({ type: "locate", n: num, take: take });
@@ -417,9 +417,9 @@
          プレイリスト合わせもテイク送りもここでは送らない。 */
       return rtcSend({ t: "cmd", c: kind })
         .then(function () {
-          /* 録音は SoundFlow 側の「3」のマクロがプレイリストを1つ進めるので、
-             こちらは記録だけ合わせる。二重に送らない。 */
-          if (kind === "record") { p.plCur = Math.min(p.plMax, p.plCur + 1); store(); }
+          /* 録音したらテイクを1つ進める。
+             Pro Tools のプレイリストは SoundFlow の「3」のマクロが動かす。 */
+          if (kind === "record") bumpTake();
           ok({ play: "再生", stop: "停止", record: "録音", ok: "OKトラックへ" }[kind] || kind);
         })
         .catch(ng);
@@ -459,8 +459,7 @@
     if (!p.on) { paint(); flash("テイク" + next); return; }
     if (p.autoSync && md === "bridge") syncPlaylist(next).catch(ng);
     else if (md === "direct" && rtcReady()) {
-      var d = next - p.plCur;
-      if (d) rtcSend({ t: "pl", d: d });
+      /* Pro Tools のプレイリストは触らない */
       p.plCur = next; store(); ok("テイク" + next);
     }
     else if (md === "gist" || md === "direct") gistWrite(null).then(function () { p.plCur = next; store(); ok("テイク" + next); }).catch(ng);
@@ -511,6 +510,16 @@
     }
   }, true);
 
+  /* 録音したら、その区切りのテイクを1つ進める */
+  function bumpTake() {
+    var ls = liveSlot();
+    if (!ls || !ls.secCur) return;
+    if (!ls.takes) ls.takes = {};
+    ls.takes[ls.secCur] = curTake() + 1;
+    store();
+    try { if (typeof render === "function") render(); } catch (e) { /* 描画失敗は無視 */ }
+  }
+
   /* 押す前のテイクと今のテイクの差だけ、プレイリストを動かす */
   function stepTake(was) {
     var p = cfg();
@@ -518,10 +527,8 @@
     var now = curTake();
     var d = now - was;
     if (!d) return;
-    if (!rtcReady()) { flash("Mac と繋がっていません"); return; }
-    rtcSend({ t: "pl", d: d })
-      .then(function () { p.plCur = now; store(); })
-      .catch(ng);
+    /* Pro Tools のプレイリストは触らない。番号だけ覚えておく。 */
+    p.plCur = now; store();
   }
 
   /* 小節番号を長押しすると、その小節へ飛ぶ。
