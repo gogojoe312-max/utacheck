@@ -10,7 +10,7 @@
   "use strict";
 
   var PT_VER = 2;
-  var PT_APPVER = "6.2";
+  var PT_APPVER = "6.3";
 
   /* 区切り名は Pro Tools のマーカー名と同一。送るのはこの配列の位置(index)で、
      名前からロケーション番号への解決は SoundFlow 側がやる。
@@ -18,8 +18,8 @@
   var SECTIONS = ["RH","1A","1B","1C","2A","2B","2C","T","TRap","2ARap","D","DRap","3C","3C'","Inter","Outro"];
 
   var midi = null, midiErr = "";
-  var lastSent = "", lastSentAt = 0, lastErr = "";
-  var panel = null, pill = null, bar = null;
+  var lastSent = "", lastSentAt = 0, lastErr = "", lastHookSec = "";
+  var panel = null, pill = null;
   var resetArm = false;
   var lastRecMode = null;
 
@@ -389,35 +389,7 @@
      Shift+↑/↓ は相対移動しかできないので、こちらで現在位置を覚えて差分だけ送る。 */
 
 
-  function transport(kind) {
-    var p = cfg(); if (!p) return;
-    var md = mode();
-    if (md === "midi") { flash("再生・録音は Gist かブリッジで動きます"); return; }
 
-    if (md === "direct" && rtcReady()) {
-      /* 1操作＝1メッセージにする。録音中に別の指示が割り込むと音が途切れるため、
-         プレイリスト合わせもテイク送りもここでは送らない。 */
-      return rtcSend({ t: "cmd", c: kind })
-        .then(function () {
-          /* 録音したらテイクを1つ進める。
-             Pro Tools のプレイリストは SoundFlow の「3」のマクロが動かす。 */
-          if (kind === "record") bumpTake();
-          ok({ play: "再生", stop: "停止", record: "録音", ok: "OKトラックへ" }[kind] || kind);
-        })
-        .catch(ng);
-    }
-
-    if (md === "gist" || md === "direct") {
-      /* 単発の指示としてGistに載せる。プレイリスト合わせは見張り役がやる */
-      return gistWrite({ cmd: kind })
-        .then(function () { ok({ play: "再生", stop: "停止", record: "録音 テイク" + curTake() }[kind] || kind); })
-        .catch(ng);
-    }
-
-    bridgeSend({ type: kind })
-      .then(function () { ok({ play: "再生", stop: "停止" }[kind] || kind); })
-      .catch(ng);
-  }
 
   /* テイクを1つ進める。アプリ側の数字とPro Tools側のプレイリストを同時に動かす */
 
@@ -448,7 +420,13 @@
       var r = orig.apply(this, arguments);
       try { resetTakeOnSecChange(); } catch (e) { /* 失敗で保存を壊さない */ }
       try { paint(); } catch (e) { /* 描画の失敗で保存を壊さない */ }
-      try { sendLocate(false); } catch (e) { /* 送信の失敗で保存を壊さない */ }
+      /* 区切りが変わった時だけ送る。テイクを押しただけで送ると無駄に飛ぶ。 */
+      try {
+        var ls = liveSlot();
+        var nowSec = ls && ls.secCur ? ls.secCur : "";
+        if (nowSec && nowSec !== lastHookSec) { lastHookSec = nowSec; sendLocate(false); }
+        else if (!nowSec) lastHookSec = "";
+      } catch (e) { /* 送信の失敗で保存を壊さない */ }
       return r;
     };
     w.__pt = true;
@@ -518,48 +496,7 @@
     + 'border:1px solid var(--line,#242830);opacity:.9}'
     + '#ptpill .dot{width:7px;height:7px;border-radius:50%;background:currentColor}'
     + '#ptpill.on{color:var(--good,#5BC98A)}#ptpill.err{color:var(--bad,#FF5C42)}'
-    + '#ptbar{position:fixed;left:0;right:0;bottom:0;z-index:9998;display:flex;gap:6px;'
-    + 'padding:6px 8px calc(6px + env(safe-area-inset-bottom));box-sizing:border-box;'
-    + 'background:rgba(7,8,10,.92);border-top:1px solid var(--line,#242830);'
-    + '-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}'
-    + '#ptbar button{flex:1;height:56px;border-radius:12px;background:var(--panel2,#1B1E25);'
-    + 'border:1px solid var(--line,#242830);color:var(--text,#EAE6DE);font-size:22px;'
-    + 'display:flex;align-items:center;justify-content:center}'
-    + '#ptbar button.rec{color:var(--bad,#FF5C42);font-size:30px;flex:1.4}'
-    + '#ptbar button.tk{flex:.7;font-size:20px;color:var(--dim,#79808B)}'
-    + '#ptbar button.ok{flex:1;font-size:18px;font-weight:700;color:var(--good,#5BC98A)}'
-    + '#ptbar button:active{background:var(--accent,#F0B23C);color:#0A0A0A}'
-    + '#ptwrap{position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.62);display:flex;align-items:flex-end;justify-content:center}'
-    + '#ptbox{width:100%;max-width:520px;max-height:90vh;overflow:auto;background:var(--panel,#13151A);'
-    + 'border-radius:16px 16px 0 0;border-top:1px solid var(--line,#242830);padding:16px 16px calc(22px + env(safe-area-inset-bottom))}'
-    + '#ptbox h3{font-size:15px;font-weight:700}'
-    + '#ptbox .sub{font-size:11px;color:var(--dim,#79808B);margin-bottom:14px}'
-    + '#ptbox .grp{margin-bottom:16px}'
-    + '#ptbox .lbl{font-size:11px;color:var(--dim,#79808B);margin-bottom:6px;font-weight:700}'
-    + '#ptbox .fld{display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap}'
-    + '#ptbox input,#ptbox select{background:var(--panel2,#1B1E25);border:1px solid var(--line,#242830);'
-    + 'border-radius:9px;padding:9px 10px;font-size:13px;color:var(--text,#EAE6DE);min-width:0}'
-    + '#ptbox input:focus-visible,#ptbox select:focus-visible,#ptbox button:focus-visible{outline:2px solid var(--accent,#F0B23C);outline-offset:2px}'
-    + '#ptbox .btn{border-radius:9px;padding:9px 14px;font-size:13px;font-weight:700;background:var(--panel2,#1B1E25);color:var(--text,#EAE6DE)}'
-    + '#ptbox .btn.acc{background:var(--accent,#F0B23C);color:#0A0A0A}'
-    + '#ptbox .btn.warn{color:var(--bad,#FF5C42)}'
-    + '#ptbox .seg{display:flex;border:1px solid var(--line,#242830);border-radius:9px;overflow:hidden}'
-    + '#ptbox .seg button{padding:8px 12px;font-size:12px;font-weight:700;color:var(--dim,#79808B);background:transparent}'
-    + '#ptbox .seg button.on{background:var(--accent,#F0B23C);color:#0A0A0A}'
-    + '#ptbox .maprow{display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--line,#242830)}'
-    + '#ptbox .maprow b{flex:0 0 68px;font-size:13px;font-weight:600}'
-    + '#ptbox .maprow input{width:66px;text-align:center;font-variant-numeric:tabular-nums}'
-    + '#ptbox .maprow span{font-size:10px;color:var(--dim,#79808B)}'
-    + '#ptbox .empty{padding:14px;border:1px dashed var(--line,#242830);border-radius:10px;font-size:12px;color:var(--dim,#79808B);line-height:1.7}'
-    + '#ptbox .note{font-size:11px;color:var(--dim,#79808B);line-height:1.7}'
-    + '#ptbox .bad{color:var(--bad,#FF5C42)}'
-    + '#pttoast{position:fixed;left:50%;transform:translateX(-50%);bottom:64px;z-index:10000;max-width:88vw;'
-    + 'background:var(--accent,#F0B23C);color:#0A0A0A;font-size:12px;font-weight:700;padding:8px 14px;'
-    + 'border-radius:999px;pointer-events:none;transition:opacity .25s;text-align:center}'
-    + '@media (prefers-reduced-motion:reduce){#pttoast{transition:none}}'
-    /* 操作バーがアプリの下端を隠さないよう、実測した高さぶん下げる */
-    + 'body.ptbar-on #app{bottom:var(--ptbar-h,68px)!important}'
-    + 'body.ptbar-on .bottom{padding-bottom:6px}';
+    + '';
 
   function injectCSS() {
     if (document.getElementById("ptcss")) return;
@@ -605,8 +542,6 @@
     if (!recMode()) {
       if (pill) pill.style.display = "none";
       if (bar) bar.style.display = "none";
-      document.body.classList.remove("ptbar-on");
-      document.documentElement.style.removeProperty("--ptbar-h");
       if (panel) panel.style.display = "none";
       return;
     }
@@ -630,37 +565,6 @@
     pill.style.display = p.pill ? "flex" : "none";
     pill.setAttribute("aria-label", "Pro Tools 連動の設定を開く（" + st.txt + "）");
 
-    if (!bar) {
-      bar = document.createElement("div");
-      bar.id = "ptbar";
-      bar.innerHTML =
-        '<button data-k="stop" aria-label="停止">■</button>'
-        + '<button data-k="play" aria-label="再生">▶</button>'
-        + '<button data-k="record" class="rec" aria-label="録音">●</button>'
-        + '<button data-k="ok" class="ok" aria-label="OKトラックへ送る">OK</button>';
-      bar.addEventListener("click", function (e) {
-        var b = e.target.closest("button"); if (!b) return;
-        transport(b.dataset.k);
-      });
-      document.body.appendChild(bar);
-    }
-    /* 文字を打っている間は操作バーを引っ込める。
-       出したままだとシートの決定ボタンやキーボードの上に被さる。 */
-    var typing = !!(document.activeElement &&
-      /^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName));
-    var sheetOpen = !!document.querySelector(".mask");
-    var showBar = (p.on && p.bar && mode() !== "midi" && !typing && !sheetOpen);
-    bar.style.display = showBar ? "flex" : "none";
-    document.body.classList.toggle("ptbar-on", showBar);
-    if (showBar) {
-      /* 実際に描かれた高さを測る。端末のセーフエリアぶんも込みになる */
-      requestAnimationFrame(function () {
-        var h = bar.offsetHeight;
-        if (h) document.documentElement.style.setProperty("--ptbar-h", h + "px");
-      });
-    } else {
-      document.documentElement.style.removeProperty("--ptbar-h");
-    }
 
     if (panel && panel.style.display !== "none") drawPanel();
   }
@@ -755,7 +659,6 @@
       + '<div class="note">いま開いている曲の区切りを、先頭の小節にまとめて作ります。</div></div>'
 
       + '<div class="grp"><div class="lbl">表示</div><div class="fld">'
-      + '<button class="btn" id="ptbart">操作ボタンを' + (p.bar ? "隠す" : "出す") + '</button>'
       + '</div><div class="note">操作ボタンは画面下部に出ます。右端の「設定」からいつでもここに戻れます。</div></div>'
 
       + '<div class="grp"><div class="fld">'
@@ -769,7 +672,6 @@
       drawPanel();
     };
     box.querySelector("#ptclose").onclick = close;
-    box.querySelector("#ptbart").onclick = function () { p.bar = !p.bar; store(); paint(); drawPanel(); };
     Array.prototype.forEach.call(box.querySelectorAll("[data-mode]"), function (b) {
       b.onclick = function () {
         p.mode = b.dataset.mode; lastErr = ""; store();
@@ -853,7 +755,7 @@
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", function () { setTimeout(boot, 600); });
   else setTimeout(boot, 600);
 
-  window.PTLink = { open: open, locate: function () { return sendLocate(true); }, transport: transport, cfg: cfg,
+  window.PTLink = { open: open, locate: function () { return sendLocate(true); }, cfg: cfg,
                     gotoBar: gotoBar, barOf: function (el) {
                       var mm = String((el && el.textContent) || "").trim().match(/(\d+)\s*$/);
                       return mm ? Number(mm[1]) : 0;
