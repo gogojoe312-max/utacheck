@@ -10,7 +10,7 @@
   "use strict";
 
   var PT_VER = 2;
-  var PT_APPVER = "5.7";
+  var PT_APPVER = "5.8";
 
   /* 区切り名は Pro Tools のマーカー名と同一。送るのはこの配列の位置(index)で、
      名前からロケーション番号への解決は SoundFlow 側がやる。
@@ -557,8 +557,8 @@
   /* ---------------- 見た目 ---------------- */
   var CSS = ''
     + '#ptpill{flex:0 0 auto;margin-left:4px;'
-    + 'height:26px;padding:0 8px;border-radius:999px;white-space:nowrap;background:var(--panel2,#1B1E25);color:var(--dim,#79808B);'
-    + 'font-size:10px;font-weight:700;letter-spacing:0;display:flex;align-items:center;gap:6px;'
+    + 'height:24px;padding:0 7px;border-radius:999px;white-space:nowrap;flex-shrink:0;background:var(--panel2,#1B1E25);color:var(--dim,#79808B);'
+    + 'font-size:9px;font-weight:700;letter-spacing:0;display:flex;align-items:center;gap:4px;'
     + 'border:1px solid var(--line,#242830);opacity:.9}'
     + '#ptpill .dot{width:7px;height:7px;border-radius:50%;background:currentColor}'
     + '#ptpill.on{color:var(--good,#5BC98A)}#ptpill.err{color:var(--bad,#FF5C42)}'
