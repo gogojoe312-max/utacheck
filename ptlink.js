@@ -10,7 +10,7 @@
   "use strict";
 
   var PT_VER = 2;
-  var PT_APPVER = "6.3";
+  var PT_APPVER = "6.4";
 
   /* 区切り名は Pro Tools のマーカー名と同一。送るのはこの配列の位置(index)で、
      名前からロケーション番号への解決は SoundFlow 側がやる。
@@ -365,8 +365,13 @@
     /* クリック検知と save() フックの両方から呼ばれるので、
        同じ区切りへの連続した送信は 800ms 以内なら捨てる。 */
     var now = Date.now();
-    if (sig === lastSent && now - (lastSentAt || 0) < 800) return Promise.resolve();
-    if (!force && sig === lastSent) return Promise.resolve();
+    /* タップされた時は、同じ区切りでも必ず送り直す。
+       マーカーを呼び直せばプリロールも元の値に戻るため。 */
+    if (!force) {
+      if (sig === lastSent) return Promise.resolve();
+    } else if (now - (lastSentAt || 0) < 250) {
+      return Promise.resolve();   /* 取りこぼしの二重発火だけ弾く */
+    }
     lastSent = sig; lastSentAt = now;
 
     var md = mode();
