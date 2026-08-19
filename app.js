@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "13.9";
+const APP_VER = "14.0";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -3262,9 +3262,9 @@ function viewLive() {
     </div>` : ""}
   <div class="hd">
     <button class="grow" style="text-align:left" data-act="picker">
-      <div class="t1 clamp2">${S.recMode
-        ? `<b style="color:var(--accent)">レコーディングモード</b>${s && s.folder ? " ・ " + h(s.folder) : ""}`
-        : `<b style="color:var(--accent)">ライブモード</b>${s ? " ・ " + h((S.groups.find((x) => x.id === s.groupId) || {}).name || "") : ""} ・ ${h(showName() || "公演名未設定")}`}${SONGS().length ? ` ・ ${U.songIdx + 1}/${SONGS().length}` : ""}${pushState && !S.recMode ? ` ・ <span style="color:${pushState === "未送信" ? "var(--bad)" : "var(--dim)"}">${h(pushState)}</span>` : ""}</div>${recWho()}
+      <div class="t1" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${S.recMode
+        ? `<b style="color:var(--accent)">レコーディングモード</b>${s ? " ・ " + h((S.groups.find((x) => x.id === s.groupId) || {}).name || s.folder || "") : ""}`
+        : `<b style="color:var(--accent)">ライブモード</b>${s ? " ・ " + h((S.groups.find((x) => x.id === s.groupId) || {}).name || "") : ""} ・ ${h(showName() || "公演名未設定")}${SONGS().length ? ` ・ ${U.songIdx + 1}/${SONGS().length}` : ""}${pushState ? ` ・ <span style="color:${pushState === "未送信" ? "var(--bad)" : "var(--dim)"}">${h(pushState)}</span>` : ""}`}</div>${recWho()}
       ${VIEW() && S.pubAt ? `<div style="font-size:10px;line-height:1.4">${freshLine()}</div>` : ""}
       <div class="t2 clamp2">${s && s.mark ? `<b style="color:var(--accent)">★</b> ` : ""}${s && takeLabel(s) ? `<b class="tkmk">${h(takeLabel(s))}</b>` : ""}${h(s ? s.title : "曲がありません")}</div>
     </button>
@@ -5078,11 +5078,11 @@ function viewPlan() {
     const col = r.live ? "var(--accent)" : r.done ? "var(--dim)" : isBreak ? "#7FB3FF" : "var(--text)";
     const diff = r.done ? (r.aE - r.aS) - Number(s.min || 0) : 0;
     const rest = r.live ? r.aE - now : 0;
-    return `${dayHead}<div class="row card" data-drop="p:${s.id}" style="margin-bottom:8px;padding:11px 12px;${r.live ? "outline:1px solid var(--accent)" : ""}">
+    return `${dayHead}<div class="row card" data-drop="p:${s.id}" style="margin-bottom:8px;padding:11px 12px;flex-wrap:wrap;max-width:100%;${r.live ? "outline:1px solid var(--accent)" : ""}">
       <span class="grip" data-drag="plan:${s.id}">⣿</span>
       <button class="grow" style="text-align:left;min-width:0" data-act="pedit" data-id="${s.id}">
-        <div class="row" style="gap:8px">
-          <span style="font-size:12px;color:var(--dim);font-variant-numeric:tabular-nums">${min2hm(r.aS)}–${min2hm(r.aE)}</span>
+        <div class="row" style="gap:8px;min-width:0">
+          <span style="font-size:12px;color:var(--dim);font-variant-numeric:tabular-nums;flex:0 0 auto">${min2hm(r.aS)}–${min2hm(r.aE)}</span>
           <span class="trunc" style="color:${col};font-weight:${r.live ? 700 : 400}">${h(s.name || (isBreak ? "休憩" : "—"))}</span>
         </div>
         <div style="font-size:11px;color:var(--dim);margin-top:2px">
