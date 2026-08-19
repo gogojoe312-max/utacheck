@@ -10,7 +10,7 @@
   "use strict";
 
   var PT_VER = 2;
-  var PT_APPVER = "6.5";
+  var PT_APPVER = "6.6";
 
   /* 区切り名は Pro Tools のマーカー名と同一。送るのはこの配列の位置(index)で、
      名前からロケーション番号への解決は SoundFlow 側がやる。
@@ -19,7 +19,7 @@
 
   var midi = null, midiErr = "";
   var lastSent = "", lastSentAt = 0, lastErr = "", lastHookSec = "";
-  var panel = null, pill = null;
+  var panel = null, pill = null, bar = null;
   var resetArm = false;
   var lastRecMode = null;
 
@@ -502,6 +502,20 @@
     + '#ptpill .dot{width:7px;height:7px;border-radius:50%;background:currentColor}'
     + '#ptpill.on{color:var(--good,#5BC98A)}#ptpill.err{color:var(--bad,#FF5C42)}'
 
+    /* 下の操作バー。Pro Tools の再生・録音・OK をここから押せる。 */
+    + '#ptbar{position:fixed;left:0;right:0;bottom:0;z-index:9997;display:none;gap:8px;'
+    + 'padding:8px 10px calc(8px + env(safe-area-inset-bottom));background:var(--bg,#0A0A0A);'
+    + 'border-top:1px solid var(--line,#242830)}'
+    + '#ptbar button{flex:1;height:52px;border-radius:12px;background:var(--panel2,#1B1E25);'
+    + 'display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;'
+    + 'color:var(--fg,#E8EAED)}'
+    + '#ptbar .stop i{width:16px;height:16px;background:#E8EAED;border-radius:2px;display:block}'
+    + '#ptbar .play i{width:0;height:0;border-left:16px solid #E8EAED;'
+    + 'border-top:10px solid transparent;border-bottom:10px solid transparent;display:block}'
+    + '#ptbar .rec i{width:20px;height:20px;background:#FF5C42;border-radius:50%;display:block}'
+    + '#ptbar .ok{color:var(--good,#5BC98A)}'
+    + 'body.ptbar-on #app{bottom:var(--ptbar-h,68px)!important}'
+
     /* 設定パネル。画面全体を覆って、下の歌詞が透けないようにする。 */
     + '#ptwrap{position:fixed;inset:0;z-index:10000;display:none;align-items:flex-end;justify-content:center;'
     + 'background:rgba(0,0,0,.6);-webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px)}'
@@ -563,11 +577,38 @@
     try { return !!S.recMode; } catch (e) { return false; }
   }
 
+  /* 下の操作バー。押すと Pro Tools 側の「space」「3」と同じ動きになる。 */
+  function makeBar() {
+    if (bar) return;
+    bar = document.createElement("div");
+    bar.id = "ptbar";
+    bar.innerHTML = '<button class="stop" data-k="stop"><i></i></button>'
+      + '<button class="play" data-k="play"><i></i></button>'
+      + '<button class="rec" data-k="record"><i></i></button>'
+      + '<button class="ok" data-k="ok">OK</button>';
+    bar.addEventListener("click", function (e) {
+      var b = e.target.closest && e.target.closest("[data-k]");
+      if (b) transport(b.getAttribute("data-k"));
+    });
+    document.body.appendChild(bar);
+  }
+
+  function transport(kind) {
+    var p = cfg();
+    if (!p || !p.on) { flash("連動がオフです"); return; }
+    if (!rtcReady()) { flash("Mac と繋がっていません"); return; }
+    rtcSend({ t: "cmd", c: kind })
+      .then(function () { if (kind === "record") bumpTake(); })
+      .catch(ng);
+  }
+
   function paint() {
     var p = cfg(); if (!p) return;
     if (!recMode()) {
       if (pill) pill.style.display = "none";
       if (bar) bar.style.display = "none";
+      document.body.classList.remove("ptbar-on");
+      document.documentElement.style.removeProperty("--ptbar-h");
       if (panel) panel.style.display = "none";
       return;
     }
@@ -589,6 +630,23 @@
     pill.className = st.cls;
     pill.querySelector(".tx").textContent = st.txt;
     pill.style.display = p.pill ? "flex" : "none";
+
+    /* 操作バー。文字を打っている時とシートが開いている時は邪魔なので隠す。 */
+    makeBar();
+    var typing = !!(document.activeElement &&
+      /^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName));
+    var sheetOpen = !!document.querySelector(".mask");
+    var showBar = (p.on && !typing && !sheetOpen);
+    bar.style.display = showBar ? "flex" : "none";
+    document.body.classList.toggle("ptbar-on", showBar);
+    if (showBar) {
+      requestAnimationFrame(function () {
+        var hgt = bar.offsetHeight;
+        if (hgt) document.documentElement.style.setProperty("--ptbar-h", hgt + "px");
+      });
+    } else {
+      document.documentElement.style.removeProperty("--ptbar-h");
+    }
     pill.setAttribute("aria-label", "Pro Tools 連動の設定を開く（" + st.txt + "）");
 
 
