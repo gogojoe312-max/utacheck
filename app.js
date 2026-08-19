@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "15.3";
+const APP_VER = "15.4";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -3329,12 +3329,9 @@ function viewLive() {
         : `<button data-act="recstart" class="aub" style="color:var(--bad)">●</button>
            <span class="grow" style="font-size:11px;color:var(--dim)">録音</span>`}
   </div>` : "")}
-  <div class="bottom">
-    ${S.recMode
-      ? `<button data-act="rtakedn" class="${Number((s || {}).take || 1) <= 1 ? "off" : ""}">‹</button>
-         <button data-act="rtakeup">›</button>`
-      : `<button data-act="prev" class="${U.songIdx <= 0 ? "off" : ""}">‹</button>
-         <button data-act="next" class="${U.songIdx >= SONGS().length - 1 ? "off" : ""}">›</button>`}
+  ${S.recMode ? "" : `<div class="bottom">
+    <button data-act="prev" class="${U.songIdx <= 0 ? "off" : ""}">‹</button>
+         <button data-act="next" class="${U.songIdx >= SONGS().length - 1 ? "off" : ""}">›</button>
     ${VIEW() ? "" : `<button data-act="draw" class="${U.draw ? "on" : ""}">✎</button>`}
     ${U.draw && !VIEW() ? `
       <button data-act="eraser" class="${U.erase ? "on" : ""}">
@@ -3350,7 +3347,7 @@ function viewLive() {
     ${(U.draw && (S.draws[drawKey()] || []).length) || (undoStack.length && !VIEW())
       ? `<button data-act="undoall" class="wide" style="color:var(--accent)">取消</button>`
       : `<button data-act="undoall" class="wide" style="opacity:.3">取消</button>`}
-  </div>`;
+  </div>`}`;
 }
 
 /* ---- 全体表示（1曲まるごと見渡す）---- */
@@ -4614,6 +4611,9 @@ function recBar() {
       ${cur ? `<span style="font-size:11px;color:var(--dim)">${h(cur.name)}</span>` : ""}
       <button class="tkbtn" data-act="takedown"${tk > 0 ? "" : ' style="opacity:.3"'}>−</button>
       <button class="tknow" data-act="takeup"><i>テイク</i><b>${tk}</b></button>
+      <button class="chip sm" data-act="draw" style="${U.draw ? "background:var(--accent);color:#0A0A0A" : ""}">✎</button>
+      ${U.draw ? `<button class="chip sm" data-act="eraser" style="${U.erase ? "background:var(--accent);color:#0A0A0A" : ""}">消</button>` : ""}
+      <button class="chip sm" data-act="undoall" style="${undoStack.length ? "color:var(--accent)" : "opacity:.3"}">取消</button>
       <span class="grow"></span>
       <button class="chip sm" data-act="pnextsec" style="background:var(--accent);color:#0A0A0A">次へ</button>`
     : next ? `<span style="color:var(--dim);font-size:12px">次 ${h(next.s.name)}　${min2hm(next.aS)}</span>
