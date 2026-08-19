@@ -10,7 +10,7 @@
   "use strict";
 
   var PT_VER = 2;
-  var PT_APPVER = "5.9";
+  var PT_APPVER = "6.0";
 
   /* 区切り名は Pro Tools のマーカー名と同一。送るのはこの配列の位置(index)で、
      名前からロケーション番号への解決は SoundFlow 側がやる。
@@ -416,7 +416,12 @@
       /* 1操作＝1メッセージにする。録音中に別の指示が割り込むと音が途切れるため、
          プレイリスト合わせもテイク送りもここでは送らない。 */
       return rtcSend({ t: "cmd", c: kind })
-        .then(function () { ok({ play: "再生", stop: "停止", record: "録音", ok: "OKトラックへ" }[kind] || kind); })
+        .then(function () {
+          /* 録音は SoundFlow 側の「3」のマクロがプレイリストを1つ進めるので、
+             こちらは記録だけ合わせる。二重に送らない。 */
+          if (kind === "record") { p.plCur = Math.min(p.plMax, p.plCur + 1); store(); }
+          ok({ play: "再生", stop: "停止", record: "録音", ok: "OKトラックへ" }[kind] || kind);
+        })
         .catch(ng);
     }
 
