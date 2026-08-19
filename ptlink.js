@@ -10,7 +10,7 @@
   "use strict";
 
   var PT_VER = 2;
-  var PT_APPVER = "6.4";
+  var PT_APPVER = "6.5";
 
   /* 区切り名は Pro Tools のマーカー名と同一。送るのはこの配列の位置(index)で、
      名前からロケーション番号への解決は SoundFlow 側がやる。
@@ -501,6 +501,27 @@
     + 'border:1px solid var(--line,#242830);opacity:.9}'
     + '#ptpill .dot{width:7px;height:7px;border-radius:50%;background:currentColor}'
     + '#ptpill.on{color:var(--good,#5BC98A)}#ptpill.err{color:var(--bad,#FF5C42)}'
+
+    /* 設定パネル。画面全体を覆って、下の歌詞が透けないようにする。 */
+    + '#ptwrap{position:fixed;inset:0;z-index:10000;display:none;align-items:flex-end;justify-content:center;'
+    + 'background:rgba(0,0,0,.6);-webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px)}'
+    + '#ptbox{width:100%;max-width:640px;max-height:88vh;overflow-y:auto;-webkit-overflow-scrolling:touch;'
+    + 'background:var(--panel,#12151B);color:var(--fg,#E8EAED);'
+    + 'border-radius:16px 16px 0 0;border-top:1px solid var(--line,#242830);'
+    + 'padding:18px 16px calc(18px + env(safe-area-inset-bottom))}'
+    + '#ptbox .sub{font-size:12px;color:var(--dim,#79808B);margin:-8px 0 14px}'
+    + '#ptbox .grp{margin-bottom:16px}'
+    + '#ptbox .lbl{font-size:11px;color:var(--dim,#79808B);margin-bottom:6px;text-align:right}'
+    + '#ptbox .fld{display:flex;align-items:center;gap:8px;flex-wrap:wrap}'
+    + '#ptbox .note{font-size:11px;color:var(--dim,#79808B);line-height:1.6;margin-top:6px}'
+    + '#ptbox .note.bad{color:var(--bad,#FF5C42)}'
+    + '#ptbox .btn{padding:9px 14px;border-radius:10px;background:var(--panel2,#1B1E25);'
+    + 'color:var(--fg,#E8EAED);font-size:13px;font-weight:700;border:1px solid var(--line,#242830)}'
+    + '#ptbox .btn.acc{background:var(--accent,#F0B23C);color:#0A0A0A;border-color:transparent}'
+    + '#ptbox input{background:var(--panel2,#1B1E25);color:var(--fg,#E8EAED);border:1px solid var(--line,#242830);'
+    + 'border-radius:10px;padding:9px 10px;font-size:13px}'
+    + '#ptbox .empty{font-size:12px;color:var(--dim,#79808B);padding:8px 0}'
+    + '#ptbox .empty.bad{color:var(--bad,#FF5C42)}'
     + '';
 
   function injectCSS() {
