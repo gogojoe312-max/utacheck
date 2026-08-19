@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "14.3";
+const APP_VER = "14.4";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -3686,16 +3686,16 @@ function renderSheet() {
         (l || {}).skip ? "background:var(--dim);color:#0A0A0A;font-weight:700" : ""}">${
         (l || {}).skip ? "コピー扱い（録りません）" : "コピーで済ませる"}</button>
 
+      ${hdr2("表記（歌メロに足すもの）", "tag", S.tagHide || [])}
+      <div class="chips">
+        ${tags.map((x) => `<button class="chip sm" data-act="${edTag ? "rworddel" : "rtagq"}" data-id="${edTag ? "tag|" : ""}${h(x)}"
+          style="${edTag ? "color:var(--bad);border:1px solid var(--bad)"
+            : tagBase((l || {}).tag) === x ? "background:var(--accent);color:#0A0A0A;font-weight:700" : ""}">${h(x)}${edTag ? " ✕" : ""}</button>`).join("")}
+        ${edTag ? "" : `<button class="chip sm" data-act="rtagfree" style="color:var(--dim)">その他…</button>`}
+      </div>
+
       <button class="ghost" data-act="rmore" style="margin-top:12px;color:var(--dim);font-size:12px">${U.rmore ? "▲ とじる" : "▼ そのほか"}</button>
       ${U.rmore ? `
-        ${hdr2("表記（歌メロに足すもの）", "tag", S.tagHide || [])}
-        <div class="chips">
-          ${tags.map((x) => `<button class="chip sm" data-act="${edTag ? "rworddel" : "rtagq"}" data-id="${edTag ? "tag|" : ""}${h(x)}"
-            style="${edTag ? "color:var(--bad);border:1px solid var(--bad)"
-              : tagBase((l || {}).tag) === x ? "background:var(--accent);color:#0A0A0A;font-weight:700" : ""}">${h(x)}${edTag ? " ✕" : ""}</button>`).join("")}
-          ${edTag ? "" : `<button class="chip sm" data-act="rtagfree" style="color:var(--dim)">その他…</button>`}
-        </div>
-
         ${hdr("下に行を足す")}
         <div class="chips">
           ${["フェイク", "ガヤ", "コーラス", "掛け声"].map((x) => `<button class="chip sm" data-act="raddline" data-id="${x}">${x}</button>`).join("")}
