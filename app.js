@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "14.8";
+const APP_VER = "14.9";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -4986,11 +4986,13 @@ function planRows() {
     const pS = plan, pE = plan + Number(s.min || 0);
     plan = pE;
     const r = { s, pS, pE };
-    if (s.a0 != null && s.a1 != null) { r.aS = s.a0; r.aE = s.a1; cursor = s.a1; r.done = true; }
+    // 巻いても押しても、後ろの枠の時刻は動かさない。
+    // 予定は予定として残し、実績はその枠の中だけに出す。
+    if (s.a0 != null && s.a1 != null) { r.aS = s.a0; r.aE = s.a1; cursor = pE; r.done = true; }
     else if (s.a0 != null) {
       r.aS = s.a0;
       r.aE = s.a0 + Number(s.min || 0);       // 表示は予定の終わり
-      cursor = Math.max(r.aE, now);           // 後ろは実際の時刻に押される
+      cursor = pE;                            // 後ろは予定どおりのまま
       r.live = true;
     }
     else { r.aS = cursor; r.aE = cursor + Number(s.min || 0); cursor = r.aE; }
