@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "14.1";
+const APP_VER = "14.2";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -125,6 +125,24 @@ async function load() {
 
 let bootErr = "";
 function migrate() {
+  // 表記を日本語から英語へ、そして連番へ。
+  // 「ガヤ」が2行あれば Gaya1 Gaya2 になる。Pro Tools のマーカー名と揃えるため。
+  try {
+    [S.songs, S.rsongs].forEach((list) => {
+      (list || []).forEach((so) => {
+        const cnt = {};
+        (so.lines || []).forEach((l) => {
+          if (!l || !l.tag) return;
+          if (/\d$/.test(l.tag)) return;               // すでに番号付きなら触らない
+          const base = TAGMAP[l.tag] || l.tag;
+          cnt[base] = (cnt[base] || 0) + 1;
+          l.tag = base + cnt[base];
+        });
+      });
+    });
+    S.tagWords = (S.tagWords || []).map((x) => TAGMAP[x] || x);
+  } catch (e) { /* 変換できないものはそのまま残す */ }
+
   // 旧データの引き継ぎ：公演名の文字列しか無かったものを公演として作り直す
   if (!S.shows || !S.shows.length) {
     const id = uid();
@@ -3131,7 +3149,9 @@ function linesInSec(so, nm) {
   const isTag = tagSecNames().includes(nm);
   ls.forEach((l, i) => {
     if (l.gap) return;
-    if (isTag ? l.tag === nm : secOfLine(so, i) === nm) out.push(i);
+    /* Gaya を選べば Gaya1 も Gaya2 も出す。Gaya2 を選べばその分だけ。 */
+    if (isTag ? (tagNum(nm) ? l.tag === nm : tagBase(l.tag) === nm)
+              : secOfLine(so, i) === nm) out.push(i);
   });
   return out;
 }
@@ -3672,7 +3692,7 @@ function renderSheet() {
         <div class="chips">
           ${tags.map((x) => `<button class="chip sm" data-act="${edTag ? "rworddel" : "rtagq"}" data-id="${edTag ? "tag|" : ""}${h(x)}"
             style="${edTag ? "color:var(--bad);border:1px solid var(--bad)"
-              : (l || {}).tag === x ? "background:var(--accent);color:#0A0A0A;font-weight:700" : ""}">${h(x)}${edTag ? " ✕" : ""}</button>`).join("")}
+              : tagBase((l || {}).tag) === x ? "background:var(--accent);color:#0A0A0A;font-weight:700" : ""}">${h(x)}${edTag ? " ✕" : ""}</button>`).join("")}
           ${edTag ? "" : `<button class="chip sm" data-act="rtagfree" style="color:var(--dim)">その他…</button>`}
         </div>
 
@@ -4565,7 +4585,25 @@ function recBar() {
     return `<button class="sectab ${cls}" id="tab-${h(e.name)}" data-act="jumpsec" data-id="${h(e.name)}">${e.done ? "✓" : ""}${h(e.name)}${false ? `<i>${e.done ? e.used : e.min}</i>` : ""}</button>`;
   }).join("");
 
-  return `${tabs ? `<div class="sectabs">${tabs}</div>` : ""}
+  /* Gaya のような表記を選んでいる時は、Gaya1 Gaya2 … を小さく並べる。
+     ひとつずつ順に録れるようにするため。 */
+  const openTag = tagBase(U.secView || (cur ? cur.name : "")) ;
+  let subTabs = "";
+  if (openTag && isTagSec(openTag)) {
+    const so2 = recSong();
+    const nums = [];
+    (so2 && so2.lines || []).forEach((l) => {
+      if (l && l.tag && tagBase(l.tag) === openTag && !nums.includes(l.tag)) nums.push(l.tag);
+    });
+    nums.sort((a, b) => (tagNum(a) || 0) - (tagNum(b) || 0));
+    if (nums.length > 1) {
+      subTabs = `<div class="sectabs" style="padding-top:0">` + nums.map((nm) =>
+        `<button class="sectab ${U.secView === nm ? "on" : ""}" data-act="jumpsec" data-id="${h(nm)}"
+          style="font-size:11px;padding:4px 10px">${h(nm)}</button>`).join("") + `</div>`;
+    }
+  }
+
+  return `${tabs ? `<div class="sectabs">${tabs}</div>` : ""}${subTabs}
   <div class="aubar">
     ${live ? `<span id="pcd" style="font-size:13px;font-variant-numeric:tabular-nums">—</span>
       ${cur ? `<span style="font-size:11px;color:var(--dim)">${h(cur.name)}</span>` : ""}
@@ -4683,8 +4721,9 @@ function tagSecNames() {
   const out = [];
   (so.lines || []).forEach((l) => {
     if (l.gap || !l.tag) return;
-    if (secs.includes(l.tag) || out.includes(l.tag)) return;
-    out.push(l.tag);
+    const b = tagBase(l.tag);          /* Gaya1 も Gaya2 も「Gaya」ひとつにまとめる */
+    if (secs.includes(b) || out.includes(b)) return;
+    out.push(b);
   });
   return out;
 }
@@ -4708,7 +4747,22 @@ function sectionOrder() {
 const PREP = "RH";
 const SECDEF = ["1A", "1B", "1C", "2A", "2B", "2C", "D", "落ち", "大サビ", "間奏"];
 // 歌メロに足すもの。区切りとは別に、行へ付ける表記。
-const TAGDEF = ["ガヤ", "フェイク", "ハモ", "コーラス", "掛け声", "アドリブ"];
+// 歌メロに足すもの。Pro Tools のマーカー名と揃えるため英語で持つ。
+// 実際に行へ付くときは Gaya1 Gaya2 … と連番になる。
+const TAGDEF = ["Gaya", "Fake", "Hamo", "Cho", "Kakegoe", "Adlib"];
+// 旧版の日本語表記を英語に読み替える
+const TAGMAP = { "ガヤ": "Gaya", "フェイク": "Fake", "ハモ": "Hamo", "コーラス": "Cho", "掛け声": "Kakegoe", "アドリブ": "Adlib" };
+// "Gaya3" → "Gaya"、"Gaya" → "Gaya"
+const tagBase = (t) => String(t || "").replace(/\d+$/, "");
+const tagNum = (t) => { const m = /(\d+)$/.exec(String(t || "")); return m ? Number(m[1]) : 0; };
+// その曲で、その種類の次の番号
+function nextTagNo(so, base) {
+  let mx = 0;
+  (so && so.lines || []).forEach((l) => {
+    if (l && l.tag && tagBase(l.tag) === base) mx = Math.max(mx, tagNum(l.tag) || 1);
+  });
+  return mx + 1;
+}
 // 録りの想定。行ごとに「どう歌うか」を決めておくと、当日その場で迷わない。
 // 色は行の左端の帯と、名前欄の札に出る。同じ想定が続けば一本の帯になって、まとまりが見える。
 // 選べるのはこの2つ。以前の版で付けた他の想定も、色だけは残して表示できるようにする。
@@ -6489,7 +6543,8 @@ document.addEventListener("click", (e) => {
       const so = recSong(); if (!so) break;
       pushUndo();
       const l3 = so.lines[U.menu.i];
-      if (l3.tag === id) delete l3.tag; else { l3.tag = id; rememberTag(id); }
+      if (l3.tag && tagBase(l3.tag) === tagBase(id)) delete l3.tag;
+      else { l3.tag = tagBase(id) + nextTagNo(so, tagBase(id)); rememberTag(tagBase(id)); }
       save(); U.menu = null; renderSheet(); render(); break;
     }
     case "rsecq": {
