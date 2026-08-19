@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "15.6";
+const APP_VER = "15.7";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -5125,16 +5125,7 @@ function viewPlan() {
     </div>
   </div>` : "";
 
-  const dayBar = dayList.length > 1 ? `<div class="chips" style="margin-bottom:10px">
-    <button class="chip sm" data-act="planday" data-id=""
-      style="${pickDay ? "" : "background:var(--accent);color:#0A0A0A"}">すべて</button>
-    ${dayList.map((d) => {
-      const n = allRows.filter((r) => r.s.day === d && r.s.kind !== "break").length;
-      const pl = (allRows.find((r) => r.s.day === d && r.s.place) || { s: {} }).s.place || "";
-      return `<button class="chip sm" data-act="planday" data-id="${h(d)}"
-        style="${pickDay === d ? "background:var(--accent);color:#0A0A0A" : ""}">${h(d)}${pl ? " " + h(pl) : ""}　${n}人</button>`;
-    }).join("")}
-  </div>` : "";
+  const dayBar = "";   /* 日付の切り替えタブは出さない */
 
   const list = rows.map((r, i) => {
     const s = r.s;
