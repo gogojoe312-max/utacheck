@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "13.8";
+const APP_VER = "13.9";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -909,7 +909,17 @@ const REC_SHOW = "rec";
 const SONGS = () => (S.recMode
   ? S.rsongs.slice()
   : S.songs.filter((x) => x.showId === S.showId));
-const takeLabel = (x) => (x && (x.take || 1) > 1 ? `テイク${x.take}` : "");
+// 同じ曲に複数テイクがあれば、テイク1にも番号を出す。
+// 1本しかない曲には付けない（全曲に「テイク1」が並ぶと読みにくいため）。
+const takeLabel = (x) => {
+  if (!x) return "";
+  const n = Number(x.take || 1);
+  if (n > 1) return `テイク${n}`;
+  const list = S.recMode ? (S.rsongs || []) : (S.songs || []);
+  const same = list.filter((y) => y && y.title === x.title
+    && (S.recMode || (y.showId === x.showId && y.groupId === x.groupId)));
+  return same.length > 1 ? `テイク${n}` : "";
+};
 const songName = (x) => x ? ((takeLabel(x) ? takeLabel(x) + "　" : "") + x.title) : "";
 function ancestorsOf(so) {
   const out = []; let cur = so;
