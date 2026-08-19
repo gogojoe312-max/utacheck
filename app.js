@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "14.6";
+const APP_VER = "14.7";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -3159,7 +3159,11 @@ function linesInSec(so, nm) {
 function focusSec() {
   if (!S.recMode) return "";
   const ord = sectionOrder();
-  return U.secView && ord.includes(U.secView) ? U.secView : "";
+  if (!U.secView) return "";
+  // Gaya1 のような枝番は、並びには Gaya としてしか入っていない。
+  // 基底名が並びにあれば、その枝番も出せるようにする。
+  if (ord.includes(U.secView) || ord.includes(tagBase(U.secView))) return U.secView;
+  return "";
 }
 function markStyle(n) {
   const c = noteColor(n);
