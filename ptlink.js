@@ -10,7 +10,7 @@
   "use strict";
 
   var PT_VER = 2;
-  var PT_APPVER = "6.1";
+  var PT_APPVER = "6.2";
 
   /* 区切り名は Pro Tools のマーカー名と同一。送るのはこの配列の位置(index)で、
      名前からロケーション番号への解決は SoundFlow 側がやる。
@@ -44,9 +44,6 @@
     p.pill = true;   /* 隠せると PWA で戻せなくなるので、常に出す */
     if (typeof p.bar !== "boolean") p.bar = false;
     /* Pro Tools がいま表示していると思われるプレイリストの番号（1始まり） */
-    if (!(p.plCur >= 0 && p.plCur <= 32)) p.plCur = 1;
-    if (typeof p.autoSync !== "boolean") p.autoSync = true;
-    if (!(p.plMax >= 1 && p.plMax <= 32)) p.plMax = 10;
     p.ver = PT_VER;
     return p;
   }
@@ -293,7 +290,6 @@
       loc: sec ? secIndex(sec) : -1,
       take: curTake(),
       sections: SECTIONS,
-      plMax: p.plMax,
       at: Date.now(),
     }, extra || {});
     var files = {};
@@ -385,27 +381,13 @@
 
     return run.then(function () {
       lastErr = ""; paint();
-      if (p.autoSync && md === "bridge") return syncPlaylist(take);
-      /* 区切りを移ったら、その区切りのテイク番号までプレイリストを合わせる。
-         2A に行けば テイク1 = .01 に戻る。 */
-      p.lastSec = sec;
-      if (secChanged) p.plCur = Math.max(0, Math.min(p.plMax, take));
-      store();
+      p.lastSec = sec; store();
     }).catch(function (e) { lastSent = ""; ng(e); });
   }
 
   /* Pro Tools のプレイリストを、いまのテイク番号に合わせる。
      Shift+↑/↓ は相対移動しかできないので、こちらで現在位置を覚えて差分だけ送る。 */
-  function syncPlaylist(target) {
-    var p = cfg();
-    var n = Math.max(0, Math.min(p.plMax, Math.round(Number(target) || 0)));
-    var delta = n - p.plCur;
-    if (!delta) return Promise.resolve({ moved: 0 });
-    return bridgeSend({ type: "playlist", delta: delta }).then(function (r) {
-      p.plCur = n; store(); paint();
-      return r;
-    });
-  }
+
 
   function transport(kind) {
     var p = cfg(); if (!p) return;
@@ -432,39 +414,13 @@
         .catch(ng);
     }
 
-    if (kind === "record") {
-      var t = curTake();
-      return syncPlaylist(t)
-        .then(function () { return bridgeSend({ type: "record" }); })
-        .then(function () { ok("録音 テイク" + t); setTimeout(function(){ takeStep(1); }, 400); })
-        .catch(ng);
-    }
     bridgeSend({ type: kind })
       .then(function () { ok({ play: "再生", stop: "停止" }[kind] || kind); })
       .catch(ng);
   }
 
   /* テイクを1つ進める。アプリ側の数字とPro Tools側のプレイリストを同時に動かす */
-  function takeStep(dir) {
-    var p = cfg(), s = liveSlot();
-    if (!s || !s.secCur) { flash("進行中の曲がありません"); return; }
-    if (!s.takes) s.takes = {};
-    var now = curTake();
-    var next = Math.max(1, Math.min(p.plMax, now + dir));
-    if (next === now) { flash(dir > 0 ? "テイクの上限です" : "テイク1です"); return; }
-    s.takes[s.secCur] = next;
-    store();
-    if (typeof render === "function") { try { render(); } catch (e) { /* 描画は失敗しても値は入っている */ } }
-    var md = mode();
-    if (!p.on) { paint(); flash("テイク" + next); return; }
-    if (p.autoSync && md === "bridge") syncPlaylist(next).catch(ng);
-    else if (md === "direct" && rtcReady()) {
-      /* Pro Tools のプレイリストは触らない */
-      p.plCur = next; store(); ok("テイク" + next);
-    }
-    else if (md === "gist" || md === "direct") gistWrite(null).then(function () { p.plCur = next; store(); ok("テイク" + next); }).catch(ng);
-    else { paint(); flash("テイク" + next); }
-  }
+
 
   /* 区切りが変わったら送る。save() を包んで拾う */
   /* 区切りが変わったらテイクを先頭に戻す。RH は 0、他は 1。
@@ -502,12 +458,6 @@
     var b = e.target.closest && e.target.closest('[data-act="jumpsec"]');
     if (b) setTimeout(function () { sendLocate(true, true); }, 0);
 
-    /* アプリ本来のテイク増減ボタン。押す前後の差だけプレイリストを動かす。 */
-    var t = e.target.closest && e.target.closest('[data-act="takeup"],[data-act="takedown"]');
-    if (t) {
-      var was = curTake();
-      setTimeout(function () { stepTake(was); }, 80);
-    }
   }, true);
 
   /* 録音したら、その区切りのテイクを1つ進める */
@@ -520,16 +470,7 @@
     try { if (typeof render === "function") render(); } catch (e) { /* 描画失敗は無視 */ }
   }
 
-  /* 押す前のテイクと今のテイクの差だけ、プレイリストを動かす */
-  function stepTake(was) {
-    var p = cfg();
-    if (!p || !p.on || !recMode()) return;
-    var now = curTake();
-    var d = now - was;
-    if (!d) return;
-    /* Pro Tools のプレイリストは触らない。番号だけ覚えておく。 */
-    p.plCur = now; store();
-  }
+
 
   /* 小節番号を長押しすると、その小節へ飛ぶ。
      アプリは pointerdown/pointerup を使うので、こちらも pointer で拾って先に止める。 */
@@ -790,7 +731,7 @@
 
     var sec = curSec();
     var nowTxt = sec
-      ? esc(sec) + "（テイク " + curTake() + " / プレイリスト .0" + p.plCur + "）"
+      ? esc(sec) + "（テイク " + curTake() + "）"
         + (secIndex(sec) >= 0 ? " → Pro Tools の「" + esc(sec) + "」へ" : " → この区切りは送りません")
       : "進行中の曲がありません。録音モードで曲を始めると、選んだ区切りをここに出します。";
 
@@ -808,17 +749,6 @@
       + '<div class="grp"><div class="lbl">' + (md === "midi" ? "MIDI の送り先" : "ブリッジ") + '</div>' + wayHtml + '</div>'
 
 
-      + (md !== "midi" ? '<div class="grp"><div class="lbl">テイク同期</div>'
-        + '<div class="fld">'
-        + '<button class="btn ' + (p.autoSync ? "acc" : "") + '" id="ptsync">' + (p.autoSync ? "オン" : "オフ") + '</button>'
-        + '<span class="note">Pro Tools の表示中プレイリスト</span>'
-        + '<input id="ptplcur" type="number" inputmode="numeric" min="1" max="' + p.plMax + '" style="width:66px;text-align:center" value="' + p.plCur + '">'
-        + '</div>'
-        + '<div class="fld"><span class="note">プレイリストの用意枚数</span>'
-        + '<input id="ptplmax" type="number" inputmode="numeric" min="1" max="32" style="width:66px;text-align:center" value="' + p.plMax + '">'
-        + '<button class="btn" id="ptplfix">テイク' + curTake() + 'に合わせ直す</button></div>'
-        + '<div class="note">区切りを選んだ時と録音する時に、プレイリストをテイク番号へ合わせます。'
-        + 'Pro Tools 側で手動でプレイリストを動かした後は、上の数字を実際の表示に直すか「合わせ直す」を押してください。</div></div>' : '')
 
       + '<div class="grp"><div class="lbl">マーカー</div>'
       + '<div class="fld"><button class="btn" id="ptmk">区切りのマーカーを Pro Tools に打つ</button></div>'
@@ -879,18 +809,6 @@
 
     var ps = box.querySelector("#ptport");
     if (ps) ps.onchange = function () { p.portName = ps.value; store(); paint(); };
-
-    var sy = box.querySelector("#ptsync");
-    if (sy) sy.onclick = function () { p.autoSync = !p.autoSync; store(); drawPanel(); paint(); };
-    bindNum(box.querySelector("#ptplcur"), 1, p.plMax, function (v) { p.plCur = v; });
-    bindNum(box.querySelector("#ptplmax"), 1, 32, function (v) {
-      p.plMax = v; if (p.plCur > v) p.plCur = v;
-    });
-    var fx = box.querySelector("#ptplfix");
-    if (fx) fx.onclick = function () {
-      /* Pro Tools は動かさず、アプリ側の認識だけを合わせる */
-      p.plCur = curTake(); store(); drawPanel(); paint(); flash("認識を .0" + p.plCur + " に直しました");
-    };
 
     bindNum(box.querySelector("#ptch"), 1, 16, function (v) { p.ch = v; });
     bindNum(box.querySelector("#ptccs"), 0, 127, function (v) { p.ccSec = v; });
