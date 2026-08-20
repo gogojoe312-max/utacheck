@@ -10,7 +10,7 @@
   "use strict";
 
   var PT_VER = 2;
-  var PT_APPVER = "6.6";
+  var PT_APPVER = "6.7";
 
   /* 区切り名は Pro Tools のマーカー名と同一。送るのはこの配列の位置(index)で、
      名前からロケーション番号への解決は SoundFlow 側がやる。
@@ -503,7 +503,7 @@
     + '#ptpill.on{color:var(--good,#5BC98A)}#ptpill.err{color:var(--bad,#FF5C42)}'
 
     /* 下の操作バー。Pro Tools の再生・録音・OK をここから押せる。 */
-    + '#ptbar{position:fixed;left:0;right:0;bottom:0;z-index:9997;display:none;gap:8px;'
+    + '#ptbar{position:fixed;left:0;right:0;bottom:0;z-index:40;display:none;gap:8px;'
     + 'padding:8px 10px calc(8px + env(safe-area-inset-bottom));background:var(--bg,#0A0A0A);'
     + 'border-top:1px solid var(--line,#242830)}'
     + '#ptbar button{flex:1;height:52px;border-radius:12px;background:var(--panel2,#1B1E25);'
@@ -836,6 +836,18 @@
     if (now !== lastRecMode) { lastRecMode = now; try { paint(); } catch (e) { /* 無視 */ } }
     else if (now && pill && !pill.isConnected) { try { paint(); } catch (e) { /* 無視 */ } }
   }, 700);
+
+  /* シートが開いた・閉じたらすぐバーを出し入れする。
+     700ms待つと、開いた直後にバーが被って見える。 */
+  (function () {
+    var seen = false;
+    new MutationObserver(function () {
+      var open = !!document.querySelector(".mask");
+      if (open === seen) return;
+      seen = open;
+      try { paint(); } catch (e) { /* 無視 */ }
+    }).observe(document.body, { childList: true, subtree: true });
+  })();
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", function () { setTimeout(boot, 600); });
   else setTimeout(boot, 600);
 
