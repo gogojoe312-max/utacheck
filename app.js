@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.0";
+const APP_VER = "16.1";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -3506,7 +3506,7 @@ function viewOverview(s) {
     <button data-act="prev" class="${U.songIdx <= 0 ? "off" : ""}">‹</button>
     <button data-act="next" class="${U.songIdx >= SONGS().length - 1 ? "off" : ""}">›</button>
     <button data-act="overview" class="wide on">一覧に戻る</button>
-    <button data-act="go-summary">集計</button>
+    ${S.recMode ? "" : `<button data-act="go-summary">集計</button>`}
   </div>`;
 }
 
