@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "15.9";
+const APP_VER = "16.0";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -5002,8 +5002,9 @@ function planRows() {
     if (s.a0 != null && s.a1 != null) { r.aS = s.a0; r.aE = s.a1; cursor = pE; r.done = true; }
     else if (s.a0 != null) {
       r.aS = s.a0;
-      r.aE = s.a0 + Number(s.min || 0);       // 表示は予定の終わり
-      cursor = pE;                            // 後ろは予定どおりのまま
+      // 早く始めても終わりは予定どおり。押して始めた時だけ後ろにずらす。
+      r.aE = Math.max(pE, s.a0 + Number(s.min || 0));
+      cursor = pE;                            // 後ろの枠は予定どおりのまま
       r.live = true;
     }
     else { r.aS = cursor; r.aE = cursor + Number(s.min || 0); cursor = r.aE; }
