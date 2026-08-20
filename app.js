@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.1";
+const APP_VER = "16.2";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -3547,6 +3547,14 @@ function renderSheet() {
         <input class="field" id="pminv" type="number" inputmode="numeric" value="${s2.min}" style="width:74px">
         <button class="chip sm" data-act="psetv">決定</button>
       </div>
+      <div class="row" style="margin-bottom:10px">
+        <span style="font-size:12px;color:var(--dim)">開始</span>
+        <input class="field grow" id="patv" type="time" value="${s2.at != null ? min2hm(s2.at) : ""}">
+        <button class="chip sm" data-act="psetat">この時刻にする</button>
+      </div>
+      <div class="note" style="font-size:11px;color:var(--dim);line-height:1.6;margin-bottom:10px">
+        この枠だけを動かします。前後の枠は動きません。
+      </div>
       <button class="ghost" data-act="pdel" style="color:var(--bad)">この枠を消す</button>
     </div>`;
     document.body.appendChild(overlay);
@@ -6892,6 +6900,17 @@ document.addEventListener("click", (e) => {
       if (s2) { s2.min = Math.max(1, Number(s2.min || 0) + Number(id)); save(); renderSheet(); render(); }
       break;
     }
+    case "psetat": {
+      /* この枠だけを指定の時刻へ動かす。前後の枠はそのまま。 */
+      const s3 = S.plan.slots.find((x) => x.id === U.menu.id);
+      const el3 = document.getElementById("patv");
+      if (s3 && el3 && el3.value) {
+        pushUndo();
+        s3.at = hm2min(el3.value);
+        save(); renderSheet(); render();
+      }
+      break;
+    }
     case "psetv": {
       const s2 = S.plan.slots.find((x) => x.id === U.menu.id);
       const el = document.getElementById("pminv"), en = document.getElementById("pnamev");
@@ -7421,7 +7440,14 @@ function onDrop(from, target) {
     const a = S.plan.slots.findIndex((x) => x.id === from.slice(5));
     const b = S.plan.slots.findIndex((x) => x.id === target.slice(2));
     if (a < 0 || b < 0 || a === b) return;
+    pushUndo();
+    /* 時刻はその場所に残す。人だけが入れ替わる。
+       入れ替えた先の時刻でその人が録ることになる。 */
+    const ats = S.plan.slots.map((x) => ({ at: x.at, day: x.day }));
     S.plan.slots.splice(b, 0, S.plan.slots.splice(a, 1)[0]);
+    S.plan.slots.forEach((x, i) => {
+      if (ats[i]) { x.at = ats[i].at; x.day = ats[i].day; }
+    });
     save(); render();
     return;
   }
