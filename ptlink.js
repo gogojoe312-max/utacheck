@@ -10,7 +10,7 @@
   "use strict";
 
   var PT_VER = 2;
-  var PT_APPVER = "6.7";
+  var PT_APPVER = "6.8";
 
   /* 区切り名は Pro Tools のマーカー名と同一。送るのはこの配列の位置(index)で、
      名前からロケーション番号への解決は SoundFlow 側がやる。
@@ -837,17 +837,15 @@
     else if (now && pill && !pill.isConnected) { try { paint(); } catch (e) { /* 無視 */ } }
   }, 700);
 
-  /* シートが開いた・閉じたらすぐバーを出し入れする。
-     700ms待つと、開いた直後にバーが被って見える。 */
-  (function () {
-    var seen = false;
-    new MutationObserver(function () {
-      var open = !!document.querySelector(".mask");
-      if (open === seen) return;
-      seen = open;
-      try { paint(); } catch (e) { /* 無視 */ }
-    }).observe(document.body, { childList: true, subtree: true });
-  })();
+  /* シートの開閉を見張る。開いていればバーを引っ込める。
+     全体の変化を監視すると描画のたびに走ってしまうので、短い間隔で見るだけにする。 */
+  setInterval(function () {
+    if (!recMode() || !bar) return;
+    var open = !!document.querySelector(".mask");
+    var shown = bar.style.display !== "none";
+    if (open === shown) { try { paint(); } catch (e) { /* 無視 */ } }
+  }, 150);
+
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", function () { setTimeout(boot, 600); });
   else setTimeout(boot, 600);
 
