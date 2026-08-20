@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "15.7";
+const APP_VER = "15.8";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -4572,12 +4572,17 @@ function takeNo(slot) {
     return Math.max(0, Number(v));
 }
 
+/* いま扱っている枠。進行で人を押していればその人、なければ進行中の人。 */
+function focusRow() {
+  const rows = planRows();
+  const foc = S.planFocus ? rows.find((r) => r.s.id === S.planFocus) : null;
+  return (foc && foc.s.kind !== "break") ? foc : rows.find((r) => r.live);
+}
+
 function recBar() {
   const rows = planRows();
   const now = nowMin();
-  /* 進行で人を押していればその人。押していなければ進行中の人。 */
-  const foc = S.planFocus ? rows.find((r) => r.s.id === S.planFocus) : null;
-  const live = (foc && foc.s.kind !== "break") ? foc : rows.find((r) => r.live);
+  const live = focusRow();
   const next = rows.find((r) => !r.done && !r.live);
   const secs = live ? sectionsOf(live.s) : [];
   const cur = secs.find((x) => x.live);
@@ -6637,14 +6642,14 @@ document.addEventListener("click", (e) => {
       save(); render(); break;
     }
     case "takeup": {
-      const live = planRows().find((r) => r.live);
+      const live = focusRow();
       if (!live || !live.s.secCur) break;
       live.s.takes = live.s.takes || {};
       live.s.takes[live.s.secCur] = takeNo(live.s) + 1;
       save(); render(); break;
     }
     case "takedown": {
-      const live = planRows().find((r) => r.live);
+      const live = focusRow();
       if (!live || !live.s.secCur) break;
       const n = takeNo(live.s);
       if (n <= 1) break;
