@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.2";
+const APP_VER = "16.3";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -3247,7 +3247,7 @@ function viewLive() {
       ${vh ? `<div class="vtdiv" style="color:${vh.c}"><span>${h(vh.vt)}</span></div>` : ""}
       <div class="ln${S.recMode && l.add ? " lnadd" : ""}${S.recMode && l.skip ? " lnskip" : ""}${isAgeri(l) ? " lnage" : ""}"${
         l.tag && tanc[l.tag] === i ? ` id="sec-${h(l.tag)}"` : ""} style="${tint ? `background:color-mix(in srgb,${tint} ${strength}%,transparent);` : ""}${vtc ? `box-shadow:inset 3px 0 0 ${vtc}` : ""}">
-        <button class="lbl" data-act="${S.recMode ? "rbar" : (VIEW() ? "noteblock" : "assignline")}" data-i="${i}"
+        <button class="lbl" data-act="${S.recMode ? "rbar" : "noteblock"}" data-i="${i}"${S.recMode || VIEW() ? "" : ` data-hold="assignline"`}
           style="${st2 ? `color:${st2 === "need" ? "var(--bad)" : "#F0B23C"}` : ""}">${S.recMode && l.tag ? `<b class="tagmk">${h(l.tag)}</b>` : ""}${labelHTML(s, i)}</button>
         <div class="brk ${gp[i]}"></div>
         <div class="grow" style="min-width:0">
@@ -7754,6 +7754,44 @@ document.addEventListener("pointerdown", (e) => {
   org.c = charAtX(row, e.clientX, e.clientY);
   dragOn = false;
 });
+
+/* 左の名前を長押ししたら歌割りの編集へ。短く押した時は指摘。 */
+(function () {
+  let t = null, fired = false, el = null;
+  const target = (n) => (n && n.closest ? n.closest("[data-hold]") : null);
+
+  document.addEventListener("pointerdown", (e) => {
+    el = target(e.target);
+    if (!el) return;
+    fired = false;
+    clearTimeout(t);
+    t = setTimeout(() => {
+      fired = true;
+      /* 一時的に役目を入れ替えて、いつもの処理に流す */
+      const keep = el.dataset.act;
+      el.dataset.act = el.dataset.hold;
+      el.click();
+      el.dataset.act = keep;
+    }, 500);
+  }, true);
+
+  const stop = (e) => {
+    clearTimeout(t); t = null;
+    if (!fired) return;
+    /* 長押しで開いた後は、続けて指摘が開かないように止める */
+    e.preventDefault(); e.stopPropagation();
+    if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+  };
+  document.addEventListener("pointerup", stop, true);
+  document.addEventListener("pointercancel", () => { clearTimeout(t); fired = false; }, true);
+  document.addEventListener("pointermove", () => { clearTimeout(t); }, true);
+  document.addEventListener("click", (e) => {
+    if (!fired || e.isTrusted === false) return;   /* 自分で起こしたものは通す */
+    fired = false;
+    e.preventDefault(); e.stopPropagation();
+    if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+  }, true);
+})();
 
 let holdTimer = null;
 const clearHold = () => { clearTimeout(holdTimer); holdTimer = null; };
