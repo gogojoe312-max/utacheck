@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.5";
+const APP_VER = "16.6";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -800,18 +800,15 @@ function sweep() {
 
 const covers = (n, i) => i >= n.lineIdx && i <= (n.lineEnd != null ? n.lineEnd : n.lineIdx);
 // 同じ曲の同じ行に、過去の公演でも指摘があったか
+// 前回の指摘。1つ前（同じ公演で複製した元、なければ前の公演の同じ曲）だけを見る。
+// それより前まで遡ると、公演を重ねるたびに同じ指摘が何回も積み上がってしまう。
 function pastHits(songId, lineIdx) {
   const me = S.songs.find((x) => x.id === songId);
   if (!me) return { count: 0, notes: [] };
-  const cur = S.shows.find((x) => x.id === S.showId) || { ts: 0 };
-  const older = new Set(S.shows.filter((x) => (x.ts || 0) < (cur.ts || 0)).map((x) => x.id));
-  const anc = ancestorsOf(me);
-  // 同じ公演の中で複製した元、または前の公演の同じ曲
-  const ids = S.songs.filter((x) => x.id !== me.id &&
-    (anc.includes(x.id) || (sigOf(x) === sigOf(me) && x.groupId === me.groupId && older.has(x.showId)))
-  ).map((x) => x.id);
-  const ns = NOTES().filter((n) => ids.includes(n.songId) && n.lineIdx === lineIdx && !n.tags.includes("good"));
-  return { count: [...new Set(ns.map((n) => n.songId))].length, notes: ns };
+  const prev = prevSongOf(me);
+  if (!prev || prev.id === me.id) return { count: 0, notes: [] };
+  const ns = NOTES().filter((n) => n.songId === prev.id && n.lineIdx === lineIdx && !n.tags.includes("good"));
+  return { count: ns.length ? 1 : 0, notes: ns };
 }
 const memoKey = (songId) => S.showId + "|" + songId;
 const songMemo = (songId) => (S.memos || {})[memoKey(songId)] || "";
@@ -965,7 +962,10 @@ function prevSongOf(so) {
   if (!so) return null;
   if (so.from) { const p = S.songs.find((x) => x.id === so.from); if (p) return p; }
   const pid = prevShowId();
-  return pid ? S.songs.find((x) => x.showId === pid && sigOf(x) === sigOf(so) && x.groupId === so.groupId) : null;
+  if (!pid) return null;
+  // 前の公演にテイクが複数あれば、いちばん新しいテイク（最後に録った／直した方）を前回とみなす
+  const same = S.songs.filter((x) => x.showId === pid && sigOf(x) === sigOf(so) && x.groupId === so.groupId);
+  return same.length ? same.reduce((a, b) => (Number(b.take || 1) > Number(a.take || 1) ? b : a)) : null;
 }
 // この曲をもう1回ぶん複製する（歌割りだけ引き継ぎ、記録は空）
 const nextTake = (so) => {
@@ -3645,7 +3645,7 @@ function viewLive() {
       const past = pastHits(s.id, i);
       if (past.count) {
         const t = [...new Set(past.notes.flatMap((n) => n.tags))].map(tagName).slice(0, 2).join("/");
-        cells += `<b class="mk pastmk">前${past.count} ${h(t)}</b>`;
+        cells += `<b class="mk pastmk">前回 ${h(t)}</b>`;
       }
       const pills = ns.filter((n) => n.lineIdx === i && (n.memo || (n.at != null && hasRec(s)))).map((n) => `
         ${n.at != null && hasRec(s) ? `<button class="tagpill" data-act="playfrom" data-id="${n.id}"
@@ -3793,7 +3793,7 @@ function viewOverview(s) {
         : `<b class="mk ovm" style="background:${c}">${body2}</b>`;
     }).join("");
     const past = pastHits(s.id, i);
-    const pb = past.count ? `<b class="mk ovm pastmk">前${past.count}</b>` : "";
+    const pb = past.count ? `<b class="mk ovm pastmk">前回</b>` : "";
     const ost = lineStatus(s, i);
     const oc = ost === "need" ? "var(--bad)" : ost === "changed" ? "#F0B23C" : "";
     return `<button class="ovl" data-act="jumpline" data-i="${i}"
@@ -4402,7 +4402,7 @@ function viewSummary() {
   const ns0 = shownNotes();
   const detail = (n, withShow) => `<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--line);font-size:13px">
       <div style="font-size:11px;color:var(--dim)">${h(songTitle(n))}${withShow ? " ・ " + h(showName(n.showId)) : ""}${
-        (() => { const p = pastHits(n.songId, n.lineIdx); return p.count ? `<span style="color:var(--bad)">　前の公演でも${p.count}回</span>` : ""; })()}</div>
+        (() => { const p = pastHits(n.songId, n.lineIdx); return p.count ? `<span style="color:var(--bad)">　前回も</span>` : ""; })()}</div>
       <div>${h(lyricOf(n))}${partOf(n) ? `<span style="color:var(--dim)">　→ ${h(partOf(n))}</span>` : ""}</div>
       <div style="font-size:11px;color:${noteColor(n)};margin-top:2px">${h(n.tags.map(tagName).join("・"))}${n.pitch ? "（正しい音 " + h(pitchLabel(n.pitch)) + "）" : ""}${n.memo ? " — " + h(n.memo) : ""}</div>
     </div>`;
@@ -5876,7 +5876,7 @@ function viewPrint() {
       };
       let cells = ns.filter((n) => n.from == null && n.lineIdx === i).map((n) => `<b class="prt">${h(mark(n))}</b>`).join("");
       const past = pastHits(so.id, i);
-      if (past.count) cells += `<span class="prp">（前${past.count}）</span>`;
+      if (past.count) cells += `<span class="prp">（前回）</span>`;
       return cells;
     }
     const nameHTML = (l, i) => {
@@ -6112,6 +6112,7 @@ function viewSetup() {
       </button>
       <button data-act="showpub" data-id="${sw.id}" style="padding:4px 6px;font-size:12px;color:${sw.nopub ? "var(--bad)" : "var(--dim)"}">${sw.nopub ? "配信×" : "配信○"}</button>
       <button data-act="copyshow" data-id="${sw.id}" style="padding:4px 6px;color:var(--dim);font-size:12px">複製</button>
+      <button data-act="sfset" data-id="${sw.id}" style="padding:4px 6px;color:${sw.folder ? "var(--accent)" : "var(--dim)"};font-size:12px">フォルダ</button>
       <button data-act="renameshow" data-id="${sw.id}" style="padding:4px 6px;color:var(--dim);font-size:12px">名前</button>
       <button data-act="delshow" data-id="${sw.id}" style="padding:4px 6px;color:var(--bad)">✕</button>
     </div>`;
@@ -7669,7 +7670,13 @@ document.addEventListener("click", (e) => {
     case "addshow": {
       const el = document.getElementById("newshow");
       const nm = el && el.value.trim();
-      if (nm) { const nid = uid(); S.shows.push({ id: nid, name: nm, ts: Date.now() }); S.showId = nid; U.songIdx = 0; save(); render(); }
+      if (nm) {
+        // 今開いている公演がフォルダに入っていれば、新しい公演も同じフォルダに入れる（散らばらない）
+        const cur = S.shows.find((x) => x.id === S.showId);
+        const nid = uid();
+        S.shows.push({ id: nid, name: nm, ts: Date.now(), folder: folderOf(cur) || undefined });
+        S.showId = nid; U.songIdx = 0; save(); render();
+      }
       break;
     }
     case "useshow": {
@@ -7680,6 +7687,15 @@ document.addEventListener("click", (e) => {
       render(); break;
     }
     case "copyshow": { dupShow(id); break; }
+    // つまんで重ねる以外にも、ボタンでフォルダに入れられるようにする
+    case "sfset": {
+      const sw = S.shows.find((x) => x.id === id);
+      if (!sw) break;
+      const names = [...new Set(S.shows.map(folderOf).filter(Boolean))];
+      const nm = prompt("フォルダ名（空にすると外に出ます）" + (names.length ? "\n今あるフォルダ: " + names.join("、") : ""), sw.folder || "");
+      if (nm != null) { pushUndo(); sw.folder = nm.trim(); if (sw.folder) S.folders[sw.folder] = true; save(); render(); }
+      break;
+    }
     case "renameshow": {
       const sw = S.shows.find((x) => x.id === id);
       const nm = prompt("公演名", sw ? sw.name : "");
@@ -7792,8 +7808,13 @@ function dupShow(fromId) {
   const nid = uid();
   S.shows.push({ id: nid, name: nm.trim(), ts: Date.now(), from: fromId, folder: folderOf(sw),
     nopub: sw && sw.nopub ? 1 : undefined });
-  S.songs.filter((x) => x.showId === fromId).forEach((x) => {
-    // 名簿・ブロック（A/B）・テイク・取り込み日まで引き継ぐ。
+  // テイクは引き継がない。リハでテイクが増えていても、本番は曲ごとに1本から始める。
+  // 同じ曲に複数テイクがあれば、いちばん新しいテイク（歌割の直しが入っている方）を元にする。
+  const src = S.songs.filter((x) => x.showId === fromId);
+  const picked = src.filter((x) => !src.some((y) => y !== x && y.title === x.title && y.groupId === x.groupId
+    && (Number(y.take || 1) > Number(x.take || 1) || (Number(y.take || 1) === Number(x.take || 1) && src.indexOf(y) > src.indexOf(x)))));
+  picked.forEach((x) => {
+    // 名簿・ブロック（A/B）・取り込み日まで引き継ぐ。
     // ここが抜けていると、複製した公演でブロックの行の担当が空になり、
     // 欠席の代役も組めず、いつ取り込んだ歌割かも分からなくなる。
     const blocks = {};
@@ -7804,7 +7825,7 @@ function dupShow(fromId) {
       roster: (x.roster || []).slice(), blocks,
       blockCells: x.blockCells, blockRows: x.blockRows, sheetName: x.sheetName,
       micSheet: x.micSheet, micMap: x.micMap,
-      take: x.take || 1, sig: x.sig, cols: x.cols,
+      take: 1, sig: x.sig, cols: x.cols,
       impAt: impOf(x),
     });
   });
