@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.4";
+const APP_VER = "16.5";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -37,7 +37,11 @@ const TAGS = [
   { c: "ミス",    id: "gara",   l: "ガラつき"   },
   { c: "ミス",    id: "mic",    l: "マイク"     },
   { c: "ミス",    id: "noise",  l: "ノイズ"     },
-  { c: "ミス",    id: "level",  l: "レベル"     },
+
+  { c: "バランス", id: "level",  l: "レベル"     },
+  { c: "バランス", id: "lvHi",   l: "レベル大きい" },
+  { c: "バランス", id: "lvLo",   l: "レベル小さい" },
+  { c: "バランス", id: "lenEq",  l: "長さ揃える" },
 
   { c: "良い",    id: "good",   l: "◎良い"     },
   { c: "良い",    id: "close",  l: "惜しい"     },
@@ -46,7 +50,7 @@ const TAGS = [
 ];
 const CATCOL = {
   "音程": "#FF6B4A", "タイミング": "#F0B23C", "出音": "#3FC7C0",
-  "表情": "#A98BFF", "ミス": "#FF3B6B", "良い": "#5BC98A",
+  "表情": "#A98BFF", "ミス": "#FF3B6B", "バランス": "#4C9BFF", "良い": "#5BC98A",
 };
 const catOf = (id) => (TAGS.find((t) => t.id === id) || {}).c || "";
 const noteColor = (n) => {
@@ -61,7 +65,8 @@ const SWIPES = [
   { id: "attack", up: "strong", dn: "weak",   lf: "accent", rt: "diction" },
   { id: "nuance", up: "bright", dn: "dark",   lf: "face",   rt: "mic" },
   { id: "lyric",  up: "flip",   dn: "nuke",   lf: "noise",  rt: "gara" },
-  { id: "good",   up: "close",  dn: "level",  lf: "oke",    rt: "swap" },
+  { id: "level",  up: "lvHi",   dn: "lvLo",   lf: "lenEq",  rt: null },
+  { id: "good",   up: "close",  dn: null,     lf: "oke",    rt: "swap" },
 ];
 // 以前つけた記録が生IDで出ないように
 const LEGACY = { breath: "ブレス", volume: "声量", tone: "声色" };
@@ -275,6 +280,12 @@ function songSig(so) {
   return hash32(body);
 }
 const sigOf = (so) => { if (!so) return 0; if (!so.sig) so.sig = songSig(so); return so.sig; };
+// 何行目か。Excelから取り込んだ曲は、Excelの行番号そのもの（資料と同じ数字で話せるように）。番地が無ければ画面の並びの番号。
+function rowNo(so, i) {
+  const l = so && so.lines ? so.lines[i] : null;
+  const m = l && /^[A-Z]+(\d+)$/.exec(l.lcell || l.cell || "");
+  return m ? Number(m[1]) : i + 1;
+}
 
 // その曲に出てくる人
 function songRoster(so) {
@@ -499,7 +510,7 @@ function labelOf(so, i) {
 // 赤＝まだ決まっていない、黄＝変更済み
 function lineStatus(so, i) {
   const l = so.lines[i] || {};
-  if (l.gap) return "";
+  if (l.gap || l.cut) return "";                            // カット（グレー）の行は歌わないので触らない
   if (/^全/.test(l.labelRaw || l.label || "")) return "";   // 「全」は見れば分かるので触らない
   // 歌割が書かれていない行（カットした所など）は触らない
   if (!(l.parts || []).length && !(l.labelRaw || l.label)) return "";
@@ -563,7 +574,7 @@ function autoSubs() {
       n++;
     });
     so.lines.forEach((l, i) => {
-      if (l.gap || !l.parts || !l.parts.length) return;
+      if (l.gap || l.cut || !l.parts || !l.parts.length) return;
       if (/^全/.test(l.labelRaw || l.label || "")) return;   // 「全」は触らない
       if (blockOf(so, i)) return;              // ブロックの行はブロック側で扱う
       if (S.subs[k] && S.subs[k][i]) return;
@@ -1026,7 +1037,7 @@ function buildSong(parsed) {
   const lines = (parsed.lines || []).map((r) => {
     const label = (r[0] || "").trim();
     const t = (r[1] || "").trim();
-    if (!label && !t) return { gap: true, label: "", t: "", parts: [], cell: "" };
+    if (!label && !t) return { gap: true, label: "", t: "", parts: [], cell: r[2] || "", lcell: r[3] || "" };
     const exRaw = r[4] || "";
     const exIds = [];
     if (exRaw) splitNames(exRaw.replace(/(ハモ|ハーモニー|コーラス|ｺｰﾗｽ|Cho|cho)/gi, " ")).forEach((k) => {
@@ -1035,7 +1046,8 @@ function buildSong(parsed) {
     if (label === "→") {
       return { label: exRaw ? "　" + exRaw : "", raw: "", labelRaw: "", extraRaw: r[7] || "", t,
         parts: carry.concat(exIds.filter((x) => !carry.includes(x))),
-        main: carry.slice(), extra: exIds, cont: true, cell: r[2] || "", lcell: r[3] || "", extraCell: r[5] || "" };
+        main: carry.slice(), extra: exIds, cont: true, cell: r[2] || "", lcell: r[3] || "", extraCell: r[5] || "",
+        cut: r[8] === "cut" ? 1 : undefined };
     }
     let parts = [];
     if (/^全/.test(label)) {
@@ -1058,7 +1070,8 @@ function buildSong(parsed) {
     carry = parts.slice();
     const all2 = parts.concat(exIds.filter((x) => !parts.includes(x)));
     return { label: label + (exRaw ? "　" + exRaw : ""), raw: label, labelRaw: r[6] || label, extraRaw: r[7] || "", t, parts: all2,
-      main: parts.slice(), extra: exIds, cell: r[2] || "", lcell: r[3] || "", extraCell: r[5] || "" };
+      main: parts.slice(), extra: exIds, cell: r[2] || "", lcell: r[3] || "", extraCell: r[5] || "",
+      cut: r[8] === "cut" ? 1 : undefined };
   });
   const so = { id: uid(), title: parsed.title || "無題", credit: parsed.credit || "", lines,
     roster, blocks: groups, blockCells: parsed.groupCells || {}, blockRows: parsed.groupRows || [], sheetName: parsed.sheetName || "",
@@ -1757,13 +1770,14 @@ async function parseXLSX(file, buf) {
       if (!nv && !lv) {
         topRun = false;                    // 空行で見出しの連なりは終わり
         flushPend();
-        const last = rows[rows.length - 1];
-        if (rows.length && (last[0] || last[1])) rows.push(["", ""]);
+        // 空行もExcelと同じ数だけ残す（画面の行がExcelとずれないように）。番地も持っておく。
+        if (rows.length) rows.push(["", "", col(nc) + (ri + 1), col(lc) + (ri + 1), "", "", "", "", "blank"]);
         return;
       }
       if (!nv && CREDIT.test(lv)) { head.push(lv); lead.forEach((x) => head.unshift(x[1])); lead = []; return; }
-      // ワンハーフでカットした箇所（グレー）は歌詞に出さない
-      if (lv && isGray(ri, lc)) { cutRows++; return; }
+      // ワンハーフでカットした箇所（グレー）は、行の位置がExcelとずれないよう残しつつ「カット」の印をつける
+      const cut = !!(lv && isGray(ri, lc));
+      if (cut) cutRows++;
       if (bi === 0 && bubbleAt[ri]) {
         // 吹き出し（煽り）は別の行として入れる。ただしすぐには入れない。
         // ひとつの歌割のまとまり（名前の無い続きの行）の途中に割り込ませると
@@ -1777,7 +1791,7 @@ async function parseXLSX(file, buf) {
       // いちばん上から続く、名前の無い行は見出し（曲名・メンバー一覧など）
       if (!nv && topRun && bi > 0) { head.push(lv); return; }
       if (!nv && !rows.length && lead.length < 3) { lead.push(["→", lv, col(nc) + (ri + 1), col(lc) + (ri + 1), "", "", "", ""]); return; }
-      rows.push([nv || "→", lv, col(nc) + (ri + 1), col(lc) + (ri + 1), extraRaw, extraCell, nvRaw, softText(ac != null ? (r[ac] || "") : "")]);
+      rows.push([nv || "→", lv, col(nc) + (ri + 1), col(lc) + (ri + 1), extraRaw, extraCell, nvRaw, softText(ac != null ? (r[ac] || "") : ""), cut ? "cut" : ""]);
     });
     flushPend();
   });
@@ -1947,11 +1961,13 @@ async function parseXlsxLook(raw, sheetName) {
   });
   const defFont = fonts[0] || { sz: 11, name: "" };
 
-  // 共有文字列（部分ごとの色・太字も拾う）
+  // 共有文字列（部分ごとの色・太字も拾う）。読み仮名（rPh）は文字ではないので拾わない。
+  const T = (el) => Q(el, "t").filter((t) => { for (let p = t.parentNode; p && p !== el; p = p.parentNode) if (p.localName === "rPh") return false; return true; })
+    .map((t) => t.textContent).join("");
   const sst = Q(X(txt("xl/sharedStrings.xml")), "si").map((si) => {
     const runs = Q(si, "r");
-    if (!runs.length) return [{ t: Q(si, "t").map((t) => t.textContent).join(""), f: {} }];
-    return runs.map((r) => ({ t: Q(r, "t").map((t) => t.textContent).join(""), f: fontOf(Q1(r, "rPr")) }));
+    if (!runs.length) return [{ t: T(si), f: {} }];
+    return runs.map((r) => ({ t: T(r), f: fontOf(Q1(r, "rPr")) }));
   });
 
   // シート本体
@@ -1992,7 +2008,7 @@ async function parseXlsxLook(raw, sheetName) {
       let runs = null;
       const ve = Q1(ce, "v");
       if (t === "s") { const k = Number(ve ? ve.textContent : "-1"); runs = sst[k] || null; }
-      else if (t === "inlineStr") { const is = Q1(ce, "is"); runs = is ? (Q(is, "r").length ? Q(is, "r").map((r) => ({ t: Q(r, "t").map((x) => x.textContent).join(""), f: fontOf(Q1(r, "rPr")) })) : [{ t: Q(is, "t").map((x) => x.textContent).join(""), f: {} }]) : null; }
+      else if (t === "inlineStr") { const is = Q1(ce, "is"); runs = is ? (Q(is, "r").length ? Q(is, "r").map((r) => ({ t: T(r), f: fontOf(Q1(r, "rPr")) })) : [{ t: T(is), f: {} }]) : null; }
       else if (ve) {
         let v = ve.textContent;
         if (t === "b") v = v === "1" ? "TRUE" : "FALSE";
@@ -2156,18 +2172,8 @@ function xlLookHTML(so, look, fx) {
       const xf = (cell && cell.xf) || {};
       const m = mergeAt[r + ":" + c];
       const st = [];
+      // 罫線は紙には引かない（塗り・文字・並びだけを再現する）
       if (xf.fill) st.push("background:" + xf.fill);
-      const bd = xf.border || {};
-      // 結合したセルは、右下のセルの罫線も使う
-      let bdR = bd.right, bdB = bd.bottom;
-      if (m) {
-        const rr = look.rows[m.r1], cc = rr && rr.cells[m.c1];
-        if (cc && cc.xf && cc.xf.border) { bdR = cc.xf.border.right || bdR; bdB = cc.xf.border.bottom || bdB; }
-      }
-      if (bd.left) st.push("border-left:" + bd.left);
-      if (bdR) st.push("border-right:" + bdR);
-      if (bd.top) st.push("border-top:" + bd.top);
-      if (bdB) st.push("border-bottom:" + bdB);
       const f = xf.font || base;
       st.push("font-family:" + famOf(f));
       st.push("font-size:" + ((f.sz || base.sz || 11) * 96 / 72).toFixed(1) + "px");
@@ -2216,24 +2222,16 @@ function xlLookHTML(so, look, fx) {
     return `<div class="xlshape" style="left:${L}px;top:${T}px;width:${W}px;height:${H}px;background:${s.bg};border:1px solid ${s.ln};font-size:${(s.sz * 96 / 72).toFixed(1)}px;font-family:${famOf({})}">${h(s.text).replace(/\n/g, "<br>")}</div>`;
   }).join("");
 
-  // 枠線（Excelの画面の薄い線）は表の裏に引く。塗ったセルやはみ出した文字が上に来る。
-  let grid = "";
-  if (fx.grid) {
-    const xs = [], ys = [];
-    let acc = 0; cols.forEach((w) => { acc += w; if (w) xs.push(acc); });
-    acc = 0; rowsPx.forEach((hh) => { acc += hh; if (hh) ys.push(acc); });
-    grid = `<svg class="xlgridsvg" width="${totalW}" height="${totalH}" viewBox="0 0 ${totalW} ${totalH}">` +
-      xs.map((x) => `<line x1="${x - 0.5}" y1="0" x2="${x - 0.5}" y2="${totalH}"/>`).join("") +
-      ys.map((y) => `<line x1="0" y1="${y - 0.5}" x2="${totalW}" y2="${y - 0.5}"/>`).join("") + "</svg>";
-  }
-  const html = `<div class="prxl" style="width:${totalW}px;height:${totalH}px">${grid}
+  const html = `<div class="prxl" style="width:${totalW}px;height:${totalH}px">
     <table class="xlt" style="width:${totalW}px"><colgroup>${cg}</colgroup>${trs.join("")}</table>${shapes}</div>`;
   return { html, w: totalW, h: totalH };
 }
 
 /* ---------------- A/B などのブロック定義を拾う ---------------- */
 function finalize(title, credit, rows) {
-  rows = rows.filter((r, i) => !(r[0] === "" && r[1] === "" && (i === 0 || (rows[i - 1][0] === "" && rows[i - 1][1] === ""))));
+  // 空行は続けて2つ以上にしない。ただしExcelから来た空行（番地つき）は、行の数がExcelと同じになるよう残す。
+  rows = rows.filter((r, i) => !(r[0] === "" && r[1] === "" && r[8] !== "blank" && (i === 0 || (rows[i - 1][0] === "" && rows[i - 1][1] === ""))));
+  while (rows.length && !rows[0][0] && !rows[0][1]) rows.shift();
   while (rows.length && !rows[rows.length - 1][0] && !rows[rows.length - 1][1]) rows.pop();
 
   const labelNames = new Set();
@@ -2272,7 +2270,7 @@ function finalize(title, credit, rows) {
   const groupRows = [];
   rows = rows.filter((r) => {
     const toks = splitNames(r[1]);
-    if (r[6] === "煽り") return true;
+    if (r[6] === "煽り" || r[8] === "cut") return true;
     if (!r[0] || r[0] === "→" || r[0].length > 2 || toks.length < 2) return true;
     if (!toks.every((t) => t.length <= 5 && !/[。、！？「」ぁ-ん]{3,}/.test(t))) return true;
     const known = toks.filter((t) => labelNames.has(t)).length;
@@ -2526,6 +2524,7 @@ function barsOf(so) {
   return (so.lines || []).map((l) => {
     if (l.gap) return null;
     if (l.add) return null;                    // 足した行は小節を数えない
+    if (l.cut) return null;                    // カット（グレー）の行も数えない
     if (l.at != null) b = Number(l.at);
     const cur = b;
     b += Number(l.bars || 4);
@@ -3662,10 +3661,10 @@ function viewLive() {
       const vh = vm.info[i];
       return `${newSec ? `<div class="secdiv" id="sec-${h(l.sec)}"><span>${h(l.sec)}</span></div>` : ""}
       ${vh ? `<div class="vtdiv" style="color:${vh.c}"><span>${h(vh.vt)}</span></div>` : ""}
-      <div class="ln${S.recMode && l.add ? " lnadd" : ""}${S.recMode && l.skip ? " lnskip" : ""}${isAgeri(l) ? " lnage" : ""}"${
+      <div class="ln${S.recMode && l.add ? " lnadd" : ""}${S.recMode && l.skip ? " lnskip" : ""}${l.cut ? " lncut" : ""}${isAgeri(l) ? " lnage" : ""}"${
         l.tag && tanc[l.tag] === i ? ` id="sec-${h(l.tag)}"` : ""} style="${tint ? `background:color-mix(in srgb,${tint} ${strength}%,transparent);` : ""}${vtc ? `box-shadow:inset 3px 0 0 ${vtc}` : ""}">
         <button class="lbl" data-act="${S.recMode ? "rbar" : "noteblock"}" data-i="${i}"${S.recMode || VIEW() ? "" : ` data-hold="assignline"`}
-          style="${st2 ? `color:${st2 === "need" ? "var(--bad)" : "#F0B23C"}` : ""}">${S.recMode && l.tag ? `<b class="tagmk">${h(l.tag)}</b>` : ""}${labelHTML(s, i)}</button>
+          style="${st2 ? `color:${st2 === "need" ? "var(--bad)" : "#F0B23C"}` : ""}">${S.recMode && l.tag ? `<b class="tagmk">${h(l.tag)}</b>` : ""}${l.cut ? `<b class="cutmk">カット</b>` : ""}${labelHTML(s, i)}</button>
         <div class="brk ${gp[i]}"></div>
         <div class="grow" style="min-width:0">
           <div class="txt" data-l="${i}" style="font-size:${S.size}px">${cells}</div>${pills}
@@ -3818,7 +3817,7 @@ function viewOverview(s) {
       const vh2 = vm2.info[i];
       return `${newSec ? `<div class="secdiv" id="sec-${h(l.sec)}"><span>${h(l.sec)}</span></div>` : ""}
         ${vh2 ? `<div class="vtdiv vtdivov" style="color:${vh2.c}"><span>${h(vh2.vt)}</span></div>` : ""}
-        <button class="ovw${l.add ? " lnadd" : ""}${S.recMode && l.skip ? " lnskip" : ""}" data-act="jumpline" data-i="${i}"
+        <button class="ovw${l.add ? " lnadd" : ""}${S.recMode && l.skip ? " lnskip" : ""}${l.cut ? " lncut" : ""}" data-act="jumpline" data-i="${i}"
           style="${vtColor(vtOf(l)) ? `box-shadow:inset 3px 0 0 ${vtColor(vtOf(l))}` : ""}">
           <span class="ovwn">${l.tag ? `<b class="tagmk">${h(l.tag)}</b>` : ""}${S.recBars && bars[i] != null ? bars[i] : ""}</span>
           <span>${h(l.add ? "（" + l.t + "）" : l.t)}</span></button>`;
@@ -4327,13 +4326,13 @@ ${shows}</div>
     : rl1 > rl0
     ? Array.from({ length: rl1 - rl0 + 1 }, (_, k) => rl0 + k)
         .filter((li) => s.lines[li] && !s.lines[li].gap)
-        .map((li) => `<div class="rgline"><span class="rgn">${li + 1}</span><span class="rgtx" data-rl="${li}">${lineHtml(li)}</span></div>`).join("")
+        .map((li) => `<div class="rgline"><span class="rgn">${rowNo(s, li)}</span><span class="rgtx" data-rl="${li}">${lineHtml(li)}</span></div>`).join("")
     : `<span class="rgtx" data-rl="${rl0}">${lineHtml(rl0)}</span>`;
   const ex = NOTES().filter((n) => n.songId === s.id && n.showId === S.showId && covers(n, sh.lineIdx));
 
   const inner = `
     <div class="row" style="margin-bottom:12px">
-      <span class="grow" style="font-size:11px;color:var(--dim)">${h(labelOf(s, sh.lineIdx) || "続き")} · ${sh.lineEnd ? `${sh.lineIdx + 1}〜${sh.lineEnd + 1}行目（まとめて）` : `${sh.lineIdx + 1}行目`}</span>
+      <span class="grow" style="font-size:11px;color:var(--dim)">${h(labelOf(s, sh.lineIdx) || "続き")} · ${sh.lineEnd ? `${rowNo(s, sh.lineIdx)}〜${rowNo(s, sh.lineEnd)}行目（まとめて）` : `${rowNo(s, sh.lineIdx)}行目`}</span>
       <button data-act="cancel" style="width:36px;height:36px;border-radius:10px;background:var(--panel2);font-size:17px">✕</button>
     </div>
     <div class="sec"><h4>${sh.lineEnd ? "文字をタップするとその一部だけ、押さなければ全体につきます" : "文字をタップすると一部だけ指定できます"}</h4>
@@ -4598,7 +4597,7 @@ function copyRecords(oldSo, newSo) {
 /* ---- チェック結果を元のExcelに書き込む ---- */
 // 元の体裁をそのまま保ったまま、指摘のあった歌詞セルを色づけし、右の空き列に内容を書く。
 const CHKCOL = { "音程": "FFFFD5CC", "タイミング": "FFFDEBC7", "出音": "FFD3F2F0",
-  "表情": "FFE7DEFF", "ミス": "FFFFD3DE", "良い": "FFD6F2E2" };
+  "表情": "FFE7DEFF", "ミス": "FFFFD3DE", "バランス": "FFD6E8FF", "良い": "FFD6F2E2" };
 
 async function exportCheckXlsx(songId) {
   const so = S.songs.find((x) => x.id === songId);
@@ -5295,7 +5294,7 @@ function secBars() {
   const tg = tagSecNames();
   let cur = "";
   (so2.lines || []).forEach((l) => {
-    if (l.gap) return;
+    if (l.gap || l.cut) return;                // カット（グレー）の行は小節に数えない
     const b = Number(l.bars || 4);
     // 表記が付いている行は、その表記の枠にも小節を足す（本編の分はそのまま）
     if (l.tag && tg.includes(l.tag)) {
@@ -5762,12 +5761,6 @@ function viewRecPrint() {
 // 紙の組み方。"xl"＝元のExcelの見た目（既定）、"plain"＝見やすい並び。端末ごとに覚える。
 function prLook() { try { return localStorage.getItem("uc_prLook") || "xl"; } catch (e) { return "xl"; } }
 function setPrLook(v) { try { localStorage.setItem("uc_prLook", v); } catch (e) { /* 覚えられなくても動く */ } }
-// 枠線（Excelの画面と同じ薄い線）。未設定ならシートの設定に従う。
-function prGrid(look) {
-  try { const v = localStorage.getItem("uc_prGrid"); if (v === "1") return true; if (v === "0") return false; } catch (e) { /* 既定へ */ }
-  return look ? !!look.showGrid : true;
-}
-function setPrGrid(on) { try { localStorage.setItem("uc_prGrid", on ? "1" : "0"); } catch (e) { /* 覚えられなくても動く */ } }
 
 const PR_BASE = 15;   // 画面の基準の文字の大きさ
 // 1曲は必ず1枚に収める。紙の幅の中で折り返し、高さに収まるまで文字を小さくする。
@@ -5857,6 +5850,7 @@ function viewPrint() {
     // cs: 文字ごとの書式（Excelの見た目のとき）。rawHTML: 印が無ければそのまま使う元の書式付き文字。
     const cellHTML = (l, i, cs, rawHTML) => {
       const ns = ns0.filter((n) => covers(n, i));
+      if (l.cut && !cs) return `<s style="color:#888">${h(l.t)}</s>` + cellMarks(l, i, ns);
       if (rawHTML && !ns.length && !pastHits(so.id, i).count) return rawHTML;
       const chars = Array.from(l.t);
       const wrapCS = (x, ci) => (cs && cs[ci] ? `<span style="${cs[ci]}">${x}</span>` : x);
@@ -5872,11 +5866,19 @@ function viewPrint() {
         const tail = ns.filter((n) => n.from != null && n.to === ci).map((n) => `<b class="prt">${h(mark(n))}</b>`).join("");
         return wrapCS(mk ? `<u>${ch === " " ? "&nbsp;" : h(ch)}</u>` : (ch === " " ? "&nbsp;" : h(ch)), ci) + tail;
       }).join("");
-      cells += ns.filter((n) => n.from == null && n.lineIdx === i).map((n) => `<b class="prt">${h(mark(n))}</b>`).join("");
+      return cells + cellMarks(l, i, ns);
+    };
+    // 行ごとの印（行全体への指摘、前の公演での回数）
+    function cellMarks(l, i, ns) {
+      const mark = (n) => {
+        const t = n.tags.length ? n.tags.map(tagName).join("・") : (n.memo ? "メモ" : "");
+        return `[${t}${n.pitch ? " " + pitchLabel(n.pitch) : ""}${n.memo ? " " + n.memo : ""}]`;
+      };
+      let cells = ns.filter((n) => n.from == null && n.lineIdx === i).map((n) => `<b class="prt">${h(mark(n))}</b>`).join("");
       const past = pastHits(so.id, i);
       if (past.count) cells += `<span class="prp">（前${past.count}）</span>`;
       return cells;
-    };
+    }
     const nameHTML = (l, i) => {
       const st = lineStatus(so, i);
       const sub = subOf(so.id, i);
@@ -5910,7 +5912,6 @@ function viewPrint() {
         if (br.lcell) at[br.lcell] = { kind: "block", br, side: "lyric" };
       });
       const fx = {
-        grid: prGrid(look),
         at: (a) => at[a] || null,
         cell: (l, i, cs, raw) => cellHTML(l, i, cs, raw),
         name: (l, i) => (lineStatus(so, i) || subOf(so.id, i)) ? nameHTML(l, i) : "",
@@ -6030,7 +6031,6 @@ function viewPrint() {
   <div class="hd noprint"><button class="ic" data-act="go-live">‹</button><b>PDF・印刷</b>
     <span class="grow"></span>
     ${picked.some((so) => so.xls) ? `<button class="chip sm" data-act="prlook">${prLook() === "plain" ? "Excelの見た目" : "見やすい並び"}</button>` : ""}
-    ${anyLook ? `<button class="chip sm" data-act="prgrid">${prGrid() ? "枠線あり" : "枠線なし"}</button>` : ""}
     <button class="chip sm" data-act="doprint" style="background:var(--accent);color:#0A0A0A">PDFで保存</button></div>
   ${U.lookWait ? `<div class="noprint" style="padding:8px 14px;font-size:11px;color:var(--dim)">元のExcelの見た目を読んでいます…</div>` : ""}
   ${noGrid.length ? `<div class="noprint" style="padding:8px 14px;font-size:11px;color:var(--bad)">
@@ -6444,11 +6444,12 @@ document.addEventListener("click", (e) => {
       openSheet(st, null, en);
       break;
     }
-    // ✕ と背景タップは、記録せずに閉じる
+    // ✕ と背景タップで閉じる。メモや音を入れてあれば、押し忘れても消えないよう記録して閉じる。
     case "closemenu": U.menu = null; renderSheet(); break;
     case "cancel":
     case "close":
       clearTimeout(sheetTimer);
+      if (U.sheet && sheetHasInput()) { U.picker = false; commitNote(); break; }
       U.picker = false; U.sheet = null; renderSheet();
       break;
     case "picker": U.picker = true; renderSheet(); break;
@@ -7471,7 +7472,6 @@ document.addEventListener("click", (e) => {
     case "gopdf": commitFields(); U.picker = false; U.printPick = null; U.view = "print"; render(); autoPrint(); break;
     case "doprint": window.print(); break;
     case "prlook": setPrLook(prLook() === "plain" ? "xl" : "plain"); render(); break;
-    case "prgrid": setPrGrid(!prGrid()); render(); break;
     case "ghstart": gistStart(id); break;
     case "ghpush": doPush("force"); break;
     case "ghverify": verifyToken(); break;
@@ -7746,6 +7746,12 @@ document.addEventListener("input", (e) => {
   memoTimer = setTimeout(() => commitFields(), 600);
 });
 
+// 指摘の画面に、メモか正しい音が入っているか（入っていれば閉じるときに記録する）
+function sheetHasInput() {
+  const sh = U.sheet; if (!sh) return false;
+  const memo = (document.getElementById("memo") || {}).value || sh.memo || "";
+  return !!(memo.trim() || (sh.seq && sh.seq.length));
+}
 // タグを押したらその場で確定して戻る
 let sheetTimer = null;
 function scheduleCommit() { clearTimeout(sheetTimer); commitNote(); }
@@ -9816,8 +9822,10 @@ setTimeout(readViewport, 400);
   importFromLink();
   syncSetlist(false);
 })();
-window.addEventListener("pagehide", () => { commitFields(); save(); saveNow(); });
-document.addEventListener("visibilitychange", () => { if (document.hidden) { commitFields(); save(); saveNow(); } });
+// 指摘の画面を開いたままアプリを閉じても、書きかけのメモが消えないように記録してから保存する
+const flushSheet = () => { if (U.sheet && sheetHasInput()) { clearTimeout(sheetTimer); commitNote(); } };
+window.addEventListener("pagehide", () => { flushSheet(); commitFields(); save(); saveNow(); });
+document.addEventListener("visibilitychange", () => { if (document.hidden) { flushSheet(); commitFields(); save(); saveNow(); } });
 if ("serviceWorker" in navigator) {
   let reloaded = false;
   navigator.serviceWorker.addEventListener("controllerchange", () => {
