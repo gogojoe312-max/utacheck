@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.6";
+const APP_VER = "16.7";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -272,6 +272,8 @@ function todayLabel() {
 // 接続リンクから開いた端末は閲覧専用。配信元（Gistを持つ端末）は編集できる。
 const VIEW = () => !!S.viewer && !S.groups.some((g) => g.gistId);
 const group = (id) => S.groups.find((g) => g.id === (id || S.groupId)) || S.groups[0] || {};
+// いま開いている公演が「配信しない」か
+const showNoPub = () => !!((S.shows.find((x) => x.id === S.showId) || {}).nopub);
 // 選んだグループの曲がある公演だけを出す（曲がまだ無い公演と、今開いている公演は常に出す）
 // 歌詞と担当の並びから、その曲の指紋を作る。曲名は見ない。
 function songSig(so) {
@@ -1770,7 +1772,7 @@ async function parseXLSX(file, buf) {
       if (!nv && !lv) {
         topRun = false;                    // 空行で見出しの連なりは終わり
         flushPend();
-        // 空行もExcelと同じ数だけ残す（画面の行がExcelとずれないように）。番地も持っておく。
+        // 空行（番地つき）。続けて空く分はあとで1つにまとめる。
         if (rows.length) rows.push(["", "", col(nc) + (ri + 1), col(lc) + (ri + 1), "", "", "", "", "blank"]);
         return;
       }
@@ -2229,8 +2231,9 @@ function xlLookHTML(so, look, fx) {
 
 /* ---------------- A/B などのブロック定義を拾う ---------------- */
 function finalize(title, credit, rows) {
-  // 空行は続けて2つ以上にしない。ただしExcelから来た空行（番地つき）は、行の数がExcelと同じになるよう残す。
-  rows = rows.filter((r, i) => !(r[0] === "" && r[1] === "" && r[8] !== "blank" && (i === 0 || (rows[i - 1][0] === "" && rows[i - 1][1] === ""))));
+  // 空行は続けて2つ以上にしない（1番と2番の間などが間延びしないように）。
+  // 歌っている行の位置はカット行を残すことで合わせ、何行目かはExcelの行番号で出す。
+  rows = rows.filter((r, i) => !(r[0] === "" && r[1] === "" && (i === 0 || (rows[i - 1][0] === "" && rows[i - 1][1] === ""))));
   while (rows.length && !rows[0][0] && !rows[0][1]) rows.shift();
   while (rows.length && !rows[rows.length - 1][0] && !rows[rows.length - 1][1]) rows.pop();
 
@@ -3706,7 +3709,7 @@ function viewLive() {
     <button class="grow" style="text-align:left" data-act="picker">
       <div class="t1" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px">${S.recMode
         ? `<b style="color:var(--accent)">レコーディングモード</b>${s ? " ・ " + h((S.groups.find((x) => x.id === s.groupId) || {}).name || s.folder || "") : ""}`
-        : `<b style="color:var(--accent)">ライブモード</b>${s ? " ・ " + h((S.groups.find((x) => x.id === s.groupId) || {}).name || "") : ""} ・ ${h(showName() || "公演名未設定")}${SONGS().length ? ` ・ ${U.songIdx + 1}/${SONGS().length}` : ""}${pushState ? ` ・ <span style="color:${pushState === "未送信" ? "var(--bad)" : "var(--dim)"}">${h(pushState)}</span>` : ""}`}${recWho()}</div>
+        : `<b style="color:var(--accent)">ライブモード</b>${s ? " ・ " + h((S.groups.find((x) => x.id === s.groupId) || {}).name || "") : ""} ・ ${h(showName() || "公演名未設定")}${SONGS().length ? ` ・ ${U.songIdx + 1}/${SONGS().length}` : ""}${showNoPub() ? ` ・ <span style="color:var(--dim)">配信しない</span>` : pushState ? ` ・ <span style="color:${pushState === "未送信" ? "var(--bad)" : "var(--dim)"}">${h(pushState)}</span>` : ""}`}${recWho()}</div>
       ${VIEW() && S.pubAt ? `<div style="font-size:10px;line-height:1.4">${freshLine()}</div>` : ""}
       <div class="t2 clamp2">${s && s.mark ? `<b style="color:var(--accent)">★</b> ` : ""}${s && !S.recMode && takeLabel(s) ? `<b class="tkmk">${h(takeLabel(s))}</b>` : ""}${h(s ? s.title : "曲がありません")}</div>
     </button>
@@ -6213,7 +6216,7 @@ function viewSetup() {
       ${S.groups.some((g) => g.nopub) ? "" : `<button class="chip sm" data-act="addnopub">「配信しない」グループを作る</button>`}
     </div>
 
-    ${(() => { const gg = group(); return gg && gg.gistId && !gg.nopub; })() ? `
+    ${(() => { const gg = group(); return gg && gg.gistId && !gg.nopub && !showNoPub(); })() ? `
     <h4 class="head">ライブ中のお知らせ</h4>
     <div class="card" style="margin-bottom:22px">
       ${S.alertMsg ? `<div style="background:var(--bad);color:#0A0A0A;border-radius:10px;padding:10px 12px;margin-bottom:8px">
@@ -6222,7 +6225,7 @@ function viewSetup() {
           <div style="font-size:15px;font-weight:700;white-space:pre-wrap;word-break:break-word">${h(S.alertMsg.text)}</div>
         </div>
         <button class="ghost" data-act="alertclear" style="color:var(--bad);margin-bottom:8px">取り下げる</button>` : ""}
-      <textarea class="field" id="alerttx" rows="2" style="resize:none;margin-bottom:8px" placeholder="${h(group().name)} のメンバーへ"></textarea>
+      <textarea class="field" id="alerttx" rows="2" style="resize:none;margin-bottom:8px" placeholder="メンバーに出すお知らせ"></textarea>
       <button class="primary" data-act="alertsend">お知らせ</button>
     </div>` : ""}
 
