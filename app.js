@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.3";
+const APP_VER = "16.4";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -83,7 +83,7 @@ let S = {
   plan: { start: "10:00", slots: [] },
   size: 19,
 };
-let U = { view: "live", songIdx: 0, sheet: null, mode: "member", allShows: false, picker: false, overview: false, ovSize: 9, recPick: null, sumOpen: "", draw: false, erase: false, pick: [], menu: null, printPick: null, focus: "", busy: "", allShowList: false, pdfBack: "", swapId: "", markOnly: false, planDay: "", planSec: "", vtN: 1, rmore: false, wordEdit: "", secOrd: false, secView: "" };
+let U = { view: "live", songIdx: 0, sheet: null, mode: "member", allShows: false, picker: false, overview: false, ovSize: 9, recPick: null, sumOpen: "", draw: false, erase: false, pick: [], menu: null, printPick: null, focus: "", busy: "", allShowList: false, pdfBack: "", swapId: "", markOnly: false, planDay: "", planSec: "", vtN: 1, rmore: false, wordEdit: "", secOrd: false, secView: "", lookWait: null };
 
 const S0 = JSON.parse(JSON.stringify(S));
 
@@ -1812,6 +1812,423 @@ async function parseXLSX(file, buf) {
     parsed0.micMap = map;
   }
   return parsed0;
+}
+
+/* ---------------- Excel の見た目を読む ---------------- */
+// 取り込み時に保管した元の .xlsx から、塗り・罫線・結合・列幅・行の高さ・文字の書式を
+// そのまま拾う。紙／PDFで「元のExcelと同じ見た目」に組むために使う。
+// SheetJS（無料版）は書式を読まないので、中のXMLを自分で読む。
+const XL_INDEXED = ["000000","FFFFFF","FF0000","00FF00","0000FF","FFFF00","FF00FF","00FFFF",
+  "000000","FFFFFF","FF0000","00FF00","0000FF","FFFF00","FF00FF","00FFFF",
+  "800000","008000","000080","808000","800080","008080","C0C0C0","808080",
+  "9999FF","993366","FFFFCC","CCFFFF","660066","FF8080","0066CC","CCCCFF",
+  "000080","FF00FF","FFFF00","00FFFF","800080","800000","008080","0000FF",
+  "00CCFF","CCFFFF","CCFFCC","FFFF99","99CCFF","FF99CC","CC99FF","FFCC99",
+  "3366FF","33CCCC","99CC00","FFCC00","FF9900","FF6600","666699","969696",
+  "003366","339966","003300","333300","993300","993366","333399","333333"];
+const XL_THEME_ORDER = ["lt1", "dk1", "lt2", "dk2", "accent1", "accent2", "accent3", "accent4", "accent5", "accent6", "hlink", "folHlink"];
+
+// 色に明るさの補正（tint）をかける。Excelと同じHSLの明度で計算する。
+function xlTint(hex, tint) {
+  if (!tint) return hex;
+  let r = parseInt(hex.slice(0, 2), 16) / 255, g = parseInt(hex.slice(2, 4), 16) / 255, b = parseInt(hex.slice(4, 6), 16) / 255;
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+  let hh = 0, s = 0, l = (mx + mn) / 2;
+  if (mx !== mn) {
+    const d = mx - mn;
+    s = l > 0.5 ? d / (2 - mx - mn) : d / (mx + mn);
+    if (mx === r) hh = (g - b) / d + (g < b ? 6 : 0);
+    else if (mx === g) hh = (b - r) / d + 2;
+    else hh = (r - g) / d + 4;
+    hh /= 6;
+  }
+  l = tint < 0 ? l * (1 + tint) : l * (1 - tint) + tint;
+  const f = (p, q, t) => { if (t < 0) t += 1; if (t > 1) t -= 1; if (t < 1 / 6) return p + (q - p) * 6 * t; if (t < 1 / 2) return q; if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6; return p; };
+  let R, G, B;
+  if (s === 0) R = G = B = l;
+  else { const q = l < 0.5 ? l * (1 + s) : l + s - l * s, p = 2 * l - q; R = f(p, q, hh + 1 / 3); G = f(p, q, hh); B = f(p, q, hh - 1 / 3); }
+  const hx = (v) => Math.round(Math.max(0, Math.min(1, v)) * 255).toString(16).padStart(2, "0").toUpperCase();
+  return hx(R) + hx(G) + hx(B);
+}
+
+async function parseXlsxLook(raw, sheetName) {
+  if (typeof DOMParser === "undefined") return null;
+  const { files } = await unzip(raw);
+  const txt = (p) => (files[p] ? new TextDecoder().decode(files[p]) : "");
+  const X = (s) => new DOMParser().parseFromString(s, "application/xml");
+  const Q = (el, tag) => Array.from(el ? el.getElementsByTagNameNS("*", tag) : []);
+  const Q1 = (el, tag) => (el ? el.getElementsByTagNameNS("*", tag)[0] : null) || null;
+  const A = (el, k, d) => (el && el.hasAttribute(k)) ? el.getAttribute(k) : d;
+
+  // どのシートか（名前 → rId → ファイル）
+  const wbx = X(txt("xl/workbook.xml"));
+  const rels = X(txt("xl/_rels/workbook.xml.rels"));
+  const relMap = {};
+  Q(rels, "Relationship").forEach((r) => { relMap[A(r, "Id", "")] = A(r, "Target", ""); });
+  const sheets = Q(wbx, "sheet");
+  let sh = sheets.find((s) => A(s, "name", "") === sheetName) || sheets[0];
+  if (!sh) return null;
+  const rid = sh.getAttribute("r:id") || sh.getAttributeNS("http://schemas.openxmlformats.org/officeDocument/2006/relationships", "id") || "";
+  let target = relMap[rid] || "worksheets/sheet1.xml";
+  target = target.replace(/^\/?xl\//, "").replace(/^\//, "");
+  const sheetPath = "xl/" + target;
+  if (!files[sheetPath]) return null;
+
+  // テーマの色
+  const theme = {};
+  const thx = X(txt("xl/theme/theme1.xml"));
+  const cs = Q1(thx, "clrScheme");
+  if (cs) Array.from(cs.children || []).forEach((n) => {
+    const nm = n.localName;
+    const sys = Q1(n, "sysClr"), srgb = Q1(n, "srgbClr");
+    theme[nm] = (sys && A(sys, "lastClr", null)) || (srgb && A(srgb, "val", null)) || null;
+  });
+  const colorOf = (el) => {
+    if (!el) return null;
+    if (A(el, "auto", null) === "1") return null;
+    let hex = null;
+    if (el.hasAttribute("rgb")) { hex = A(el, "rgb", ""); if (hex.length === 8) hex = hex.slice(2); }
+    else if (el.hasAttribute("theme")) { const k = XL_THEME_ORDER[Number(A(el, "theme", "0"))]; hex = theme[k] || null; }
+    else if (el.hasAttribute("indexed")) hex = XL_INDEXED[Number(A(el, "indexed", "0"))] || null;
+    if (!hex || hex.length !== 6) return null;
+    const tint = Number(A(el, "tint", "0")) || 0;
+    return "#" + xlTint(hex.toUpperCase(), tint);
+  };
+
+  // 書式（フォント・塗り・罫線・配置）
+  const stx = X(txt("xl/styles.xml"));
+  const fontOf = (fe) => {
+    if (!fe) return {};
+    const o = {};
+    const sz = Q1(fe, "sz"); if (sz) o.sz = Number(A(sz, "val", "11"));
+    const nm = Q1(fe, "name"); if (nm) o.name = A(nm, "val", "");
+    if (Q1(fe, "b")) o.b = A(Q1(fe, "b"), "val", "1") !== "0";
+    if (Q1(fe, "i")) o.i = A(Q1(fe, "i"), "val", "1") !== "0";
+    if (Q1(fe, "u")) o.u = A(Q1(fe, "u"), "val", "single") !== "none";
+    if (Q1(fe, "strike")) o.strike = A(Q1(fe, "strike"), "val", "1") !== "0";
+    const c = colorOf(Q1(fe, "color")); if (c) o.color = c;
+    return o;
+  };
+  const fonts = Q(Q1(stx, "fonts"), "font").map(fontOf);
+  const fills = Q(Q1(stx, "fills"), "fill").map((fe) => {
+    const p = Q1(fe, "patternFill");
+    if (!p) return null;
+    const pt = A(p, "patternType", "none");
+    if (pt === "none") return null;
+    const fg = colorOf(Q1(p, "fgColor")), bg = colorOf(Q1(p, "bgColor"));
+    if (pt === "solid") return fg || bg || null;
+    // 網掛けは、色を薄めて塗っておく
+    return fg ? "#" + xlTint(fg.slice(1), 0.5) : (bg || null);
+  });
+  const BW = { thin: "1px solid", medium: "2px solid", thick: "3px solid", hair: "1px solid", dashed: "1px dashed", mediumDashed: "2px dashed",
+    dotted: "1px dotted", double: "3px double", dashDot: "1px dashed", mediumDashDot: "2px dashed", dashDotDot: "1px dashed", mediumDashDotDot: "2px dashed", slantDashDot: "2px dashed" };
+  const borders = Q(Q1(stx, "borders"), "border").map((be) => {
+    const o = {};
+    ["left", "right", "top", "bottom"].forEach((side) => {
+      const s = Q1(be, side);
+      const st = s && A(s, "style", "");
+      if (!st || !BW[st]) return;
+      const c = colorOf(Q1(s, "color")) || "#000";
+      o[side] = BW[st] + " " + c;
+    });
+    return o;
+  });
+  const xfs = Q(Q1(stx, "cellXfs"), "xf").map((xe) => {
+    const al = Q1(xe, "alignment");
+    return {
+      font: fonts[Number(A(xe, "fontId", "0"))] || fonts[0] || {},
+      fill: fills[Number(A(xe, "fillId", "0"))] || null,
+      border: borders[Number(A(xe, "borderId", "0"))] || {},
+      h: al ? A(al, "horizontal", "") : "", v: al ? A(al, "vertical", "") : "",
+      wrap: al ? A(al, "wrapText", "0") === "1" : false,
+      rot: al ? Number(A(al, "textRotation", "0")) : 0,
+      indent: al ? Number(A(al, "indent", "0")) : 0,
+    };
+  });
+  const defFont = fonts[0] || { sz: 11, name: "" };
+
+  // 共有文字列（部分ごとの色・太字も拾う）
+  const sst = Q(X(txt("xl/sharedStrings.xml")), "si").map((si) => {
+    const runs = Q(si, "r");
+    if (!runs.length) return [{ t: Q(si, "t").map((t) => t.textContent).join(""), f: {} }];
+    return runs.map((r) => ({ t: Q(r, "t").map((t) => t.textContent).join(""), f: fontOf(Q1(r, "rPr")) }));
+  });
+
+  // シート本体
+  const sx = X(txt(sheetPath));
+  const fmt = Q1(sx, "sheetFormatPr");
+  const defRowPt = Number(A(fmt, "defaultRowHeight", "0")) || (/ゴシック|明朝|Meiryo|メイリオ|Yu|游|MS/i.test(defFont.name || "") ? 18.75 : 15);
+  // 1文字ぶんの幅（px）。日本語フォントは少し広い。
+  const mdw = /ゴシック|明朝|Meiryo|メイリオ|Yu|游|MS/i.test(defFont.name || "") ? 8 : 7;
+  const defColW = Number(A(fmt, "defaultColWidth", "0")) || (Number(A(fmt, "baseColWidth", "8")) + 5 / mdw);
+  const colPx = (w) => Math.trunc(((256 * w + Math.trunc(128 / mdw)) / 256) * mdw);
+  const view = Q1(sx, "sheetView");
+  const showGrid = !view || A(view, "showGridLines", "1") !== "0";
+
+  const colDefs = [];
+  Q(Q1(sx, "cols"), "col").forEach((c) => {
+    const mn = Number(A(c, "min", "1")), mx = Number(A(c, "max", "1"));
+    for (let i = mn; i <= mx && i <= 500; i++) colDefs[i - 1] = { w: Number(A(c, "width", defColW)), hidden: A(c, "hidden", "0") === "1", s: Number(A(c, "style", "-1")) };
+  });
+
+  const cellRef = (a) => { const m = /^([A-Z]+)(\d+)$/.exec(a || ""); if (!m) return null; let n = 0; for (let i = 0; i < m[1].length; i++) n = n * 26 + (m[1].charCodeAt(i) - 64); return { c: n - 1, r: Number(m[2]) - 1 }; };
+  const merges = Q(Q1(sx, "mergeCells"), "mergeCell").map((m) => {
+    const [a, b] = A(m, "ref", "").split(":");
+    const p = cellRef(a), q = cellRef(b || a);
+    return p && q ? { r0: p.r, c0: p.c, r1: q.r, c1: q.c } : null;
+  }).filter(Boolean);
+
+  const rows = [];
+  let maxC = -1, maxR = -1;
+  Q(Q1(sx, "sheetData"), "row").forEach((re) => {
+    const ri = Number(A(re, "r", "0")) - 1;
+    if (ri < 0 || ri > 2000) return;
+    const row = { r: ri, ht: A(re, "ht", null) != null ? Number(A(re, "ht", "0")) : null, hidden: A(re, "hidden", "0") === "1", cells: {} };
+    Q(re, "c").forEach((ce) => {
+      const p = cellRef(A(ce, "r", ""));
+      if (!p) return;
+      const s = Number(A(ce, "s", "0"));
+      const t = A(ce, "t", "n");
+      let runs = null;
+      const ve = Q1(ce, "v");
+      if (t === "s") { const k = Number(ve ? ve.textContent : "-1"); runs = sst[k] || null; }
+      else if (t === "inlineStr") { const is = Q1(ce, "is"); runs = is ? (Q(is, "r").length ? Q(is, "r").map((r) => ({ t: Q(r, "t").map((x) => x.textContent).join(""), f: fontOf(Q1(r, "rPr")) })) : [{ t: Q(is, "t").map((x) => x.textContent).join(""), f: {} }]) : null; }
+      else if (ve) {
+        let v = ve.textContent;
+        if (t === "b") v = v === "1" ? "TRUE" : "FALSE";
+        else if (t === "n" && /^-?\d+\.\d{6,}$/.test(v)) v = String(Math.round(Number(v) * 10000) / 10000);
+        runs = [{ t: v, f: {} }];
+      }
+      const text = runs ? runs.map((x) => x.t).join("") : "";
+      const xf = xfs[s] || xfs[0] || {};
+      const has = text || xf.fill || Object.keys(xf.border || {}).length;
+      if (!has) return;
+      row.cells[p.c] = { s, runs, text, xf, num: t === "n" && !!ve };
+      if (text || xf.fill) { if (p.c > maxC) maxC = p.c; if (ri > maxR) maxR = ri; }
+    });
+    rows[ri] = row;
+  });
+  merges.forEach((m) => { if (m.c1 > maxC) maxC = m.c1; if (m.r1 > maxR) maxR = m.r1; });
+  if (maxC < 0 || maxR < 0) return null;
+
+  // 吹き出し・図形（煽りなど）
+  const shapes = [];
+  try {
+    const relPath = sheetPath.replace(/worksheets\/([^/]+)$/, "worksheets/_rels/$1.rels");
+    const m = /Target="([^"]*drawings\/drawing\d+\.xml)"/.exec(txt(relPath));
+    if (m) {
+      const dx = X(txt("xl/" + m[1].replace(/^\.\.\//, "").replace(/^\/?xl\//, "")));
+      const EMU = 9525;
+      const anchors = Q(dx, "twoCellAnchor").concat(Q(dx, "oneCellAnchor"));
+      anchors.forEach((an) => {
+        const fr = Q1(an, "from"), to = Q1(an, "to"), ext = Q1(an, "ext");
+        if (!fr) return;
+        const num = (el, tag) => Number((Q1(el, tag) || {}).textContent || 0);
+        const sp = Q1(an, "sp");
+        if (!sp) return;
+        const paras = Q(Q1(sp, "txBody"), "p").map((p) => Q(p, "t").map((t) => t.textContent).join(""));
+        const text = paras.join("\n").trim();
+        if (!text) return;
+        const spPr = Q1(sp, "spPr");
+        let bg = "#FFFFFF", ln = "#555555";
+        const sf = spPr ? Array.from(spPr.children || []).find((x) => x.localName === "solidFill") : null;
+        if (sf) { const c = Q1(sf, "srgbClr"); if (c) bg = "#" + A(c, "val", "FFFFFF"); const sc = Q1(sf, "schemeClr"); if (sc && theme[A(sc, "val", "")]) bg = "#" + theme[A(sc, "val", "")]; }
+        const lnEl = Q1(spPr, "ln");
+        if (lnEl) { const c = Q1(lnEl, "srgbClr"); if (c) ln = "#" + A(c, "val", "555555"); if (Q1(lnEl, "noFill")) ln = "transparent"; }
+        const rpr = Q1(sp, "rPr");
+        const fsz = rpr && A(rpr, "sz", null) ? Number(A(rpr, "sz", "1100")) / 100 : (defFont.sz || 11);
+        const shape = { c0: num(fr, "col"), c0off: num(fr, "colOff") / EMU, r0: num(fr, "row"), r0off: num(fr, "rowOff") / EMU, text, bg, ln, sz: fsz };
+        if (to) { shape.c1 = num(to, "col"); shape.c1off = num(to, "colOff") / EMU; shape.r1 = num(to, "row"); shape.r1off = num(to, "rowOff") / EMU; }
+        else if (ext) { shape.cx = Number(A(ext, "cx", "0")) / EMU; shape.cy = Number(A(ext, "cy", "0")) / EMU; }
+        shapes.push(shape);
+      });
+    }
+  } catch (e) { /* 図形は無くても表は出せる */ }
+
+  return { rows, merges, colDefs, defColW, colPx, defRowPt, maxC, maxR, showGrid, defFont, shapes };
+}
+
+// 部分ごとの書式 → CSS
+function xlRunCSS(f, base) {
+  const o = [];
+  const b = f.b != null ? f.b : base.b, i = f.i != null ? f.i : base.i, u = f.u != null ? f.u : base.u;
+  if (f.color) o.push("color:" + f.color);
+  if (f.sz && f.sz !== base.sz) o.push("font-size:" + (f.sz * 96 / 72).toFixed(1) + "px");
+  if (f.name && f.name !== base.name) o.push(`font-family:'${f.name.replace(/['"]/g, "")}'`);
+  if (b != null && b !== !!base.b) o.push("font-weight:" + (b ? "700" : "400"));
+  if (i) o.push("font-style:italic");
+  if (u) o.push("text-decoration:underline");
+  if (f.strike) o.push("text-decoration:line-through");
+  return o.join(";");
+}
+
+// 歌詞の文字ごとの書式。取り込み時の整形（改行→空白、余分な空白の圧縮）を
+// 同じ順で文字の並びに施し、l.t と一致した時だけ使う。
+function xlCharStyles(runs, base, want) {
+  if (!runs || !want) return null;
+  let arr = [];
+  runs.forEach((r) => Array.from(r.t).forEach((ch) => arr.push({ ch, st: xlRunCSS(r.f, base) })));
+  const rep = (re, to) => {
+    const s = arr.map((x) => x.ch).join("");
+    const out = [];
+    let last = 0, m;
+    re.lastIndex = 0;
+    // 文字の位置（UTF-16）→ 配列の位置
+    const idx = []; let p = 0; arr.forEach((x, k) => { idx[p] = k; p += x.ch.length; }); idx[p] = arr.length;
+    while ((m = re.exec(s))) {
+      const a = idx[m.index], b = idx[m.index + m[0].length];
+      if (a == null || b == null) return;
+      for (let k = last; k < a; k++) out.push(arr[k]);
+      const t = typeof to === "function" ? to(m[0]) : to;
+      Array.from(t).forEach((ch) => out.push({ ch, st: arr[a] ? arr[a].st : "" }));
+      last = b;
+      if (!m[0].length) re.lastIndex++;
+    }
+    for (let k = last; k < arr.length; k++) out.push(arr[k]);
+    arr = out;
+  };
+  rep(/\s*\n\s*/g, " ");
+  rep(/[\u2E80-\u2FDF\uFF66-\uFF9F]+/g, (t) => (t.normalize ? t.normalize("NFKC") : t));
+  rep(/\(cid:\d+\)/g, "");
+  rep(/[\uFFFD\u0000-\u001F\uE000-\uF8FF]/g, " ");
+  rep(/[ \t\u00A0]+/g, " ");
+  while (arr.length && /\s/.test(arr[0].ch)) arr.shift();
+  while (arr.length && /\s/.test(arr[arr.length - 1].ch)) arr.pop();
+  if (arr.map((x) => x.ch).join("") !== want) return null;
+  return arr.map((x) => x.st);
+}
+
+// 読んだ見た目は曲ごとに覚えておく（null＝元のExcelが無い）
+const XLOOK = {};
+async function ensureLooks(songs) {
+  const todo = songs.filter((so) => so.xls && XLOOK[so.id] === undefined);
+  if (!todo.length) return false;
+  for (const so of todo) {
+    XLOOK[so.id] = null;
+    try {
+      const blob = await getClip("xls:" + so.id);
+      if (!blob) continue;
+      XLOOK[so.id] = await parseXlsxLook(new Uint8Array(await blob.arrayBuffer()), so.sheetName || "");
+    } catch (e) { XLOOK[so.id] = null; }
+  }
+  return true;
+}
+
+// 元のExcelそのままの表を組む。歌詞・名前のセルには、今の画面と同じ印（下線・タグ・欠席の差し替え）を重ねる。
+// cellFn(l, i, charStyles) / nameFn(l, i) は viewPrint のもの。
+function xlLookHTML(so, look, fx) {
+  const rowPx = (rw) => ((rw && rw.ht != null ? rw.ht : look.defRowPt) * 96 / 72);
+  const cols = [];
+  for (let c = 0; c <= look.maxC; c++) {
+    const d = look.colDefs[c];
+    cols.push(d && d.hidden ? 0 : look.colPx(d ? d.w : look.defColW));
+  }
+  const rowsPx = [];
+  for (let r = 0; r <= look.maxR; r++) { const rw = look.rows[r]; rowsPx.push(rw && rw.hidden ? 0 : rowPx(rw)); }
+  const totalW = cols.reduce((a, b) => a + b, 0);
+  const totalH = rowsPx.reduce((a, b) => a + b, 0);
+
+  const covered = {}, mergeAt = {};
+  look.merges.forEach((m) => {
+    mergeAt[m.r0 + ":" + m.c0] = m;
+    for (let r = m.r0; r <= m.r1; r++) for (let c = m.c0; c <= m.c1; c++) if (r !== m.r0 || c !== m.c0) covered[r + ":" + c] = true;
+  });
+  const base = look.defFont || {};
+  const famOf = (f) => `'${(f.name || base.name || "").replace(/['"]/g, "")}','Hiragino Sans','Yu Gothic','Meiryo',sans-serif`;
+  const colName = (c) => { let t = ""; c++; while (c > 0) { const m = (c - 1) % 26; t = String.fromCharCode(65 + m) + t; c = (c - m - 1) / 26; } return t; };
+
+  const runsHTML = (runs, bf) => (runs || []).map((r) => {
+    const css = xlRunCSS(r.f, bf);
+    const t = h(r.t);
+    return css ? `<span style="${css}">${t}</span>` : t;
+  }).join("");
+
+  const trs = [];
+  for (let r = 0; r <= look.maxR; r++) {
+    const rw = look.rows[r];
+    if (rw && rw.hidden) continue;
+    const tds = [];
+    for (let c = 0; c <= look.maxC; c++) {
+      if (covered[r + ":" + c]) continue;
+      const d = look.colDefs[c];
+      if (d && d.hidden) continue;
+      const cell = rw && rw.cells[c];
+      const xf = (cell && cell.xf) || {};
+      const m = mergeAt[r + ":" + c];
+      const st = [];
+      if (xf.fill) st.push("background:" + xf.fill);
+      const bd = xf.border || {};
+      // 結合したセルは、右下のセルの罫線も使う
+      let bdR = bd.right, bdB = bd.bottom;
+      if (m) {
+        const rr = look.rows[m.r1], cc = rr && rr.cells[m.c1];
+        if (cc && cc.xf && cc.xf.border) { bdR = cc.xf.border.right || bdR; bdB = cc.xf.border.bottom || bdB; }
+      }
+      if (bd.left) st.push("border-left:" + bd.left);
+      if (bdR) st.push("border-right:" + bdR);
+      if (bd.top) st.push("border-top:" + bd.top);
+      if (bdB) st.push("border-bottom:" + bdB);
+      const f = xf.font || base;
+      st.push("font-family:" + famOf(f));
+      st.push("font-size:" + ((f.sz || base.sz || 11) * 96 / 72).toFixed(1) + "px");
+      if (f.b) st.push("font-weight:700");
+      if (f.i) st.push("font-style:italic");
+      if (f.u) st.push("text-decoration:underline");
+      if (f.color) st.push("color:" + f.color);
+      const hz = xf.h || (cell && cell.num ? "right" : "left");
+      st.push("text-align:" + (hz === "centerContinuous" || hz === "center" ? "center" : hz === "right" ? "right" : "left"));
+      st.push("vertical-align:" + (xf.v === "top" ? "top" : xf.v === "center" ? "middle" : "bottom"));
+      if (xf.wrap) st.push("white-space:pre-wrap;overflow-wrap:anywhere");
+      else {
+        // 折り返さない文字は、右隣が空ならExcelと同じくはみ出して見せる
+        const nx = rw && rw.cells[c + 1];
+        const spill = hz === "left" && !(nx && nx.text) && !(m);
+        st.push("white-space:pre;overflow:" + (spill ? "visible" : "hidden"));
+      }
+      if (xf.rot === 255) st.push("writing-mode:vertical-rl");
+      if (xf.indent) st.push("padding-left:" + (xf.indent * 9 + 2) + "px");
+      let inner = "";
+      const addr = colName(c) + (r + 1);
+      const hit = fx.at(addr);      // {kind:"lyric"|"name"|"block", l, i, br}
+      if (hit && hit.kind === "lyric" && hit.l.t) {
+        const cs = xlCharStyles(cell && cell.runs, f, hit.l.t);
+        inner = fx.cell(hit.l, hit.i, cs, cell && cell.runs && !cs ? runsHTML(cell.runs, f) : "");
+      } else if (hit && hit.kind === "name") {
+        inner = fx.name(hit.l, hit.i) || runsHTML(cell && cell.runs, f);
+      } else if (hit && hit.kind === "block") {
+        inner = fx.block(hit.br, hit.side) || runsHTML(cell && cell.runs, f);
+      } else if (cell) inner = runsHTML(cell.runs, f);
+      // はみ出した文字は、隣のセルの枠線より手前に出す（Excelと同じ）
+      const span = m ? ` colspan="${m.c1 - m.c0 + 1}" rowspan="${m.r1 - m.r0 + 1}"` : "";
+      tds.push(`<td${span} style="${st.join(";")}">${inner}</td>`);
+    }
+    trs.push(`<tr style="height:${rowsPx[r].toFixed(2)}px">${tds.join("")}</tr>`);
+  }
+  const cg = cols.map((w, c) => (look.colDefs[c] && look.colDefs[c].hidden) ? "" : `<col style="width:${w}px">`).join("");
+
+  // 吹き出し・図形
+  const x0 = (c, off) => cols.slice(0, c).reduce((a, b) => a + b, 0) + (off || 0);
+  const y0 = (r, off) => rowsPx.slice(0, r).reduce((a, b) => a + b, 0) + (off || 0);
+  const shapes = look.shapes.map((s) => {
+    const L = x0(s.c0, s.c0off), T = y0(s.r0, s.r0off);
+    const W = s.c1 != null ? Math.max(20, x0(s.c1, s.c1off) - L) : (s.cx || 120);
+    const H = s.r1 != null ? Math.max(14, y0(s.r1, s.r1off) - T) : (s.cy || 30);
+    return `<div class="xlshape" style="left:${L}px;top:${T}px;width:${W}px;height:${H}px;background:${s.bg};border:1px solid ${s.ln};font-size:${(s.sz * 96 / 72).toFixed(1)}px;font-family:${famOf({})}">${h(s.text).replace(/\n/g, "<br>")}</div>`;
+  }).join("");
+
+  // 枠線（Excelの画面の薄い線）は表の裏に引く。塗ったセルやはみ出した文字が上に来る。
+  let grid = "";
+  if (fx.grid) {
+    const xs = [], ys = [];
+    let acc = 0; cols.forEach((w) => { acc += w; if (w) xs.push(acc); });
+    acc = 0; rowsPx.forEach((hh) => { acc += hh; if (hh) ys.push(acc); });
+    grid = `<svg class="xlgridsvg" width="${totalW}" height="${totalH}" viewBox="0 0 ${totalW} ${totalH}">` +
+      xs.map((x) => `<line x1="${x - 0.5}" y1="0" x2="${x - 0.5}" y2="${totalH}"/>`).join("") +
+      ys.map((y) => `<line x1="0" y1="${y - 0.5}" x2="${totalW}" y2="${y - 0.5}"/>`).join("") + "</svg>";
+  }
+  const html = `<div class="prxl" style="width:${totalW}px;height:${totalH}px">${grid}
+    <table class="xlt" style="width:${totalW}px"><colgroup>${cg}</colgroup>${trs.join("")}</table>${shapes}</div>`;
+  return { html, w: totalW, h: totalH };
 }
 
 /* ---------------- A/B などのブロック定義を拾う ---------------- */
@@ -5342,6 +5759,16 @@ function viewRecPrint() {
 // 箱からはみ出た分は切り取られるため、2ページ目が発生しない。
 
 
+// 紙の組み方。"xl"＝元のExcelの見た目（既定）、"plain"＝見やすい並び。端末ごとに覚える。
+function prLook() { try { return localStorage.getItem("uc_prLook") || "xl"; } catch (e) { return "xl"; } }
+function setPrLook(v) { try { localStorage.setItem("uc_prLook", v); } catch (e) { /* 覚えられなくても動く */ } }
+// 枠線（Excelの画面と同じ薄い線）。未設定ならシートの設定に従う。
+function prGrid(look) {
+  try { const v = localStorage.getItem("uc_prGrid"); if (v === "1") return true; if (v === "0") return false; } catch (e) { /* 既定へ */ }
+  return look ? !!look.showGrid : true;
+}
+function setPrGrid(on) { try { localStorage.setItem("uc_prGrid", on ? "1" : "0"); } catch (e) { /* 覚えられなくても動く */ } }
+
 const PR_BASE = 15;   // 画面の基準の文字の大きさ
 // 1曲は必ず1枚に収める。紙の幅の中で折り返し、高さに収まるまで文字を小さくする。
 function fitPrintDOM() {
@@ -5356,6 +5783,23 @@ function fitPrintDOM() {
     box.style.height = "";                 // いったん元の高さ（上限）に戻す
     const bw = box.clientWidth, bh = box.clientHeight;
     if (!bw || !bh) return;
+    const xl = sec.querySelector(".prxl");
+    if (xl) {
+      // Excelの見た目は文字を組み直さず、表ごと縮めて紙に収める
+      inner.style.transform = "none";
+      inner.style.fontSize = PR_BASE + "px";
+      inner.style.width = bw + "px";
+      xl.style.transform = "none";
+      xl.style.marginBottom = "";
+      const tw = xl.offsetWidth, th = xl.offsetHeight;
+      const rest = inner.scrollHeight - th;          // 見出し・総括のぶん
+      const k = Math.min(1, bw / Math.max(1, tw), (bh - 8 - rest) / Math.max(1, th));
+      xl.style.transformOrigin = "top left";
+      xl.style.transform = "scale(" + k + ")";
+      xl.style.marginBottom = (-(1 - k) * th) + "px";
+      box.style.height = Math.min(bh, inner.scrollHeight + 6) + "px";
+      return;
+    }
     // 幅は紙の幅に固定し、文字の大きさだけで高さを合わせる。
     // 以前は横に引き伸ばしてから縮小していたため、幅の測り方が狂うと
     // 右段（2番）が紙からはみ出して切り落とされていた。
@@ -5388,7 +5832,10 @@ function fitPrintDOM() {
 // 紙面の組み直し（fitPrintDOM）が終わってから呼ぶ。
 // 印刷から戻ったときのために画面自体は残す。
 function autoPrint() {
-  setTimeout(() => { try { window.print(); } catch (e) { /* 出せなければ画面が残るだけ */ } }, 150);
+  const go = () => setTimeout(() => { try { window.print(); } catch (e) { /* 出せなければ画面が残るだけ */ } }, 150);
+  // 元のExcelの見た目を読んでいる途中なら、読み終えて組み直してから
+  if (U.lookWait) U.lookWait.then(() => setTimeout(go, 50));
+  else go();
 }
 
 function viewPrint() {
@@ -5397,14 +5844,22 @@ function viewPrint() {
   const picked = U.printPick ? all.filter((x) => U.printPick.includes(x.id)) : all;
 
   let needWide = false;
+  let landVotes = 0, portVotes = 0;
+  // 元のExcelの見た目を、まだ読んでいなければ読む（読めたら組み直す）
+  if (prLook() !== "plain" && picked.some((so) => so.xls && XLOOK[so.id] === undefined)) {
+    U.lookWait = ensureLooks(picked).then(() => { U.lookWait = null; if (U.view === "print") render(); });
+  }
   const body = picked.map((so) => {
     const ns0 = NOTES().filter((n) => n.songId === so.id && n.showId === S.showId);
     const mm = songMemo(so.id);
 
     // 1行ぶんの歌詞を、指摘の印つきで組み立てる
-    const cellHTML = (l, i) => {
+    // cs: 文字ごとの書式（Excelの見た目のとき）。rawHTML: 印が無ければそのまま使う元の書式付き文字。
+    const cellHTML = (l, i, cs, rawHTML) => {
       const ns = ns0.filter((n) => covers(n, i));
+      if (rawHTML && !ns.length && !pastHits(so.id, i).count) return rawHTML;
       const chars = Array.from(l.t);
+      const wrapCS = (x, ci) => (cs && cs[ci] ? `<span style="${cs[ci]}">${x}</span>` : x);
       const mark = (n) => {
         const t = n.tags.length ? n.tags.map(tagName).join("・") : (n.memo ? "メモ" : "");
         return `[${t}${n.pitch ? " " + pitchLabel(n.pitch) : ""}${n.memo ? " " + n.memo : ""}]`;
@@ -5415,7 +5870,7 @@ function viewPrint() {
       let cells = chars.map((ch, ci) => {
         const mk = wholeLine || ns.find((n) => n.from != null && ci >= n.from && ci <= n.to);
         const tail = ns.filter((n) => n.from != null && n.to === ci).map((n) => `<b class="prt">${h(mark(n))}</b>`).join("");
-        return (mk ? `<u>${ch === " " ? "&nbsp;" : h(ch)}</u>` : (ch === " " ? "&nbsp;" : h(ch))) + tail;
+        return wrapCS(mk ? `<u>${ch === " " ? "&nbsp;" : h(ch)}</u>` : (ch === " " ? "&nbsp;" : h(ch)), ci) + tail;
       }).join("");
       cells += ns.filter((n) => n.from == null && n.lineIdx === i).map((n) => `<b class="prt">${h(mark(n))}</b>`).join("");
       const past = pastHits(so.id, i);
@@ -5441,8 +5896,40 @@ function viewPrint() {
     const withBoth = withT.filter((l) => ref(l.cell) && ref(l.lcell));
     const hasGrid = withT.length > 0 && withBoth.length >= withT.length * 0.8;
     let inner;
+    const look = prLook() !== "plain" ? XLOOK[so.id] : null;
 
-    if (hasGrid) {
+    if (look) {
+      // 元のExcelそのまま。歌詞・名前のセルに今の印を重ねる。
+      const at = {};
+      so.lines.forEach((l, i) => {
+        if (l.lcell) at[l.lcell] = { kind: "lyric", l, i };
+        if (l.cell) at[l.cell] = { kind: "name", l, i };
+      });
+      (so.blockRows || []).forEach((br) => {
+        if (br.ncell) at[br.ncell] = { kind: "block", br, side: "name" };
+        if (br.lcell) at[br.lcell] = { kind: "block", br, side: "lyric" };
+      });
+      const fx = {
+        grid: prGrid(look),
+        at: (a) => at[a] || null,
+        cell: (l, i, cs, raw) => cellHTML(l, i, cs, raw),
+        name: (l, i) => (lineStatus(so, i) || subOf(so.id, i)) ? nameHTML(l, i) : "",
+        block: (br, side) => {
+          if (side === "name") return "";
+          const st = blockStatus(so, br.b);
+          return st ? `<span style="font-weight:700;text-decoration:underline">${h(names(blockParts(so, br.b)) || "—")}</span>` : "";
+        },
+      };
+      const out = xlLookHTML(so, look, fx);
+      // 表に載らない行（吹き出しの煽りなど）への指摘は、表の下に出す
+      const orphan = so.lines.map((l, i) => ({ l, i })).filter((x) => !x.l.gap && !(x.l.lcell && at[x.l.lcell]) && ns0.some((n) => covers(n, x.i)));
+      inner = out.html + (orphan.length ? `<div class="prbody" style="margin-top:6px">${orphan.map(({ l, i }) =>
+        `<div class="prl"><span class="prn">${nameHTML(l, i)}</span><span class="prx">${cellHTML(l, i)}</span></div>`).join("")}</div>` : "");
+      // 紙の向きは、大きく出せる方にする
+      const MM = 96 / 25.4, H2 = out.h + 70;
+      const port = Math.min(170 * MM / out.w, 196 * MM / H2), land = Math.min(257 * MM / out.w, 144 * MM / H2);
+      if (land > port * 1.15) landVotes++; else portVotes++;
+    } else if (hasGrid) {
       const colNum = (t) => { let n = 0; for (let i = 0; i < t.length; i++) n = n * 26 + (t.charCodeAt(i) - 64); return n; };
       // 元のExcelにあった列を、そのままの並びで使う
       const spec = [];
@@ -5531,7 +6018,9 @@ function viewPrint() {
     </div></div></section>`;
   }).join("");
 
-  const noGrid = picked.filter((x) => {
+  if (landVotes > portVotes) needWide = true;
+  const anyLook = prLook() !== "plain" && picked.some((so) => XLOOK[so.id]);
+  const noGrid = anyLook ? [] : picked.filter((x) => {
     const withT = x.lines.filter((l) => l.t);
     const ok = withT.filter((l) => /^[A-Z]+\d+$/.test(l.cell || "") && /^[A-Z]+\d+$/.test(l.lcell || ""));
     return withT.length && ok.length < withT.length * 0.8;
@@ -5540,13 +6029,16 @@ function viewPrint() {
   return `
   <div class="hd noprint"><button class="ic" data-act="go-live">‹</button><b>PDF・印刷</b>
     <span class="grow"></span>
+    ${picked.some((so) => so.xls) ? `<button class="chip sm" data-act="prlook">${prLook() === "plain" ? "Excelの見た目" : "見やすい並び"}</button>` : ""}
+    ${anyLook ? `<button class="chip sm" data-act="prgrid">${prGrid() ? "枠線あり" : "枠線なし"}</button>` : ""}
     <button class="chip sm" data-act="doprint" style="background:var(--accent);color:#0A0A0A">PDFで保存</button></div>
+  ${U.lookWait ? `<div class="noprint" style="padding:8px 14px;font-size:11px;color:var(--dim)">元のExcelの見た目を読んでいます…</div>` : ""}
   ${noGrid.length ? `<div class="noprint" style="padding:8px 14px;font-size:11px;color:var(--bad)">
     ${h(noGrid.map((x) => songName(x)).join("、"))} は元の並びを再現できません。Excelから読み込み直すと同じ並びになります。</div>` : ""}
   <div class="scroll">
     ${needWide ? `<style>@page{size:A4 landscape;margin:0}</style>
     <div class="noprint" style="padding:8px 12px;background:#2A2118;color:#F0C089;font-size:12px;line-height:1.6">
-      この曲は歌割表が横に2段あるので、紙は<b>横向き</b>で組んでいます。
+      ${anyLook ? "この歌割表は横長なので" : "この曲は歌割表が横に2段あるので"}、紙は<b>横向き</b>で組んでいます。
       印刷／PDFの画面で「方向」が縦向きになっていたら、<b>横向きに変えてください</b>。
       iPhoneは方向の指定を無視することがあり、縦のままだと文字が小さくなります。
     </div>` : ""}
@@ -6978,6 +7470,8 @@ document.addEventListener("click", (e) => {
     }
     case "gopdf": commitFields(); U.picker = false; U.printPick = null; U.view = "print"; render(); autoPrint(); break;
     case "doprint": window.print(); break;
+    case "prlook": setPrLook(prLook() === "plain" ? "xl" : "plain"); render(); break;
+    case "prgrid": setPrGrid(!prGrid()); render(); break;
     case "ghstart": gistStart(id); break;
     case "ghpush": doPush("force"); break;
     case "ghverify": verifyToken(); break;
