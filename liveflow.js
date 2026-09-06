@@ -46,15 +46,14 @@ const LiveFlow = (() => {
     const so = song(); if (!allowed() || !so) return "";
     syncContext(so);
     const count = pending(so).length;
-    return `<section class="lf-dock" aria-label="ライブのクイック記録">
-      <div class="lf-top"><button data-act="lf-select" data-id="pending" aria-pressed="${selected === "pending"}" class="${selected === "pending" ? "lf-active" : ""}">⚑ あとで確認</button>
-        <button data-act="lf-next"${count ? "" : " disabled"}>次の未確認 <b>${count}</b></button><button data-act="lf-list">確認一覧</button></div>
-      <div class="lf-tags">${tags().map((id) => `<button data-act="lf-select" data-id="${id}" aria-pressed="${selected === id}" class="${selected === id ? "lf-active" : ""}">${h(tagName(id))}</button>`).join("")}</div>
-      <div class="lf-help"><span role="status">${message ? h(message) : U.overview ? "歌詞を開くと、行の横に＋が出ます" : `歌詞の横の＋ → ${selected === "pending" ? "仮メモ（配信しません）" : h(tagName(selected))}`}</span>
-      ${lastUndo && lastUndo === undoStack[undoStack.length - 1] ? '<button data-act="lf-undo">取消</button>' : ""}
-      ${lastTag && !tags().includes(lastTag) ? `<button data-act="lf-select" data-id="${h(lastTag)}">直前：${h(tagName(lastTag))}</button>` : ""}<button data-act="lf-settings">並べ替え</button></div>
+    selected = "pending";
+    return `<section class="lf-dock lf-compact" aria-label="ライブの確認">
+      <span class="lf-status" role="status">${message ? h(message) : "＋であとで確認"}</span>
+      <button data-act="lf-next"${count ? "" : " disabled"}>未確認 ${count}</button>
+      <button data-act="lf-list">一覧</button>
     </section>`;
   }
+
   function getSong(m) { return m && m.showId === S.showId ? S.songs.find((x) => x.id === m.songId && x.showId === m.showId) : null; }
   function getItem(so, m) { return items(so).find((x) => x.id === m.itemId && x.kind === m.itemKind && (x.kind !== "prior" || x.sourceSongId === m.sourceSongId)); }
   function openItem(so, x) {

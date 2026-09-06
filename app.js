@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.12";
+const APP_VER = "16.13";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -3751,7 +3751,7 @@ function viewLive() {
           style="${st2 ? `color:${st2 === "need" ? "var(--bad)" : "#F0B23C"}` : ""}">${S.recMode && l.tag ? `<b class="tagmk">${h(l.tag)}</b>` : ""}${l.cut ? `<b class="cutmk">カット</b>` : ""}${labelHTML(s, i)}</button>
         <div class="brk ${gp[i]}"></div>
         <div class="grow" style="min-width:0">
-          <div class="txt" data-l="${i}" style="font-size:${S.size}px">${cells}</div>${pills}
+          <div class="txt" data-l="${i}" style="font-size:${S.size + 3}px">${cells}</div>${pills}
         </div>${typeof LiveFlow !== "undefined" ? LiveFlow.lineButton(s, i) : ""}</div>`;
     }).join("");
   }

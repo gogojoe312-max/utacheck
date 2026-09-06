@@ -1,6 +1,16 @@
 /* Presentation only: keep settings values, handlers and storage unchanged. */
 function polishUI() {
   app.dataset.screen = U.view;
+  if (U.view === "live") {
+    const idleAudio = app.querySelector('.aubar:has([data-act="recstart"])');
+    const bottom = app.querySelector('.bottom');
+    if (idleAudio && bottom) {
+      const record = idleAudio.querySelector('[data-act="recstart"]');
+      record.setAttribute('aria-label','録音を開始');
+      bottom.prepend(record);
+      idleAudio.remove();
+    }
+  }
   if (U.view !== "setup") return;
   const sc = app.querySelector('.scroll.pad');
   if (!sc) return;
