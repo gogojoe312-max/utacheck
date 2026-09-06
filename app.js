@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.7";
+const APP_VER = "16.8";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1102,14 +1102,20 @@ function softText(t) {
   return t.replace(/[ \t\u00A0]+/g, " ").trim();
 }
 
-const NAMESEP = /[・、，,･\/／\s]+/;
-// 括弧は、短ければ人名（(平)）、長ければ指示（(ウィスパー里)）とみなす
+// 研修生発表会の歌割は「橋田・相馬＋吉田光・根本」のように「＋」でメンバーと研修生をつなぐ
+const NAMESEP = /[・、，,･\/／＋+\s]+/;
+// 括弧は、短ければ人名（(平)）、長ければ指示（(ウィスパー里)）とみなす。
+// 「（Hey）全」のような掛け声（英字だけ）は名前ではないので外す。
 function stripParens(t) {
-  return t.replace(/[（(]([^）)]*)[）)]/g, (m, inner) => (inner.trim().length <= 3 ? inner.trim() : ""));
+  return t.replace(/[（(]([^）)]*)[）)]/g, (m, inner) => {
+    const s = inner.trim();
+    return s.length <= 3 && /[぀-ヿ㐀-䶿一-鿿豈-﫿]/.test(s) ? s : "";
+  });
 }
 function splitNames(label) {
-  return label.split(NAMESEP)
-    .map((t) => stripParens(t).trim())
+  // 括弧の中に「＋」があることがある（全（松原＋坂本Oct下））ので、区切る前に括弧を外す
+  return stripParens(String(label || "")).split(NAMESEP)
+    .map((t) => t.trim())
     .filter((t) => t && t.length < 6 && !/[（()）※★☆]/.test(t)); // 長いもの・括弧や記号は名前ではない
 }
 
@@ -1619,8 +1625,29 @@ async function addVersionTab(buf, tabName, edits, srcSheet) {
 /* ---------------- Excel 取り込み ---------------- */
 // 社内の歌割は「名前・空白・歌詞」の3列を1組として、横に2〜3組並ぶ形。
 // 列位置は資料ごとに違うので、中身から名前列と歌詞列を見分ける。
-const NAMECELL = /^[^\s、,，・･\/／]{1,4}([\s、,，・･\/／]+[^\s、,，・･\/／]{1,4})*$/;
-const looksName = (v) => !!v && v.length <= 12 && NAMECELL.test(v);
+const NAMECELL = /^[^\s、,，・･\/／＋+]{1,4}([\s、,，・･\/／＋+]+[^\s、,，・･\/／＋+]{1,4})*$/;
+// セルが「名前の欄」らしいかを 0〜1 で返す。
+//   漢字だけの短い語（橋田・吉田光）、A/B のような組の記号、「全」 … 1
+//   かなや英字が混じる短い語（この胸・Wow）は歌詞にもあるので … 0.4
+//   4文字を超える語が1つでもあれば歌詞 … 0
+// 「橋田・相馬＋吉田光・根本」「全（松原＋坂本Oct下）」のような長い並びも名前の欄として通す。
+const HAMO_RE = /(ハモ|ハーモニー|コーラス|ｺｰﾗｽ|Cho|cho)/g;
+function nameScore(v) {
+  if (!v) return 0;
+  const s = stripParens(v).replace(HAMO_RE, " ").trim();   // 「広本ハモ」も名前の欄
+  if (!s || s.length > 40) return 0;
+  const toks = s.split(NAMESEP).filter(Boolean);
+  if (!toks.length) return 0;
+  let sum = 0;
+  for (const t of toks) {
+    if (t.length > 4) return 0;
+    if (/^全/.test(t) || /^[A-Za-z]$/.test(t) || /^[㐀-䶿一-鿿豈-﫿々〆]+$/.test(t)) sum += 1;
+    else if (/[぀-ヿ㐀-䶿一-鿿豈-﫿]/.test(t) || /^[A-Za-z]+$/.test(t)) sum += 0.4;
+    else return 0;                                   // 記号や数字だけ
+  }
+  return sum / toks.length;
+}
+const looksName = (v) => nameScore(v) >= 0.6;
 
 // どのシートが歌割かを選ぶ。
 // 1枚目が「マイク番号」のように番号だけの表のことがあるため。
@@ -1712,32 +1739,67 @@ async function parseXLSX(file, buf) {
   const w = grid.reduce((m, r) => Math.max(m, r.length), 0);
   grid.forEach((r) => { while (r.length < w) r.push(""); });
 
+  // 列ごとに「名前の欄」か「歌詞の欄」かを見分ける。
+  // 「全」が結合セルで1つしか入っていない列もあるので、値の数では切らない。
   const kind = [];
+  const colVals = [];
   for (let c = 0; c < w; c++) {
     const vals = grid.map((r) => cleanText(r[c])).filter(Boolean);
-    if (vals.length < 3) { kind.push("."); continue; }
-    kind.push(vals.filter(looksName).length / vals.length >= 0.6 ? "N" : "L");
+    colVals.push(vals);
+    if (!vals.length) { kind.push("."); continue; }
+    const sc = vals.reduce((a, v) => a + nameScore(v), 0) / vals.length;
+    kind.push(sc >= 0.6 ? "N" : "L");
   }
-  // 名前列の右隣（2列以内）にある歌詞列を組にする
+  // 名前列の右隣（2列以内）にある歌詞列を組にする。1つの歌詞列は1つの組にしか入れない。
   const blocks = [];
+  const usedL = new Set();
   for (let c = 0; c < w; c++) {
     if (kind[c] !== "N") continue;
-    for (let d = c + 1; d < Math.min(c + 3, w); d++) if (kind[d] === "L") { blocks.push([c, d]); break; }
+    for (let d = c + 1; d < Math.min(c + 3, w); d++) {
+      if (kind[d] === "N") break;                    // 名前列が続く時は、その先の歌詞列は次の名前列のもの
+      if (kind[d] === "L" && !usedL.has(d)) { blocks.push([c, d]); usedL.add(d); break; }
+    }
   }
   if (!blocks.length) {
     const L = kind.indexOf("L");
-    if (L >= 0) blocks.push([Math.max(0, L - 2), L]);
+    if (L >= 0) { blocks.push([Math.max(0, L - 2), L]); usedL.add(L); }
   }
+  // 名前の付いていない歌詞列（右側の WOW WOW など）も落とさない。
+  // 左隣が空の列なら、そこを（空の）名前列として組にする。担当は空のまま。
+  for (let c = 0; c < w; c++) {
+    if (kind[c] !== "L" || usedL.has(c)) continue;
+    const nc = c - 1;
+    if (nc < 0 || kind[nc] !== ".") continue;
+    blocks.push([nc, c]); usedL.add(c);
+  }
+  blocks.sort((a, b) => a[0] - b[0]);
+  const orphan = new Set();
+  blocks.forEach(([nc, lc], bi) => { if (kind[nc] === ".") orphan.add(bi); });
   // 歌詞列のすぐ右にある「名前だけの列」は、ハモなどの追加担当とみなす
   const inBlock = new Set();
   blocks.forEach(([a, b]) => { inBlock.add(a); inBlock.add(b); });
   const annex = blocks.map(() => []);
+  // ただし「橋田｜根本」のように、名前だけの列が2つ並んで同じ行に1人ずつ入っている表は
+  // メンバーと研修生の組み合わせの一覧（凡例）なので、ハモとしては読まない。
+  const rowsOf = (c) => grid.map((r, i) => (cleanText(r[c]) ? i : -1)).filter((i) => i >= 0);
+  const singleNames = (c) => colVals[c].every((v) => splitNames(v).length === 1);
+  const isLegendPair = (c1, c2) => {
+    if (kind[c1] !== "N" || kind[c2] !== "N") return false;
+    const r1 = rowsOf(c1), r2 = rowsOf(c2);
+    if (r1.length < 4 || r1.length !== r2.length || r1.some((v, i) => v !== r2[i])) return false;
+    if (!singleNames(c1) || !singleNames(c2)) return false;
+    const n1 = colVals[c1].map((v) => splitNames(v)[0]), n2 = colVals[c2].map((v) => splitNames(v)[0]);
+    if (new Set(n1).size !== n1.length || new Set(n2).size !== n2.length) return false;
+    return !n1.some((n) => n2.includes(n));
+  };
   blocks.forEach(([nc, lc], bi) => {
+    const cand = [];
     for (let c = lc + 1; c < Math.min(lc + 3, w); c++) {
       if (inBlock.has(c) || kind[c] !== "N") continue;
-      annex[bi].push(c);
-      inBlock.add(c);
+      cand.push(c);
     }
+    if (cand.length === 2 && isLegendPair(cand[0], cand[1])) return;
+    cand.forEach((c) => { annex[bi].push(c); inBlock.add(c); });
   });
   const HAMO = /(ハモ|ハーモニー|コーラス|ｺｰﾗｽ|Cho|cho)/gi;
 
@@ -1753,12 +1815,25 @@ async function parseXLSX(file, buf) {
   const flushPend = () => {
     while (pend.length) rows.push(["煽り", softText(pend.shift()), "", "", "", "", "煽り", ""]);
   };
+  // 見出し（曲名・作家・メンバー一覧）は、どの組でも最初の名前が出る行より上にある
+  let bodyStart = grid.length;
   blocks.forEach(([nc, lc], bi) => {
-    let topRun = true;        // いちばん上から途切れずに続く、名前の無い行（＝見出し）
+    if (orphan.has(bi)) return;
+    for (let ri = 0; ri < grid.length; ri++) {
+      const v = cleanText(grid[ri][nc] || "");
+      if (v && nameScore(v) >= 0.6) { bodyStart = Math.min(bodyStart, ri); break; }
+    }
+  });
+  blocks.forEach(([nc, lc], bi) => {
+    const noName = orphan.has(bi);   // 名前列の無い組（担当は空のまま入れる）
+    let topRun = !noName;     // まだ名前が出ていない（＝見出しの範囲）
     grid.forEach((r, ri) => {
       let nv = cleanText(r[nc] || "");
       let nvRaw = softText(r[nc] || "");
       const lv = softText(r[lc] || "");
+      // 「（Hey）全」は全員の掛け声。「全」を頭にして、全員の行として扱えるようにする
+      const hm = /^[（(]([^）)]*)[）)]\s*(全.*)$/.exec(nv);
+      if (hm) nv = hm[2] + "(" + hm[1] + ")";
       // 「（空欄） A  吉田・服部…」のように、間の列にブロック名が書かれていることがある
       if (!nv && lv) {
         for (let c = nc + 1; c < lc; c++) {
@@ -1770,7 +1845,7 @@ async function parseXLSX(file, buf) {
       const extraRaw = ac != null ? cleanText(r[ac] || "") : "";
       const extraCell = ac != null ? col(ac) + (ri + 1) : "";
       if (!nv && !lv) {
-        topRun = false;                    // 空行で見出しの連なりは終わり
+        // 空行は見出しの連なりを切らない（題名の上に空行がある資料もある）
         flushPend();
         // 空行（番地つき）。続けて空く分はあとで1つにまとめる。
         if (rows.length) rows.push(["", "", col(nc) + (ri + 1), col(lc) + (ri + 1), "", "", "", "", "blank"]);
@@ -1789,11 +1864,14 @@ async function parseXLSX(file, buf) {
       }
       // 新しいまとまりが始まる行の手前で、持っていた煽りを出す
       if (pend.length && nv) flushPend();
+      // 名前列の上のほうに「2026年9月研修生発表会」のような見出しだけが入っていることがある
+      if (nv && !lv && topRun && nameScore(nv) < 0.6) { head.push(nvRaw); return; }
       if (nv) topRun = false;
       // いちばん上から続く、名前の無い行は見出し（曲名・メンバー一覧など）
-      if (!nv && topRun && bi > 0) { head.push(lv); return; }
-      if (!nv && !rows.length && lead.length < 3) { lead.push(["→", lv, col(nc) + (ri + 1), col(lc) + (ri + 1), "", "", "", ""]); return; }
-      rows.push([nv || "→", lv, col(nc) + (ri + 1), col(lc) + (ri + 1), extraRaw, extraCell, nvRaw, softText(ac != null ? (r[ac] || "") : ""), cut ? "cut" : ""]);
+      if (!nv && topRun && bi > 0 && ri < bodyStart) { head.push(lv); return; }
+      if (!nv && !noName && !rows.length && lead.length < 3 && ri < bodyStart) { lead.push(["→", lv, col(nc) + (ri + 1), col(lc) + (ri + 1), "", "", "", ""]); return; }
+      // 名前がまだ一度も出ていない組の歌詞は、前の組の担当を引き継がず、担当なしで入れる
+      rows.push([nv || (noName || topRun ? "" : "→"), lv, col(nc) + (ri + 1), col(lc) + (ri + 1), extraRaw, extraCell, nvRaw, softText(ac != null ? (r[ac] || "") : ""), cut ? "cut" : ""]);
     });
     flushPend();
   });
