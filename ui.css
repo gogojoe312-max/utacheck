@@ -161,3 +161,26 @@ select.field{appearance:auto}textarea.field{resize:vertical}
  #app[data-screen="live"] .lf-compact{padding-left:24px;padding-right:24px}
 }
 }
+@media screen {
+/* Keep the compact header below the notch, including installed iPhone PWAs. */
+#app[data-screen="live"] .hd:has([data-act="picker"]){padding-top:calc(8px + env(safe-area-inset-top));padding-left:calc(12px + env(safe-area-inset-left));padding-right:calc(12px + env(safe-area-inset-right))}
+#app[data-screen="live"] .bottom{padding-bottom:calc(3px + env(safe-area-inset-bottom))}
+.reading-bar{display:flex;align-items:center;gap:6px;min-width:0;flex:1;background:var(--panel);padding:3px 10px;flex-shrink:0}
+.reading-bar select{min-width:0;max-width:160px;flex:1;font-size:12px;min-height:38px;appearance:auto;background:transparent;color:var(--text)}
+.reading-bar button{font-size:12px;min-height:38px;white-space:nowrap;padding:5px 8px;color:var(--accent)}
+.reading-bar button[aria-pressed="true"]{background:#293c56;border-radius:8px}
+.reading-bar button:disabled{opacity:.4}
+#app[data-screen="live"] .lf-compact{flex-wrap:wrap;gap:0;padding-left:8px;padding-right:8px}
+.lf-compact .reading-bar{padding-left:0;padding-right:0}
+.lf-compact>button{font-size:11px;padding:4px 7px}
+.reading-hidden{display:none!important}.reading-current{outline:1px solid var(--accent);outline-offset:-2px;border-radius:8px}
+.reading-notes{font-size:13px;line-height:1.7;color:#bfd8ff;margin:5px 0 3px;white-space:pre-wrap;overflow-wrap:anywhere}
+.reading-notes>div{border-left:2px solid #6688b5;padding-left:8px;margin-top:4px}
+.reading-empty{font-size:14px;line-height:1.7;padding:24px;color:var(--dim)}
+#app[data-reading-filter="1"] .scroll>.gap,#app[data-reading-filter="1"] .scroll>.pull,#app[data-reading-filter="1"] .scroll>.card{display:none}
+@media(min-width:700px){#app[data-screen="live"] .hd:has([data-act="picker"]){padding-top:calc(12px + env(safe-area-inset-top));padding-left:calc(24px + env(safe-area-inset-left));padding-right:calc(24px + env(safe-area-inset-right))}}
+}
+@media screen{
+#app>.reading-bar{flex:0 0 auto;border-top:1px solid var(--line)}
+#app[data-viewer="1"] .ln:has(.reading-notes) .tagpill[data-act="note"]{display:none}
+}

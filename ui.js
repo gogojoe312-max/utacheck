@@ -1,6 +1,7 @@
 /* Presentation only: keep settings values, handlers and storage unchanged. */
 function polishUI() {
   app.dataset.screen = U.view;
+  app.dataset.viewer = VIEW() ? "1" : "0";
   if (U.view === "live") {
     const idleAudio = app.querySelector('.aubar:has([data-act="recstart"])');
     const bottom = app.querySelector('.bottom');
@@ -11,6 +12,7 @@ function polishUI() {
       idleAudio.remove();
     }
   }
+  if (typeof Reading !== "undefined") Reading.apply();
   if (U.view !== "setup") return;
   const sc = app.querySelector('.scroll.pad');
   if (!sc) return;
