@@ -1,0 +1,52 @@
+/* 指が迷わない固定配置。小さい端末では歌詞の高さを優先する。 */
+.rf-dock{flex:0 0 auto;padding:9px 10px 6px;border-top:1px solid var(--line);background:var(--panel)}
+.rf-context{display:flex;align-items:center;gap:8px;min-width:0;margin-bottom:8px;font-size:12px}
+.rf-context strong{max-width:34%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--accent);font-size:15px}
+.rf-context>span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-variant-numeric:tabular-nums}
+.rf-context>button{padding:5px 8px;background:var(--panel2);border-radius:7px;white-space:nowrap}
+.rf-actions{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
+.rf-actions button{min-height:44px;border:1px solid #39414c;border-radius:10px;font-size:12px;font-weight:600;background:#20262f;white-space:nowrap}
+.rf-actions button:last-child{border-color:#3b6652;color:#9de5ba}
+.rf-actions button:disabled{opacity:.38;cursor:default}
+.rf-actions button:active,.rf-wide:active{background:#3c424d}
+.rf-feedback{display:flex;align-items:center;gap:9px;min-height:30px;font-size:11px;color:#aab2bf}
+.rf-feedback>span{flex:1;min-width:0;line-height:1.4}
+.rf-feedback button{white-space:nowrap;min-height:30px;color:var(--accent)}
+.rf-dot{margin-right:4px;font-size:11px}
+.rf-done{color:#9de5ba}.rf-candidate{color:#f5c56c}.rf-retake,.rf-partial{color:#ff9b84}.rf-unknown{color:#b0b9c7}
+.rf-empty{display:flex;align-items:center;gap:10px;padding:8px 12px;font-size:12px;color:#aab2bf;border-top:1px solid var(--line)}
+.rf-empty span{flex:1}.rf-empty button{min-height:44px;white-space:nowrap;color:var(--accent)}
+.rf-sheet-head{display:flex;align-items:flex-start;gap:12px;margin-bottom:16px}.rf-sheet-head>div{flex:1;min-width:0}
+.rf-sheet-head h2{font-size:19px;line-height:1.5}.rf-sheet-head p{font-size:12px;color:#b0b9c7;margin-top:4px;overflow-wrap:anywhere}
+.rf-sheet-head button{min-height:44px;padding:0 10px;border:1px solid var(--line);border-radius:9px;font-size:13px}
+.rf-summary{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:12px}
+.rf-summary>div{background:var(--panel2);border-radius:10px;padding:10px 4px;text-align:center;font-size:11px;color:#b0b9c7}
+.rf-summary b{display:block;font-size:24px;color:var(--text);font-variant-numeric:tabular-nums}
+.rf-help{display:block;font-size:12px;line-height:1.65;color:#b0b9c7;margin:8px 0}
+.rf-wide{display:block;width:100%;min-height:44px;padding:10px 12px;background:var(--panel2);border:1px solid #39414c;border-radius:10px;font-size:13px;margin:10px 0}
+.rf-primary{background:var(--accent);border-color:var(--accent);color:#121316;font-weight:700}
+.rf-review-item{padding:12px 0;border-bottom:1px solid var(--line)}
+.rf-section{flex:1;min-width:0;min-height:44px;text-align:left;font-size:18px;font-weight:700;overflow-wrap:anywhere}
+.rf-section span{font-size:11px;font-weight:400;color:#b0b9c7;white-space:nowrap}
+.rf-badge{font-size:12px;white-space:nowrap;background:var(--panel2);padding:5px 8px;border-radius:6px}
+.rf-row-actions{display:flex;gap:8px;margin-top:6px}.rf-row-actions button{min-height:44px;padding:6px 12px;border:1px solid #39414c;border-radius:8px;font-size:12px}
+.rf-punch{margin:8px 0 8px 20px;font-size:13px;line-height:1.7}.rf-memo{font-size:13px;line-height:1.7;white-space:pre-wrap}
+.rf-lines label{display:flex;gap:12px;align-items:center;min-height:48px;padding:10px;border:1px solid var(--line);border-radius:9px;margin-bottom:6px;font-size:14px;line-height:1.7}
+.rf-lines input{appearance:auto;width:20px;height:20px;flex:0 0 auto;accent-color:var(--accent)}
+.rf-error{font-size:12px;color:#ff9b84;line-height:1.6;margin-top:8px}
+.rf-sheet-footer{margin-top:18px}.rf-sheet button:focus-visible,.rf-dock button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+@media(max-height:640px){.rf-dock{padding-top:5px}.rf-context{margin-bottom:4px}.rf-feedback{min-height:24px}.rf-feedback button{min-height:24px}}
+@media print{.rf-dock,.rf-empty{display:none!important}}
+
+/* 曲名は操作ボタンに押しつぶされないよう、録音画面の先頭を1段使う。 */
+#app[data-rec="1"] .hd:has([data-act="picker"]){flex-wrap:wrap;gap:6px}
+#app[data-rec="1"] .hd>button[data-act="picker"]{flex:1 0 100%;max-width:100%}
+#app[data-rec="1"] .hd #pcd2{margin-right:auto!important}
+@media(max-width:400px){
+ #app[data-rec="1"] .aubar{gap:5px;padding:6px 8px;flex-wrap:wrap}
+ #app[data-rec="1"] .aubar .chip.sm{padding:6px 8px;white-space:nowrap;flex-shrink:0;min-height:38px}
+ #app[data-rec="1"] .aubar .tkbtn{min-width:30px;width:30px;flex-shrink:0}
+ #app[data-rec="1"] .aubar .tknow{min-width:68px;padding:0 6px;flex-shrink:0}
+ #app[data-rec="1"] .aubar #pcd{font-size:12px!important}
+}
+@media(max-width:350px){#app[data-rec="1"] .aubar #pcd+span{display:none}}

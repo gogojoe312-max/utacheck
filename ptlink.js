@@ -439,7 +439,7 @@
   }
   document.addEventListener("click", function (e) {
     var b = e.target.closest && e.target.closest('[data-act="jumpsec"]');
-    if (b) setTimeout(function () { sendLocate(true, true); }, 0);
+    if (b && cfg() && cfg().on) setTimeout(function () { sendLocate(true, true); }, 0);
 
   }, true);
 

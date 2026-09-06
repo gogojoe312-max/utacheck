@@ -1,8 +1,10 @@
 /* 自分のコードは毎回ネットワークを見に行き、圏外のときだけキャッシュを使う。
    重い vendor/ だけはキャッシュ優先。これで「更新したのに変わらない」が起きない。 */
-const CACHE = "utacheck-16.8";
+const CACHE = "utacheck-16.12";
 const ASSETS = [
   "./", "./index.html", "./app.js", "./manifest.webmanifest",
+  "./ui.css", "./ui.js", "./liveflow.js", "./liveflow.css",
+  "./recflow.js", "./recflow.css", "./ptlink.js", "./ptmac.html",
   "./icon-192.png", "./icon-512.png", "./setlist.json",
   "./vendor/pdf.min.js", "./vendor/pdf.worker.min.js", "./vendor/xlsx.full.min.js",
 ];
@@ -13,7 +15,7 @@ self.addEventListener("install", (e) => {
 
 self.addEventListener("activate", (e) => {
   e.waitUntil(caches.keys()
-    .then((ks) => Promise.all(ks.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+    .then((ks) => Promise.all(ks.filter((k) => k.startsWith("utacheck-") && k !== CACHE).map((k) => caches.delete(k))))
     .then(() => self.clients.claim()));
 });
 

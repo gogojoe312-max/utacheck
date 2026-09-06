@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.8";
+const APP_VER = "16.12";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -819,7 +819,7 @@ let pushTimer = null, pushState = "";
 let undoStack = [];
 let readTimer = null;
 function pushUndo(songId) {
-  const snap = { notes: S.notes, rsongs: S.rsongs, plan: S.plan,
+  const snap = { livePending: S.livePending || [], liveChecks: S.liveChecks || [], notes: S.notes, rsongs: S.rsongs, plan: S.plan,
     shows: S.shows, folders: S.folders, folderOrder: S.folderOrder };
   // 歌割を差し替える時だけ、その1曲と代役も控える。
   // 全曲を毎回控えるとメモリを食うので、必要な時に限る。
@@ -3556,6 +3556,7 @@ function render() {
   const sig = U.view + U.songIdx + U.mode + U.allShows + U.overview;
   const sameView = app.dataset.view === sig;
   app.dataset.view = sig;
+  app.dataset.rec = S.recMode ? "1" : "0";
 
   const pend = alertPending();
   if (pend) app.innerHTML = viewAlert(pend);
@@ -3566,6 +3567,8 @@ function render() {
   else if (U.view === "live") app.innerHTML = viewLive();
   else if (U.view === "summary") app.innerHTML = viewSummary();
   else app.innerHTML = viewSetup();
+
+  if (typeof polishUI === "function") polishUI();
 
   // 保存できていないことは、どの画面にいても分かるようにする（紙面には出さない）
   if (saveErr && U.view !== "print" && U.view !== "recprint") {
@@ -3749,7 +3752,7 @@ function viewLive() {
         <div class="brk ${gp[i]}"></div>
         <div class="grow" style="min-width:0">
           <div class="txt" data-l="${i}" style="font-size:${S.size}px">${cells}</div>${pills}
-        </div></div>`;
+        </div>${typeof LiveFlow !== "undefined" ? LiveFlow.lineButton(s, i) : ""}</div>`;
     }).join("");
   }
 
@@ -3826,6 +3829,7 @@ function viewLive() {
         : `<button data-act="recstart" class="aub" style="color:var(--bad)">●</button>
            <span class="grow" style="font-size:11px;color:var(--dim)">録音</span>`}
   </div>` : "")}
+  ${typeof LiveFlow !== "undefined" ? LiveFlow.bar() : ""}
   ${S.recMode ? "" : `<div class="bottom">
     <button data-act="prev" class="${U.songIdx <= 0 ? "off" : ""}">‹</button>
          <button data-act="next" class="${U.songIdx >= SONGS().length - 1 ? "off" : ""}">›</button>
@@ -3999,6 +4003,8 @@ function viewOverview(s) {
       <h4 style="font-size:11px;color:var(--dim);margin-bottom:6px">総括</h4>
       <div style="font-size:13px;white-space:pre-wrap">${h(songMemo(s.id))}</div></div>` : ""}
     <div style="height:30px"></div></div>
+  ${S.recMode && typeof RecFlow !== "undefined" ? RecFlow.bar() : ""}
+  ${typeof LiveFlow !== "undefined" ? LiveFlow.bar() : ""}
   <div class="bottom">
     <button data-act="prev" class="${U.songIdx <= 0 ? "off" : ""}">‹</button>
     <button data-act="next" class="${U.songIdx >= SONGS().length - 1 ? "off" : ""}">›</button>
@@ -4012,6 +4018,20 @@ function renderSheet() {
   // 記録シートの中で打っている最中も、組み直すと文字が飛ぶ
   if (typingNow() && overlay && overlay.contains(document.activeElement)) { pendingRender = true; return; }
   if (overlay) { overlay.remove(); overlay = null; }
+
+  if (U.menu && U.menu.kind.startsWith("lf-") && typeof LiveFlow !== "undefined") {
+    overlay = document.createElement("div"); overlay.className = "mask";
+    overlay.innerHTML = `<button class="sp" data-act="lf-close" aria-label="閉じる"></button><div class="sheet" role="dialog" aria-modal="true" aria-label="ライブの確認">${LiveFlow.sheet(U.menu)}</div>`;
+    document.body.appendChild(overlay); return;
+  }
+
+  if (U.menu && U.menu.kind.startsWith("rf-") && typeof RecFlow !== "undefined") {
+    overlay = document.createElement("div");
+    overlay.className = "mask";
+    overlay.innerHTML = `<button class="sp" data-act="rf-close" aria-label="閉じる"></button><div class="sheet">${RecFlow.sheet(U.menu)}</div>`;
+    document.body.appendChild(overlay);
+    return;
+  }
 
   if (U.menu && U.menu.kind === "sched") {
     overlay = document.createElement("div");
@@ -5096,7 +5116,7 @@ function recBar() {
   const tabList = secs.length ? secs : sectionOrder().map((nm) => ({ name: nm }));
   const tabs = tabList.map((e) => {
     const cls = (e.live || e.name === U.secView || tagBase(U.secView) === e.name) ? "on" : e.done ? "dn" : "";
-    return `<button class="sectab ${cls}" id="tab-${h(e.name)}" data-act="jumpsec" data-id="${h(e.name)}">${e.done ? "✓" : ""}${h(e.name)}${false ? `<i>${e.done ? e.used : e.min}</i>` : ""}</button>`;
+    return `<button class="sectab ${cls}" id="tab-${h(e.name)}" data-act="jumpsec" data-id="${h(e.name)}">${typeof RecFlow !== "undefined" && live ? RecFlow.tab(live.s, e.name) : (e.done ? "✓" : "")}${h(e.name)}${false ? `<i>${e.done ? e.used : e.min}</i>` : ""}</button>`;
   }).join("");
 
   /* Gaya のような表記を選んでいる時は、Gaya1 Gaya2 … を小さく並べる。
@@ -5118,6 +5138,7 @@ function recBar() {
   }
 
   return `${tabs ? `<div class="sectabs">${tabs}</div>` : ""}${subTabs}
+  ${typeof RecFlow !== "undefined" ? RecFlow.bar() : ""}
   <div class="aubar">
     ${live && live.s.a0 != null ? `<span id="pcd" style="font-size:13px;font-variant-numeric:tabular-nums">—</span>
       ${cur ? `<span style="font-size:11px;color:var(--dim)">${h(cur.name)}</span>` : ""}
@@ -6495,6 +6516,8 @@ document.addEventListener("click", (e) => {
   if (e.target.closest("[data-r]") && U.sheet) return;   // 文字の選択はなぞりで扱う
   if (!b) return;
   const a = b.dataset.act, i = +b.dataset.i, id = b.dataset.id;
+  if (typeof RecFlow !== "undefined" && (RecFlow.handle(a, id) || RecFlow.guard(a, id, b.dataset.rfApproved))) return;
+  if (typeof LiveFlow !== "undefined" && LiveFlow.handle(a, id, i, b)) return;
   const s = song();
 
   switch (a) {
@@ -6574,6 +6597,8 @@ document.addEventListener("click", (e) => {
         if (Array.isArray(prev)) S.notes = prev;
         else {
           S.notes = prev.notes; S.rsongs = prev.rsongs; S.plan = prev.plan;
+          if (prev.livePending) S.livePending = prev.livePending;
+          if (prev.liveChecks) S.liveChecks = prev.liveChecks;
           if (prev.shows) S.shows = prev.shows;
           if (prev.folders) S.folders = prev.folders;
           if (prev.folderOrder) S.folderOrder = prev.folderOrder;
@@ -6760,7 +6785,17 @@ document.addEventListener("click", (e) => {
       render(); break;
     }
     case "recstop": stopRec(); break;
-    case "playfrom": { const n = NOTES().find((x) => x.id === id); if (n) openPlayer(n.at || 0); break; }
+    case "playfrom": {
+      const n = NOTES().find((x) => x.id === id);
+      if (n && n.recKey) {
+        if (REC) { alert("録音を停止してから聴いてください。"); break; }
+        const k = recKeysOf(song()).indexOf(n.recKey);
+        if (k < 0) { alert("この指摘に対応する録音が、この端末にありません。"); break; }
+        U.recPick = k;
+      }
+      if (n) openPlayer(n.at || 0);
+      break;
+    }
     case "playtop": openPlayer(0); break;
     case "pauseau": pauseAudio(); break;
     case "preroll": S.preroll = Number(id); save(); render(); break;
@@ -7335,6 +7370,7 @@ document.addEventListener("click", (e) => {
         const first = (ss0.find((x) => x.prep) || ss0.find((x) => !x.skip) || ss0[0] || {}).name;
         if (first) nn.secCur = first;
       }
+      S.planFocus = nn ? nn.id : "";
       save(); render(); break;
     }
     case "psetstart": {
@@ -7424,13 +7460,13 @@ document.addEventListener("click", (e) => {
       save(); render(); break;
     case "pstart": {
       const s2 = S.plan.slots.find((x) => x.id === id);
-      if (s2) { startSlot(s2); save(); render(); }
+      if (s2) { startSlot(s2); S.planFocus = s2.id; save(); render(); }
       break;
     }
     case "jumpsec": {
       U.secView = U.secView === id ? "" : id;
-      const live = planRows().find((r) => r.live);
-      if (live) {
+      const live = focusRow();
+      if (live && live.live) {
         pushUndo();
         live.s.secCur = id;
         live.s.secStart = Date.now();
@@ -7449,7 +7485,8 @@ document.addEventListener("click", (e) => {
       if (s2) {
         s2.a1 = nowMin();
         const nx = S.plan.slots[i2 + 1];
-        if (nx && nx.a0 == null) nx.a0 = s2.a1;
+        if (nx && nx.a0 == null) startSlot(nx);
+        S.planFocus = nx ? nx.id : "";
         save(); render();
       }
       break;
@@ -9929,8 +9966,10 @@ const flushSheet = () => { if (U.sheet && sheetHasInput()) { clearTimeout(sheetT
 window.addEventListener("pagehide", () => { flushSheet(); commitFields(); save(); saveNow(); });
 document.addEventListener("visibilitychange", () => { if (document.hidden) { flushSheet(); commitFields(); save(); saveNow(); } });
 if ("serviceWorker" in navigator) {
-  let reloaded = false;
+  let reloaded = false, wasControlled = !!navigator.serviceWorker.controller;
   navigator.serviceWorker.addEventListener("controllerchange", () => {
+    // 初回のオフライン準備完了では、入力中の画面を再読み込みしない。
+    if (!wasControlled) { wasControlled = true; return; }
     if (reloaded) return; reloaded = true; location.reload();
   });
   navigator.serviceWorker.register("sw.js?v=" + APP_VER).then((r) => r.update()).catch(() => {});
