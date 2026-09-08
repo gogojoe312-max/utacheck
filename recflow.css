@@ -30,3 +30,16 @@
 .plan-settings .row{flex-wrap:wrap}.plan-settings .row>input.grow{min-width:100px}
 @media(max-width:480px){#app[data-rec="1"] .rec-tools .rec-person{flex-basis:calc(100% - 90px)}#app[data-rec="1"] .rec-tools .rec-primary{margin-left:auto}}
 @media print{.rec-tools,.rec-break-bar{display:none!important}}
+
+/* 録音中の主要操作は、共通のコンパクト表示より優先する。 */
+#app[data-rec="1"][data-screen="live"] .sectabs{gap:8px;padding:6px 10px}
+#app[data-rec="1"][data-screen="live"] .sectab{min-width:64px;min-height:48px;padding:10px 18px;font-size:17px}
+#app[data-rec="1"] .rec-tools{gap:8px}
+#app[data-rec="1"] .rec-tools .chip{min-width:52px;min-height:52px;padding:10px 14px;font-size:16px;flex-shrink:0}
+#app[data-rec="1"] .rec-tools [data-act="undoall"]{min-width:72px}
+#app[data-rec="1"] .rec-tools .tkbtn{width:52px;min-width:52px;height:52px;flex-shrink:0;font-size:24px}
+#app[data-rec="1"] .rec-tools .tknow{min-width:96px;height:52px;flex-shrink:0;gap:8px}
+#app[data-rec="1"] .rec-tools .tknow i{font-size:13px}
+#app[data-rec="1"] .rec-tools .tknow b{font-size:24px}
+#app[data-rec="1"] .rec-tools .rec-primary{min-width:80px}
+#app[data-rec="1"] .rec-tools button:focus-visible,#app[data-rec="1"] .sectab:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}

@@ -10,7 +10,7 @@
   "use strict";
 
   var PT_VER = 2;
-  var PT_APPVER = "6.8";
+  var PT_APPVER = "6.9";
 
   /* 区切り名は Pro Tools のマーカー名と同一。送るのはこの配列の位置(index)で、
      名前からロケーション番号への解決は SoundFlow 側がやる。
@@ -518,9 +518,7 @@
     + '#ptbar .ok{color:var(--good,#5BC98A)}'
      + '#ptbar{left:auto;right:12px;bottom:calc(var(--rec-tools-h,64px) + 12px);width:min(440px,calc(100vw - 24px));padding:8px;border:1px solid var(--line,#39414c);border-radius:18px;box-shadow:0 6px 24px #0006;flex-direction:column;background:var(--panel,#202126)}'
     + '#ptbar .pt-controls{display:flex;gap:6px}#ptbar .pt-controls[hidden]{display:none}'
-    + '#ptbar .pt-controls button{height:56px;min-width:0;gap:6px;flex-direction:column;font-size:12px}'
-    + '#ptbar .pt-toggle{height:32px;min-height:32px;flex:auto;background:transparent;align-self:flex-end;padding:0 10px;font-size:12px;color:var(--accent,#afc9f7)}'
-    + '#ptbar.collapsed{width:auto;padding:5px}#ptbar.collapsed .pt-toggle{height:38px}'
+    + '#ptbar .pt-controls button{height:56px;min-width:0;gap:6px;flex-direction:column;font-size:14px}'
     + '@media print{#ptbar,#ptpill{display:none!important}}'
 
     /* 設定パネル。画面全体を覆って、下の歌詞が透けないようにする。 */
@@ -591,16 +589,12 @@
     bar.id = "ptbar";
     bar.setAttribute("role", "group");
     bar.setAttribute("aria-label", "Pro Tools操作");
-    bar.innerHTML = '<button class="pt-toggle" aria-controls="pt-controls" aria-expanded="false">操作を表示</button>'
-      + '<div class="pt-controls" id="pt-controls" hidden>'
+    bar.innerHTML = '<div class="pt-controls" id="pt-controls">'
       + '<button class="stop" data-k="stop" aria-label="停止"><i></i><span>停止</span></button>'
       + '<button class="play" data-k="play" aria-label="再生"><i></i><span>再生</span></button>'
       + '<button class="rec" data-k="record" aria-label="録音"><i></i><span>録音</span></button>'
-      + '<button class="ok" data-k="ok" aria-label="録音OK">OK</button></div>';
+      + '<button class="ok" data-k="ok" aria-label="OKテイク">OKテイク</button></div>';
     bar.addEventListener("click", function (e) {
-      if (e.target.closest(".pt-toggle")) {
-        var p = cfg(); p.transportCollapsed = !p.transportCollapsed; store(); paint(); return;
-      }
       var b = e.target.closest && e.target.closest("[data-k]");
       if (b) transport(b.getAttribute("data-k"));
     });
@@ -653,11 +647,7 @@
     var focus = typeof focusRow === "function" ? focusRow() : null;
     var breaking = focus && focus.s.kind === "break";
     var showBar = p.on && U.view === "live" && !U.overview && !U.draw && !typing && !sheetOpen && !breaking;
-    var collapsed = p.transportCollapsed;
-    bar.classList.toggle("collapsed", collapsed);
-    bar.querySelector(".pt-controls").hidden = collapsed;
-    bar.querySelector(".pt-toggle").textContent = collapsed ? "操作を表示" : "操作を隠す";
-    bar.querySelector(".pt-toggle").setAttribute("aria-expanded", String(!collapsed));
+    showBar = showBar && !p.transportCollapsed && !(panel && panel.style.display !== "none");
     var toolsHeight = Array.from(document.querySelectorAll("#app > .aubar, #app > .sectabs, #app > .rec-break-bar")).reduce(function (n, el) { return n + el.offsetHeight; }, 0);
     bar.style.setProperty("--rec-tools-h", toolsHeight + "px");
     bar.style.display = showBar ? "flex" : "none";
@@ -678,10 +668,11 @@
       document.body.appendChild(panel);
     }
     panel.style.display = "flex";
+    if (bar) bar.style.display = "none";
     if (mode() === "midi") connectMidi().then(paint);
     drawPanel();
   }
-  function close() { if (panel) panel.style.display = "none"; resetArm = false; }
+  function close() { if (panel) panel.style.display = "none"; resetArm = false; paint(); }
 
   function drawPanel() {
     var p = cfg(); if (!p || !panel) return;
@@ -757,7 +748,8 @@
       + '<div class="note">いま開いている曲の区切りを、先頭の小節にまとめて作ります。</div></div>'
 
       + '<div class="grp"><div class="lbl">表示</div><div class="fld">'
-      + '</div><div class="note">操作ボタンは画面下部に出ます。右端の「設定」からいつでもここに戻れます。</div></div>'
+      + '<button class="btn" id="ptvisibility" aria-pressed="' + !p.transportCollapsed + '">操作パネル：' + (p.transportCollapsed ? '非表示' : '表示') + '</button>'
+      + '</div></div>'
 
       + '<div class="grp"><div class="fld">'
       + '<button class="btn" id="ptclose" style="flex:1">閉じる</button>'
@@ -768,6 +760,9 @@
       p.on = !p.on; store();
       if (p.on && mode() === "midi") connectMidi().then(paint); else paint();
       drawPanel();
+    };
+    box.querySelector("#ptvisibility").onclick = function () {
+      p.transportCollapsed = !p.transportCollapsed; store(); paint();
     };
     box.querySelector("#ptclose").onclick = close;
     Array.prototype.forEach.call(box.querySelectorAll("[data-mode]"), function (b) {

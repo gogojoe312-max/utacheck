@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.17";
+const APP_VER = "16.18";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -4990,6 +4990,9 @@ function viewSetupRec() {
     ${list || `<p class="note">曲がありません</p>`}
     <div class="card"><button class="primary" data-act="rpick">歌詞のWordを読み込む（複数可）</button></div>
 
+    <h4 class="head">操作パネル</h4>
+    <div class="card"><button class="primary" data-act="pt-settings">Pro Tools操作・表示設定</button></div>
+
     <h4 class="head">進行</h4>
     <div class="card"><button class="primary" data-act="goplan">進行表をひらく</button></div>
 
@@ -5135,7 +5138,7 @@ function recBar() {
     if (nums.length > 1) {
       subTabs = `<div class="sectabs" style="padding-top:0">` + nums.map((nm) =>
         `<button class="sectab ${U.secView === nm ? "on" : ""}" data-act="jumpsec" data-id="${h(nm)}"
-          style="font-size:11px;padding:4px 10px">${h(nm)}</button>`).join("") + `</div>`;
+          >${h(nm)}</button>`).join("") + `</div>`;
     }
   }
 
@@ -5149,7 +5152,7 @@ function recBar() {
     <button class="chip sm" data-act="draw" aria-label="手書き" aria-pressed="${!!U.draw}">✎</button>
     ${U.draw ? `<button class="chip sm" data-act="eraser" aria-pressed="${!!U.erase}">消</button>` : ""}
     <button class="chip sm" data-act="undoall" aria-label="取り消す">取消</button>
-    ${live && live.live ? `<button class="chip sm rec-primary" data-act="pnextsec">${secs.some(x => !x.done && !x.skip && x.name !== live.s.secCur) ? "次の区切り" : "終了"}</button>`
+    ${live && live.live ? `<button class="chip sm rec-primary" data-act="pnextsec">${secs.some(x => !x.done && !x.skip && x.name !== live.s.secCur) ? "OK" : "終了"}</button>`
       : live && !live.done ? `<button class="chip sm rec-primary" data-act="pstart" data-id="${live.s.id}">開始</button>` : ""}
   </div>`;
 }
@@ -6505,6 +6508,7 @@ document.addEventListener("click", (e) => {
     case "prev": if (U.songIdx > 0) { commitFields(); markRead(song()); U.songIdx--; if (S.recMode) { S.rsongId = SONGS()[U.songIdx].id; U.secView = ""; save(); } render(); } break;
     case "next": if (U.songIdx < SONGS().length - 1) { commitFields(); markRead(song()); U.songIdx++; if (S.recMode) { S.rsongId = SONGS()[U.songIdx].id; U.secView = ""; save(); } render(); } break;
     case "go-summary": commitFields(); U.view = "summary"; render(); break;
+    case "pt-settings": if (window.PTLink) window.PTLink.open(); break;
     case "go-setup": commitFields(); U.view = "setup"; render(); break;
     case "go-live": commitFields(); U.view = "live"; render(); break;
     case "note": openSheet(i, null); break;
