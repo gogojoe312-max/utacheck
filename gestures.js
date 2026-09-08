@@ -1,12 +1,16 @@
 /* Horizontal touch navigation. Text ranges remain selectable inside the note sheet. */
 (() => {
  let start=null, touches=new Set(), suppressUntil=0;
+ const controls='#app>.bottom,#app>.lf-dock,#app>.aubar';
  const allowed=()=>U.view==='live'&&!S.recMode&&!U.overview&&!U.draw&&!U.sheet&&!U.menu&&!U.picker&&!REC;
  document.addEventListener('pointerdown',e=>{
   if(e.pointerType!=='touch')return;
   touches.add(e.pointerId);
   if(touches.size>1){start=null;org=null;clearHold();clearHl();return;}
-  if(!allowed()||e.clientX<24||e.clientX>innerWidth-24||!e.target.closest('#app>.scroll')||e.target.closest('button,input,textarea,select,.pull')||(!VIEW()&&e.target.closest('[data-c],.mk,.lbl,.tagpill,.reading-notes,.secdiv,.vtdiv')))return;
+  if(!allowed()||e.clientX<24||e.clientX>innerWidth-24)return;
+  if(VIEW()){
+   if(!e.target.closest('#app>.scroll')||e.target.closest('button,input,textarea,select,.pull'))return;
+  }else if(!e.target.closest(controls)||e.target.closest('input,textarea,select'))return;
   start={id:e.pointerId,x:e.clientX,y:e.clientY,time:performance.now(),horizontal:false};
  },true);
  document.addEventListener('pointermove',e=>{
@@ -28,7 +32,7 @@
   if(button&&!button.classList.contains('off'))button.click();
  },{capture:true,passive:false});
  document.addEventListener('pointercancel',e=>{touches.delete(e.pointerId);start=null;},true);
- document.addEventListener('click',e=>{if(U.view==='live'&&e.isTrusted&&Date.now()<suppressUntil&&e.target.closest('#app>.scroll')){e.preventDefault();e.stopImmediatePropagation();}},true);
+ document.addEventListener('click',e=>{if(U.view==='live'&&e.isTrusted&&Date.now()<suppressUntil&&(e.target.closest('#app>.scroll')||e.target.closest(controls))){e.preventDefault();e.stopImmediatePropagation();}},true);
 })();
 function memberHelpHTML(){return `<details class="member-help"><summary>使い方</summary>
 <div><h3>歌詞と指摘を確認する</h3><ol>
