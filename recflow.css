@@ -28,7 +28,6 @@
 .plan-more button{min-height:44px;padding:8px 12px}
 .plan-settings{margin-top:20px;border-top:1px solid var(--line)}.plan-settings>summary{padding:16px 4px;min-height:48px;font-size:14px;cursor:pointer;color:var(--accent)}
 .plan-settings .row{flex-wrap:wrap}.plan-settings .row>input.grow{min-width:100px}
-@media(max-width:480px){#app[data-rec="1"] .rec-tools .rec-person{flex-basis:calc(100% - 90px)}#app[data-rec="1"] .rec-tools .rec-primary{margin-left:auto}}
 @media print{.rec-tools,.rec-break-bar{display:none!important}}
 
 /* 録音中の主要操作は、共通のコンパクト表示より優先する。 */
@@ -43,3 +42,16 @@
 #app[data-rec="1"] .rec-tools .tknow b{font-size:24px}
 #app[data-rec="1"] .rec-tools .rec-primary{min-width:80px}
 #app[data-rec="1"] .rec-tools button:focus-visible,#app[data-rec="1"] .sectab:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+
+/* メタ情報と主要操作を2段に固定し、OKだけが折り返す余白をなくす。 */
+#app[data-rec="1"] .rec-tools{display:flex;flex-direction:column;align-items:stretch;gap:4px;padding:4px 10px calc(6px + env(safe-area-inset-bottom))}
+#app[data-rec="1"] .rec-tools-meta{display:flex;align-items:center;gap:8px;min-width:0}
+#app[data-rec="1"] .rec-tools-meta .chip{min-width:44px;min-height:44px;padding:6px 10px;font-size:14px}
+#app[data-rec="1"] .rec-tools-meta .rec-person{flex:1;min-width:0}
+#app[data-rec="1"] .rec-tools-meta #pcd{flex-shrink:0}
+#app[data-rec="1"] .rec-tools-actions{display:flex;align-items:center;gap:8px;min-width:0}
+#app[data-rec="1"] .rec-tools-actions .chip{flex:1;min-width:64px;padding:8px 10px;margin:0}
+#app[data-rec="1"] .rec-tools-actions .tknow{flex:1.2;min-width:84px;padding:0 8px}
+#app[data-rec="1"] .rec-tools-actions .tkbtn{flex:0 0 52px}
+#app[data-rec="1"][data-screen="live"] .sectabs{padding-top:2px;padding-bottom:2px}
+#app[data-rec="1"][data-screen="live"] .txt{line-height:1.6}

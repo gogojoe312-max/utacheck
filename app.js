@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.18";
+const APP_VER = "16.19";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -3770,7 +3770,7 @@ function viewLive() {
           style="${st2 ? `color:${st2 === "need" ? "var(--bad)" : "#F0B23C"}` : ""}">${S.recMode && l.tag ? `<b class="tagmk">${h(l.tag)}</b>` : ""}${l.cut ? `<b class="cutmk">カット</b>` : ""}${labelHTML(s, i)}</button>
         <div class="brk ${gp[i]}"></div>
         <div class="grow" style="min-width:0">
-          <div class="txt" data-l="${i}" style="font-size:${S.size + 3}px">${cells}</div>${pills}
+          <div class="txt" data-l="${i}" style="font-size:${S.size + (S.recMode ? 6 : 3)}px">${cells}</div>${pills}
         </div>${typeof LiveFlow !== "undefined" ? LiveFlow.lineButton(s, i) : ""}</div>`;
     }).join("");
   }
@@ -5144,16 +5144,20 @@ function recBar() {
 
   return `${tabs ? `<div class="sectabs">${tabs}</div>` : ""}${subTabs}
   <div class="aubar rec-tools">
-    <button class="chip sm" data-act="goplan">進行表</button>
-    ${live ? `<span class="rec-person">${h(live.s.name)}${live.done ? " · 終了" : ""}</span>` : '<span class="grow"></span>'}
-    ${live && live.live ? `<span id="pcd">—</span>
-      <button class="tkbtn" data-act="takedown" aria-label="テイクを減らす">−</button>
-      <button class="tknow" data-act="takeup" aria-label="テイクを増やす"><i>テイク</i><b>${tk}</b></button>` : ""}
-    <button class="chip sm" data-act="draw" aria-label="手書き" aria-pressed="${!!U.draw}">✎</button>
-    ${U.draw ? `<button class="chip sm" data-act="eraser" aria-pressed="${!!U.erase}">消</button>` : ""}
-    <button class="chip sm" data-act="undoall" aria-label="取り消す">取消</button>
-    ${live && live.live ? `<button class="chip sm rec-primary" data-act="pnextsec">${secs.some(x => !x.done && !x.skip && x.name !== live.s.secCur) ? "OK" : "終了"}</button>`
-      : live && !live.done ? `<button class="chip sm rec-primary" data-act="pstart" data-id="${live.s.id}">開始</button>` : ""}
+    <div class="rec-tools-meta">
+      <button class="chip sm" data-act="goplan">進行表</button>
+      ${live ? `<span class="rec-person">${h(live.s.name)}${live.done ? " · 終了" : ""}</span>` : '<span class="grow"></span>'}
+      ${live && live.live ? '<span id="pcd">—</span>' : ""}
+      <button class="chip sm" data-act="draw" aria-label="手書き" aria-pressed="${!!U.draw}">✎</button>
+      ${U.draw ? `<button class="chip sm" data-act="eraser" aria-label="消しゴム" aria-pressed="${!!U.erase}">消</button>` : ""}
+    </div>
+    <div class="rec-tools-actions">
+      ${live && live.live ? `<button class="tkbtn" data-act="takedown" aria-label="テイクを減らす">−</button>
+        <button class="tknow" data-act="takeup" aria-label="テイクを増やす"><i>テイク</i><b>${tk}</b></button>` : ""}
+      <button class="chip sm" data-act="undoall" aria-label="取り消す">取消</button>
+      ${live && live.live ? `<button class="chip sm rec-primary" data-act="pnextsec">${secs.some(x => !x.done && !x.skip && x.name !== live.s.secCur) ? "OK" : "終了"}</button>`
+        : live && !live.done ? `<button class="chip sm rec-primary" data-act="pstart" data-id="${live.s.id}">開始</button>` : ""}
+    </div>
   </div>`;
 }
 
@@ -8267,7 +8271,7 @@ document.addEventListener("touchmove", (e) => {
   const v = pinchSize(pinch.base * (d / pinch.d));
   // 描き直さずに、今出ている文字の大きさだけ変える（指の動きに遅れないように）
   const sel = U.overview ? ".ovcols, .ogrid, .ovword, .ovpage" : ".txt";
-  document.querySelectorAll(sel).forEach((el) => { el.style.fontSize = v + "px"; });
+  document.querySelectorAll(sel).forEach((el) => { el.style.fontSize = (v + (U.overview ? 0 : S.recMode ? 6 : 3)) + "px"; });
   e.preventDefault();
 }, { passive: false });
 document.addEventListener("touchend", (e) => {
