@@ -21,6 +21,7 @@
   var lastSent = "", lastSentAt = 0, lastErr = "", lastHookSec = "";
   var panel = null, pill = null, bar = null;
   var resetArm = false;
+  var lastBarContext = "";
   var lastRecMode = null;
 
   /* ---------------- 設定 ---------------- */
@@ -43,6 +44,7 @@
     if (!(p.ccTake >= 0 && p.ccTake <= 127)) p.ccTake = 21;
     p.pill = true;   /* 隠せると PWA で戻せなくなるので、常に出す */
     if (typeof p.bar !== "boolean") p.bar = false;
+    if (typeof p.transportCollapsed !== "boolean") p.transportCollapsed = true;
     /* Pro Tools がいま表示していると思われるプレイリストの番号（1始まり） */
     p.ver = PT_VER;
     return p;
@@ -54,7 +56,7 @@
   function liveSlot() {
     try {
       var sl = (S.plan && S.plan.slots) || [];
-      for (var i = 0; i < sl.length; i++) if (sl[i].a0 != null && sl[i].a1 == null) return sl[i];
+      for (var i = 0; i < sl.length; i++) if (sl[i].a0 != null && sl[i].a1 == null) return sl[i].kind === "break" ? null : sl[i];
     } catch (e) { /* 進行表がまだ無い */ }
     return null;
   }
@@ -514,7 +516,12 @@
     + 'border-top:10px solid transparent;border-bottom:10px solid transparent;display:block}'
     + '#ptbar .rec i{width:20px;height:20px;background:#FF5C42;border-radius:50%;display:block}'
     + '#ptbar .ok{color:var(--good,#5BC98A)}'
-    + 'body.ptbar-on #app{bottom:var(--ptbar-h,68px)!important}'
+     + '#ptbar{left:auto;right:12px;bottom:calc(var(--rec-tools-h,64px) + 12px);width:min(440px,calc(100vw - 24px));padding:8px;border:1px solid var(--line,#39414c);border-radius:18px;box-shadow:0 6px 24px #0006;flex-direction:column;background:var(--panel,#202126)}'
+    + '#ptbar .pt-controls{display:flex;gap:6px}#ptbar .pt-controls[hidden]{display:none}'
+    + '#ptbar .pt-controls button{height:56px;min-width:0;gap:6px;flex-direction:column;font-size:12px}'
+    + '#ptbar .pt-toggle{height:32px;min-height:32px;flex:auto;background:transparent;align-self:flex-end;padding:0 10px;font-size:12px;color:var(--accent,#afc9f7)}'
+    + '#ptbar.collapsed{width:auto;padding:5px}#ptbar.collapsed .pt-toggle{height:38px}'
+    + '@media print{#ptbar,#ptpill{display:none!important}}'
 
     /* 設定パネル。画面全体を覆って、下の歌詞が透けないようにする。 */
     + '#ptwrap{position:fixed;inset:0;z-index:10000;display:none;align-items:flex-end;justify-content:center;'
@@ -582,11 +589,18 @@
     if (bar) return;
     bar = document.createElement("div");
     bar.id = "ptbar";
-    bar.innerHTML = '<button class="stop" data-k="stop"><i></i></button>'
-      + '<button class="play" data-k="play"><i></i></button>'
-      + '<button class="rec" data-k="record"><i></i></button>'
-      + '<button class="ok" data-k="ok">OK</button>';
+    bar.setAttribute("role", "group");
+    bar.setAttribute("aria-label", "Pro Tools操作");
+    bar.innerHTML = '<button class="pt-toggle" aria-controls="pt-controls" aria-expanded="false">操作を表示</button>'
+      + '<div class="pt-controls" id="pt-controls" hidden>'
+      + '<button class="stop" data-k="stop" aria-label="停止"><i></i><span>停止</span></button>'
+      + '<button class="play" data-k="play" aria-label="再生"><i></i><span>再生</span></button>'
+      + '<button class="rec" data-k="record" aria-label="録音"><i></i><span>録音</span></button>'
+      + '<button class="ok" data-k="ok" aria-label="録音OK">OK</button></div>';
     bar.addEventListener("click", function (e) {
+      if (e.target.closest(".pt-toggle")) {
+        var p = cfg(); p.transportCollapsed = !p.transportCollapsed; store(); paint(); return;
+      }
       var b = e.target.closest && e.target.closest("[data-k]");
       if (b) transport(b.getAttribute("data-k"));
     });
@@ -636,17 +650,17 @@
     var typing = !!(document.activeElement &&
       /^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName));
     var sheetOpen = !!document.querySelector(".mask");
-    var showBar = (p.on && !typing && !sheetOpen);
+    var focus = typeof focusRow === "function" ? focusRow() : null;
+    var breaking = focus && focus.s.kind === "break";
+    var showBar = p.on && U.view === "live" && !U.overview && !U.draw && !typing && !sheetOpen && !breaking;
+    var collapsed = p.transportCollapsed;
+    bar.classList.toggle("collapsed", collapsed);
+    bar.querySelector(".pt-controls").hidden = collapsed;
+    bar.querySelector(".pt-toggle").textContent = collapsed ? "操作を表示" : "操作を隠す";
+    bar.querySelector(".pt-toggle").setAttribute("aria-expanded", String(!collapsed));
+    var toolsHeight = Array.from(document.querySelectorAll("#app > .aubar, #app > .sectabs, #app > .rec-break-bar")).reduce(function (n, el) { return n + el.offsetHeight; }, 0);
+    bar.style.setProperty("--rec-tools-h", toolsHeight + "px");
     bar.style.display = showBar ? "flex" : "none";
-    document.body.classList.toggle("ptbar-on", showBar);
-    if (showBar) {
-      requestAnimationFrame(function () {
-        var hgt = bar.offsetHeight;
-        if (hgt) document.documentElement.style.setProperty("--ptbar-h", hgt + "px");
-      });
-    } else {
-      document.documentElement.style.removeProperty("--ptbar-h");
-    }
     pill.setAttribute("aria-label", "Pro Tools 連動の設定を開く（" + st.txt + "）");
 
 
@@ -841,9 +855,9 @@
      全体の変化を監視すると描画のたびに走ってしまうので、短い間隔で見るだけにする。 */
   setInterval(function () {
     if (!recMode() || !bar) return;
-    var open = !!document.querySelector(".mask");
-    var shown = bar.style.display !== "none";
-    if (open === shown) { try { paint(); } catch (e) { /* 無視 */ } }
+    var focus = typeof focusRow === "function" ? focusRow() : null;
+    var key = [U.view, U.overview, U.draw, !!document.querySelector(".mask"), focus && focus.s.kind].join("|");
+    if (key !== lastBarContext) { lastBarContext = key; try { paint(); } catch (e) { /* 無視 */ } }
   }, 150);
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", function () { setTimeout(boot, 600); });

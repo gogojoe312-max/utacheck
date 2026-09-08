@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.16";
+const APP_VER = "16.17";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -206,7 +206,7 @@ function migrate() {
   if (!S.rsongs) S.rsongs = [];
   if (!S.recOvSize) S.recOvSize = 14;
   if (!S.plan) S.plan = { start: "10:00", slots: [] };
-  if (S.planAuto == null) S.planAuto = false;
+  S.planAuto = false; // 進行は必ず手動。旧版の自動オンも引き継がない。
   if (!S.planMin) S.planMin = 90;
   if (S.planPrep == null) S.planPrep = 10;
   if (!S.secWords) S.secWords = [];
@@ -1023,7 +1023,7 @@ function dupSong(id) {
   autoSubs();
   save(); schedulePush(); render();
 }
-const song = () => { const a = SONGS(); return a[Math.min(U.songIdx, a.length - 1)] || null; };
+const song = () => { if (S.recMode) return recSong(); const a = SONGS(); return a[Math.min(U.songIdx, a.length - 1)] || null; };
 const member = (id) => S.members.find((m) => m.id === id);
 const names = (ids) => (ids || []).map((i) => (member(i) || {}).name).filter(Boolean).join("・");
 
@@ -2627,7 +2627,7 @@ function barsOf(so) {
     return cur;
   });
 }
-const recSong = () => (S.recMode ? (SONGS()[U.songIdx] || S.rsongs.find((x) => x.id === S.rsongId) || S.rsongs[0] || null) : null);
+const recSong = () => S.recMode ? (S.rsongs.find((x) => x.id === S.rsongId) || S.rsongs[0] || null) : null;
 
 /* ---------------- ピッチを見る ---------------- */
 const PT = { on: false, rec: null, chunks: [], buf: null, notes: [], t0: 0, playing: false, sel: -1, dur: 0, hist: [] };
@@ -3566,6 +3566,10 @@ function render() {
   // メンバーへのお知らせだけは、打っていても割り込ませる
   if (typingNow() && !alertPending()) { pendingRender = true; return; }
   pendingRender = false;
+  if (S.recMode && recSong()) {
+    S.rsongId = recSong().id;
+    U.songIdx = S.rsongs.findIndex((x) => x.id === S.rsongId);
+  }
   const keep = app.querySelector(".scroll");
   const st = keep ? keep.scrollTop : 0;
   const sig = U.view + U.songIdx + U.mode + U.allShows + U.overview;
@@ -4018,7 +4022,6 @@ function viewOverview(s) {
       <h4 style="font-size:11px;color:var(--dim);margin-bottom:6px">総括</h4>
       <div style="font-size:13px;white-space:pre-wrap">${h(songMemo(s.id))}</div></div>` : ""}
     <div style="height:30px"></div></div>
-  ${S.recMode && typeof RecFlow !== "undefined" ? RecFlow.bar() : ""}
   ${typeof LiveFlow !== "undefined" ? LiveFlow.bar() : ""}
   <div class="bottom">
     <button data-act="prev" class="${U.songIdx <= 0 ? "off" : ""}">‹</button>
@@ -5096,14 +5099,18 @@ function takeNo(slot) {
 function focusRow() {
   const rows = planRows();
   const foc = S.planFocus ? rows.find((r) => r.s.id === S.planFocus) : null;
-  return (foc && foc.s.kind !== "break") ? foc : rows.find((r) => r.live);
+  return foc || rows.find((r) => r.live);
 }
 
 function recBar() {
-  const rows = planRows();
-  const now = nowMin();
   const live = focusRow();
-  const next = rows.find((r) => !r.done && !r.live);
+  if (live && live.s.kind === "break") return `<div class="rec-break-bar">
+    <strong>${live.live ? "休憩中" : live.done ? "休憩終了" : "休憩"}</strong>
+    ${live.live ? '<span id="pcd">—</span>' : `<span>${live.s.min}分</span>`}
+    <button data-act="goplan">進行表</button>
+    ${live.live ? `<button class="rec-primary" data-act="pnext" data-id="${live.s.id}">休憩終了</button>`
+      : !live.done ? `<button class="rec-primary" data-act="pstart" data-id="${live.s.id}">休憩開始</button>` : ""}
+  </div>`;
   const secs = live ? sectionsOf(live.s) : [];
   const cur = secs.find((x) => x.live);
   const tk = live ? takeNo(live.s) : 1;
@@ -5111,7 +5118,7 @@ function recBar() {
   const tabList = secs.length ? secs : sectionOrder().map((nm) => ({ name: nm }));
   const tabs = tabList.map((e) => {
     const cls = (e.live || e.name === U.secView || tagBase(U.secView) === e.name) ? "on" : e.done ? "dn" : "";
-    return `<button class="sectab ${cls}" id="tab-${h(e.name)}" data-act="jumpsec" data-id="${h(e.name)}">${typeof RecFlow !== "undefined" && live ? RecFlow.tab(live.s, e.name) : (e.done ? "✓" : "")}${h(e.name)}${false ? `<i>${e.done ? e.used : e.min}</i>` : ""}</button>`;
+    return `<button class="sectab ${cls}" id="tab-${h(e.name)}" data-act="jumpsec" data-id="${h(e.name)}">${e.done ? "✓" : ""}${h(e.name)}${false ? `<i>${e.done ? e.used : e.min}</i>` : ""}</button>`;
   }).join("");
 
   /* Gaya のような表記を選んでいる時は、Gaya1 Gaya2 … を小さく並べる。
@@ -5133,24 +5140,17 @@ function recBar() {
   }
 
   return `${tabs ? `<div class="sectabs">${tabs}</div>` : ""}${subTabs}
-  ${typeof RecFlow !== "undefined" ? RecFlow.bar() : ""}
-  <div class="aubar">
-    ${live && live.s.a0 != null ? `<span id="pcd" style="font-size:13px;font-variant-numeric:tabular-nums">—</span>
-      ${cur ? `<span style="font-size:11px;color:var(--dim)">${h(cur.name)}</span>` : ""}
-      <button class="tkbtn" data-act="takedown"${tk > 0 ? "" : ' style="opacity:.3"'}>−</button>
-      <button class="tknow" data-act="takeup"><i>テイク</i><b>${tk}</b></button>
-      <button class="chip sm" data-act="draw" style="${U.draw ? "background:var(--accent);color:#0A0A0A" : ""}">✎</button>
-      ${U.draw ? `<button class="chip sm" data-act="eraser" style="${U.erase ? "background:var(--accent);color:#0A0A0A" : ""}">消</button>` : ""}
-      <button class="chip sm" data-act="undoall" style="${undoStack.length ? "color:var(--accent)" : "opacity:.3"}">取消</button>
-      <span class="grow"></span>
-      <button class="chip sm" data-act="pnextsec" style="background:var(--accent);color:#0A0A0A">次へ</button>`
-    : (live || next) ? (function () {
-        const t = live || next;
-        return `<span style="color:var(--dim);font-size:12px">次 ${h(t.s.name)}　${min2hm(t.aS)}</span>
-      <span class="grow"></span>
-      <button class="chip sm" data-act="pstart" data-id="${t.s.id}" style="background:var(--accent);color:#0A0A0A">開始</button>`;
-      })()
-    : `<span class="grow" style="color:var(--dim);font-size:12px">進行表に誰も入っていません</span>`}
+  <div class="aubar rec-tools">
+    <button class="chip sm" data-act="goplan">進行表</button>
+    ${live ? `<span class="rec-person">${h(live.s.name)}${live.done ? " · 終了" : ""}</span>` : '<span class="grow"></span>'}
+    ${live && live.live ? `<span id="pcd">—</span>
+      <button class="tkbtn" data-act="takedown" aria-label="テイクを減らす">−</button>
+      <button class="tknow" data-act="takeup" aria-label="テイクを増やす"><i>テイク</i><b>${tk}</b></button>` : ""}
+    <button class="chip sm" data-act="draw" aria-label="手書き" aria-pressed="${!!U.draw}">✎</button>
+    ${U.draw ? `<button class="chip sm" data-act="eraser" aria-pressed="${!!U.erase}">消</button>` : ""}
+    <button class="chip sm" data-act="undoall" aria-label="取り消す">取消</button>
+    ${live && live.live ? `<button class="chip sm rec-primary" data-act="pnextsec">${secs.some(x => !x.done && !x.skip && x.name !== live.s.secCur) ? "次の区切り" : "終了"}</button>`
+      : live && !live.done ? `<button class="chip sm rec-primary" data-act="pstart" data-id="${live.s.id}">開始</button>` : ""}
   </div>`;
 }
 
@@ -5170,8 +5170,6 @@ function fmtLeft(sec) {
   const neg = sec < 0, v = Math.abs(Math.round(sec));
   return (neg ? "−" : "") + Math.floor(v / 60) + ":" + String(v % 60).padStart(2, "0");
 }
-// 予定の時刻になったら、その枠を自動で始める。
-// 自動を止めていれば何もしない。手で始めた枠には触らない。
 // その枠が今日のものか。日付が書かれていなければ、いつでも良いものとして扱う。
 function isToday(sw) {
   if (!sw || !sw.day) return true;
@@ -5182,30 +5180,15 @@ function isToday(sw) {
 }
 
 function autoPlan() {
-  if (!S.recMode || !S.planAuto || !S.plan) return;
-  const slots = S.plan.slots || [];
-  const now = nowMin();
-  const live = slots.find((x) => x.a0 != null && x.a1 == null);
-  if (live) {
-    // 次の枠の時刻が来たら、いまの枠を終えて次へ移る
-    const i = slots.indexOf(live);
-    const nx = slots.slice(i + 1).find((x) => x.at != null && x.a1 == null && isToday(x));
-    if (nx && nx.at != null && now >= nx.at && nx.a0 == null) {
-      live.a1 = now;
-      startSlot(nx, true);
-      save(); render();
-    }
-    return;
-  }
-  const nx = slots.find((x) => x.a0 == null && x.at != null && now >= x.at && isToday(x));
-  if (!nx) return;
-  // だいぶ過ぎている枠は勝手に始めない（アプリを開き直した時など）
-  if (now - nx.at > 30) return;
-  startSlot(nx, true);
-  save(); render();
+  // 予定時刻は目安。選択中の曲・人・休憩を自動で切り替えない。
 }
 
 function startSlot(s2, auto) {
+  // 明示的に開始した枠だけを動かし、曲の選択には触れない。
+  for (const sl of S.plan.slots || []) {
+    if (sl !== s2 && sl.a0 != null && sl.a1 == null) finishSlot(sl);
+  }
+  S.planFocus = s2.id;
   s2.a0 = nowMin(); delete s2.a1;
   s2.startAt = Date.now(); s2.secStart = Date.now();
   s2.secLog = {}; s2.takes = {};
@@ -5214,14 +5197,25 @@ function startSlot(s2, auto) {
   U.secView = s2.secCur;
   if (auto) autoMsg = `${s2.name} を始めました（${min2hm(s2.a0)}）`;
 }
+function finishSlot(sl) {
+  if (!sl || sl.a0 == null || sl.a1 != null) return;
+  if (sl.secCur && sl.secStart) {
+    sl.secLog = sl.secLog || {};
+    sl.secLog[sl.secCur] = Math.max(1, Math.round((Date.now() - sl.secStart) / 60000));
+  }
+  sl.a1 = nowMin();
+  delete sl.secCur;
+  delete sl.secStart;
+  U.secView = "";
+}
 let autoMsg = "";
 
 function tickPlan() {
   autoPlan();
   const el = document.getElementById("pcd");
   const el2 = document.getElementById("pcd2");
-  const live = planRows().find((r) => r.live);
-  if (!live) { if (el) el.textContent = "—"; if (el2) el2.textContent = ""; return; }
+  const live = focusRow();
+  if (!live || !live.live) { if (el) el.textContent = "—"; if (el2) el2.textContent = ""; return; }
   if (el2 && !live.s.startAt) { el2.textContent = ""; }
   else if (el2) {
     const all = Number(live.s.min || 0) * 60 - (live.s.startAt ? (Date.now() - live.s.startAt) / 1000 : 0);
@@ -5410,7 +5404,7 @@ function secBars() {
 // 何も指定していない区切りの、既定の持ち時間
 const SEC_MIN = 5;
 function sectionsOf(slot) {
-  if (!slot) return [];
+  if (!slot || slot.kind === "break") return [];
   const names2 = sectionOrder();
   const log = slot.secLog || {};
   const adj = slot.sec || {};
@@ -5626,47 +5620,30 @@ function viewPlan() {
   /* 終わった枠は隠す。ただし今日の分は、終わっても残しておく。 */
   const td = new Date();
   const todayStr = `${td.getMonth() + 1}/${td.getDate()}`;
-  const shown = allRows.filter((r) => !r.done || r.s.day === todayStr);
+  const shown = allRows;
   const rows = pickDay ? shown.filter((r) => r.s.day === pickDay) : shown;
   const now = nowMin();
   // 配分を開く枠。何も開いていなければ、今やっている枠を開いておく。
   const liveSlotId = (rows.find((r) => r.live) || { s: {} }).s.id || "";
-  const openSlot = U.planSec && rows.some((r) => r.s.id === U.planSec) ? U.planSec : liveSlotId;
+  const openSlot = U.planSec && rows.some((r) => r.s.id === U.planSec) ? U.planSec : "";
   const liveIdx = rows.findIndex((r) => r.live);
   const nextIdx = rows.findIndex((r) => !r.done && !r.live);
   const last = rows[rows.length - 1];
   const gap = last ? last.aE - last.pE : 0;
 
-  const hasAt = allRows.some((r) => r.s.at != null);
-  const autoBar = hasAt ? `<div class="card" style="margin-bottom:10px;padding:10px 12px">
-    <div class="row">
-      <div class="grow" style="min-width:0">
-        <div style="font-size:13px">時刻になったら自動で始める</div>
-        <div style="font-size:11px;color:var(--dim);margin-top:2px">${S.planAuto
-          ? (autoMsg ? h(autoMsg) : (() => {
-              const n = allRows.filter((r) => r.s.at != null && isToday(r.s)).length;
-              return n ? `今日の予定 ${n}件。時刻になったら自動で移ります`
-                       : "今日の予定はありません。別の日の枠は自動で始めません";
-            })())
-          : "いまは手で開始する設定です"}</div>
-      </div>
-      <button class="chip sm" data-act="autotoggle"
-        style="${S.planAuto ? "background:var(--accent);color:#0A0A0A" : ""}">${S.planAuto ? "自動オン" : "自動オフ"}</button>
-    </div>
-  </div>` : "";
-
-  const dayBar = "";   /* 日付の切り替えタブは出さない */
+  const autoBar = "";
+  const dayBar = dayList.length > 1 ? `<div class="plan-days"><button data-act="planday" data-id="">全日程</button>${dayList.map(d => `<button data-act="planday" data-id="${h(d)}" aria-pressed="${pickDay === d}">${h(d)}</button>`).join("")}</div>` : "";
 
   const list = rows.map((r, i) => {
     const s = r.s;
-    const dayHead = "";   /* 日付の見出しは出さない */
+    const dayHead = s.day && (i === 0 || rows[i - 1].s.day !== s.day) ? `<h3 class="plan-day">${h(s.day)}${s.place ? " · " + h(s.place) : ""}</h3>` : "";
     const isBreak = s.kind === "break";
     const col = r.live ? "var(--accent)" : r.done ? "var(--dim)" : isBreak ? "#7FB3FF" : "var(--text)";
     const diff = r.done ? (r.aE - r.aS) - Number(s.min || 0) : 0;
     const rest = r.live ? r.aE - now : 0;
-    return `${dayHead}<div class="row card" data-drop="p:${s.id}" style="margin-bottom:8px;padding:11px 12px;flex-wrap:wrap;max-width:100%;${r.live ? "outline:1px solid var(--accent)" : ""}">
+    return `${dayHead}<div class="row card plan-row${r.live ? " is-live" : ""}${isBreak ? " is-break" : ""}" data-drop="p:${s.id}" style="margin-bottom:8px;padding:11px 12px;flex-wrap:wrap;max-width:100%;${r.live ? "outline:1px solid var(--accent)" : ""}">
       <span class="grip" data-drag="plan:${s.id}">⣿</span>
-      <button class="grow" style="text-align:left;min-width:0" data-act="pedit" data-id="${s.id}">
+      <button class="grow" style="text-align:left;min-width:0" data-act="psecgo" data-id="${s.id}">
         <div class="row" style="gap:8px;min-width:0">
           <span style="font-size:12px;color:var(--dim);font-variant-numeric:tabular-nums;flex:0 0 auto">${min2hm(r.aS)}–${min2hm(r.aE)}</span>
           <span class="trunc" style="color:${col};font-weight:${r.live ? 700 : 400}">${h(s.name || (isBreak ? "休憩" : "—"))}</span>
@@ -5680,11 +5657,11 @@ function viewPlan() {
       </button>
       ${isBreak ? "" : `<button class="chip sm" data-act="psecopen" data-id="${s.id}"
         style="${openSlot === s.id ? "background:var(--panel2);color:var(--accent);border:1px solid var(--accent)" : "color:var(--dim)"}">配分</button>`}
-      ${r.live ? `<button class="chip sm" data-act="pretry" data-id="${s.id}" style="color:var(--dim)">やり直す</button>
-          <button class="chip sm" data-act="pcancel" data-id="${s.id}" style="color:var(--bad)">取り消す</button>
-          <button class="chip sm" data-act="pnext" data-id="${s.id}" style="background:var(--accent);color:#0A0A0A">次へ</button>`
-        : !r.done && i === nextIdx ? `<button class="chip sm" data-act="pstart" data-id="${s.id}">開始</button>`
-        : r.done ? `<button class="chip sm" data-act="pundo" data-id="${s.id}" style="color:var(--dim)">戻す</button>` : ""}
+      ${isBreak ? `<button class="chip sm" data-act="peditbreak" data-id="${s.id}">時間</button>` : ""}
+      ${r.live ? `<button class="chip sm rec-primary" data-act="pnext" data-id="${s.id}">${isBreak ? "休憩終了" : "終了"}</button>`
+        : !r.done ? `<button class="chip sm rec-primary" data-act="pstart" data-id="${s.id}">${isBreak ? "休憩開始" : "開始"}</button>`
+        : `<button class="chip sm" data-act="pundo" data-id="${s.id}">戻す</button>`}
+      ${r.live ? `<details class="plan-more"><summary>その他</summary><button data-act="pretry" data-id="${s.id}">やり直す</button><button data-act="pcancel" data-id="${s.id}">開始を取り消す</button></details>` : ""}
     </div>
     ${openSlot === s.id && sectionsOf(s).length ? (() => {
       const sum = secSum(s);
@@ -5770,6 +5747,9 @@ function viewPlan() {
     <span style="font-size:12px;color:${gap > 0 ? "var(--bad)" : gap < 0 ? "var(--good)" : "var(--dim)"}">
       ${last ? (gap ? dmin(gap) : "予定どおり") : ""}</span></div>
   <div class="scroll pad">
+    <div class="plan-song">${h((recSong() || {}).title || "曲を選択してください")}</div>
+    ${dayBar}${list || `<p class="note">予定はまだありません</p>`}
+    <details class="plan-settings"><summary>進行表を編集</summary>
     <div class="card">
       <div class="row" style="gap:10px;margin-bottom:10px">
         <span style="font-size:11px;color:var(--dim);width:40px">開始</span>
@@ -5798,8 +5778,7 @@ function viewPlan() {
           <b style="font-size:19px">${Math.floor(total / 60)}時間${total % 60 ? (total % 60) + "分" : ""}</b></div>
       </div>
     </div>
-    ${rows.some((r) => !r.done) ? `<button class="ghost" data-act="prebal" style="margin-bottom:10px">残り時間で振り直す</button>` : ""}
-    ${autoBar}${dayBar}${list || `<p class="note">まだ誰も入っていません</p>`}
+    ${rows.some((r) => !r.done) ? `<button class="ghost" data-act="prebal">残り時間で振り直す</button>` : ""}
     <div class="card">
       ${memberPick || ""}
       <button class="ghost" data-act="prosternew" style="margin-top:10px">メンバーを登録する</button>
@@ -5811,6 +5790,7 @@ function viewPlan() {
       <button class="ghost" data-act="pbreak" style="margin-top:8px">休憩を入れる</button>
       <button class="ghost" data-act="pastesched" style="margin-top:8px;color:var(--accent)">予定表を貼って組む</button>
     </div>
+    </details>
     <div style="height:40px"></div>
   </div>`;
 }
@@ -6511,7 +6491,6 @@ document.addEventListener("click", (e) => {
   if (e.target.closest("[data-r]") && U.sheet) return;   // 文字の選択はなぞりで扱う
   if (!b) return;
   const a = b.dataset.act, i = +b.dataset.i, id = b.dataset.id;
-  if (typeof RecFlow !== "undefined" && (RecFlow.handle(a, id) || RecFlow.guard(a, id, b.dataset.rfApproved))) return;
   if (typeof LiveFlow !== "undefined" && LiveFlow.handle(a, id, i, b)) return;
   const s = song();
 
@@ -6523,8 +6502,8 @@ document.addEventListener("click", (e) => {
       if (!U.sheet || VIEW() || !TAGS.some(t => t.id === id)) break;
       U.sheet.tags = [id]; scheduleCommit(); break;
     case "size": S.size = S.size >= 26 ? 15 : S.size + 2; save(); render(); break;
-    case "prev": if (U.songIdx > 0) { commitFields(); markRead(song()); U.songIdx--; render(); } break;
-    case "next": if (U.songIdx < SONGS().length - 1) { commitFields(); markRead(song()); U.songIdx++; render(); } break;
+    case "prev": if (U.songIdx > 0) { commitFields(); markRead(song()); U.songIdx--; if (S.recMode) { S.rsongId = SONGS()[U.songIdx].id; U.secView = ""; save(); } render(); } break;
+    case "next": if (U.songIdx < SONGS().length - 1) { commitFields(); markRead(song()); U.songIdx++; if (S.recMode) { S.rsongId = SONGS()[U.songIdx].id; U.secView = ""; save(); } render(); } break;
     case "go-summary": commitFields(); U.view = "summary"; render(); break;
     case "go-setup": commitFields(); U.view = "setup"; render(); break;
     case "go-live": commitFields(); U.view = "live"; render(); break;
@@ -6613,7 +6592,7 @@ document.addEventListener("click", (e) => {
         save(); schedulePush(); render();
       }
       break;
-    case "jump": markRead(song()); U.picker = false; U.songIdx = i; render(); break;
+    case "jump": markRead(song()); U.picker = false; U.songIdx = i; if (S.recMode && SONGS()[i]) { S.rsongId = SONGS()[i].id; U.secView = ""; save(); } render(); break;
     case "dupsong": dupSong(id); break;
     case "picksong": U.pick = U.pick.includes(id) ? U.pick.filter((x) => x !== id) : U.pick.concat(id); render(); break;
     case "pickall": {
@@ -6815,7 +6794,7 @@ document.addEventListener("click", (e) => {
     case "mode": U.mode = id; render(); break;
     case "allshows": U.allShows = !U.allShows; render(); break;
 
-    case "opensong": commitFields(); U.songIdx = i; U.view = "live"; render(); break;
+    case "opensong": commitFields(); U.songIdx = i; if (S.recMode && SONGS()[i]) { S.rsongId = SONGS()[i].id; U.secView = ""; save(); } U.view = "live"; render(); break;
     case "up": case "down": {
       const cur = SONGS(); const j = a === "up" ? i - 1 : i + 1;
       if (j < 0 || j >= cur.length) break;
@@ -7336,8 +7315,8 @@ document.addEventListener("click", (e) => {
       save(); render(); break;
     }
     case "pnextsec": {
-      const live = planRows().find((r) => r.live);
-      if (!live) break;
+      const live = focusRow();
+      if (!live || !live.live || live.s.kind === "break") break;
       pushUndo();
       const ss = sectionsOf(live.s);
       // 今の区切りを「録り終わった」ことにして、実際にかかった分を残す
@@ -7359,19 +7338,9 @@ document.addEventListener("click", (e) => {
         }, 0);
         break;
       }
-      // 全部終わったら、その人を終えて次の人へ
-      live.s.a1 = nowMin();
-      delete live.s.secCur;
-      const i3 = S.plan.slots.findIndex((x) => x.id === live.s.id);
-      const nn = S.plan.slots[i3 + 1];
-      if (nn && nn.a0 == null) {
-        nn.a0 = live.s.a1; nn.startAt = Date.now(); nn.secStart = Date.now();
-        // 準備があれば準備から始める
-        const ss0 = sectionsOf(nn);
-        const first = (ss0.find((x) => x.prep) || ss0.find((x) => !x.skip) || ss0[0] || {}).name;
-        if (first) nn.secCur = first;
-      }
-      S.planFocus = nn ? nn.id : "";
+      // 最後の区切りで終了。次の人や曲は開始しない。
+      finishSlot(live.s);
+      S.planFocus = live.s.id;
       save(); render(); break;
     }
     case "psetstart": {
@@ -7382,7 +7351,7 @@ document.addEventListener("click", (e) => {
     case "pastesched": U.menu = { kind: "sched" }; renderSheet(); break;
     case "planday": U.planDay = id || ""; render(); break;
     case "autotoggle": {
-      S.planAuto = !S.planAuto;
+      S.planAuto = false;
       autoMsg = "";
       save(); render(); break;
     }
@@ -7461,13 +7430,13 @@ document.addEventListener("click", (e) => {
       save(); render(); break;
     case "pstart": {
       const s2 = S.plan.slots.find((x) => x.id === id);
-      if (s2) { startSlot(s2); S.planFocus = s2.id; save(); render(); }
+      if (s2) { pushUndo(); startSlot(s2); S.planFocus = s2.id; save(); render(); }
       break;
     }
     case "jumpsec": {
       U.secView = U.secView === id ? "" : id;
       const live = focusRow();
-      if (live && live.live) {
+      if (live && live.live && live.s.kind !== "break") {
         pushUndo();
         live.s.secCur = id;
         live.s.secStart = Date.now();
@@ -7481,31 +7450,26 @@ document.addEventListener("click", (e) => {
       break;
     }
     case "pnext": {
-      const i2 = S.plan.slots.findIndex((x) => x.id === id);
-      const s2 = S.plan.slots[i2];
-      if (s2) {
-        s2.a1 = nowMin();
-        const nx = S.plan.slots[i2 + 1];
-        if (nx && nx.a0 == null) startSlot(nx);
-        S.planFocus = nx ? nx.id : "";
+      const sl = S.plan.slots.find(x => x.id === id);
+      if (sl && sl.a0 != null && sl.a1 == null) {
+        pushUndo(); finishSlot(sl); S.planFocus = sl.id;
         save(); render();
       }
       break;
     }
     case "pundo": {
-      const i2 = S.plan.slots.findIndex((x) => x.id === id);
-      const s2 = S.plan.slots[i2];
-      if (s2) {
-        delete s2.a1;
-        const nx = S.plan.slots[i2 + 1];
-        if (nx) { delete nx.a0; delete nx.a1; }
-        save(); render();
+      const sl = S.plan.slots.find(x => x.id === id);
+      if (!sl || sl.a1 == null) break;
+      if (S.plan.slots.some(x => x !== sl && x.a0 != null && x.a1 == null)) {
+        alert("進行中の枠を終了してから戻してください。"); break;
       }
-      break;
+      pushUndo(); delete sl.a1; S.planFocus = sl.id;
+      U.secView = "";
+      save(); render(); break;
     }
     case "pedit": {
       const _sl = (S.plan.slots || []).find((x) => x.id === id);
-      if (_sl && _sl.kind !== "break") { S.planFocus = _sl.id; U.view = "live"; save(); render(); break; }
+      if (_sl) { S.planFocus = _sl.id; U.view = "live"; save(); render(); break; }
     }
     case "peditbreak": U.menu = { kind: "pedit", id }; renderSheet(); break;
     case "pset": {
@@ -7540,6 +7504,7 @@ document.addEventListener("click", (e) => {
     }
     case "rlist": U.menu = { kind: "rlist" }; renderSheet(); break;
     case "ruse": {
+      U.secView = "";
       S.rsongId = id;
       const k = SONGS().findIndex((x) => x.id === id);
       if (k >= 0) U.songIdx = k;
