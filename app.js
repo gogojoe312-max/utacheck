@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.14";
+const APP_VER = "16.16";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -71,6 +71,21 @@ const SWIPES = [
 // 以前つけた記録が生IDで出ないように
 const LEGACY = { breath: "ブレス", volume: "声量", tone: "声色" };
 const tagName = (id) => (TAGS.find((t) => t.id === id) || {}).l || LEGACY[id] || id;
+
+// Fixed locations make the growing tag list predictable; stored IDs stay unchanged.
+const TAG_MENU = [
+  {name: "音程", ids: ["pitch","pHi","pLo","pUn","pWob"]},
+  {name: "リズム", ids: ["rhythm","fast","slow","long","short","lenEq"]},
+  {name: "発音", ids: ["diction","lyric","attack","accent"]},
+  {name: "声・表現", ids: ["strong","weak","nuance","dark","bright","face","flip","nuke","gara","mic","noise","level","lvHi","lvLo"]},
+  {name: "良い・その他", ids: ["good","close","oke","swap"]},
+];
+function tagMenuHTML(sh) {
+  const group = TAG_MENU.find(g => g.name === sh.tagCategory);
+  if (!group) return `<div class="tag-categories">${TAG_MENU.map(g => `<button data-act="tag-category" data-id="${h(g.name)}"><b>${h(g.name)}</b><span>${h(g.ids.slice(0,3).map(tagName).join("・"))}</span></button>`).join("")}</div>`;
+  return `<div class="tag-menu-heading"><button data-act="tag-category" data-id="">‹ 分類に戻る</button><b>${h(group.name)}</b></div>
+    <div class="tag-options">${group.ids.map(id => `<button data-act="tag-choice" data-id="${id}">${h(tagName(id))}</button>`).join("")}</div>`;
+}
 
 /* ---------------- state ---------------- */
 let S = {
@@ -4440,27 +4455,7 @@ ${shows}</div>
       <div class="range">${rangeHtml}</div>
       ${sh.range ? `<button class="chip sm" data-act="rangeoff" style="margin-top:8px;color:var(--dim)">行全体に戻す</button>` : ""}
     </div>
-    <div class="sec"><h4>何　${sh.tags.length ? `<b style="color:var(--accent)">${h(sh.tags.map(tagName).join("・"))}</b>` : "タップ、または上下左右になぞる"}</h4>
-      <div class="tiles">
-        ${SWIPES.map((sw) => {
-          const col = CATCOL[catOf(sw.id)] || "var(--accent)";
-          const on = sh.tags.includes(sw.id);
-          const sub = (k) => {
-            if (!sw[k]) return "";
-            const nm = tagName(sw[k]);
-            // 長い語は詰めて出す（はみ出して切れないように）
-            const cls = Array.from(nm).length >= 5 ? " tlong" : Array.from(nm).length === 4 ? " tmid4" : "";
-            return `<span class="t${k}${cls}">${h(nm)}</span>`;
-          };
-          return `<div class="tile" data-swipe="${sw.id}"
-            style="box-shadow:inset 0 0 0 1.5px ${col};${on ? `background:${col}` : ""}">
-            ${sub("up")}${sub("lf")}
-            <span class="tmid" style="${on ? "color:#0A0A0A" : `color:${col}`}">${tagName(sw.id)}</span>
-            ${sub("rt")}${sub("dn")}
-          </div>`;
-        }).join("")}
-      </div>
-    </div>
+    <div class="sec tag-menu"><h4>指摘を選ぶ</h4>${tagMenuHTML(sh)}</div>
     <div class="sec">
       <h4>正しい音（任意）　${sh.rec ? "録音中。押した音が順に入ります" : "押すと鳴るだけ。残したい時は録音を押す"}</h4>
       <div class="row" style="margin-bottom:8px">
@@ -6521,6 +6516,12 @@ document.addEventListener("click", (e) => {
   const s = song();
 
   switch (a) {
+    case "tag-category":
+      if (!U.sheet || VIEW()) break;
+      commitFields(); U.sheet.tagCategory = TAG_MENU.some(g => g.name === id) ? id : ""; renderSheet(); break;
+    case "tag-choice":
+      if (!U.sheet || VIEW() || !TAGS.some(t => t.id === id)) break;
+      U.sheet.tags = [id]; scheduleCommit(); break;
     case "size": S.size = S.size >= 26 ? 15 : S.size + 2; save(); render(); break;
     case "prev": if (U.songIdx > 0) { commitFields(); markRead(song()); U.songIdx--; render(); } break;
     case "next": if (U.songIdx < SONGS().length - 1) { commitFields(); markRead(song()); U.songIdx++; render(); } break;

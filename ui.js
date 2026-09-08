@@ -16,6 +16,7 @@ function polishUI() {
   if (U.view !== "setup") return;
   const sc = app.querySelector('.scroll.pad');
   if (!sc) return;
+  if (typeof memberHelpHTML === 'function') sc.insertAdjacentHTML('afterbegin', memberHelpHTML());
   const headings = [...sc.children].filter(e => e.matches('h4.head'));
   headings.forEach((heading, i) => {
     const section = document.createElement('section');
