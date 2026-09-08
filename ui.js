@@ -28,11 +28,15 @@ function polishUI() {
       section.append(section.nextSibling);
     }
   });
-  const secondary = new Set(['音を確かめる','ピッチを見る','メトロノーム','録音データ','歌割をPDFにする','保存領域','ほかの端末と揃える']);
-  const extra = document.createElement('details');extra.className='settings-extra';
-  const summary = document.createElement('summary');summary.textContent='その他の設定';extra.append(summary);
-  headings.forEach(heading => { if (secondary.has(heading.textContent)) extra.append(heading.parentElement); });
-  if (extra.children.length > 1) sc.append(extra);
+  // 日常の操作を先頭へ。全項目を展開したまま並べる。
+  const order = ['公演','セットリスト','曲','進行','指摘','欠席対応','ライブ中のお知らせ','操作パネル','グループ','自動公開','音を確かめる','ピッチを見る','メトロノーム','録音データ','歌割をPDFにする','ほかの端末と揃える','バックアップ','歌詞の表示','メンバー画面','保存領域','ゴミ箱'];
+  const sections = headings.map(heading => ({name:heading.textContent,el:heading.parentElement}));
+  // フッターを最終セクションから外し、並べ替えた後も最下部へ置く。
+  const last = sections.at(-1)?.el;
+  const footer = last ? [...last.children].filter(el => el.tagName === 'DIV' && (el.style.textAlign === 'center' || el.style.height === '40px')) : [];
+  footer.forEach(el => sc.append(el));
+  sections.sort((a,b) => (order.includes(a.name) ? order.indexOf(a.name) : 99) - (order.includes(b.name) ? order.indexOf(b.name) : 99));
+  sections.forEach(x => sc.insertBefore(x.el, footer[0] || null));
   const input = sc.querySelector('#newshow');
   if (input) { input.placeholder = '新しい公演名'; input.setAttribute('aria-label','新しい公演名'); }
   app.querySelectorAll('[data-act="go-live"]').forEach(e => e.setAttribute('aria-label','歌詞に戻る'));

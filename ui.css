@@ -218,3 +218,5 @@ select.field{appearance:auto}textarea.field{resize:vertical}
 .lyric-settings .row{gap:10px;margin:4px 0}
 .lyric-settings button{min-width:48px;min-height:48px;padding:8px 12px;background:var(--panel2);border-radius:10px}
 .lyric-settings button[aria-pressed="true"]{color:var(--accent);box-shadow:inset 0 -2px var(--accent)}
+
+.member-preview-link{font-size:13px;color:var(--dim);text-align:left;min-height:44px;background:transparent!important}

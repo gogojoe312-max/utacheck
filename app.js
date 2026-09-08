@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.20";
+const APP_VER = "16.21";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -370,7 +370,19 @@ function showsFor() {
 }
 const showsNewestFirst = () => S.shows.slice().sort((a, b) => (b.ts || 0) - (a.ts || 0));
 const showName = (id) => (S.shows.find((x) => x.id === (id || S.showId)) || {}).name || "";
-const NOTES = () => S.notes.concat(S.pubNotes);
+function memberViewNotes(notes) {
+  if (!VIEW()) return notes;
+  const gn = (group() || {}).name || S.srcGroup || "";
+  const roster = (S.rosters || {})[gn];
+  const permitted = new Set(roster && roster.length ? roster : (S.sourceMemberNames || []).length ? S.sourceMemberNames
+    : S.songs.flatMap(so => songRoster(so)).map(id => (member(id) || {}).name).filter(Boolean));
+  const songIds = new Set(S.songs.filter(so => !so.groupId || so.groupId === S.groupId).map(so => so.id));
+  return notes.filter(n => songIds.has(n.songId)).flatMap(n => {
+    const memberIds = (n.memberIds || []).filter(id => permitted.has((member(id) || {}).name));
+    return memberIds.length || !(n.memberIds || []).length ? [{ ...n, memberIds }] : [];
+  });
+}
+const NOTES = () => memberViewNotes(S.notes.concat(S.pubNotes));
 // いま録っているテイク。指摘や手書きは、テイクごとに分けて覚える。
 // ライブモードでは使わない（空文字＝テイクの区別なし）。
 function takeCtx() {
@@ -3861,6 +3873,7 @@ function viewLive() {
           <path d="M4 20.5h16" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/>
         </svg></button>
       ` : ""}
+    ${VIEW() ? '<button data-act="go-summary">集計</button>' : ""}
     ${VIEW() && unreadSongs().length ? `<button data-act="nextunread" style="color:var(--accent);font-weight:700">未読${unreadSongs().length}</button>` : ""}
 
     <span class="grow"></span>
@@ -4512,7 +4525,7 @@ function viewSummary() {
     // 登録した名簿の順（＝年齢順）に並べ、グループごとに見出しを付ける
     const named = S.groups.map((g) => g.name).filter(Boolean);
     const gorder = named.length > 1 ? named : ((S.groupOrder || []).length ? S.groupOrder : named);
-    const gnames = Object.keys(S.rosters || {}).filter((k) => (S.rosters[k] || []).length)
+    const gnames = Object.keys(S.rosters || {}).filter((k) => (S.rosters[k] || []).length && (!VIEW() || k === ((group() || {}).name || S.srcGroup)))
       .sort((a, b) => {
         const ia = gorder.indexOf(a), ib = gorder.indexOf(b);
         return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
@@ -4581,7 +4594,9 @@ function viewSummary() {
     style="${U.mode === id ? "background:var(--accent);color:#0A0A0A" : ""}">${label}</button>`;
 
   return `
-  <div class="hd"><button class="ic" data-act="go-live">‹</button><b>集計</b>
+  <div class="hd"><button class="ic" data-act="go-live" aria-label="歌詞を開く">${VIEW() ? "歌詞" : "‹"}</button><b>集計</b>
+    ${VIEW() ? '<button class="ic" data-act="go-setup">設定</button>' : ""}
+    ${preview ? '<button class="chip sm" data-act="endpv">確認を終わる</button>' : ""}
     <span class="grow"></span>
     <span style="font-size:11px;color:var(--dim)" class="trunc">${h(U.allShows ? "全公演" : showName())}</span></div>
   <div class="tabs">${tab("member", "メンバー別")}${tab("song", "曲別")}${tab("show", "公演別")}${tab("diff", "前回との差")}</div>
@@ -4607,7 +4622,9 @@ function viewDiff() {
   const tab = (id, label) => `<button class="chip sm" data-act="mode" data-id="${id}"
     style="${U.mode === id ? "background:var(--accent);color:#0A0A0A" : ""}">${label}</button>`;
   const head = `
-  <div class="hd"><button class="ic" data-act="go-live">‹</button><b>集計</b>
+  <div class="hd"><button class="ic" data-act="go-live" aria-label="歌詞を開く">${VIEW() ? "歌詞" : "‹"}</button><b>集計</b>
+    ${VIEW() ? '<button class="ic" data-act="go-setup">設定</button>' : ""}
+    ${preview ? '<button class="chip sm" data-act="endpv">確認を終わる</button>' : ""}
     <span class="grow"></span>
     <span style="font-size:11px;color:var(--dim)" class="trunc">${h(showName())}</span></div>
   <div class="tabs">${tab("member", "メンバー別")}${tab("song", "曲別")}${tab("show", "公演別")}${tab("diff", "前回との差")}</div>`;
@@ -4951,6 +4968,14 @@ function viewAbsent() {
 }
 
 /* ---- レコーディングの設定 ---- */
+function backupSettingsHTML() {
+  return `<h4 class="head">バックアップ</h4><div class="card">
+    <p class="note">${S.bkAt ? "最終保存：" + new Date(S.bkAt).toLocaleString("ja-JP") : "まだバックアップがありません"}</p>
+    <button class="primary" data-act="bknow">バックアップする</button>
+    <button class="ghost" data-act="backup-restore">バックアップから復元</button>
+  </div>`;
+}
+
 function lyricDisplaySettings() {
   return `<h4 class="head">歌詞の表示</h4><div class="card lyric-settings">
     <div class="row"><span class="grow">文字サイズ</span>
@@ -4963,7 +4988,7 @@ function lyricDisplaySettings() {
 function memberPreviewSettings() {
   const groups = S.groups.filter(g => !g.nopub && g.src);
   return `<h4 class="head">メンバー画面</h4><div class="card">
-    ${groups.length ? groups.map(g => `<button class="primary" data-act="pvnow" data-id="${h(g.id)}">${h(g.name)}：メンバーURLの見え方を確認</button>`).join("")
+    ${groups.length ? groups.map(g => `<button class="ghost member-preview-link" data-act="pvnow" data-id="${h(g.id)}">${h(g.name)}のメンバー画面を見る</button>`).join("")
       : '<p class="note">グループの自動公開を始めると、配信したメンバー画面を確認できます。</p>'}
   </div>`;
 }
@@ -5076,15 +5101,7 @@ function viewSetupRec() {
       })()}
     </div>
 
-    <h4 class="head">バックアップ</h4>
-    <div class="card">
-      <div class="row" style="margin-bottom:10px">
-        <span class="grow" style="font-size:13px">${S.bkAt ? "最終 " + new Date(S.bkAt).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "まだ取っていません"}</span>
-      </div>
-      <button class="primary" data-act="bknow" style="margin-bottom:8px">今すぐバックアップ</button>
-      <button class="ghost" data-act="bkfile">ファイルに書き出す</button>
-
-    </div>
+    ${backupSettingsHTML()}
 
     ${(S.trash || []).length ? `<h4 class="head">ゴミ箱</h4>
     <div class="card"><button class="primary" data-act="gotrash">ゴミ箱（${S.trash.length}件）</button></div>` : ""}
@@ -6474,21 +6491,7 @@ function viewSetup() {
       })()}
     </div>
 
-    <h4 class="head">バックアップ</h4>
-    <div class="card">
-      <div class="row" style="margin-bottom:10px">
-        <span class="grow" style="font-size:13px">${S.bkAt ? "最終 " + new Date(S.bkAt).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "まだ取っていません"}</span>
-        <span style="font-size:11px;color:${bkSignature() === S.bkHash ? "var(--good)" : "var(--dim)"}">${bkSignature() === S.bkHash ? "最新" : "未反映あり"}</span>
-      </div>
-      <button class="primary" data-act="bknow" style="margin-bottom:8px">今すぐバックアップ</button>
-      <button class="ghost" data-act="bkfile" style="margin-bottom:8px">ファイルに書き出す</button>
-      <button class="ghost" data-act="bkrestore" style="color:var(--bad);margin-bottom:6px">バックアップから戻す</button>
-      <button class="ghost" data-act="bkfind" style="margin-bottom:6px">バックアップを探す（見つからない時）</button>
-      <button class="ghost" data-act="bkfromid" style="margin-bottom:6px">GistのURLを指定して戻す</button>
-      <button class="primary" data-act="bkfrompub" style="margin-bottom:10px">配信データから取り戻す</button>
-      <button class="primary" data-act="editlink">自分用リンクを作る</button>
-      <div style="font-size:11px;color:var(--dim);margin-top:8px">公演・曲・記録・総括・手書きをすべて保存します。録音とトークンは含みません。</div>
-    </div>
+    ${backupSettingsHTML()}
 
     ${(S.trash || []).length ? `<h4 class="head">ゴミ箱</h4>
     <div class="card"><button class="primary" data-act="gotrash">ゴミ箱（${S.trash.length}件）</button>
@@ -7595,6 +7598,7 @@ document.addEventListener("click", (e) => {
     case "ghstart": gistStart(id); break;
     case "ghpush": doPush("force"); break;
     case "ghverify": verifyToken(); break;
+    case "backup-restore": if (S.bkGistId) restoreBackup(); else findBackup(); break;
     case "bknow": doBackup(false); break;
     case "bkfile": backupToFile(); break;
     case "bkrestore": restoreBackup(); break;
@@ -8771,10 +8775,10 @@ function publicationData(gid) {
     return {
       version: Date.now(), authorId: S.deviceId, src: g.src || "", groupName: g.name || "",
       members: used.map((n) => ({ name: n })),
-      rosters: S.rosters || {},                                   // 名簿の並び（年齢順）
+      rosters: (S.rosters || {})[g.name] ? { [g.name]: S.rosters[g.name] } : {}, // 配信先の名簿だけ
       alert: (S.alertMsg && (!(S.alertMsg.to || []).length || S.alertMsg.to.includes(g.id)))
         ? S.alertMsg : null,                                      // ライブ中のお知らせ（相手を絞れる）
-      groupOrder: S.groups.map((x) => x.name).filter(Boolean),    // グループの並び
+      groupOrder: g.name ? [g.name] : [],                        // 配信先だけ
       folderOrder: (S.folderOrder || []).slice(),                 // 公演の箱の並び
       lib,
       songs: songs.map((x) => ({
@@ -9571,6 +9575,7 @@ function resetForNewSource() {
 function applySetlist(d) {
   if (!S.groups.some((g) => g.gistId)) { S.songs = []; S.memos = {}; S.pubNotes = []; }
   S.songs = [];
+  S.sourceMemberNames = (d.members || []).map(x => x.name).filter(Boolean);
   (d.members || []).forEach((x) => addMember(x.name));
   if (d.version) {
     if (S.pubAt && d.version !== S.pubAt) justUpdated = Date.now();   // 中身が変わった合図
@@ -9766,7 +9771,7 @@ async function startPreview(src, key) {
   S.subs = {}; S.subsMan = {}; S.gsubs = {}; S.draws = {}; S.recs = {};
   S.viewer = true; S.recMode = false;
   applySetlist(d);
-  U.view = "live"; U.songIdx = 0;
+  U.view = "summary"; U.mode = "member"; U.allShows = false; U.sumOpen = ""; U.songIdx = 0;
   render();
 }
 function endPreview() {
@@ -9882,6 +9887,7 @@ async function importFromLink() {
       if (key && !S.key) { S.key = key; save(); }
       keepLinkInURL();
       await syncSetlist(false);
+      if (VIEW()) { U.view = "summary"; U.mode = "member"; render(); }
       return;
     }
     if (S.groups.some((x) => x.gistId)) {
@@ -9903,6 +9909,7 @@ async function importFromLink() {
     S.setlistVer = 0; save();
     keepLinkInURL();
     await syncSetlist(true);
+    if (VIEW()) { U.view = "summary"; U.mode = "member"; U.allShows = false; render(); }
   } catch (e) { alert("接続リンクを読み取れませんでした。"); }
 }
 
@@ -9946,6 +9953,7 @@ setTimeout(readViewport, 400);
 (async () => {
   await load();
   booted = true;
+  if (VIEW() || /^#g=/.test(location.hash)) { U.view = "summary"; U.mode = "member"; }
   // 前まで localStorage に置いていた分は、IndexedDB へ引っ越す。
   // 移し終えてから消すので、途中で止まっても元は残る。
   if (idbOK) {

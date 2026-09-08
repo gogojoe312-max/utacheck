@@ -7,7 +7,7 @@ const source = file => fs.readFileSync(path.join(__dirname, '..', file), 'utf8')
 function gestures() {
  const handlers = {}, clicks = [];
  const ctx = vm.createContext({console, Set, Date, performance:{now:()=>100}, innerWidth:390,
-  U:{view:'live'}, S:{recMode:false}, REC:false, org:null, dragOn:false,
+  VIEW:()=>false, U:{view:'live'}, S:{recMode:false}, REC:false, org:null, dragOn:false,
   clearHold(){}, clearHl(){},
   document:{addEventListener(name, fn){(handlers[name] ||= []).push(fn);}},
   app:{querySelector(sel){return {classList:{contains:()=>false},click(){clicks.push(sel);}};}}
@@ -56,4 +56,17 @@ test('temporary check toggles off without deleting confirmed notes or another sh
 });
 test('member preview cannot change temporary checks',()=>{
  const l=live();l.c.preview='saved-state';l.run('LiveFlow.handle("lf-line", "", 0)');assert.equal(l.c.S.livePending.length,1);
+});
+
+test('members can swipe lyrics to change songs while editors keep lyric gestures for notes',()=>{
+ const g=gestures();g.ctx.VIEW=()=>true;g.swipe('text');assert.equal(g.clicks.length,1);
+ g.swipe('button');assert.equal(g.clicks.length,1);
+});
+test('member notes use the current group roster and never change editor data',()=>{
+ const raw=[{id:'a',songId:'song',memberIds:['in','out']},{id:'b',songId:'song',memberIds:['out']},{id:'c',songId:'stale',memberIds:['in']},{id:'d',songId:'song',memberIds:[]}];
+ const c=vm.createContext({S:{groupId:'g',songs:[{id:'song',groupId:'g',roster:['in','out']}],rosters:{Current:['Alice'],Other:['Bob']}},VIEW:()=>true,group:()=>({name:'Current'}),member:id=>({name:id==='in'?'Alice':'Bob'}),songRoster:so=>so.roster,raw});
+ const app=source('app.js'),start=app.indexOf('function memberViewNotes(');vm.runInContext(app.slice(start,app.indexOf('\n}',start)+2),c);
+ const result=JSON.parse(vm.runInContext('JSON.stringify(memberViewNotes(raw))',c));
+ assert.deepEqual(result.map(n=>n.id),['a','d']);assert.deepEqual(result[0].memberIds,['in']);assert.deepEqual(raw[0].memberIds,['in','out']);
+ c.VIEW=()=>false;assert.equal(vm.runInContext('memberViewNotes(raw)===raw',c),true);
 });
