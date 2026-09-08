@@ -1,12 +1,12 @@
 /* Horizontal touch navigation. Text ranges remain selectable inside the note sheet. */
 (() => {
  let start=null, touches=new Set(), suppressUntil=0;
- const allowed=()=>U.view==='live'&&!S.recMode&&!U.draw&&!U.sheet&&!U.menu&&!U.picker&&!REC;
+ const allowed=()=>U.view==='live'&&!S.recMode&&!U.overview&&!U.draw&&!U.sheet&&!U.menu&&!U.picker&&!REC;
  document.addEventListener('pointerdown',e=>{
   if(e.pointerType!=='touch')return;
   touches.add(e.pointerId);
   if(touches.size>1){start=null;org=null;clearHold();clearHl();return;}
-  if(!allowed()||e.clientX<24||e.clientX>innerWidth-24||!e.target.closest('#app>.scroll')||e.target.closest('button,input,textarea,select,.pull'))return;
+  if(!allowed()||e.clientX<24||e.clientX>innerWidth-24||!e.target.closest('#app>.scroll')||e.target.closest('button,input,textarea,select,.pull,[data-c],.mk,.lbl,.tagpill,.reading-notes,.secdiv,.vtdiv'))return;
   start={id:e.pointerId,x:e.clientX,y:e.clientY,time:performance.now(),horizontal:false};
  },true);
  document.addEventListener('pointermove',e=>{
@@ -32,8 +32,8 @@
 })();
 function memberHelpHTML(){return `<details class="member-help"><summary>使い方</summary>
 <div><h3>歌詞と指摘を確認する</h3><ol>
-<li><b>曲を選ぶ</b><br>上の曲名を押すと曲を選べます。歌詞を左へスワイプすると次の曲、右へスワイプすると前の曲に移動します。下の矢印でも移動できます。</li>
-<li><b>自分の指摘を見る</b><br>下の名前欄で自分を選び、「指摘のみ」を押します。「次の指摘」で順番に確認でき、「全文に戻す」で歌詞全体へ戻れます。指摘のみの表示は通常の歌詞画面で使えます。</li>
+<li><b>曲を選ぶ</b><br>上の曲名を押すと曲を選べます。歌詞の文字がない余白を左へスワイプすると次の曲、右へスワイプすると前の曲に移動します。下の矢印でも移動できます。</li>
+<li><b>自分の指摘を見る</b><br>歌詞についた色や印と、その下の指摘・メモを確認できます。</li>
 <li><b>文字を大きくする</b><br>歌詞を2本指で広げると拡大、狭めると縮小できます。上下のスクロールで歌詞の続きを読めます。</li>
 <li><b>内容を読む</b><br>歌詞の下に指摘とメモを表示します。「前回」は以前の公演の指摘です。分からない内容は担当者に確認してください。</li>
 <li><b>更新を受け取る</b><br>通信できる状態で共有されたURLを開いてください。古い表示のままの場合は再読み込みしてください。名前の絞り込みは閲覧用で、共有された記録を書き換えません。</li>

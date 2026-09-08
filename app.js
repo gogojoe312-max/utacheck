@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.19";
+const APP_VER = "16.20";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -3770,7 +3770,7 @@ function viewLive() {
           style="${st2 ? `color:${st2 === "need" ? "var(--bad)" : "#F0B23C"}` : ""}">${S.recMode && l.tag ? `<b class="tagmk">${h(l.tag)}</b>` : ""}${l.cut ? `<b class="cutmk">カット</b>` : ""}${labelHTML(s, i)}</button>
         <div class="brk ${gp[i]}"></div>
         <div class="grow" style="min-width:0">
-          <div class="txt" data-l="${i}" style="font-size:${S.size + (S.recMode ? 6 : 3)}px">${cells}</div>${pills}
+          <div class="txt" data-l="${i}" style="font-size:${S.size + 6}px;line-height:${S.lyricLineHeight === 1.8 ? 1.8 : S.lyricLineHeight === 1.5 ? 1.5 : 1.6}">${cells}</div>${pills}
         </div>${typeof LiveFlow !== "undefined" ? LiveFlow.lineButton(s, i) : ""}</div>`;
     }).join("");
   }
@@ -3862,9 +3862,9 @@ function viewLive() {
         </svg></button>
       ` : ""}
     ${VIEW() && unreadSongs().length ? `<button data-act="nextunread" style="color:var(--accent);font-weight:700">未読${unreadSongs().length}</button>` : ""}
-    ${S.recMode ? "" : `<button data-act="go-summary">集計</button>`}
+
     <span class="grow"></span>
-    ${(U.draw && (S.draws[drawKey()] || []).length) || (undoStack.length && !VIEW())
+    ${VIEW() ? "" : (U.draw && (S.draws[drawKey()] || []).length) || undoStack.length
       ? `<button data-act="undoall" class="wide" style="color:var(--accent)">取消</button>`
       : `<button data-act="undoall" class="wide" style="opacity:.3">取消</button>`}
   </div>`}`;
@@ -4027,7 +4027,7 @@ function viewOverview(s) {
     <button data-act="prev" class="${U.songIdx <= 0 ? "off" : ""}">‹</button>
     <button data-act="next" class="${U.songIdx >= SONGS().length - 1 ? "off" : ""}">›</button>
     <button data-act="overview" class="wide on">一覧に戻る</button>
-    ${S.recMode ? "" : `<button data-act="go-summary">集計</button>`}
+
   </div>`;
 }
 
@@ -4951,6 +4951,23 @@ function viewAbsent() {
 }
 
 /* ---- レコーディングの設定 ---- */
+function lyricDisplaySettings() {
+  return `<h4 class="head">歌詞の表示</h4><div class="card lyric-settings">
+    <div class="row"><span class="grow">文字サイズ</span>
+      <button data-act="lyric-smaller" aria-label="歌詞を小さく">−</button><b>${S.size + 6}</b>
+      <button data-act="lyric-larger" aria-label="歌詞を大きく">＋</button></div>
+    <div class="row"><span class="grow">行間</span>
+      ${[[1.6,"標準"],[1.8,"広め"]].map(([v,label]) => `<button data-act="lyric-spacing" data-id="${v}" aria-pressed="${(S.lyricLineHeight || 1.6) === v}">${label}</button>`).join("")}</div>
+  </div>`;
+}
+function memberPreviewSettings() {
+  const groups = S.groups.filter(g => !g.nopub && g.src);
+  return `<h4 class="head">メンバー画面</h4><div class="card">
+    ${groups.length ? groups.map(g => `<button class="primary" data-act="pvnow" data-id="${h(g.id)}">${h(g.name)}：メンバーURLの見え方を確認</button>`).join("")
+      : '<p class="note">グループの自動公開を始めると、配信したメンバー画面を確認できます。</p>'}
+  </div>`;
+}
+
 function viewSetupRec() {
   const cur = SONGS();
   const songRow = (x) => `<div class="row card" data-drop="r:${x.id}" style="margin-bottom:8px;padding:10px 12px;${x.id === S.rsongId ? "outline:1px solid var(--accent)" : ""}">
@@ -4986,6 +5003,7 @@ function viewSetupRec() {
     ${U.busy ? `<span style="font-size:12px;color:var(--accent)">${h(U.busy)}</span>`
              : `<button data-act="recon" class="chip sm" style="color:var(--accent)">レコーディングモード ⇄</button>`}</div>
   <div class="scroll pad">
+    ${lyricDisplaySettings()}
     <h4 class="head">曲</h4>
     ${list || `<p class="note">曲がありません</p>`}
     <div class="card"><button class="primary" data-act="rpick">歌詞のWordを読み込む（複数可）</button></div>
@@ -6167,6 +6185,9 @@ function viewSetup() {
       <span class="grow"></span>
       <span style="font-size:11px;color:var(--accent)">ライブモード</span></div>
     <div class="scroll pad">
+    ${preview ? '<button class="primary" data-act="endpv">メンバー画面の確認を終わる</button>' : ""}
+    ${lyricDisplaySettings()}
+    <h4 class="head">指摘</h4><div class="card"><button class="primary" data-act="go-summary">指摘の集計を見る</button></div>
     <h4 class="head">公演</h4>
     ${list || `<p class="note">公演がありません</p>`}
     ${allShows.length > 12 ? `<button class="ghost" data-act="allshowlist" style="margin-bottom:10px">${U.allShowList ? "最近の12公演だけ表示" : `すべて表示（全${allShows.length}公演）`}</button>` : ""}
@@ -6252,7 +6273,10 @@ function viewSetup() {
     ${U.busy ? `<span style="font-size:12px;color:var(--accent)">${h(U.busy)}</span>`
              : `<button data-act="recon" class="chip sm" style="color:var(--accent)">ライブモード ⇄</button>`}</div>
   <div class="scroll pad">
-        <h4 class="head">公演</h4>
+    ${memberPreviewSettings()}
+    ${lyricDisplaySettings()}
+    <h4 class="head">指摘</h4><div class="card"><button class="primary" data-act="go-summary">指摘の集計を見る</button></div>
+    <h4 class="head">公演</h4>
     ${S.groups.length > 1 ? `<div class="chips" style="margin-bottom:10px">
       <button class="chip sm" data-act="showfilter" data-id="" style="${!S.showFilter ? "background:var(--accent);color:#0A0A0A" : ""}">すべて</button>
       ${S.groups.map((g) => `<button class="chip sm" data-act="showfilter" data-id="${g.id}"
@@ -6508,6 +6532,9 @@ document.addEventListener("click", (e) => {
     case "tag-choice":
       if (!U.sheet || VIEW() || !TAGS.some(t => t.id === id)) break;
       U.sheet.tags = [id]; scheduleCommit(); break;
+    case "lyric-smaller": S.size = Math.max(11, S.size - 2); save(); render(); break;
+    case "lyric-larger": S.size = Math.min(34, S.size + 2); save(); render(); break;
+    case "lyric-spacing": if ([1.6, 1.8].includes(Number(id))) { S.lyricLineHeight = Number(id); save(); render(); } break;
     case "size": S.size = S.size >= 26 ? 15 : S.size + 2; save(); render(); break;
     case "prev": if (U.songIdx > 0) { commitFields(); markRead(song()); U.songIdx--; if (S.recMode) { S.rsongId = SONGS()[U.songIdx].id; U.secView = ""; save(); } render(); } break;
     case "next": if (U.songIdx < SONGS().length - 1) { commitFields(); markRead(song()); U.songIdx++; if (S.recMode) { S.rsongId = SONGS()[U.songIdx].id; U.secView = ""; save(); } render(); } break;
@@ -8271,7 +8298,7 @@ document.addEventListener("touchmove", (e) => {
   const v = pinchSize(pinch.base * (d / pinch.d));
   // 描き直さずに、今出ている文字の大きさだけ変える（指の動きに遅れないように）
   const sel = U.overview ? ".ovcols, .ogrid, .ovword, .ovpage" : ".txt";
-  document.querySelectorAll(sel).forEach((el) => { el.style.fontSize = (v + (U.overview ? 0 : S.recMode ? 6 : 3)) + "px"; });
+  document.querySelectorAll(sel).forEach((el) => { el.style.fontSize = (v + (U.overview ? 0 : 6)) + "px"; });
   e.preventDefault();
 }, { passive: false });
 document.addEventListener("touchend", (e) => {

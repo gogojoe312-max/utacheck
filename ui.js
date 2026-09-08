@@ -16,7 +16,7 @@ function polishUI() {
   if (U.view !== "setup") return;
   const sc = app.querySelector('.scroll.pad');
   if (!sc) return;
-  if (typeof memberHelpHTML === 'function') sc.insertAdjacentHTML('afterbegin', memberHelpHTML());
+  if (VIEW() && typeof memberHelpHTML === 'function') sc.insertAdjacentHTML('afterbegin', memberHelpHTML());
   const headings = [...sc.children].filter(e => e.matches('h4.head'));
   headings.forEach((heading, i) => {
     const section = document.createElement('section');
@@ -28,27 +28,11 @@ function polishUI() {
       section.append(section.nextSibling);
     }
   });
-  const nav = document.createElement('nav');
-  nav.className = 'settings-nav';
-  nav.setAttribute('aria-label', '設定項目へ移動');
-  const groups = [
-    ['管理', ['公演','曲']], ['音の確認', ['音を確かめる']],
-    ['データ', ['録音データ','保存領域']], ['バックアップ', ['バックアップ']]
-  ];
-  for (const [label, names] of groups) {
-    const heading = headings.find(e => names.includes(e.textContent));
-    if (!heading) continue;
-    const button = document.createElement('button');
-    button.textContent = label;
-    button.type = 'button';
-    button.addEventListener('click', () => {
-      heading.parentElement.scrollIntoView({behavior:'instant',block:'start'});
-      heading.tabIndex = -1;
-      heading.focus({preventScroll:true});
-    });
-    nav.append(button);
-  }
-  sc.before(nav);
+  const secondary = new Set(['音を確かめる','ピッチを見る','メトロノーム','録音データ','歌割をPDFにする','保存領域','ほかの端末と揃える']);
+  const extra = document.createElement('details');extra.className='settings-extra';
+  const summary = document.createElement('summary');summary.textContent='その他の設定';extra.append(summary);
+  headings.forEach(heading => { if (secondary.has(heading.textContent)) extra.append(heading.parentElement); });
+  if (extra.children.length > 1) sc.append(extra);
   const input = sc.querySelector('#newshow');
   if (input) { input.placeholder = '新しい公演名'; input.setAttribute('aria-label','新しい公演名'); }
   app.querySelectorAll('[data-act="go-live"]').forEach(e => e.setAttribute('aria-label','歌詞に戻る'));

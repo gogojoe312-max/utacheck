@@ -39,8 +39,8 @@ const LiveFlow = (() => {
     if (!allowed() || U.draw) return "";
     syncContext(so);
     const marked = drafts(so).some((x) => x.lineIdx === i && x.text === so.lines[i].t);
-    const label = marked ? "仮メモあり" : selected === "pending" ? "あとで確認に追加" : tagName(selected) + "を記録";
-    return `<button class="lf-line ${marked ? "lf-marked" : ""}" data-act="lf-line" data-i="${i}" aria-label="${i + 1}行目を${h(label)}" title="${h(label)}">${marked ? "⚑" : "+"}</button>`;
+    const label = marked ? "仮チェックを外す" : selected === "pending" ? "あとで確認に追加" : tagName(selected) + "を記録";
+    return `<button class="lf-line ${marked ? "lf-marked" : ""}" data-act="lf-line" data-i="${i}" aria-label="${i + 1}行目を${h(label)}" title="${h(label)}" aria-pressed="${marked}">${marked ? "✓" : "+"}</button>`;
   }
   function bar() {
     const so = song(); if (!allowed() || !so) return "";
@@ -48,7 +48,7 @@ const LiveFlow = (() => {
     const count = pending(so).length;
     selected = "pending";
     return `<section class="lf-dock lf-compact" aria-label="ライブの確認">
-      <span class="lf-status" role="status">${message ? h(message) : "＋であとで確認"}</span>
+      <span class="lf-status" role="status">${message ? h(message) : ""}</span>
       <button data-act="lf-next"${count ? "" : " disabled"}>未確認 ${count}</button>
       <button data-act="lf-list">一覧</button>
     </section>`;
@@ -109,7 +109,11 @@ const LiveFlow = (() => {
     const base = { id: uid(), showId: S.showId, songId: so.id, lineIdx: i,
       memberIds: partsOf(so, i).slice(), at: sameRecording ? at : null, recKey: sameRecording ? captured : null, ts: Date.now() };
     if (selected === "pending") {
-      if (drafts(so).some((x) => x.lineIdx === i && x.text === l.t)) { message = `${i + 1}行目は仮メモに残っています`; render(); return; }
+      const existing = drafts(so).find((x) => x.lineIdx === i && x.text === l.t);
+      if (existing) {
+        before(); S.livePending = S.livePending.filter((x) => x.id !== existing.id);
+        persist(`${i + 1}行目の仮チェックを外しました`, false); return;
+      }
       before(); S.livePending = (S.livePending || []).concat({ ...base, text: l.t });
       persist(`${i + 1}行目をあとで確認（配信しません）`, false);
     } else if (TAGS.some((t) => t.id === selected)) {
