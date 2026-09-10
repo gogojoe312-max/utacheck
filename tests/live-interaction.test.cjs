@@ -79,3 +79,13 @@ test('footer taps remain available and a swipe suppresses the following button c
  g.swipe('control-button');assert.equal(g.clicks.length,1);
  assert.equal(g.fire('click',130,200,'control-button').prevented,true);
 });
+
+test('a temporary check still becomes a published note with its memo and recording position',()=>{
+ const l=live();l.c.S.songs[0].showId='show';l.c.prevSongOf=()=>null;l.c.renderSheet=()=>{};l.c.TAGS=[{id:'pLo'}];
+ l.run('LiveFlow.handle("lf-line", "", 0)');
+ const d=l.c.S.livePending.find(n=>n.id==='new');d.at=12;d.recKey='show|song|1';d.memberIds=['singer'];
+ l.c.U.menu={kind:'lf-item',showId:'show',songId:'song',itemId:d.id,itemKind:'draft',tag:'pLo',memo:'語尾を確認'};
+ l.run('LiveFlow.handle("lf-confirm", "", 0)');
+ const note=l.c.S.notes.at(-1);assert.equal(note.memo,'語尾を確認');assert.deepEqual(Array.from(note.tags),['pLo']);assert.equal(note.at,12);assert.equal(note.recKey,'show|song|1');assert.deepEqual(Array.from(note.memberIds),['singer']);
+ assert.equal(l.c.S.livePending.length,1);assert.equal(l.publishes(),1);
+});

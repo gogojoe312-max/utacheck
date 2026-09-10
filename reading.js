@@ -1,7 +1,6 @@
 /* メンバー画面では、絞り込み行を出さず歌詞の下に指摘を表示する。 */
 const Reading = (() => {
  function apply() {
-  app.dataset.readingFilter = '0';
   if (U.view !== 'live' || S.recMode || U.overview || U.draw || !song() || !VIEW()) return;
   const so = song();
   const notes = NOTES().filter(n => n.songId === so.id && n.showId === S.showId && inTake(n));

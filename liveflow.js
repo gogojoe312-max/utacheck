@@ -2,7 +2,7 @@
 "use strict";
 const LiveFlow = (() => {
   const defaults = ["pLo", "slow", "diction", "good"];
-  let activeKey = "", selected = "pending", lastTag = "", message = "", lastUndo = "";
+  let activeKey = "", message = "";
   const allowed = () => !S.recMode && !VIEW() && !preview;
   const keyOf = (so) => JSON.stringify([S.showId, so && so.id]);
   const tags = () => {
@@ -11,9 +11,9 @@ const LiveFlow = (() => {
   };
   const drafts = (so) => (S.livePending || []).filter((x) => x.showId === S.showId && x.songId === so.id);
   function syncContext(so) {
-    if (activeKey !== keyOf(so)) { activeKey = keyOf(so); selected = "pending"; lastTag = ""; message = ""; lastUndo = ""; }
+    if (activeKey !== keyOf(so)) { activeKey = keyOf(so); message = ""; }
   }
-  function before() { pushUndo(); lastUndo = undoStack[undoStack.length - 1]; }
+  function before() { pushUndo(); }
   function persist(text, publish) { message = text; save(); if (publish) schedulePush(); render(); }
   function prior(so) {
     const old = prevSongOf(so); if (!old || old.id === so.id) return [];
@@ -39,14 +39,13 @@ const LiveFlow = (() => {
     if (!allowed() || U.draw) return "";
     syncContext(so);
     const marked = drafts(so).some((x) => x.lineIdx === i && x.text === so.lines[i].t);
-    const label = marked ? "仮チェックを外す" : selected === "pending" ? "あとで確認に追加" : tagName(selected) + "を記録";
+    const label = marked ? "仮チェックを外す" : "あとで確認に追加";
     return `<button class="lf-line ${marked ? "lf-marked" : ""}" data-act="lf-line" data-i="${i}" aria-label="${i + 1}行目を${h(label)}" title="${h(label)}" aria-pressed="${marked}">${marked ? "✓" : "+"}</button>`;
   }
   function bar() {
     const so = song(); if (!allowed() || !so) return "";
     syncContext(so);
     const count = pending(so).length;
-    selected = "pending";
     return `<section class="lf-dock lf-compact" aria-label="ライブの確認">
       <span class="lf-status" role="status">${message ? h(message) : ""}</span>
       <button data-act="lf-next"${count ? "" : " disabled"}>未確認 ${count}</button>
@@ -71,9 +70,6 @@ const LiveFlow = (() => {
   function sheet(m) {
     const so = getSong(m);
     if (!so) return '<p>対象の曲が見つかりません。</p><button class="lf-wide" data-act="lf-close">閉じる</button>';
-    if (m.kind === "lf-settings") return heading(so, "よく使う4つの指摘") + `<p class="lf-description">左からこの順で固定します。本番中に自動で並びは変わりません。</p>
-      ${m.tags.map((id, i) => `<label class="lf-setting">${i + 1}番目<select data-lf-pref="${i}">${TAGS.map((t) => `<option value="${t.id}"${t.id === id ? " selected" : ""}>${h(t.l)}</option>`).join("")}</select></label>`).join("")}
-      <p id="lf-error" role="alert"></p><button class="lf-wide lf-primary" data-act="lf-save-settings">この並びにする</button>`;
     if (m.kind === "lf-list") {
       const all = items(so), left = all.filter((x) => x.status === "pending").length;
       return heading(so, "ライブの確認一覧") + `<div class="lf-count"><b>${left}</b> 未確認 <span>仮メモ ${drafts(so).length} ／ 前回の指摘 ${prior(so).length}</span></div>
@@ -108,23 +104,15 @@ const LiveFlow = (() => {
     const sameRecording = captured && captured.startsWith(S.showId + "|" + so.id + "|");
     const base = { id: uid(), showId: S.showId, songId: so.id, lineIdx: i,
       memberIds: partsOf(so, i).slice(), at: sameRecording ? at : null, recKey: sameRecording ? captured : null, ts: Date.now() };
-    if (selected === "pending") {
-      const existing = drafts(so).find((x) => x.lineIdx === i && x.text === l.t);
-      if (existing) {
-        before(); S.livePending = S.livePending.filter((x) => x.id !== existing.id);
-        persist(`${i + 1}行目の仮チェックを外しました`, false); return;
-      }
-      before(); S.livePending = (S.livePending || []).concat({ ...base, text: l.t });
-      persist(`${i + 1}行目をあとで確認（配信しません）`, false);
-    } else if (TAGS.some((t) => t.id === selected)) {
-      const draft = drafts(so).find((x) => x.lineIdx === i && x.text === l.t);
-      before();
-      const captured = draft ? { memberIds: draft.memberIds, at: draft.at, recKey: draft.recKey, ts: draft.ts } : {};
-      S.notes.push({ ...base, ...captured, tags: [selected], memo: draft ? draft.memo || "" : "", pitch: null, lineEnd: null, from: null, to: null });
-      if (draft) S.livePending = S.livePending.filter((x) => x.id !== draft.id);
-      lastTag = selected; persist(`${i + 1}行目：${tagName(selected)}を記録`, true);
+    const existing = drafts(so).find((x) => x.lineIdx === i && x.text === l.t);
+    if (existing) {
+      before(); S.livePending = S.livePending.filter((x) => x.id !== existing.id);
+      persist(`${i + 1}行目の仮チェックを外しました`, false); return;
     }
+    before(); S.livePending = (S.livePending || []).concat({ ...base, text: l.t });
+    persist(`${i + 1}行目をあとで確認（配信しません）`, false);
   }
+
   let draftTimer = null;
   function rememberDraft() {
     clearTimeout(draftTimer);
@@ -143,16 +131,11 @@ const LiveFlow = (() => {
     const so = m ? getSong(m) : song(); if (!so) return true;
     syncContext(so);
     const x = m ? getItem(so, m) : null;
-    if (a === "lf-select") { if (id === "pending" || TAGS.some((t) => t.id === id)) { selected = id; message = ""; render(); } }
-    else if (a === "lf-line") addLine(so, i);
+    if (a === "lf-line") addLine(so, i);
     else if (a === "lf-list") { U.menu = { kind: "lf-list", showId: S.showId, songId: so.id }; renderSheet(); }
     else if (a === "lf-next") next(so);
     else if (a === "lf-open") { const item = items(so).find((v) => v.id === id && v.kind === button.dataset.kind && (v.kind !== "prior" || v.sourceSongId === button.dataset.source)); if (item) openItem(so, item); }
-    else if (a === "lf-settings") { U.menu = { kind: "lf-settings", showId: S.showId, songId: so.id, tags: tags().slice() }; renderSheet(); }
-    else if (a === "lf-save-settings" && m) {
-      if (new Set(m.tags).size !== 4 || !m.tags.every((t) => TAGS.some((x) => x.id === t))) { document.getElementById("lf-error").textContent = "4つの異なる指摘を選んでください。"; return true; }
-      S.liveQuickTags = m.tags.slice(); U.menu = null; persist("指摘の並びを保存しました", false);
-    } else if (a === "lf-confirm" && x && x.kind === "draft") {
+    else if (a === "lf-confirm" && x && x.kind === "draft") {
       if (!so.lines[x.lineIdx] || so.lines[x.lineIdx].t !== x.text) return true;
       const memo = (m.memo || "").trim(), tag = m.tag;
       if (!tag && !memo) { document.getElementById("lf-error").textContent = "指摘を選ぶか、メモを入力してください。"; return true; }
@@ -162,7 +145,6 @@ const LiveFlow = (() => {
         memberIds: x.memberIds.slice(), tags: tag ? [tag] : [], memo, pitch: null,
         lineEnd: null, from: null, to: null, at: x.at, recKey: x.recKey, ts: x.ts });
       S.livePending = (S.livePending || []).filter((d) => d.id !== x.id);
-      if (tag) lastTag = tag;
       U.menu = null; persist("仮メモを指摘にしました", true); next(so);
     } else if (a === "lf-discard" && x && x.kind === "draft") {
       before(); S.livePending = (S.livePending || []).filter((d) => d.id !== x.id);
@@ -176,9 +158,6 @@ const LiveFlow = (() => {
       render(); setTimeout(() => { const e = app.querySelector(`.txt[data-l="${x.lineIdx}"]`); if (e) { e.scrollIntoView({block:"center"}); e.classList.add("lf-target"); } }, 0);
     } else if (a === "lf-play" && x && x.recKey && !REC && S.recs[x.recKey]) {
       const index = recKeysOf(so).indexOf(x.recKey); if (index >= 0) { U.recPick = index; openPlayer(x.at); }
-    } else if (a === "lf-undo" && lastUndo && lastUndo === undoStack[undoStack.length - 1]) {
-      message = "直前の操作を取り消しました"; lastUndo = "";
-      const b = document.createElement("button"); b.dataset.act = "undo"; b.hidden = true; document.body.appendChild(b); b.click(); b.remove();
     }
     return true;
   }
@@ -187,7 +166,6 @@ const LiveFlow = (() => {
     if (e.target.id === "lf-tag") m.tag = e.target.value;
     if (e.target.id === "lf-memo") m.memo = e.target.value;
     if (e.target.id === "lf-memo" || e.target.id === "lf-tag") { clearTimeout(draftTimer); draftTimer = setTimeout(rememberDraft, 500); }
-    if (e.target.matches("[data-lf-pref]")) m.tags[Number(e.target.dataset.lfPref)] = e.target.value;
   });
   window.addEventListener("pagehide", () => { rememberDraft(); saveNow(); });
   document.addEventListener("visibilitychange", () => { if (document.hidden) { rememberDraft(); saveNow(); } });

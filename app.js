@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.22";
+const APP_VER = "16.23";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -4056,14 +4056,6 @@ function renderSheet() {
     document.body.appendChild(overlay); return;
   }
 
-  if (U.menu && U.menu.kind.startsWith("rf-") && typeof RecFlow !== "undefined") {
-    overlay = document.createElement("div");
-    overlay.className = "mask";
-    overlay.innerHTML = `<button class="sp" data-act="rf-close" aria-label="閉じる"></button><div class="sheet">${RecFlow.sheet(U.menu)}</div>`;
-    document.body.appendChild(overlay);
-    return;
-  }
-
   if (U.menu && U.menu.kind === "sched") {
     overlay = document.createElement("div");
     overlay.className = "mask";
@@ -5119,8 +5111,7 @@ function recWho() {
   const foc = S.planFocus ? rows.find((r) => r.s.id === S.planFocus) : null;
   const r = foc || rows.find((x) => x.live);
   if (!r || r.s.kind === "break") return "";
-  const tail = foc && !foc.live ? "" : "";
-  return `<span style="color:var(--accent);font-weight:700">　${h(r.s.name)}${tail}</span>`;
+  return `<span style="color:var(--accent);font-weight:700">　${h(r.s.name)}</span>`;
 }
 
 // 歌詞画面の下に、今の枠と残り時間を出す
@@ -5156,7 +5147,7 @@ function recBar() {
   const tabList = secs.length ? secs : sectionOrder().map((nm) => ({ name: nm }));
   const tabs = tabList.map((e) => {
     const cls = (e.live || e.name === U.secView || tagBase(U.secView) === e.name) ? "on" : e.done ? "dn" : "";
-    return `<button class="sectab ${cls}" id="tab-${h(e.name)}" data-act="jumpsec" data-id="${h(e.name)}">${e.done ? "✓" : ""}${h(e.name)}${false ? `<i>${e.done ? e.used : e.min}</i>` : ""}</button>`;
+    return `<button class="sectab ${cls}" id="tab-${h(e.name)}" data-act="jumpsec" data-id="${h(e.name)}">${e.done ? "✓" : ""}${h(e.name)}</button>`;
   }).join("");
 
   /* Gaya のような表記を選んでいる時は、Gaya1 Gaya2 … を小さく並べる。
