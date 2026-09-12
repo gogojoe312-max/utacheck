@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.23";
+const APP_VER = "16.24";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -80,11 +80,11 @@ const TAG_MENU = [
   {name: "声・表現", ids: ["strong","weak","nuance","dark","bright","face","flip","nuke","gara","mic","noise","level","lvHi","lvLo"]},
   {name: "良い・その他", ids: ["good","close","oke","swap"]},
 ];
-function tagMenuHTML(sh) {
-  const group = TAG_MENU.find(g => g.name === sh.tagCategory);
-  if (!group) return `<div class="tag-categories">${TAG_MENU.map(g => `<button data-act="tag-category" data-id="${h(g.name)}"><b>${h(g.name)}</b><span>${h(g.ids.slice(0,3).map(tagName).join("・"))}</span></button>`).join("")}</div>`;
-  return `<div class="tag-menu-heading"><button data-act="tag-category" data-id="">‹ 分類に戻る</button><b>${h(group.name)}</b></div>
-    <div class="tag-options">${group.ids.map(id => `<button data-act="tag-choice" data-id="${id}">${h(tagName(id))}</button>`).join("")}</div>`;
+function tagMenuHTML() {
+  return TAG_MENU.map(g => `<section class="tag-group" aria-label="${h(g.name)}">
+    <h5>${h(g.name)}</h5>
+    <div class="tag-options">${g.ids.map(id => `<button data-act="tag-choice" data-id="${id}">${h(tagName(id))}</button>`).join("")}</div>
+  </section>`).join("");
 }
 
 /* ---------------- state ---------------- */
@@ -4463,7 +4463,7 @@ ${shows}</div>
       <div class="range">${rangeHtml}</div>
       ${sh.range ? `<button class="chip sm" data-act="rangeoff" style="margin-top:8px;color:var(--dim)">行全体に戻す</button>` : ""}
     </div>
-    <div class="sec tag-menu"><h4>指摘を選ぶ</h4>${tagMenuHTML(sh)}</div>
+    <div class="sec tag-menu"><h4>指摘を選ぶ</h4>${tagMenuHTML()}</div>
     <div class="sec">
       <h4>正しい音（任意）　${sh.rec ? "録音中。押した音が順に入ります" : "押すと鳴るだけ。残したい時は録音を押す"}</h4>
       <div class="row" style="margin-bottom:8px">
@@ -6520,9 +6520,6 @@ document.addEventListener("click", (e) => {
   const s = song();
 
   switch (a) {
-    case "tag-category":
-      if (!U.sheet || VIEW()) break;
-      commitFields(); U.sheet.tagCategory = TAG_MENU.some(g => g.name === id) ? id : ""; renderSheet(); break;
     case "tag-choice":
       if (!U.sheet || VIEW() || !TAGS.some(t => t.id === id)) break;
       U.sheet.tags = [id]; scheduleCommit(); break;
