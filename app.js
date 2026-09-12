@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.26";
+const APP_VER = "16.27";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -80,7 +80,7 @@ function recentTagIds() {
   for (const {note} of notes) {
     for (const id of note.tags || []) {
       if (!ids.includes(id) && TAGS.some(t => t.id === id)) ids.push(id);
-      if (ids.length === 6) return ids;
+      if (ids.length === 4) return ids;
     }
   }
   return ids;
@@ -94,10 +94,12 @@ function tagMenuHTML() {
     <div class="swipe-tags">${SWIPES.map((sw, index) => {
       const name = catOf(sw.id), label = tagName(sw.id);
       const help = `${name}：タップで${label}` + dirs.filter(([key]) => sw[key]).map(([key,,direction]) => `、${direction}で${tagName(sw[key])}`).join("");
-      return `<button class="swipe-tile" data-swipe="${sw.id}" data-act="tag-choice" data-id="${sw.id}" aria-label="${h(help)}" style="--tag-color:${colors[index]}">
-        <span class="swipe-center" data-tag-id="${sw.id}">${name !== label ? `<small>${h(name)}</small>` : ""}<b>${h(labels[sw.id] || label)}</b></span>
-        ${dirs.map(([key, arrow]) => sw[key] ? `<span class="swipe-option swipe-${key}" data-tag-id="${sw[key]}"><i>${arrow}</i><span>${h(labels[sw[key]] || tagName(sw[key]))}</span></span>` : "").join("")}
-      </button>`;
+      return `<section class="swipe-row" aria-label="${h(name)}" style="--tag-color:${colors[index]}">
+        <button class="swipe-tile" data-swipe="${sw.id}" data-act="tag-choice" data-id="${sw.id}" data-tag-id="${sw.id}" aria-label="${h(help)}">
+          ${name !== label ? `<small>${h(name)}</small>` : ""}<b>${h(labels[sw.id] || label)}</b>
+        </button>
+        <div class="swipe-choices">${dirs.map(([key, arrow]) => sw[key] ? `<button class="swipe-option" data-tag-id="${sw[key]}" data-act="tag-choice" data-id="${sw[key]}" aria-label="${h(tagName(sw[key]))}"><i>${arrow}</i><span>${h(labels[sw[key]] || tagName(sw[key]))}</span></button>` : '<span aria-hidden="true"></span>').join("")}</div>
+      </section>`;
     }).join("")}</div>`;
 }
 
@@ -4467,19 +4469,21 @@ ${shows}</div>
     : `<span class="rgtx" data-rl="${rl0}">${lineHtml(rl0)}</span>`;
   const ex = NOTES().filter((n) => n.songId === s.id && n.showId === S.showId && covers(n, sh.lineIdx));
 
+  const contextText = sh.range
+    ? Array.from((s.lines[rangeLine] || {}).t || "").slice(sh.range[0], sh.range[1] + 1).join("")
+    : s.lines.slice(rl0, rl1 + 1).map(x => x.t || "").join(" / ");
   const inner = `
     <header class="note-sheet-head">
       <div class="note-sheet-title">
-        <div><h2 id="note-sheet-title">指摘</h2><p>${h(labelOf(s, sh.lineIdx) || "続き")} · ${sh.lineEnd ? `${rowNo(s, sh.lineIdx)}〜${rowNo(s, sh.lineEnd)}行目` : `${rowNo(s, sh.lineIdx)}行目`}</p></div>
+        <div>${sh.detail ? '<button class="note-back" data-act="note-detail-back">‹ 指摘に戻る</button>' : '<h2 id="note-sheet-title">指摘</h2>'}<p>${h(labelOf(s, sh.lineIdx) || "続き")} · ${sh.lineEnd ? `${rowNo(s, sh.lineIdx)}〜${rowNo(s, sh.lineEnd)}行目` : `${rowNo(s, sh.lineIdx)}行目`}</p></div>
         <button class="note-close" data-act="cancel" aria-label="指摘画面を閉じる">×</button>
       </div>
-      <div class="note-context">
-        <div class="range" aria-label="指摘の対象の歌詞">${rangeHtml}</div>
-        ${sh.range ? `<button class="note-range-reset" data-act="rangeoff">行全体に戻す</button>` : ""}
-      </div>
+      ${!sh.detail ? `<button class="note-context-preview" data-act="note-detail" data-id="range" aria-label="歌詞の範囲を選ぶ"><span>${h(contextText || gapWhere(s, sh.lineIdx) || "歌詞のない箇所")}</span><i>›</i></button>` : ""}
     </header>
-    <div class="note-sheet-content">
-    <div class="tag-menu">${tagMenuHTML()}</div>
+    ${sh.detail ? `<div class="note-details-content">
+      <section class="note-range"><h3>歌詞の範囲</h3><div class="note-context"><div class="range">${rangeHtml}</div>
+        ${sh.range ? '<button class="note-range-reset" data-act="rangeoff">行全体に戻す</button>' : ""}
+      </div></section>
     <div class="note-memo">
       <label for="memo">メモ <span>任意</span></label>
       <input class="field" id="memo" enterkeyhint="done" placeholder="語尾が落ちる / 出が半拍遅い など" value="${h(sh.memo)}">
@@ -4506,14 +4510,15 @@ ${shows}</div>
         ${n.ro ? `<span style="color:var(--dim);font-size:11px">配信</span>`
                : `<button data-act="delnote" data-id="${n.id}" style="color:var(--bad);padding:0 4px">✕</button>`}
       </div>`).join("")}</div>` : ""}
-    </div>`;
+    </div>` : `<div class="note-choice-content"><div class="tag-menu">${tagMenuHTML()}</div></div>
+    <footer class="note-sheet-foot"><button data-act="note-detail" data-id="memo">メモ・音・記録${sh.memo || sh.seq.length ? " · 入力あり" : ""}<span>›</span></button></footer>`}`;
 
   overlay = document.createElement("div");
   overlay.className = "mask";
-  overlay.innerHTML = `<button class="sp" data-act="close" aria-label="指摘画面を閉じる"></button><div class="sheet note-sheet" role="dialog" aria-modal="true" aria-labelledby="note-sheet-title">${inner}</div>`;
+  overlay.innerHTML = `<button class="sp" data-act="close" aria-label="指摘画面を閉じる"></button><div class="sheet note-sheet${sh.detail ? " note-detail-view" : ""}" role="dialog" aria-modal="true" aria-label="${sh.detail ? "歌詞・メモ・音" : "指摘"}">${inner}</div>`;
   document.body.appendChild(overlay);
   const pitchPanel = overlay.querySelector(".note-pitch");
-  pitchPanel.addEventListener("toggle", () => { if (U.sheet === sh) sh.pitchOpen = pitchPanel.open; });
+  if (pitchPanel) pitchPanel.addEventListener("toggle", () => { if (U.sheet === sh) sh.pitchOpen = pitchPanel.open; });
   showPianoAtC4(overlay);
 }
 
@@ -6544,6 +6549,15 @@ document.addEventListener("click", (e) => {
   const s = song();
 
   switch (a) {
+    case "note-detail":
+    case "note-detail-back":
+      if (!U.sheet || VIEW()) break;
+      commitFields();
+      if (typingNow() && document.activeElement) document.activeElement.blur();
+      U.sheet.detail = a === "note-detail";
+      renderSheet();
+      if (U.sheet.detail && id === "memo") overlay.querySelector(".note-memo")?.scrollIntoView({block:"nearest"});
+      break;
     case "tag-choice":
       // タイルの指・マウス操作は pointerup で確定。クリックはキーボード操作だけ。
       if (b.dataset.swipe && e.detail !== 0) break;
@@ -8017,7 +8031,7 @@ function swipeTagAt(sw, dx, dy) {
   return Math.abs(dy) >= Math.abs(dx) ? sw[dy < 0 ? "up" : "dn"] : sw[dx < 0 ? "lf" : "rt"];
 }
 function clearTagSwipe() {
-  if (swOrg) swOrg.el.querySelectorAll("[data-tag-id]").forEach(el => el.classList.remove("is-selected"));
+  if (swOrg) swOrg.row.querySelectorAll("[data-tag-id]").forEach(el => el.classList.remove("is-selected"));
   swOrg = null;
 }
 document.addEventListener("pointerdown", (e) => {
@@ -8026,14 +8040,14 @@ document.addEventListener("pointerdown", (e) => {
   if (tagPointers.size > 1) { clearTagSwipe(); return; }
   const t = e.target.closest && e.target.closest("[data-swipe]");
   if (!t || !U.sheet || VIEW() || e.button !== 0) return;
-  swOrg = {id:t.dataset.swipe, pointerId:e.pointerId, sheet:U.sheet, el:t, x:e.clientX, y:e.clientY};
+  swOrg = {id:t.dataset.swipe, pointerId:e.pointerId, sheet:U.sheet, el:t, row:t.closest?.(".swipe-row") || t, x:e.clientX, y:e.clientY};
   t.setPointerCapture(e.pointerId);
 }, true);
 document.addEventListener("pointermove", (e) => {
   if (!swOrg || e.pointerId !== swOrg.pointerId) return;
   const sw = SWIPES.find(x => x.id === swOrg.id);
   const id = swipeTagAt(sw, e.clientX - swOrg.x, e.clientY - swOrg.y);
-  swOrg.el.querySelectorAll("[data-tag-id]").forEach(el => el.classList.toggle("is-selected", el.dataset.tagId === id));
+  swOrg.row.querySelectorAll("[data-tag-id]").forEach(el => el.classList.toggle("is-selected", el.dataset.tagId === id));
   e.preventDefault();
 }, {passive:false});
 document.addEventListener("pointerup", (e) => {
@@ -8455,10 +8469,10 @@ document.addEventListener("pointerdown", (e) => {
   const target = (n) => (n && n.closest ? n.closest("[data-hold]") : null);
 
   document.addEventListener("pointerdown", (e) => {
-    el = target(e.target);
-    if (!el) return;
     fired = false;
     clearTimeout(t);
+    el = target(e.target);
+    if (!el) return;
     t = setTimeout(() => {
       fired = true;
       /* 一時的に役目を入れ替えて、いつもの処理に流す */

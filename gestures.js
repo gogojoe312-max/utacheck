@@ -1,12 +1,13 @@
 /* Horizontal touch navigation. Text ranges remain selectable inside the note sheet. */
 (() => {
- let start=null, touches=new Set(), suppressUntil=0;
+ let start=null, suppressUntil=0;
  const controls='#app>.bottom,#app>.lf-dock,#app>.aubar';
- const allowed=()=>U.view==='live'&&!S.recMode&&!U.overview&&!U.draw&&!U.sheet&&!U.menu&&!U.picker&&!REC;
+ const allowed=()=>U.view==='live'&&!S.recMode&&!U.overview&&!U.draw&&!U.sheet&&!U.menu&&!U.picker;
  document.addEventListener('pointerdown',e=>{
   if(e.pointerType!=='touch')return;
-  touches.add(e.pointerId);
-  if(touches.size>1){start=null;org=null;clearHold();clearHl();return;}
+  if(e.isPrimary===false){start=null;org=null;clearHold();clearHl();return;}
+  // 新しいタッチで必ず初期化する。別の操作が pointerup を止めても引きずらない。
+  start=null;suppressUntil=0;
   if(!allowed()||e.clientX<24||e.clientX>innerWidth-24)return;
   if(VIEW()){
    if(!e.target.closest('#app>.scroll')||e.target.closest('button,input,textarea,select,.pull'))return;
@@ -21,7 +22,6 @@
   if(start.horizontal){org=null;dragOn=false;clearHold();clearHl();e.preventDefault();e.stopImmediatePropagation();}
  },{capture:true,passive:false});
  document.addEventListener('pointerup',e=>{
-  touches.delete(e.pointerId);
   if(!start||e.pointerId!==start.id)return;
   const s=start;start=null;
   if(!s.horizontal)return;
@@ -31,7 +31,7 @@
   const button=app.querySelector(`[data-act="${dx<0?'next':'prev'}"]`);
   if(button&&!button.classList.contains('off'))button.click();
  },{capture:true,passive:false});
- document.addEventListener('pointercancel',e=>{touches.delete(e.pointerId);start=null;},true);
+ document.addEventListener('pointercancel',()=>{start=null;},true);
  document.addEventListener('click',e=>{if(U.view==='live'&&e.isTrusted&&Date.now()<suppressUntil&&(e.target.closest('#app>.scroll')||e.target.closest(controls))){e.preventDefault();e.stopImmediatePropagation();}},true);
 })();
 function memberHelpHTML(){return `<details class="member-help"><summary>使い方</summary>
@@ -41,4 +41,4 @@ function memberHelpHTML(){return `<details class="member-help"><summary>使い�
 <li><b>文字を大きくする</b><br>歌詞を2本指で広げると拡大、狭めると縮小できます。上下のスクロールで歌詞の続きを読めます。</li>
 <li><b>内容を読む</b><br>歌詞の下に指摘とメモを表示します。「前回」は以前の公演の指摘です。分からない内容は担当者に確認してください。</li>
 <li><b>更新を受け取る</b><br>通信できる状態で共有されたURLを開いてください。古い表示のままの場合は再読み込みしてください。名前の絞り込みは閲覧用で、共有された記録を書き換えません。</li>
-</ol><p>画面の左右端はブラウザーの操作に使われるため、スワイプは中央付近から始めてください。録音中・手書き中・指摘画面では曲移動のスワイプは無効です。</p></div></details>`;}
+</ol><p>画面の左右端はブラウザーの操作に使われるため、スワイプは中央付近から始めてください。レコーディングモード・手書き中・指摘画面では曲移動のスワイプは無効です。</p></div></details>`;}

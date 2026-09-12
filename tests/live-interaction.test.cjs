@@ -23,7 +23,7 @@ function gestures() {
   return null;
  }}; }
  function fire(name, x, y, kind='blank', id=1) {
-  const e={pointerType:'touch',pointerId:id,clientX:x,clientY:y,target:target(kind),isTrusted:true,preventDefault(){this.prevented=true;},stopImmediatePropagation(){}};
+  const e={pointerType:'touch',pointerId:id,isPrimary:id===1,clientX:x,clientY:y,target:target(kind),isTrusted:true,preventDefault(){this.prevented=true;},stopImmediatePropagation(){}};
   (handlers[name] || []).forEach(fn=>fn(e));return e;
  }
  function swipe(kind, dy=0) {fire('pointerdown',240,200,kind);fire('pointermove',130,200+dy,kind);fire('pointerup',130,200+dy,kind);}
@@ -78,6 +78,20 @@ test('footer taps remain available and a swipe suppresses the following button c
  assert.equal(g.clicks.length,0);assert.equal(g.fire('click',240,200,'control-button').prevented,undefined);
  g.swipe('control-button');assert.equal(g.clicks.length,1);
  assert.equal(g.fire('click',130,200,'control-button').prevented,true);
+});
+
+test('footer song swipes recover after another interaction consumes pointerup',()=>{
+ const g=gestures();g.ctx.U.sheet={};
+ g.fire('pointerdown',240,200,'text',9);
+ // A dialog / long-press handler consumes this release before navigation sees it.
+ g.ctx.U.sheet=null;
+ g.swipe('control-button');g.swipe('control-button');
+ assert.equal(g.clicks.length,2);g.clicks.forEach(x=>assert.match(x,/next/));
+});
+
+test('footer swipes use the same song navigation as arrows while live audio is recording',()=>{
+ const g=gestures();g.ctx.REC=true;g.swipe('control-button');
+ assert.equal(g.clicks.length,1);assert.equal(g.ctx.REC,true);
 });
 
 test('a temporary check still becomes a published note with its memo and recording position',()=>{

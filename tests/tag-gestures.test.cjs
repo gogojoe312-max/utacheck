@@ -58,10 +58,10 @@ test('release consumes its follow-up click, permits the next tap and clears poin
  s.c.U.sheet={tags:[]};s.fire('click',100,100,{detail:0});assert.equal(s.commits.length,3);
 });
 
-test('recent tags use six distinct saved choices, newest first, without changing notes',()=>{
+test('recent tags use four distinct saved choices, newest first, without changing notes',()=>{
  const notes=[{tags:['pitch'],ts:1},{tags:['pLo','fast'],ts:5},{tags:['slow','good','diction','mic'],ts:4},{tags:['pLo'],ts:6},{tags:['unknown'],ts:100},{tags:['pHi'],ts:200,ro:true}];
  const original=JSON.stringify(notes),s=setup(notes);
- assert.deepEqual(Array.from(s.run('recentTagIds()')),['pLo','fast','slow','good','diction','mic']);
+ assert.deepEqual(Array.from(s.run('recentTagIds()')),['pLo','fast','slow','good']);
  const html=s.run('tagMenuHTML()');assert(html.indexOf('recent-tags')<html.indexOf('swipe-tags'));
  assert.equal((html.match(/data-swipe=/g)||[]).length,7);assert.equal(JSON.stringify(notes),original);
  s.c.S.notes=[];assert(!s.run('tagMenuHTML()').includes('class="recent-tags"'));
