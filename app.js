@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.27";
+const APP_VER = "16.28";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -72,7 +72,7 @@ const SWIPES = [
 const LEGACY = { breath: "ブレス", volume: "声量", tone: "声色" };
 const tagName = (id) => (TAGS.find((t) => t.id === id) || {}).l || LEGACY[id] || id;
 
-// 分類と方向は固定し、最近の指摘だけを上に並べる。
+// 分類と方向は固定し、最近の指摘は親指が届く下側に並べる。
 function recentTagIds() {
   const ids = [];
   const notes = (S.notes || []).map((note, index) => ({note, index}))
@@ -90,17 +90,17 @@ function tagMenuHTML() {
   const colors = ["#efa795","#dec18c","#94cec8","#bfaee4","#e9a5b5","#9bbce5","#9aceaf"];
   const labels = {pHi:"高い",pLo:"低い",lvHi:"大きい",lvLo:"小さい",good:"良い"};
   const dirs = [["up","↑","上"],["dn","↓","下"],["lf","←","左"],["rt","→","右"]];
-  return `${recent.length ? `<section class="recent-tags" aria-label="最近使った指摘"><h3>最近使った指摘</h3><div class="recent-tag-options">${recent.map(id => `<button data-act="tag-choice" data-id="${id}">${h(tagName(id))}</button>`).join("")}</div></section>` : ""}
-    <div class="swipe-tags">${SWIPES.map((sw, index) => {
+  return `<div class="swipe-tags">${SWIPES.map((sw, index) => {
       const name = catOf(sw.id), label = tagName(sw.id);
       const help = `${name}：タップで${label}` + dirs.filter(([key]) => sw[key]).map(([key,,direction]) => `、${direction}で${tagName(sw[key])}`).join("");
-      return `<section class="swipe-row" aria-label="${h(name)}" style="--tag-color:${colors[index]}">
-        <button class="swipe-tile" data-swipe="${sw.id}" data-act="tag-choice" data-id="${sw.id}" data-tag-id="${sw.id}" aria-label="${h(help)}">
+      return `<section class="swipe-row" data-swipe="${sw.id}" aria-label="${h(name)}" style="--tag-color:${colors[index]}">
+        <div class="swipe-choices">${dirs.map(([key, arrow]) => sw[key] ? `<button class="swipe-option" data-tag-id="${sw[key]}" data-act="tag-choice" data-id="${sw[key]}" aria-label="${h(tagName(sw[key]))}"><i>${arrow}</i><span>${h(labels[sw[key]] || tagName(sw[key]))}</span></button>` : '<span aria-hidden="true"></span>').join("")}</div>
+        <button class="swipe-tile" data-act="tag-choice" data-id="${sw.id}" data-tag-id="${sw.id}" aria-label="${h(help)}">
           ${name !== label ? `<small>${h(name)}</small>` : ""}<b>${h(labels[sw.id] || label)}</b>
         </button>
-        <div class="swipe-choices">${dirs.map(([key, arrow]) => sw[key] ? `<button class="swipe-option" data-tag-id="${sw[key]}" data-act="tag-choice" data-id="${sw[key]}" aria-label="${h(tagName(sw[key]))}"><i>${arrow}</i><span>${h(labels[sw[key]] || tagName(sw[key]))}</span></button>` : '<span aria-hidden="true"></span>').join("")}</div>
       </section>`;
-    }).join("")}</div>`;
+    }).join("")}</div>
+    ${recent.length ? `<section class="recent-tags" aria-label="最近使った指摘"><h3>最近使った指摘</h3><div class="recent-tag-options">${recent.map(id => `<button data-act="tag-choice" data-id="${id}">${h(tagName(id))}</button>`).join("")}</div></section>` : ""}`;
 }
 
 /* ---------------- state ---------------- */
@@ -6559,8 +6559,8 @@ document.addEventListener("click", (e) => {
       if (U.sheet.detail && id === "memo") overlay.querySelector(".note-memo")?.scrollIntoView({block:"nearest"});
       break;
     case "tag-choice":
-      // タイルの指・マウス操作は pointerup で確定。クリックはキーボード操作だけ。
-      if (b.dataset.swipe && e.detail !== 0) break;
+      // 指摘行の指・マウス操作は pointerup で確定。最近の指摘とキーボードはクリックで選ぶ。
+      if (b.closest("[data-swipe]") && e.detail !== 0) break;
       if (!U.sheet || VIEW() || !TAGS.some(t => t.id === id)) break;
       U.sheet.tags = [id]; scheduleCommit(); break;
     case "lyric-smaller": S.size = Math.max(11, S.size - 2); save(); render(); break;
@@ -8026,8 +8026,8 @@ function openSheet(lineIdx, range, lineEnd) {
 /* ---- タグをなぞって選ぶ ---- */
 let swOrg = null, tagClickUntil = 0;
 const tagPointers = new Set();
-function swipeTagAt(sw, dx, dy) {
-  if (Math.max(Math.abs(dx), Math.abs(dy)) <= 24) return sw.id;
+function swipeTagAt(sw, dx, dy, tapId) {
+  if (Math.max(Math.abs(dx), Math.abs(dy)) <= 24) return tapId;
   return Math.abs(dy) >= Math.abs(dx) ? sw[dy < 0 ? "up" : "dn"] : sw[dx < 0 ? "lf" : "rt"];
 }
 function clearTagSwipe() {
@@ -8040,13 +8040,14 @@ document.addEventListener("pointerdown", (e) => {
   if (tagPointers.size > 1) { clearTagSwipe(); return; }
   const t = e.target.closest && e.target.closest("[data-swipe]");
   if (!t || !U.sheet || VIEW() || e.button !== 0) return;
-  swOrg = {id:t.dataset.swipe, pointerId:e.pointerId, sheet:U.sheet, el:t, row:t.closest?.(".swipe-row") || t, x:e.clientX, y:e.clientY};
+  const choice = e.target.closest('[data-act="tag-choice"]');
+  swOrg = {id:t.dataset.swipe, tapId:choice?.dataset.id || null, pointerId:e.pointerId, sheet:U.sheet, row:t, x:e.clientX, y:e.clientY};
   t.setPointerCapture(e.pointerId);
 }, true);
 document.addEventListener("pointermove", (e) => {
   if (!swOrg || e.pointerId !== swOrg.pointerId) return;
   const sw = SWIPES.find(x => x.id === swOrg.id);
-  const id = swipeTagAt(sw, e.clientX - swOrg.x, e.clientY - swOrg.y);
+  const id = swipeTagAt(sw, e.clientX - swOrg.x, e.clientY - swOrg.y, swOrg.tapId);
   swOrg.row.querySelectorAll("[data-tag-id]").forEach(el => el.classList.toggle("is-selected", el.dataset.tagId === id));
   e.preventDefault();
 }, {passive:false});
@@ -8054,12 +8055,12 @@ document.addEventListener("pointerup", (e) => {
   tagPointers.delete(e.pointerId);
   if (!swOrg || e.pointerId !== swOrg.pointerId) return;
   const o = swOrg; clearTagSwipe();
-  // タイルを離した後のクリックが、下の歌詞や別のボタンに抜けないようにする。
+  // 行を離した後のクリックが、下の歌詞や別のボタンに抜けないようにする。
   tagClickUntil = Date.now() + 500;
   e.preventDefault();
   if (U.sheet !== o.sheet || VIEW()) return;
   const sw = SWIPES.find(x => x.id === o.id);
-  const id = swipeTagAt(sw, e.clientX - o.x, e.clientY - o.y);
+  const id = swipeTagAt(sw, e.clientX - o.x, e.clientY - o.y, o.tapId);
   if (!id) return;
   U.sheet.tags = [id];
   commitFields(); scheduleCommit();

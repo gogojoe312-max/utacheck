@@ -14,14 +14,16 @@ function setup(notes=[]) {
  const clickStart=src.indexOf('document.addEventListener("click", (e) => {');
  vm.runInContext(src.slice(clickStart,src.indexOf('\n});',clickStart)+4),c);
  vm.runInContext(src.slice(src.indexOf('let swOrg = null'),src.indexOf('/* ---- 公演をつまんで')),c);
- const tile={dataset:{swipe:'pitch',act:'tag-choice',id:'pitch'},setPointerCapture(){},querySelectorAll(){return []}};
+ const row={dataset:{swipe:'pitch'},setPointerCapture(){},querySelectorAll(){return []}};
+ const choice=id=>({dataset:{act:'tag-choice',id},closest(sel){return sel==='[data-swipe]'?row:['[data-act]','[data-act="tag-choice"]'].includes(sel)?this:null;}});
+ const tile=choice('pitch');
  function fire(name,x=100,y=100,more={}) {
   const e={pointerId:1,button:0,clientX:x,clientY:y,detail:1,isTrusted:true,
-   target:{closest:sel=>['[data-swipe]','[data-act]'].includes(sel)?tile:null},preventDefault(){this.prevented=true;},stopImmediatePropagation(){this.stopped=true;},...more};
+   target:tile,preventDefault(){this.prevented=true;},stopImmediatePropagation(){this.stopped=true;},...more};
   for(const {fn} of [...(handlers[name] || [])].sort((a,b)=>Number(b.capture)-Number(a.capture))){fn(e);if(e.stopped)break;}
   return e;
  }
- return {c,tile,handlers,commits,fire,run:code=>vm.runInContext(code,c)};
+ return {c,row,tile,choice,handlers,commits,fire,run:code=>vm.runInContext(code,c)};
 }
 
 test('all 33 existing tags remain reachable with their original swipe directions',()=>{
@@ -41,7 +43,7 @@ test('cancelled, multi-touch, stale-sheet and unassigned-direction gestures neve
  s.fire('pointerdown');s.fire('pointerdown',100,100,{pointerId:2});s.fire('pointerup');s.fire('pointerup',100,100,{pointerId:2});
  s.fire('click');assert.equal(s.commits.length,0);
  s.fire('pointerdown');s.c.U.sheet={tags:[]};s.fire('pointerup');
- s.tile.dataset.swipe='level';s.fire('pointerdown');s.fire('pointerup',170,100);
+ s.row.dataset.swipe='level';s.fire('pointerdown');s.fire('pointerup',170,100);
  assert.equal(s.commits.length,0);
  s.c.VIEW=()=>true;s.fire('pointerdown');s.fire('pointerup');assert.equal(s.commits.length,0);
 });
@@ -62,7 +64,50 @@ test('recent tags use four distinct saved choices, newest first, without changin
  const notes=[{tags:['pitch'],ts:1},{tags:['pLo','fast'],ts:5},{tags:['slow','good','diction','mic'],ts:4},{tags:['pLo'],ts:6},{tags:['unknown'],ts:100},{tags:['pHi'],ts:200,ro:true}];
  const original=JSON.stringify(notes),s=setup(notes);
  assert.deepEqual(Array.from(s.run('recentTagIds()')),['pLo','fast','slow','good']);
- const html=s.run('tagMenuHTML()');assert(html.indexOf('recent-tags')<html.indexOf('swipe-tags'));
+ const html=s.run('tagMenuHTML()');assert(html.indexOf('recent-tags')>html.indexOf('swipe-tags'));
  assert.equal((html.match(/data-swipe=/g)||[]).length,7);assert.equal(JSON.stringify(notes),original);
  s.c.S.notes=[];assert(!s.run('tagMenuHTML()').includes('class="recent-tags"'));
+});
+
+test('each direction can start anywhere in the row while a tap selects the touched choice',()=>{
+ const s=setup();
+ for(const startId of ['pHi','pLo','pUn','pWob','pitch']){
+  const target=s.choice(startId);
+  for(const [dx,dy,id] of [[3,3,startId],[0,-60,'pHi'],[0,60,'pLo'],[-60,0,'pUn'],[60,0,'pWob']]){
+   s.c.U.sheet={tags:[]};
+   s.fire('pointerdown',200,200,{target});s.fire('pointermove',200+dx,200+dy,{target});s.fire('pointerup',200+dx,200+dy,{target});
+   assert.equal(s.commits.at(-1)[0],id);
+   assert.equal(s.fire('click',200+dx,200+dy,{target}).stopped,true);
+  }
+ }
+ assert.equal(s.commits.length,25);
+ const gap={closest:sel=>sel==='[data-swipe]'?s.row:null};
+ s.c.U.sheet={tags:[]};s.fire('pointerdown',200,200,{target:gap});s.fire('pointerup',200,200,{target:gap});
+ assert.equal(s.commits.length,25);
+ s.fire('pointerdown',200,200,{target:gap});s.fire('pointerup',140,200,{target:gap});
+ assert.equal(s.commits.at(-1)[0],'pUn');
+});
+
+test('cancelled choice taps do not save through native clicks, and recent buttons still work',()=>{
+ const s=setup(),target=s.choice('pHi');
+ s.fire('pointerdown',200,200,{target});s.fire('pointercancel',200,200,{target});s.fire('click',200,200,{target});
+ assert.equal(s.commits.length,0);
+ s.fire('pointerdown',200,200,{target});s.fire('pointerdown',200,200,{pointerId:2,target});
+ s.fire('pointerup',200,200,{target});s.fire('pointerup',200,200,{pointerId:2,target});s.fire('click',200,200,{target});
+ assert.equal(s.commits.length,0);
+ s.fire('click',200,200,{target,detail:0});assert.equal(s.commits.at(-1)[0],'pHi');
+ s.c.U.sheet={tags:[]};
+ const recent={dataset:{act:'tag-choice',id:'fast'},closest(sel){return sel==='[data-act]'?this:null;}};
+ s.fire('pointerdown',200,200,{target:recent});s.fire('pointerup',200,200,{target:recent});s.fire('click',200,200,{target:recent});
+ assert.equal(s.commits.at(-1)[0],'fast');assert.equal(s.commits.length,2);
+});
+
+test('every genre appears after its direct choices, at the right end of the row',()=>{
+ const html=setup().run('tagMenuHTML()');
+ const rows=[...html.matchAll(/<section class="swipe-row"[\s\S]*?<\/section>/g)].map(m=>m[0]);
+ assert.equal(rows.length,7);
+ for(const row of rows){
+  assert.match(row, /^<section class="swipe-row" data-swipe=/);
+  assert(row.indexOf('class="swipe-choices"')<row.indexOf('class="swipe-tile"'));
+ }
 });
