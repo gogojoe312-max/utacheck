@@ -1,6 +1,6 @@
 /* Quiet, high-contrast controls for stage and studio. Screen only: printed lyrics keep their layout. */
 @media screen {
-:root{color-scheme:dark;--bg:#101113;--panel:#1b1c20;--panel2:#28292e;--line:#34353b;--text:#f3f3f5;--dim:#a0a1ab;--accent:#80b4ff;--good:#75d6a0;--bad:#ff8a80}
+:root{color-scheme:dark;--bg:#111215;--panel:#1c1e23;--panel2:#2a2d34;--line:#343740;--text:#f3f4f7;--dim:#a9adb8;--accent:#a6c8ff;--good:#91d7ae;--bad:#f4a295}
 body{font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans",sans-serif;-webkit-font-smoothing:antialiased;letter-spacing:.01em}
 button{touch-action:manipulation;transition:background-color .15s,color .15s;}
 button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
@@ -28,10 +28,10 @@ button:disabled{cursor:default}
 .sectabs{gap:4px;padding:8px 12px 2px;border-top:1px solid var(--line)}
 .sectab{background:transparent;border-radius:8px;font-size:13px;padding:10px 15px;min-height:40px;font-weight:500;color:var(--dim)}
 .sectab.on{background:#303238;color:var(--text);font-weight:600;box-shadow:inset 0 -2px var(--accent)}
-.card{border:1px solid #ffffff08;border-radius:18px;padding:18px}.field{border-radius:12px}
+.card{border:1px solid #ffffff08;border-radius:16px;padding:18px}.field{border-radius:12px}
 .chip{border-color:transparent;border-radius:10px}.tagpill{border-radius:5px}
-.mask{background:#0008;backdrop-filter:blur(9px);-webkit-backdrop-filter:blur(9px)}
-.sheet{background:#202125;border:1px solid #ffffff12;border-bottom:0;border-radius:26px 26px 0 0;padding:24px 20px calc(24px + env(safe-area-inset-bottom));box-shadow:0 -12px 70px #0004}
+.mask{background:#0009;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
+.sheet{background:#1c1e23;border:1px solid #ffffff12;border-bottom:0;border-radius:24px 24px 0 0;padding:24px 20px calc(24px + env(safe-area-inset-bottom));box-shadow:0 -12px 60px #0004}
 .lf-heading h2{font-size:23px;font-weight:650;letter-spacing:-.025em}
 .lf-heading button{border:0;background:#33343a;border-radius:50px;padding:6px 15px}
 .lf-count{background:#2b2c32;border-radius:16px}.lf-count{padding:20px}.lf-count>b{color:var(--text);font-size:36px;font-weight:500}
@@ -78,8 +78,8 @@ select.field{appearance:auto}textarea.field{resize:vertical}
 #app[data-screen="setup"]>.hd .ic{font-size:28px;color:var(--accent)}
 #app[data-screen="setup"]>.scroll{padding:0 18px 32px}
 .settings-section{scroll-margin-top:14px;margin:0 auto 28px;max-width:760px}
-.settings-section>.head{font-size:16px;color:var(--text);font-weight:600;margin:26px 2px 12px;letter-spacing:0}
-.settings-section>.card{border:1px solid #ffffff08;box-shadow:0 2px 8px #0001;border-radius:16px;padding:16px!important;margin-bottom:10px!important}
+.settings-section>.head{font-size:14px;color:var(--dim);font-weight:600;margin:24px 4px 10px;letter-spacing:0}
+.settings-section>.card{border:1px solid #ffffff06;border-radius:16px;padding:16px!important;margin-bottom:8px!important}
 .settings-section .row.card{gap:8px;flex-wrap:wrap}
 .settings-section .row.card>.grow{flex-basis:140px}
 .settings-section .row.card>button:not(.grow){min-height:36px;min-width:32px;border-radius:8px}
@@ -95,7 +95,7 @@ select.field{appearance:auto}textarea.field{resize:vertical}
  #app[data-screen="setup"]>.hd{padding:24px 32px 18px}
  #app[data-screen="setup"]>.scroll{padding:0 40px 48px}
  .settings-section{margin-bottom:36px}
- .settings-section>.head{margin-top:32px;font-size:18px}
+ .settings-section>.head{margin-top:28px;font-size:15px}
  .settings-section>.card{padding:20px!important}
 }
 @media(max-width:350px){
@@ -117,7 +117,7 @@ select.field{appearance:auto}textarea.field{resize:vertical}
 #app[data-screen="live"] .hd>button[data-act="picker"]{flex:1 1 auto;max-width:none}
 #app[data-screen="live"] .hd .t2{font-size:18px;margin-top:0;line-height:1.3}
 #app[data-screen="live"] .hd .t1{font-size:10px!important;line-height:1.4}
-#app[data-screen="live"] .hd .ic{min-width:32px;width:32px;height:36px;font-size:11px!important}
+#app[data-screen="live"] .hd .ic{min-width:44px;width:44px;height:44px;font-size:12px!important}
 #app[data-screen="live"] .blk{padding:4px 12px;gap:12px}
 #app[data-screen="live"] .ln:not(.lngap){display:grid;grid-template-columns:minmax(0,1fr) 32px;gap:0 5px;padding:6px 14px}
 #app[data-screen="live"] .ln>.lbl{grid-column:1;grid-row:1;text-align:left;padding:0;font-size:10px;line-height:1.4;min-height:14px}
@@ -157,12 +157,36 @@ select.field{appearance:auto}textarea.field{resize:vertical}
 #app[data-viewer="1"] .ln:has(.reading-notes) .tagpill[data-act="note"]{display:none}
 }
 @media screen{
-.tag-group+.tag-group{margin-top:14px}
-.tag-group h5{margin:0 0 6px;font-size:13px;font-weight:600;color:var(--dim);line-height:1.5}
-.tag-options{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
-.tag-options button{min-height:48px;padding:10px 8px;background:#303137;border-radius:11px;font-size:14px}
-.tag-options button:active{background:#344b69}
-@media(max-width:350px){.tag-options{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.sheet.note-sheet{display:flex;flex-direction:column;overflow:hidden;padding:0;max-height:92%;max-height:calc(100dvh - max(16px,env(safe-area-inset-top)));width:min(680px,100%);align-self:center}
+.note-sheet-head{flex:none;padding:18px 18px 14px;border-bottom:1px solid #ffffff08}
+.note-sheet-title{display:flex;align-items:center;gap:12px;margin-bottom:12px}
+.note-sheet-title>div{flex:1;min-width:0}
+.note-sheet-title h2{font-size:21px;line-height:1.3;font-weight:650;letter-spacing:-.02em}
+.note-sheet-title p{font-size:12px;color:var(--dim);margin-top:4px;overflow-wrap:anywhere}
+.note-close{flex:0 0 44px;height:44px;border-radius:50%;background:#2a2d34;color:#c8cbd3;font-size:27px;font-weight:400;line-height:1}
+.note-context{padding:10px 12px;background:#14161a;border:1px solid #ffffff08;border-radius:12px;max-height:120px;overflow-y:auto}
+.note-context .range{font-size:18px;line-height:1.55;overflow-wrap:anywhere}
+.note-range-reset{min-height:44px;margin-top:4px;color:var(--accent);font-size:12px}
+.note-sheet-content{min-height:0;overflow-y:auto;overscroll-behavior-y:contain;padding:16px 16px calc(20px + env(safe-area-inset-bottom));scrollbar-width:thin}
+.tag-menu{display:grid;grid-template-columns:minmax(0,1fr);gap:12px}
+.tag-group{min-width:0;padding:12px;background:#23262c;border:1px solid #ffffff06;border-radius:16px}
+.tag-group h3{display:flex;align-items:center;gap:7px;margin:0 0 9px;font-size:12px;font-weight:600;color:var(--tag-color);line-height:1.5}
+.tag-group h3::before{content:'';width:3px;height:12px;background:var(--tag-color);border-radius:2px}
+.tag-options{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
+.tag-options button{min-width:0;min-height:48px;padding:10px 4px;background:color-mix(in srgb,var(--tag-color) 7%,#292d34);border:1px solid #ffffff05;border-radius:10px;font-size:14px;font-weight:500;line-height:1.4;overflow-wrap:anywhere}
+.tag-options button:active{background:color-mix(in srgb,var(--tag-color) 25%,#292d34);border-color:var(--tag-color)}
+.note-memo{margin-top:20px}
+.note-memo label{display:block;font-size:13px;font-weight:600;margin:0 2px 8px}
+.note-memo label span{font-size:11px;color:var(--dim);font-weight:400;margin-left:6px}
+.note-pitch{margin-top:14px;border-top:1px solid #ffffff0b}
+.note-pitch summary{min-height:48px;padding:14px 2px;color:var(--dim);font-size:13px;cursor:pointer}
+.note-pitch-help{font-size:12px;line-height:1.6;color:var(--dim);margin-bottom:12px}
+.note-pitch .chip{min-width:44px;min-height:44px}
+.note-sheet-content [data-act="delnote"],.note-sheet-content [data-act="playnote"],.note-sheet-content [data-act="playfrom"]{min-width:44px;min-height:44px;border-radius:10px}
+@media(min-width:380px) and (max-width:619px){.tag-options{grid-template-columns:repeat(4,minmax(0,1fr))}.tag-options button{padding-left:2px;padding-right:2px}}
+@media(min-width:620px){.tag-menu{grid-template-columns:repeat(2,minmax(0,1fr));align-items:start}.note-sheet-head{padding:20px 24px 16px}.note-sheet-content{padding:18px 24px 24px}}
+@media(max-width:350px){.note-sheet-head{padding:14px 12px 12px}.note-sheet-content{padding-left:10px;padding-right:10px}.tag-group{padding:10px}.tag-options button{font-size:13px}}
+@media(max-height:550px){.note-sheet-head{padding-top:10px;padding-bottom:10px}.note-sheet-title{margin-bottom:6px}.note-context{max-height:76px}}
 }
 @media screen{
 #app[data-screen="live"]>.scroll{touch-action:pan-y pinch-zoom}
@@ -177,7 +201,8 @@ select.field{appearance:auto}textarea.field{resize:vertical}
 #app[data-rec="0"][data-screen="live"] .ln>.lf-line{width:44px;min-height:48px;font-size:24px}
 #app[data-rec="0"][data-screen="live"] .bottom{gap:6px;padding:4px 10px calc(6px + env(safe-area-inset-bottom))}
 #app[data-rec="0"][data-screen="live"] .bottom button{min-width:44px;min-height:48px;padding:8px 10px;font-size:14px;flex-shrink:0}
-#app[data-rec="0"][data-screen="live"] .bottom [data-act="undoall"]{min-width:64px}
+#app[data-rec="0"][data-screen="live"] .bottom [data-act="undoall"]{min-width:64px;background:#ffffff08;color:var(--text)}
+#app[data-rec="0"][data-screen="live"] .bottom [data-act="prev"],#app[data-rec="0"][data-screen="live"] .bottom [data-act="next"]{font-size:26px;line-height:1;background:#ffffff05}
 #app[data-rec="0"][data-screen="live"] .lf-compact{min-height:44px;gap:8px}
 #app[data-rec="0"][data-screen="live"] .lf-compact>button{min-height:44px;font-size:14px;padding:6px 12px}
 #app[data-viewer="1"][data-screen="live"] .ln:not(.lngap){grid-template-columns:minmax(0,1fr)}

@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.24";
+const APP_VER = "16.25";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -74,16 +74,18 @@ const tagName = (id) => (TAGS.find((t) => t.id === id) || {}).l || LEGACY[id] ||
 
 // Fixed locations make the growing tag list predictable; stored IDs stay unchanged.
 const TAG_MENU = [
-  {name: "音程", ids: ["pitch","pHi","pLo","pUn","pWob"]},
-  {name: "リズム", ids: ["rhythm","fast","slow","long","short","lenEq"]},
-  {name: "発音", ids: ["diction","lyric","attack","accent"]},
-  {name: "声・表現", ids: ["strong","weak","nuance","dark","bright","face","flip","nuke","gara","mic","noise","level","lvHi","lvLo"]},
-  {name: "良い・その他", ids: ["good","close","oke","swap"]},
+  {name: "音程", color: "#efa795", ids: ["pitch","pHi","pLo","pUn","pWob"]},
+  {name: "リズム", color: "#dec18c", ids: ["rhythm","fast","slow","long","short","lenEq"]},
+  {name: "発音", color: "#94cec8", ids: ["diction","lyric","attack","accent"]},
+  {name: "表現", color: "#bfaee4", ids: ["nuance","strong","weak","face","bright","dark"]},
+  {name: "声・音量", color: "#9bbce5", ids: ["level","lvHi","lvLo","flip","nuke","gara","mic","noise"]},
+  {name: "良い・その他", color: "#9aceaf", ids: ["good","close","oke","swap"]},
 ];
 function tagMenuHTML() {
-  return TAG_MENU.map(g => `<section class="tag-group" aria-label="${h(g.name)}">
-    <h5>${h(g.name)}</h5>
-    <div class="tag-options">${g.ids.map(id => `<button data-act="tag-choice" data-id="${id}">${h(tagName(id))}</button>`).join("")}</div>
+  const labels = {pHi:"高い",pLo:"低い",lvHi:"大きい",lvLo:"小さい",good:"良い"};
+  return TAG_MENU.map(g => `<section class="tag-group" aria-label="${h(g.name)}" style="--tag-color:${g.color}">
+    <h3>${h(g.name)}</h3>
+    <div class="tag-options">${g.ids.map(id => `<button data-act="tag-choice" data-id="${id}" aria-label="${h(tagName(id))}">${h(labels[id] || tagName(id))}</button>`).join("")}</div>
   </section>`).join("");
 }
 
@@ -2530,8 +2532,7 @@ const footerHTML = () => `
     <div style="text-align:center;color:var(--dim);font-size:11px;letter-spacing:.04em;margin:26px 0 4px">
       Created by Joe Takasaki
     </div>
-    <div style="text-align:center;color:var(--dim);font-size:10px;opacity:.6;margin-bottom:2px">${APP_VER}</div>
-    <div style="text-align:center;color:var(--dim);font-size:10px;opacity:.5;margin-bottom:10px">${h(vpInfo)}</div>`;
+    <div style="text-align:center;color:var(--dim);font-size:10px;opacity:.6;margin-bottom:10px">${APP_VER}</div>`;
 
 function pianoHTML(sel) {
   const W = ["C", "D", "E", "F", "G", "A", "B"], B = ["C", "D", "F", "G", "A"];
@@ -4455,28 +4456,36 @@ ${shows}</div>
   const ex = NOTES().filter((n) => n.songId === s.id && n.showId === S.showId && covers(n, sh.lineIdx));
 
   const inner = `
-    <div class="row" style="margin-bottom:12px">
-      <span class="grow" style="font-size:11px;color:var(--dim)">${h(labelOf(s, sh.lineIdx) || "続き")} · ${sh.lineEnd ? `${rowNo(s, sh.lineIdx)}〜${rowNo(s, sh.lineEnd)}行目（まとめて）` : `${rowNo(s, sh.lineIdx)}行目`}</span>
-      <button data-act="cancel" style="width:36px;height:36px;border-radius:10px;background:var(--panel2);font-size:17px">✕</button>
+    <header class="note-sheet-head">
+      <div class="note-sheet-title">
+        <div><h2 id="note-sheet-title">指摘</h2><p>${h(labelOf(s, sh.lineIdx) || "続き")} · ${sh.lineEnd ? `${rowNo(s, sh.lineIdx)}〜${rowNo(s, sh.lineEnd)}行目` : `${rowNo(s, sh.lineIdx)}行目`}</p></div>
+        <button class="note-close" data-act="cancel" aria-label="指摘画面を閉じる">×</button>
+      </div>
+      <div class="note-context">
+        <div class="range" aria-label="指摘の対象の歌詞">${rangeHtml}</div>
+        ${sh.range ? `<button class="note-range-reset" data-act="rangeoff">行全体に戻す</button>` : ""}
+      </div>
+    </header>
+    <div class="note-sheet-content">
+    <div class="tag-menu">${tagMenuHTML()}</div>
+    <div class="note-memo">
+      <label for="memo">メモ <span>任意</span></label>
+      <input class="field" id="memo" enterkeyhint="done" placeholder="語尾が落ちる / 出が半拍遅い など" value="${h(sh.memo)}">
     </div>
-    <div class="sec"><h4>${sh.lineEnd ? "文字をタップするとその一部だけ、押さなければ全体につきます" : "文字をタップすると一部だけ指定できます"}</h4>
-      <div class="range">${rangeHtml}</div>
-      ${sh.range ? `<button class="chip sm" data-act="rangeoff" style="margin-top:8px;color:var(--dim)">行全体に戻す</button>` : ""}
-    </div>
-    <div class="sec tag-menu"><h4>指摘を選ぶ</h4>${tagMenuHTML()}</div>
-    <div class="sec">
-      <h4>正しい音（任意）　${sh.rec ? "録音中。押した音が順に入ります" : "押すと鳴るだけ。残したい時は録音を押す"}</h4>
+    <details class="note-pitch"${sh.pitchOpen || sh.rec || sh.seq.length ? " open" : ""}>
+      <summary>正しい音を残す</summary>
+      <div class="note-pitch-body">
+      <p class="note-pitch-help">録音を押してから鍵盤を弾くと、音を指摘に残せます。</p>
       <div class="row" style="margin-bottom:8px">
         <button class="chip sm" id="recbtn" data-act="rec"
           style="${sh.rec ? "background:var(--bad);color:#0A0A0A;border-color:var(--bad)" : ""}">${sh.rec ? "● 録音中" : "● 録音"}</button>
         <span class="grow" id="seqtxt" style="font-size:15px;font-weight:600;color:var(--accent)">${h(pitchLabel(sh.seq))}</span>
-        <button class="chip sm" id="seqplay" data-act="playseq" style="${sh.seq.length ? "" : "display:none"}">▶</button>
+        <button class="chip sm" id="seqplay" data-act="playseq" aria-label="正しい音を再生" style="${sh.seq.length ? "" : "display:none"}">▶</button>
         <button class="chip sm" id="seqclr" data-act="clearseq" style="color:var(--dim);${sh.seq.length ? "" : "display:none"}">消す</button>
       </div>
       ${pianoHTML(sh.rec ? sh.seq[sh.seq.length - 1] : null)}
-    </div>
-    <div class="sec"><h4>メモ（任意）</h4>
-      <input class="field" id="memo" placeholder="語尾が落ちる / 出が半拍遅い など" value="${h(sh.memo)}"></div>
+      </div>
+    </details>
     ${ex.length ? `<div class="sec"><h4>この行の記録</h4>${ex.map((n) => `
       <div class="row" style="background:var(--panel2);border-radius:10px;padding:8px 10px;margin-bottom:6px;font-size:13px">
         <span class="grow trunc">${n.from != null ? `<span style="color:var(--dim)">「${h(chars.slice(n.from, n.to + 1).join(""))}」</span> ` : ""}${h(names(n.memberIds) || "—")} ${h(n.tags.map(tagName).join("/"))}${n.pitch ? " " + h(pitchLabel(n.pitch)) : ""}${n.memo ? " " + h(n.memo) : ""}</span>
@@ -4484,12 +4493,15 @@ ${shows}</div>
         ${n.at != null && !n.ro ? `<button data-act="playfrom" data-id="${n.id}" style="color:var(--good);padding:0 6px">🔊 ${mmss(n.at)}</button>` : ""}
         ${n.ro ? `<span style="color:var(--dim);font-size:11px">配信</span>`
                : `<button data-act="delnote" data-id="${n.id}" style="color:var(--bad);padding:0 4px">✕</button>`}
-      </div>`).join("")}</div>` : ""}`;
+      </div>`).join("")}</div>` : ""}
+    </div>`;
 
   overlay = document.createElement("div");
   overlay.className = "mask";
-  overlay.innerHTML = `<button class="sp" data-act="close"></button><div class="sheet">${inner}</div>`;
+  overlay.innerHTML = `<button class="sp" data-act="close" aria-label="指摘画面を閉じる"></button><div class="sheet note-sheet" role="dialog" aria-modal="true" aria-labelledby="note-sheet-title">${inner}</div>`;
   document.body.appendChild(overlay);
+  const pitchPanel = overlay.querySelector(".note-pitch");
+  pitchPanel.addEventListener("toggle", () => { if (U.sheet === sh) sh.pitchOpen = pitchPanel.open; });
   showPianoAtC4(overlay);
 }
 
