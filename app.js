@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.28";
+const APP_VER = "16.29";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -4476,7 +4476,6 @@ ${shows}</div>
     <header class="note-sheet-head">
       <div class="note-sheet-title">
         <div>${sh.detail ? '<button class="note-back" data-act="note-detail-back">‹ 指摘に戻る</button>' : '<h2 id="note-sheet-title">指摘</h2>'}<p>${h(labelOf(s, sh.lineIdx) || "続き")} · ${sh.lineEnd ? `${rowNo(s, sh.lineIdx)}〜${rowNo(s, sh.lineEnd)}行目` : `${rowNo(s, sh.lineIdx)}行目`}</p></div>
-        <button class="note-close" data-act="cancel" aria-label="指摘画面を閉じる">×</button>
       </div>
       ${!sh.detail ? `<button class="note-context-preview" data-act="note-detail" data-id="range" aria-label="歌詞の範囲を選ぶ"><span>${h(contextText || gapWhere(s, sh.lineIdx) || "歌詞のない箇所")}</span><i>›</i></button>` : ""}
     </header>
@@ -4510,8 +4509,11 @@ ${shows}</div>
         ${n.ro ? `<span style="color:var(--dim);font-size:11px">配信</span>`
                : `<button data-act="delnote" data-id="${n.id}" style="color:var(--bad);padding:0 4px">✕</button>`}
       </div>`).join("")}</div>` : ""}
-    </div>` : `<div class="note-choice-content"><div class="tag-menu">${tagMenuHTML()}</div></div>
-    <footer class="note-sheet-foot"><button data-act="note-detail" data-id="memo">メモ・音・記録${sh.memo || sh.seq.length ? " · 入力あり" : ""}<span>›</span></button></footer>`}`;
+    </div>` : `<div class="note-choice-content"><div class="tag-menu">${tagMenuHTML()}</div></div>`}
+    <footer class="note-sheet-foot">
+      ${!sh.detail ? `<button class="note-tools" data-act="note-detail" data-id="memo"><span>メモ・音・記録${sh.memo || sh.seq.length ? " · 入力あり" : ""}</span><i aria-hidden="true">›</i></button>` : ""}
+      <button class="note-close" data-act="cancel" aria-label="指摘画面を閉じる"><span aria-hidden="true">×</span>閉じる</button>
+    </footer>`;
 
   overlay = document.createElement("div");
   overlay.className = "mask";

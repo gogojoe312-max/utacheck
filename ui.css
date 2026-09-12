@@ -163,8 +163,9 @@ select.field{appearance:auto}textarea.field{resize:vertical}
 .note-sheet-title>div{display:flex;align-items:baseline;gap:10px;flex:1;min-width:0}
 .note-sheet-title h2{font-size:20px;line-height:1.3;font-weight:650;letter-spacing:-.02em;white-space:nowrap}
 .note-sheet-title p{font-size:11px;color:var(--dim);overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
-.note-close{flex:0 0 44px;height:44px;border-radius:50%;color:#c8cbd3;font-size:26px;font-weight:400;line-height:1}
-.note-close:active{background:#2a2d34}
+.note-close{display:flex;justify-content:center;align-items:center;gap:8px;flex:0 0 112px;min-height:52px;padding:8px 12px;border-radius:12px;background:#30343d;color:var(--text);font-size:16px;font-weight:600;line-height:1.3;touch-action:manipulation}
+.note-close span{font-size:26px;font-weight:400;line-height:1}
+.note-close:active{background:#444b58}
 .note-back{min-height:44px;color:var(--accent);font-size:14px;white-space:nowrap}
 .note-context-preview{display:flex;align-items:center;gap:8px;min-height:28px;width:100%;text-align:left;font-size:16px;line-height:1.5}
 .note-context-preview span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -186,9 +187,9 @@ select.field{appearance:auto}textarea.field{resize:vertical}
 .swipe-option span{overflow-wrap:anywhere}
 .swipe-row .is-selected,.swipe-option:active{background:color-mix(in srgb,var(--tag-color) 22%,#252932);color:var(--text);box-shadow:inset 0 0 0 1px var(--tag-color)}
 .recent-tag-options button:active{background:#3d5472}
-.note-sheet-foot{flex:none;padding:6px 12px calc(6px + env(safe-area-inset-bottom))}
-.note-sheet-foot button{display:flex;justify-content:space-between;align-items:center;width:100%;min-height:44px;padding:8px 4px;color:var(--dim);font-size:13px;text-align:left}
-.note-sheet-foot span{font-size:20px}
+.note-sheet-foot{display:flex;justify-content:flex-end;align-items:center;gap:12px;flex:none;padding:6px 12px calc(6px + env(safe-area-inset-bottom))}
+.note-tools{display:flex;justify-content:space-between;align-items:center;gap:8px;flex:1;min-width:0;min-height:48px;padding:8px 4px;color:var(--dim);font-size:13px;text-align:left}
+.note-tools i{font-size:20px;font-style:normal}
 .note-details-content{flex:1;min-height:0;overflow-y:auto;overscroll-behavior-y:contain;padding:12px 16px calc(20px + env(safe-area-inset-bottom))}
 .note-range h3{font-size:13px;color:var(--dim);font-weight:500;margin-bottom:8px}
 .note-context{padding:10px 12px;background:#14161a;border:1px solid #ffffff08;border-radius:12px}
@@ -204,8 +205,8 @@ select.field{appearance:auto}textarea.field{resize:vertical}
 .note-details-content [data-act="delnote"],.note-details-content [data-act="playnote"],.note-details-content [data-act="playfrom"]{min-width:44px;min-height:44px;border-radius:10px}
 @media(min-width:700px){.note-sheet-head{padding-left:20px;padding-right:20px}.note-choice-content{padding-left:20px;padding-right:20px}.swipe-row{grid-template-columns:minmax(0,1fr) 112px}.swipe-option{font-size:15px}.swipe-tile b{font-size:16px}}
 @media(max-width:350px){.swipe-row{grid-template-columns:minmax(0,1fr) 66px}.note-choice-content{padding-left:8px;padding-right:8px}.swipe-option{font-size:12px}.swipe-tile b{font-size:13px}}
-@media(max-height:620px){.note-sheet-head{padding-top:6px;padding-bottom:4px}.note-sheet-title{min-height:36px;margin-bottom:2px}.note-close{height:36px;flex-basis:36px}.note-context-preview{min-height:24px;font-size:14px}.note-choice-content{padding-top:6px}.tag-menu{gap:6px}.swipe-tags{gap:3px}.swipe-tile small{display:none}.swipe-option{font-size:12px;gap:1px}.recent-tag-options button{min-height:36px}.note-sheet-foot{padding-top:2px;padding-bottom:calc(2px + env(safe-area-inset-bottom))}.note-sheet-foot button{min-height:40px}}
-@media(orientation:landscape) and (max-height:550px){.note-sheet-head{display:flex;align-items:center;gap:12px}.note-sheet-title{flex:1;margin:0;min-width:0}.note-context-preview{flex:1;min-width:0}.swipe-tags{grid-template-columns:repeat(2,minmax(0,1fr));grid-template-rows:repeat(4,minmax(0,1fr))}.swipe-row{grid-template-columns:minmax(0,1fr) 72px}.note-sheet-foot button{min-height:36px}.swipe-option{font-size:11px}.recent-tags h3{display:none}.note-close{order:-1}.note-sheet-foot{padding-top:0}}
+@media(max-height:620px){.note-sheet-head{padding-top:6px;padding-bottom:4px}.note-sheet-title{min-height:36px;margin-bottom:2px}.note-close{min-height:48px}.note-context-preview{min-height:24px;font-size:14px}.note-choice-content{padding-top:6px}.tag-menu{gap:6px}.swipe-tags{gap:3px}.swipe-tile small{display:none}.swipe-option{font-size:12px;gap:1px}.recent-tag-options button{min-height:36px}.note-sheet-foot{padding-top:2px;padding-bottom:calc(2px + env(safe-area-inset-bottom))}}
+@media(orientation:landscape) and (max-height:550px){.note-sheet-head{display:flex;align-items:center;gap:12px}.note-sheet-title{flex:1;margin:0;min-width:0}.note-context-preview{flex:1;min-width:0}.swipe-tags{grid-template-columns:repeat(2,minmax(0,1fr));grid-template-rows:repeat(4,minmax(0,1fr))}.swipe-row{grid-template-columns:minmax(0,1fr) 72px}.swipe-option{font-size:11px}.recent-tags h3{display:none}.note-sheet-foot{padding-top:0}}
 
 }
 @media screen{
