@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.25";
+const APP_VER = "16.26";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -72,21 +72,33 @@ const SWIPES = [
 const LEGACY = { breath: "ブレス", volume: "声量", tone: "声色" };
 const tagName = (id) => (TAGS.find((t) => t.id === id) || {}).l || LEGACY[id] || id;
 
-// Fixed locations make the growing tag list predictable; stored IDs stay unchanged.
-const TAG_MENU = [
-  {name: "音程", color: "#efa795", ids: ["pitch","pHi","pLo","pUn","pWob"]},
-  {name: "リズム", color: "#dec18c", ids: ["rhythm","fast","slow","long","short","lenEq"]},
-  {name: "発音", color: "#94cec8", ids: ["diction","lyric","attack","accent"]},
-  {name: "表現", color: "#bfaee4", ids: ["nuance","strong","weak","face","bright","dark"]},
-  {name: "声・音量", color: "#9bbce5", ids: ["level","lvHi","lvLo","flip","nuke","gara","mic","noise"]},
-  {name: "良い・その他", color: "#9aceaf", ids: ["good","close","oke","swap"]},
-];
+// 分類と方向は固定し、最近の指摘だけを上に並べる。
+function recentTagIds() {
+  const ids = [];
+  const notes = (S.notes || []).map((note, index) => ({note, index}))
+    .filter(x => !x.note.ro).sort((a, b) => (Number(b.note.ts) || 0) - (Number(a.note.ts) || 0) || b.index - a.index);
+  for (const {note} of notes) {
+    for (const id of note.tags || []) {
+      if (!ids.includes(id) && TAGS.some(t => t.id === id)) ids.push(id);
+      if (ids.length === 6) return ids;
+    }
+  }
+  return ids;
+}
 function tagMenuHTML() {
+  const recent = recentTagIds();
+  const colors = ["#efa795","#dec18c","#94cec8","#bfaee4","#e9a5b5","#9bbce5","#9aceaf"];
   const labels = {pHi:"高い",pLo:"低い",lvHi:"大きい",lvLo:"小さい",good:"良い"};
-  return TAG_MENU.map(g => `<section class="tag-group" aria-label="${h(g.name)}" style="--tag-color:${g.color}">
-    <h3>${h(g.name)}</h3>
-    <div class="tag-options">${g.ids.map(id => `<button data-act="tag-choice" data-id="${id}" aria-label="${h(tagName(id))}">${h(labels[id] || tagName(id))}</button>`).join("")}</div>
-  </section>`).join("");
+  const dirs = [["up","↑","上"],["dn","↓","下"],["lf","←","左"],["rt","→","右"]];
+  return `${recent.length ? `<section class="recent-tags" aria-label="最近使った指摘"><h3>最近使った指摘</h3><div class="recent-tag-options">${recent.map(id => `<button data-act="tag-choice" data-id="${id}">${h(tagName(id))}</button>`).join("")}</div></section>` : ""}
+    <div class="swipe-tags">${SWIPES.map((sw, index) => {
+      const name = catOf(sw.id), label = tagName(sw.id);
+      const help = `${name}：タップで${label}` + dirs.filter(([key]) => sw[key]).map(([key,,direction]) => `、${direction}で${tagName(sw[key])}`).join("");
+      return `<button class="swipe-tile" data-swipe="${sw.id}" data-act="tag-choice" data-id="${sw.id}" aria-label="${h(help)}" style="--tag-color:${colors[index]}">
+        <span class="swipe-center" data-tag-id="${sw.id}">${name !== label ? `<small>${h(name)}</small>` : ""}<b>${h(labels[sw.id] || label)}</b></span>
+        ${dirs.map(([key, arrow]) => sw[key] ? `<span class="swipe-option swipe-${key}" data-tag-id="${sw[key]}"><i>${arrow}</i><span>${h(labels[sw[key]] || tagName(sw[key]))}</span></span>` : "").join("")}
+      </button>`;
+    }).join("")}</div>`;
 }
 
 /* ---------------- state ---------------- */
@@ -6533,6 +6545,8 @@ document.addEventListener("click", (e) => {
 
   switch (a) {
     case "tag-choice":
+      // タイルの指・マウス操作は pointerup で確定。クリックはキーボード操作だけ。
+      if (b.dataset.swipe && e.detail !== 0) break;
       if (!U.sheet || VIEW() || !TAGS.some(t => t.id === id)) break;
       U.sheet.tags = [id]; scheduleCommit(); break;
     case "lyric-smaller": S.size = Math.max(11, S.size - 2); save(); render(); break;
@@ -7996,25 +8010,61 @@ function openSheet(lineIdx, range, lineEnd) {
 // 最初の操作で音の準備をしておく（iOSは操作なしでは音を出せない）
 
 /* ---- タグをなぞって選ぶ ---- */
-let swOrg = null;
+let swOrg = null, tagClickUntil = 0;
+const tagPointers = new Set();
+function swipeTagAt(sw, dx, dy) {
+  if (Math.max(Math.abs(dx), Math.abs(dy)) <= 24) return sw.id;
+  return Math.abs(dy) >= Math.abs(dx) ? sw[dy < 0 ? "up" : "dn"] : sw[dx < 0 ? "lf" : "rt"];
+}
+function clearTagSwipe() {
+  if (swOrg) swOrg.el.querySelectorAll("[data-tag-id]").forEach(el => el.classList.remove("is-selected"));
+  swOrg = null;
+}
 document.addEventListener("pointerdown", (e) => {
+  tagClickUntil = 0;
+  tagPointers.add(e.pointerId);
+  if (tagPointers.size > 1) { clearTagSwipe(); return; }
   const t = e.target.closest && e.target.closest("[data-swipe]");
-  swOrg = t ? { id: t.dataset.swipe, x: e.clientX, y: e.clientY } : null;
-});
+  if (!t || !U.sheet || VIEW() || e.button !== 0) return;
+  swOrg = {id:t.dataset.swipe, pointerId:e.pointerId, sheet:U.sheet, el:t, x:e.clientX, y:e.clientY};
+  t.setPointerCapture(e.pointerId);
+}, true);
+document.addEventListener("pointermove", (e) => {
+  if (!swOrg || e.pointerId !== swOrg.pointerId) return;
+  const sw = SWIPES.find(x => x.id === swOrg.id);
+  const id = swipeTagAt(sw, e.clientX - swOrg.x, e.clientY - swOrg.y);
+  swOrg.el.querySelectorAll("[data-tag-id]").forEach(el => el.classList.toggle("is-selected", el.dataset.tagId === id));
+  e.preventDefault();
+}, {passive:false});
 document.addEventListener("pointerup", (e) => {
-  const o = swOrg; swOrg = null;
-  if (!o || !U.sheet) return;
-  const sw = SWIPES.find((x) => x.id === o.id);
-  if (!sw) return;
-  const dx = e.clientX - o.x, dy = e.clientY - o.y;
-  let id = sw.id;
-  if (Math.abs(dx) > 24 || Math.abs(dy) > 24) {
-    if (Math.abs(dy) >= Math.abs(dx)) id = (dy < 0 ? sw.up : sw.dn) || sw.id;
-    else id = (dx < 0 ? sw.lf : sw.rt) || sw.id;
+  tagPointers.delete(e.pointerId);
+  if (!swOrg || e.pointerId !== swOrg.pointerId) return;
+  const o = swOrg; clearTagSwipe();
+  // タイルを離した後のクリックが、下の歌詞や別のボタンに抜けないようにする。
+  tagClickUntil = Date.now() + 500;
+  e.preventDefault();
+  if (U.sheet !== o.sheet || VIEW()) return;
+  const sw = SWIPES.find(x => x.id === o.id);
+  const id = swipeTagAt(sw, e.clientX - o.x, e.clientY - o.y);
+  if (!id) return;
+  U.sheet.tags = [id];
+  commitFields(); scheduleCommit();
+}, {capture:true,passive:false});
+document.addEventListener("pointercancel", (e) => { tagPointers.delete(e.pointerId); clearTagSwipe(); }, true);
+window.addEventListener("blur", () => { tagPointers.clear(); clearTagSwipe(); });
+document.addEventListener("click", (e) => {
+  if (e.isTrusted && e.detail !== 0 && Date.now() < tagClickUntil) {
+    tagClickUntil = 0; e.preventDefault(); e.stopImmediatePropagation();
   }
-  U.sheet.tags = U.sheet.tags.includes(id) ? U.sheet.tags.filter((x) => x !== id) : U.sheet.tags.concat(id);
-  commitFields();
-  scheduleCommit();
+}, true);
+document.addEventListener("keydown", (e) => {
+  const t = e.target.closest && e.target.closest("[data-swipe]");
+  if (!t || !U.sheet || VIEW()) return;
+  const key = {ArrowUp:"up",ArrowDown:"dn",ArrowLeft:"lf",ArrowRight:"rt"}[e.key];
+  if (!key) return;
+  e.preventDefault();
+  const sw = SWIPES.find(x => x.id === t.dataset.swipe), id = sw && sw[key];
+  if (id) { U.sheet.tags = [id]; commitFields(); scheduleCommit(); }
 });
 
 /* ---- 公演をつまんでフォルダにまとめる ---- */
