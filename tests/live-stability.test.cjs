@@ -19,7 +19,7 @@ test('touching, scrolling and open dialogs defer background renders until intera
  const time=clock(),doc=events(),win=events();doc.activeElement=null;let writes=0;
  const app={dataset:{},querySelector:()=>null,set innerHTML(v){writes++;}};
  const c=vm.createContext({...time,document:doc,window:win,Set,S:{recMode:false},U:{view:'live'},app,
-  alertPending:()=>null,viewLive:()=>'<div>歌詞</div>',saveErr:false,VIEW:()=>false,queueInkPaint(){},renderSheet(){}});
+  song:()=>({id:'song'}),takeCtx:()=>'',alertPending:()=>null,viewLive:()=>'<div>歌詞</div>',saveErr:false,VIEW:()=>false,queueInkPaint(){},renderSheet(){}});
  vm.runInContext(block('let pendingRender = false;', '// 今日の日付'),c);
  const run=s=>vm.runInContext(s,c);
  doc.fire('pointerdown');run('render(true)');assert.equal(writes,0);
@@ -120,4 +120,18 @@ test('close remains usable when a mobile browser keeps focus in the memo input',
  const start=src.indexOf('document.addEventListener("click", (e) => {');vm.runInContext(src.slice(start,src.indexOf('\n});',start)+4),c);
  c.click({target:{closest:sel=>sel==='[data-act]'?{tagName:'BUTTON',dataset:{act:'cancel'}}:null}});
  assert.equal(committed,'入力した指示');assert.equal(closed,true);assert.equal(c.U.sheet,null);
+});
+
+test('changing take at the same list index starts at the top, while edits keep position',()=>{
+ const time=clock(),doc=events(),win=events();doc.activeElement=null;
+ let current={id:'take1'},take='',sc={scrollTop:0};
+ const app={dataset:{},querySelector:()=>sc,set innerHTML(v){sc={scrollTop:0};}};
+ const c=vm.createContext({...time,document:doc,window:win,Set,S:{recMode:false},U:{view:'live',songIdx:0},app,
+  song:()=>current,takeCtx:()=>take,alertPending:()=>null,viewLive:()=>'<div>歌詞</div>',saveErr:false,VIEW:()=>false,queueInkPaint(){},renderSheet(){}});
+ vm.runInContext(block('let pendingRender = false;', '// 今日の日付'),c);
+ const render=()=>vm.runInContext('render()',c);
+ render();sc.scrollTop=1800;render();assert.equal(sc.scrollTop,1800);
+ current={id:'take2'};render();assert.equal(sc.scrollTop,0);
+ sc.scrollTop=600;render();assert.equal(sc.scrollTop,600);
+ take='section-take2';render();assert.equal(sc.scrollTop,0);
 });

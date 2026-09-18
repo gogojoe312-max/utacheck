@@ -6,9 +6,9 @@ const path = require('node:path');
 const src = fs.readFileSync(path.join(__dirname,'..','app.js'),'utf8');
 
 function setup(notes=[]) {
- const handlers={}, commits=[];
+ const handlers={}, commits=[], feedback={hidden:true,textContent:""};
  const c=vm.createContext({S:{notes},U:{sheet:{tags:[],memo:'keep'}},VIEW:()=>false,song:()=>({id:'song'}),Date,Set,
-  document:{addEventListener(name,fn,opts){(handlers[name] ||= []).push({fn,capture:opts===true || !!opts?.capture});}},
+  document:{querySelector(){return feedback;},addEventListener(name,fn,opts){(handlers[name] ||= []).push({fn,capture:opts===true || !!opts?.capture});}},
   window:{addEventListener(){}},commitFields(){},scheduleCommit(){commits.push(c.U.sheet.tags.slice());c.U.sheet=null;}});
  vm.runInContext(src.slice(0,src.indexOf('/* ---------------- state')),c);
  const clickStart=src.indexOf('document.addEventListener("click", (e) => {');
@@ -23,7 +23,7 @@ function setup(notes=[]) {
   for(const {fn} of [...(handlers[name] || [])].sort((a,b)=>Number(b.capture)-Number(a.capture))){fn(e);if(e.stopped)break;}
   return e;
  }
- return {c,row,tile,choice,handlers,commits,fire,run:code=>vm.runInContext(code,c)};
+ return {c,row,tile,choice,handlers,commits,fire,feedback,run:code=>vm.runInContext(code,c)};
 }
 
 test('all 33 existing tags remain reachable with their original swipe directions',()=>{
@@ -60,13 +60,21 @@ test('release consumes its follow-up click, permits the next tap and clears poin
  s.c.U.sheet={tags:[]};s.fire('click',100,100,{detail:0});assert.equal(s.commits.length,3);
 });
 
-test('recent tags use four distinct saved choices, newest first, without changing notes',()=>{
- const notes=[{tags:['pitch'],ts:1},{tags:['pLo','fast'],ts:5},{tags:['slow','good','diction','mic'],ts:4},{tags:['pLo'],ts:6},{tags:['unknown'],ts:100},{tags:['pHi'],ts:200,ro:true}];
- const original=JSON.stringify(notes),s=setup(notes);
- assert.deepEqual(Array.from(s.run('recentTagIds()')),['pLo','fast','slow','good']);
- const html=s.run('tagMenuHTML()');assert(html.indexOf('recent-tags')>html.indexOf('swipe-tags'));
- assert.equal((html.match(/data-swipe=/g)||[]).length,7);assert.equal(JSON.stringify(notes),original);
- s.c.S.notes=[];assert(!s.run('tagMenuHTML()').includes('class="recent-tags"'));
+test('quick choices stay in the same bottom positions regardless of note history',()=>{
+ const s=setup([{tags:['good','mic'],ts:100}]);
+ const before=s.run('tagMenuHTML()');
+ s.c.S.notes=[{tags:['pLo'],ts:200}];
+ assert.equal(s.run('tagMenuHTML()'),before);
+ assert.deepEqual(Array.from(s.run('QUICK_TAGS')),['pHi','pLo','fast','slow']);
+ assert(before.indexOf('quick-tags')>before.indexOf('swipe-tags'));
+});
+test('swipe feedback follows direction and disappears on cancellation and release',()=>{
+ const s=setup();s.fire('pointerdown');s.fire('pointermove',100,40);
+ assert.equal(s.feedback.hidden,false);assert.equal(s.feedback.textContent,'音程高');
+ s.fire('pointermove',100,160);assert.equal(s.feedback.textContent,'音程低');
+ s.fire('pointercancel');assert.equal(s.feedback.hidden,true);assert.equal(s.commits.length,0);
+ s.fire('pointerdown');s.fire('pointermove',100,40);s.fire('pointerup',100,40);
+ assert.equal(s.feedback.hidden,true);assert.equal(s.commits[0][0],'pHi');
 });
 
 test('each direction can start anywhere in the row while a tap selects the touched choice',()=>{
@@ -88,7 +96,7 @@ test('each direction can start anywhere in the row while a tap selects the touch
  assert.equal(s.commits.at(-1)[0],'pUn');
 });
 
-test('cancelled choice taps do not save through native clicks, and recent buttons still work',()=>{
+test('cancelled choice taps do not save through native clicks, and fixed shortcut buttons still work',()=>{
  const s=setup(),target=s.choice('pHi');
  s.fire('pointerdown',200,200,{target});s.fire('pointercancel',200,200,{target});s.fire('click',200,200,{target});
  assert.equal(s.commits.length,0);

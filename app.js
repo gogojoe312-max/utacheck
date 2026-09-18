@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.30";
+const APP_VER = "16.31";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -72,21 +72,9 @@ const SWIPES = [
 const LEGACY = { breath: "ブレス", volume: "声量", tone: "声色" };
 const tagName = (id) => (TAGS.find((t) => t.id === id) || {}).l || LEGACY[id] || id;
 
-// 分類と方向は固定し、最近の指摘は親指が届く下側に並べる。
-function recentTagIds() {
-  const ids = [];
-  const notes = (S.notes || []).map((note, index) => ({note, index}))
-    .filter(x => !x.note.ro).sort((a, b) => (Number(b.note.ts) || 0) - (Number(a.note.ts) || 0) || b.index - a.index);
-  for (const {note} of notes) {
-    for (const id of note.tags || []) {
-      if (!ids.includes(id) && TAGS.some(t => t.id === id)) ids.push(id);
-      if (ids.length === 4) return ids;
-    }
-  }
-  return ids;
-}
+// 使用履歴で位置を変えず、親指側の4項目を固定する。
+const QUICK_TAGS = ["pHi", "pLo", "fast", "slow"];
 function tagMenuHTML() {
-  const recent = recentTagIds();
   const colors = ["#efa795","#dec18c","#94cec8","#bfaee4","#e9a5b5","#9bbce5","#9aceaf"];
   const labels = {pHi:"高い",pLo:"低い",lvHi:"大きい",lvLo:"小さい",good:"良い"};
   const dirs = [["up","↑","上"],["dn","↓","下"],["lf","←","左"],["rt","→","右"]];
@@ -96,11 +84,12 @@ function tagMenuHTML() {
       return `<section class="swipe-row" data-swipe="${sw.id}" aria-label="${h(name)}" style="--tag-color:${colors[index]}">
         <div class="swipe-choices">${dirs.map(([key, arrow]) => sw[key] ? `<button class="swipe-option" data-tag-id="${sw[key]}" data-act="tag-choice" data-id="${sw[key]}" aria-label="${h(tagName(sw[key]))}"><i>${arrow}</i><span>${h(labels[sw[key]] || tagName(sw[key]))}</span></button>` : '<span aria-hidden="true"></span>').join("")}</div>
         <button class="swipe-tile" data-act="tag-choice" data-id="${sw.id}" data-tag-id="${sw.id}" aria-label="${h(help)}">
-          ${name !== label ? `<small>${h(name)}</small>` : ""}<b>${h(labels[sw.id] || label)}</b>
+          <b>${h(name)}</b>${name !== label ? `<small>${h(label)}</small>` : ""}
         </button>
       </section>`;
     }).join("")}</div>
-    ${recent.length ? `<section class="recent-tags" aria-label="最近使った指摘"><h3>最近使った指摘</h3><div class="recent-tag-options">${recent.map(id => `<button data-act="tag-choice" data-id="${id}">${h(tagName(id))}</button>`).join("")}</div></section>` : ""}`;
+    <section class="quick-tags" aria-label="よく使う指摘"><div class="quick-tag-options">${QUICK_TAGS.map(id => `<button data-act="tag-choice" data-id="${id}">${h(tagName(id))}</button>`).join("")}</div></section>
+    <output class="swipe-feedback" aria-live="polite" hidden></output>`;
 }
 
 /* ---------------- state ---------------- */
@@ -3638,7 +3627,7 @@ function render(background = false) {
   }
   const keep = app.querySelector(".scroll");
   const st = keep ? keep.scrollTop : 0;
-  const sig = U.view + U.songIdx + U.mode + U.allShows + U.overview;
+  const sig = JSON.stringify([U.view, S.showId, song()?.id, takeCtx(), U.mode, U.allShows, U.overview]);
   const sameView = app.dataset.view === sig;
   app.dataset.view = sig;
   app.dataset.rec = S.recMode ? "1" : "0";
@@ -4581,8 +4570,29 @@ const partOf = (n) => (n.from != null ? Array.from(lyricOf(n)).slice(n.from, n.t
 const songTitle = (n) => { const so = S.songs.find((x) => x.id === n.songId); return so ? songName(so) : "?"; };
 
 
+function summaryShows() {
+  return showsNewestFirst().filter(sw => !sw.hidden && S.songs.some(so =>
+    so.showId === sw.id && (!S.groupId || !so.groupId || so.groupId === S.groupId)));
+}
+function summaryShowPicker() {
+  if (S.recMode) return "";
+  return `<label class="summary-show-picker"><span>公演・日付</span><select id="summary-show" aria-label="公演・日付">
+    <option value="" ${U.allShows ? "selected" : ""}>全公演をまとめる</option>
+    ${summaryShows().map(sw => `<option value="${h(sw.id)}" ${!U.allShows && sw.id === S.showId ? "selected" : ""}>${h(sw.name)}</option>`).join("")}
+  </select></label>`;
+}
+function selectSummaryShow(id) {
+  if (S.recMode || (id && !summaryShows().some(sw => sw.id === id))) return;
+  U.allShows = !id;
+  if (id) S.showId = id;
+  U.songIdx = 0;
+  save(); render();
+}
+
 function viewSummary() {
   const ns0 = shownNotes();
+  const selectedMember = U.mode === "member" ? member(U.sumOpen) : null;
+  const noMemberNotes = selectedMember && !ns0.some(n => n.memberIds.includes(selectedMember.id));
   const detail = (n, withShow) => `<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--line);font-size:13px">
       <div style="font-size:11px;color:var(--dim)">${h(songTitle(n))}${withShow ? " ・ " + h(showName(n.showId)) : ""}${
         (() => { const p = pastHits(n.songId, n.lineIdx); return p.count ? `<span style="color:var(--bad)">　前回も</span>` : ""; })()}</div>
@@ -4660,6 +4670,10 @@ function viewSummary() {
     }).join("");
   }
 
+  if (noMemberNotes) {
+    const empty = `<p class="note" style="padding:12px">${h(selectedMember.name)}さんの指摘は${U.allShows ? "まだ" : "この公演には"}ありません。</p>`;
+    body = empty + (ns0.length ? body : "");
+  }
   if (U.mode === "diff") return viewDiff();
   const tab = (id, label) => `<button class="chip sm" data-act="mode" data-id="${id}"
     style="${U.mode === id ? "background:var(--accent);color:#0A0A0A" : ""}">${label}</button>`;
@@ -4671,11 +4685,7 @@ function viewSummary() {
     <span class="grow"></span>
     <span style="font-size:11px;color:var(--dim)" class="trunc">${h(U.allShows ? "全公演" : showName())}</span></div>
   <div class="tabs">${tab("member", "メンバー別")}${tab("song", "曲別")}${tab("show", "公演別")}${tab("diff", "前回との差")}</div>
-  <div class="tabs" style="padding-top:0">
-    <button class="chip sm" data-act="allshows"
-      style="${U.allShows ? "background:var(--accent);color:#0A0A0A" : ""}">全公演をまとめる</button>
-    <span class="grow"></span>
-  </div>
+  ${summaryShowPicker()}
   <div class="scroll pad">${body}<div style="height:40px"></div></div>`;
 }
 
@@ -4698,7 +4708,7 @@ function viewDiff() {
     ${preview ? '<button class="chip sm" data-act="endpv">確認を終わる</button>' : ""}
     <span class="grow"></span>
     <span style="font-size:11px;color:var(--dim)" class="trunc">${h(showName())}</span></div>
-  <div class="tabs">${tab("member", "メンバー別")}${tab("song", "曲別")}${tab("show", "公演別")}${tab("diff", "前回との差")}</div>`;
+  <div class="tabs">${tab("member", "メンバー別")}${tab("song", "曲別")}${tab("show", "公演別")}${tab("diff", "前回との差")}</div>${summaryShowPicker()}`;
 
   const key = (n) => n.lineIdx + "|" + (n.lineEnd || "");
   const cards = SONGS().map((so) => {
@@ -5040,10 +5050,18 @@ function viewAbsent() {
 
 /* ---- レコーディングの設定 ---- */
 function backupSettingsHTML() {
+  const status = backupInFlight ? "バックアップ中…" : S.bkError ? "クラウド保存に失敗しました：" + S.bkError
+    : !S.ghToken ? "クラウド未接続。ファイルで保存できます。"
+    : S.bkAt ? "クラウド保存：" + new Date(S.bkAt).toLocaleString("ja-JP") + (bkSignature() !== S.bkHash ? "（未保存の変更あり）" : "")
+    : "クラウドにはまだ保存されていません";
   return `<h4 class="head">バックアップ</h4><div class="card">
-    <p class="note">${S.bkAt ? "最終保存：" + new Date(S.bkAt).toLocaleString("ja-JP") : "まだバックアップがありません"}</p>
-    <button class="primary" data-act="bknow">バックアップする</button>
-    <button class="ghost" data-act="backup-restore">バックアップから復元</button>
+    <p class="note" role="status" ${S.bkError ? 'style="color:var(--bad)"' : ""}>${h(status)}</p>
+    ${S.bkFileAt ? `<p class="note">ファイル作成：${new Date(S.bkFileAt).toLocaleString("ja-JP")}</p>` : ""}
+    <button class="primary" data-act="bknow" ${backupInFlight ? "disabled" : ""}>${backupInFlight ? "保存中…" : S.ghToken ? "バックアップする" : "ファイルに保存"}</button>
+    ${S.ghToken && S.bkError ? '<button class="ghost" data-act="bkfile">ファイルに保存</button>' : ""}
+    ${S.ghToken ? '<button class="ghost" data-act="backup-restore">クラウドから復元</button>' : ""}
+    <button class="ghost" data-act="backup-file-restore">ファイルから復元</button>
+    <p class="note">歌割・指摘・手書き・設定を保存します。録音音声は含みません。</p>
   </div>`;
 }
 
@@ -6614,7 +6632,7 @@ document.addEventListener("click", (e) => {
       if (U.sheet.detail && id === "memo") overlay.querySelector(".note-memo")?.scrollIntoView({block:"nearest"});
       break;
     case "tag-choice":
-      // 指摘行の指・マウス操作は pointerup で確定。最近の指摘とキーボードはクリックで選ぶ。
+      // 指摘行の指・マウス操作は pointerup で確定。固定ショートカットとキーボードはクリックで選ぶ。
       if (b.closest("[data-swipe]") && e.detail !== 0) break;
       if (!U.sheet || VIEW() || !TAGS.some(t => t.id === id)) break;
       U.sheet.tags = [id]; scheduleCommit(); break;
@@ -7686,6 +7704,7 @@ document.addEventListener("click", (e) => {
     case "backup-restore": if (S.bkGistId) restoreBackup(); else findBackup(); break;
     case "bknow": doBackup(false); break;
     case "bkfile": backupToFile(); break;
+    case "backup-file-restore": chooseBackupFile(); break;
     case "bkrestore": restoreBackup(); break;
     case "bkfind": findBackup(); break;
     case "bkpick": pickTarget(); break;
@@ -7941,6 +7960,7 @@ document.addEventListener("focusout", () => {
 });
 
 document.addEventListener("change", (e) => {
+  if (e.target.id === "summary-show") { selectSummaryShow(e.target.value); return; }
   if (e.target.id === "file") {
     // 一覧を控えてから空にする。同じファイルをもう一度選んでも読み込めるように。
     const picked = Array.from(e.target.files || []);
@@ -8087,7 +8107,14 @@ function swipeTagAt(sw, dx, dy, tapId) {
   if (Math.max(Math.abs(dx), Math.abs(dy)) <= 24) return tapId;
   return Math.abs(dy) >= Math.abs(dx) ? sw[dy < 0 ? "up" : "dn"] : sw[dx < 0 ? "lf" : "rt"];
 }
+function showTagFeedback(id) {
+  const el = document.querySelector(".swipe-feedback");
+  if (!el) return;
+  el.hidden = !id;
+  if (id) el.textContent = tagName(id);
+}
 function clearTagSwipe() {
+  showTagFeedback(null);
   if (swOrg) swOrg.row.querySelectorAll("[data-tag-id]").forEach(el => el.classList.remove("is-selected"));
   swOrg = null;
 }
@@ -8107,6 +8134,8 @@ document.addEventListener("pointermove", (e) => {
   const sw = SWIPES.find(x => x.id === swOrg.id);
   const id = swipeTagAt(sw, e.clientX - swOrg.x, e.clientY - swOrg.y, swOrg.tapId);
   swOrg.row.querySelectorAll("[data-tag-id]").forEach(el => el.classList.toggle("is-selected", el.dataset.tagId === id));
+  const moved = Math.max(Math.abs(e.clientX - swOrg.x), Math.abs(e.clientY - swOrg.y)) > 24;
+  showTagFeedback(moved ? id : null);
   e.preventDefault();
 }, {passive:false});
 document.addEventListener("pointerup", (e) => {
@@ -9194,6 +9223,7 @@ setInterval(() => {
 setInterval(() => {
   if (document.hidden || preview) return;
   // 変わっていれば送る（別の端末とすぐ揃うように）
+  if (VIEW() || backupInFlight || syncing || Date.now() < backupRetryAt) return;
   if (S.ghToken && bkSignature() !== S.bkHash && Date.now() - (S.bkAt || 0) > 20000) doBackup(true);
   else checkOther();
 }, 30000);
@@ -9203,9 +9233,13 @@ const hash32 = (str) => { let h = 0; for (let i = 0; i < str.length; i++) h = (h
 
 async function squeeze(u8) {
   if (typeof CompressionStream === "undefined") return null;
-  const cs = new CompressionStream("deflate-raw");
-  const w = cs.writable.getWriter(); w.write(u8); w.close();
-  return new Uint8Array(await new Response(cs.readable).arrayBuffer());
+  try {
+    const cs = new CompressionStream("deflate-raw");
+    const read = new Response(cs.readable).arrayBuffer();
+    const w = cs.writable.getWriter();
+    const write = (async () => { await w.write(u8); await w.close(); })();
+    return new Uint8Array((await Promise.all([read, write]))[0]);
+  } catch (e) { return null; }
 }
 async function unsqueeze(u8) {
   const ds = new DecompressionStream("deflate-raw");
@@ -9224,14 +9258,15 @@ function backupState() {
 // 受け取った側で元に戻す
 const fromBackup = (st) => unpackState(st || {});
 // 署名に自分の値（前回時刻・前回署名）が混ざると毎回変わるので外す
-const bkSignature = () => {
-  const c = backupState();
-  delete c.bkAt; delete c.bkHash; delete c.bkSeen; delete c.editPass;
+const backupSignature = (state) => {
+  const c = {...state};
+  for (const key of ["bkAt","bkHash","bkSeen","bkGistId","bkError","bkFileAt","editPass"]) delete c[key];
   return hash32(JSON.stringify(c));
 };
+const bkSignature = () => backupSignature(backupState());
 
-async function packBackup() {
-  const raw = new TextEncoder().encode(JSON.stringify({ app: "utacheck", ver: APP_VER, at: Date.now(), state: backupState() }));
+async function packBackup(state = backupState(), at = Date.now()) {
+  const raw = new TextEncoder().encode(JSON.stringify({ app: "utacheck", ver: APP_VER, at, state }));
   const z = await squeeze(raw);
   const body = { bk: 1, z: !!z, data: b64e(z || raw) };
   return S.bkKey ? await sealJSON(body, S.bkKey) : body;
@@ -9580,42 +9615,44 @@ async function findBackupInner() {
     + `\n\nGist ${cands.length}件を調べました。`);
 }
 
+let backupInFlight = false, backupRetryAt = 0;
+function renderBackupStatus() {
+  if (U.view === "setup" || U.view === "recsetup") render(true);
+}
 async function doBackup(silent) {
-  if (!S.ghToken) { if (!silent) alert("先に自動公開のトークンを入れてください。"); return; }
+  if (backupInFlight || preview || VIEW()) return false;
+  if (!S.ghToken) { if (!silent) return backupToFile(); return false; }
+  backupInFlight = true;
+  S.bkError = ""; renderBackupStatus();
   try {
-    let content = JSON.stringify(await packBackup());
-    if (content.length > 950000) {
-      // 手書きは容量を食うわりに、他の端末で使うことが少ない。外して入るなら外して送る。
-      const keep = S.draws;
-      S.draws = {};
-      const slim = JSON.stringify(await packBackup());
-      S.draws = keep;
-      if (slim.length <= 950000) {
-        content = slim;
-        if (!silent) alert("手書きが大きいので、手書きだけ外して送りました。\n（手書きはこの端末には残っています）");
-      } else {
-        const mb = (content.length / 1048576).toFixed(1);
-        if (!silent) alert(`大きすぎて送れません（${mb} MB）。\n\n公演${S.shows.length}件・曲${S.songs.length}件・記録${S.notes.length}件\n\n設定の「保存領域」から、使わないグループや古い公演を消してください。`);
-        return;
-      }
-    }
+    commitFields();
+    const snapshot = backupState(), at = Date.now(), signature = backupSignature(snapshot);
+    const content = JSON.stringify(await packBackup(snapshot, at));
+    if (content.length > 950000) throw new Error("クラウド保存の容量を超えています。「ファイルに保存」で全内容を保存してください。");
     const files = { "utacheck-backup.json": { content } };
+    const options = {signal:AbortSignal.timeout(30000)};
     if (S.bkGistId) {
-      try { await gh("/gists/" + S.bkGistId, { method: "PATCH", body: JSON.stringify({ files }) }); }
+      try { await gh("/gists/" + S.bkGistId, {...options, method:"PATCH", body:JSON.stringify({files})}); }
       catch (e) { if (e.status === 404) S.bkGistId = ""; else throw e; }
     }
     if (!S.bkGistId) {
-      const g = await gh("/gists", { method: "POST",
-        body: JSON.stringify({ description: "歌チェック バックアップ", public: false, files }) });
+      const g = await gh("/gists", {...options, method:"POST", body:JSON.stringify({description:"歌チェック バックアップ",public:false,files})});
+      if (!g.id) throw new Error("保存先を確認できませんでした。");
       S.bkGistId = g.id;
     }
-    S.bkAt = Date.now();
-    S.bkSeen = S.bkAt;
-    S.bkHash = bkSignature();
+    S.bkAt = at; S.bkSeen = at; S.bkHash = signature; S.bkError = "";
+    backupRetryAt = 0;
     save();
-    if (!silent) { alert("バックアップしました。"); render(); }
+    if (!silent) alert("クラウドにバックアップしました。");
+    return true;
   } catch (e) {
-    if (!silent) alert("バックアップできませんでした。\n" + e.message);
+    S.bkError = e.name === "TimeoutError" ? "通信が時間切れになりました。再試行してください。" : (e.message || "保存できませんでした。");
+    backupRetryAt = Date.now() + 60000;
+    save();
+    if (!silent) alert("バックアップできませんでした。\n" + S.bkError);
+    return false;
+  } finally {
+    backupInFlight = false; renderBackupStatus();
   }
 }
 
@@ -9660,12 +9697,48 @@ function download(name, text, type) {
   const url = URL.createObjectURL(new Blob([text], { type: (type || "text/plain") + ";charset=utf-8" }));
   const a = document.createElement("a");
   a.href = url; a.download = name; document.body.appendChild(a); a.click();
-  setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 500);
+  setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 60000);
 }
 async function backupToFile() {
-  const d = new Date();
-  const nm = `歌チェック_${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}.json`;
-  download(nm, JSON.stringify(await packBackup()), "application/json");
+  try {
+    commitFields();
+    const d = new Date();
+    const nm = `歌チェック_${d.getFullYear()}${String(d.getMonth()+1).padStart(2,"0")}${String(d.getDate()).padStart(2,"0")}_${String(d.getHours()).padStart(2,"0")}${String(d.getMinutes()).padStart(2,"0")}.json`;
+    download(nm, JSON.stringify(await packBackup()), "application/json");
+    S.bkFileAt = Date.now(); save(); renderBackupStatus();
+    return true;
+  } catch (e) { alert("ファイルを作成できませんでした。\n" + e.message); return false; }
+}
+function chooseBackupFile() {
+  const input = document.createElement("input");
+  input.type = "file"; input.accept = ".json,application/json";
+  input.onchange = () => { if (input.files[0]) restoreBackupFile(input.files[0]); };
+  input.click();
+}
+async function restoreBackupFile(file) {
+  try {
+    const raw = JSON.parse(await file.text());
+    let obj;
+    try { obj = await unpackWithPass(raw, S.bkKey, true); }
+    catch (e) {
+      if (!e.badKey) throw e;
+      const pw = prompt("バックアップの合言葉を入れてください。", "");
+      if (pw == null) return;
+      obj = await unpackWithPass(raw, pw, false);
+    }
+    if (obj?.app !== "utacheck" || !obj.state) throw new Error("歌チェックのバックアップではありません。");
+    const st = fromBackup(obj.state);
+    if (!Array.isArray(st.songs) || !Array.isArray(st.notes)) throw new Error("バックアップの中身が不正です。");
+    if (!confirm(`このファイルから復元します。公演${(st.shows || []).length}件・曲${st.songs.length}件・指摘${st.notes.length}件。\n現在の内容を置き換えますか？`)) return;
+    const token = S.ghToken, target = S.bkGistId, pass = S.bkKey;
+    Object.keys(S).forEach(k => delete S[k]); Object.assign(S, st);
+    S.ghToken = token; S.bkGistId = target; S.bkKey = pass;
+    S.bkHash = null; S.bkError = "";
+    U.view = "setup"; U.songIdx = 0; U.sheet = null; U.menu = null;
+    save(); await saveNow();
+    if (saveErr) throw new Error("端末に保存できません。空き容量を確認してください。");
+    render(); alert("ファイルから復元しました。");
+  } catch (e) { alert("復元できませんでした。\n" + e.message); }
 }
 
 /* ---- 受け取り：配信されたものを取り込む ---- */
@@ -9712,6 +9785,9 @@ function resetForNewSource() {
 }
 
 function applySetlist(d) {
+  const summaryContext = VIEW() && U.view === "summary" && S.songs.length
+    && (!d.groupName || !S.srcGroup || d.groupName === S.srcGroup)
+    ? {showId:S.showId, memberName:(member(U.sumOpen) || {}).name} : null;
   if (!S.groups.some((g) => g.gistId)) { S.songs = []; S.memos = {}; S.pubNotes = []; }
   S.songs = [];
   S.sourceMemberNames = (d.members || []).map(x => x.name).filter(Boolean);
@@ -9802,9 +9878,13 @@ function applySetlist(d) {
     const focus = d.focusShow && S.shows.some((x) => x.id === d.focusShow)
       ? d.focusShow
       : ((showsNewestFirst().filter((x) => !x.hidden)[0] || {}).id || "");
-    if (focus) S.showId = focus;
-    // 更新が届いたら、開いている画面に関係なく歌詞の1曲目に戻す
-    U.view = "live";
+    const keepShow = summaryContext && S.shows.some(sw => sw.id === summaryContext.showId);
+    if (keepShow) S.showId = summaryContext.showId;
+    else if (focus) S.showId = focus;
+    // メンバー別の確認中は、公演と開いている人を更新後も保持する。
+    U.view = summaryContext ? "summary" : "live";
+    if (summaryContext) U.sumOpen = (S.members.find(m => m.name === summaryContext.memberName) || {}).id || "";
+    else U.sumOpen = "";
     U.menu = null;
     U.sheet = null;
     U.overview = false;
@@ -9931,7 +10011,7 @@ async function syncNow() {
   if (!S.bkGistId) { alert("つなぎ先がありません。\n「つなぎ先を探す」を押すか、Macで「自分用リンクを作る」を使ってください。"); return; }
   U.busy = "揃えています…"; render();
   try {
-    if (bkSignature() !== S.bkHash) await doBackup(true);   // こちらが新しければ送る
+    if (bkSignature() !== S.bkHash && !await doBackup(true)) throw new Error(S.bkError || "バックアップを完了できませんでした。");
     await checkOther();                                      // 向こうが新しければ受け取る
     U.busy = ""; render();
     alert(otherAt
@@ -9944,7 +10024,7 @@ async function syncNow() {
 }
 
 async function checkOther() {
-  if (syncing || preview) return;
+  if (syncing || backupInFlight || preview) return;
   if (!S.ghToken || !S.bkGistId) return;
   syncing = true;
   try {
