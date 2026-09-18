@@ -111,3 +111,13 @@ test('unchanged or failed automatic receive polls leave the live DOM alone',asyn
  c.fetchSetlist=async()=>null;await vm.runInContext('syncSetlist(false)',c);assert.equal(renders,0);
  c.fetchSetlist=async()=>({...payload,version:8});await vm.runInContext('syncSetlist(false)',c);assert.equal(applied,1);
 });
+
+test('close remains usable when a mobile browser keeps focus in the memo input',()=>{
+ const sheet={memo:''};let committed='',closed=false;
+ const document={activeElement:{tagName:'TEXTAREA',value:'入力した指示',blur(){document.activeElement=null;}},addEventListener(name,fn){c.click=fn;}};
+ const c=vm.createContext({U:{sheet},document,sheetTimer:null,clearTimeout(){},song:()=>({}),typingNow:()=>!!document.activeElement,
+  commitFields(){sheet.memo=document.activeElement.value;},sheetHasInput:()=>!!sheet.memo,commitNote(){assert.equal(document.activeElement,null);committed=sheet.memo;c.U.sheet=null;closed=true;},renderSheet(){closed=true;}});
+ const start=src.indexOf('document.addEventListener("click", (e) => {');vm.runInContext(src.slice(start,src.indexOf('\n});',start)+4),c);
+ c.click({target:{closest:sel=>sel==='[data-act]'?{tagName:'BUTTON',dataset:{act:'cancel'}}:null}});
+ assert.equal(committed,'入力した指示');assert.equal(closed,true);assert.equal(c.U.sheet,null);
+});

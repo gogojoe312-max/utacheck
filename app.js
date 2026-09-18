@@ -6595,6 +6595,11 @@ document.addEventListener("click", (e) => {
   if (e.target.closest("[data-r]") && U.sheet) return;   // 文字の選択はなぞりで扱う
   if (!b) return;
   const a = b.dataset.act, i = +b.dataset.i, id = b.dataset.id;
+  // iPhoneではボタンを押しても入力欄からフォーカスが移らないことがある。
+  // 明示的なボタン操作は、内容を確保して入力を終え、描画待ちで止まらないようにする。
+  if (b.tagName === "BUTTON" && typingNow()) {
+    commitFields(); document.activeElement.blur();
+  }
   if (typeof LiveFlow !== "undefined" && LiveFlow.handle(a, id, i, b)) return;
   const s = song();
 
