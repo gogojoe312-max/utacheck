@@ -210,7 +210,7 @@ select.field{appearance:auto}textarea.field{resize:vertical}
 
 }
 @media screen{
-#app[data-screen="live"]>.scroll{touch-action:pan-y pinch-zoom}
+#app[data-screen="live"]>.scroll{touch-action:pan-y}
 .member-help{max-width:760px;margin:18px auto;background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden}
 .member-help summary{padding:16px;cursor:pointer;color:var(--accent);font-size:15px;font-weight:600;min-height:48px}
 .member-help>div{padding:0 20px 20px;font-size:13px;line-height:1.8}
@@ -235,3 +235,17 @@ select.field{appearance:auto}textarea.field{resize:vertical}
 
 /* 下部のボタンはタップを保ち、横スワイプ時だけ曲を切り替える。 */
 #app[data-rec="0"][data-screen="live"]>.bottom,#app[data-rec="0"][data-screen="live"]>.lf-dock,#app[data-rec="0"][data-screen="live"]>.aubar{touch-action:pan-y}
+
+/* ライブ操作中の拡大・はみ出しを防ぎ、文字サイズは設定で変える。 */
+@media screen {
+ html,body{touch-action:pan-x pan-y;-webkit-text-size-adjust:100%;text-size-adjust:100%}
+ button,a,input,select,textarea{touch-action:manipulation}
+ input:not([type="range"]):not([type="checkbox"]):not([type="radio"]),textarea,select{font-size:16px!important}
+ #app>.scroll{min-height:0;min-width:0}
+ #app>.hd,#app>.bottom,#app>.aubar,#app>.lf-dock{flex-shrink:0;min-width:0}
+ .mask{min-width:0;overflow:hidden}
+ .sheet{min-width:0;overflow-x:hidden;overscroll-behavior:contain}
+ .ln,.txt,.tagpill,.mk{overflow-wrap:anywhere}
+ .ink[hidden]{display:none}
+ .note-detail-view .note-details-content{padding-bottom:12px}
+}

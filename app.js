@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.29";
+const APP_VER = "16.30";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -861,9 +861,10 @@ const shownNotes = () => (U.allShows ? NOTES() : NOTES().filter((n) => n.showId 
 let pushTimer = null, pushState = "";
 let undoStack = [];
 let readTimer = null;
-function pushUndo(songId) {
-  const snap = { livePending: S.livePending || [], liveChecks: S.liveChecks || [], notes: S.notes, rsongs: S.rsongs, plan: S.plan,
-    shows: S.shows, folders: S.folders, folderOrder: S.folderOrder };
+function pushUndo(songId, notesOnly = false) {
+  const snap = { livePending: S.livePending || [], liveChecks: S.liveChecks || [], notes: S.notes };
+  if (!notesOnly) Object.assign(snap, { rsongs: S.rsongs, plan: S.plan,
+    shows: S.shows, folders: S.folders, folderOrder: S.folderOrder });
   // 歌割を差し替える時だけ、その1曲と代役も控える。
   // 全曲を毎回控えるとメモリを食うので、必要な時に限る。
   if (songId) {
@@ -934,9 +935,15 @@ function freeSpace() {
 // 保存はIndexedDBへ。書き込みは非同期なので、呼ばれた直後の分をまとめて書く。
 // 交互に2か所へ書き、片方が途中で切れても もう片方が残るようにする。
 let idbOK = false;                 // IndexedDBが使えるか（起動時に判定）
-let saveTimer = null, saveSeq = 0, saving = false, savePend = null;
+let saveTimer = null, saveSeq = 0, saving = false, savePend = null, saveDirty = false, stateRevision = 0;
 async function flushSave() {
-  if (saving || savePend == null) return;
+  if (saving) return;
+  if (saveDirty) {
+    // 連続操作をまとめてから直列化する。閲覧プレビュー中は元の編集データを保存する。
+    savePend = JSON.stringify(packState(preview ? JSON.parse(preview) : S));
+    saveDirty = false;
+  }
+  if (savePend == null) return;
   saving = true;
   const txt = savePend; savePend = null;
   try {
@@ -952,13 +959,14 @@ async function flushSave() {
     }
   }
   saving = false;
-  if (savePend != null) flushSave();
+  if (saveDirty || savePend != null) await flushSave();
 }
 function save() {
   if (preview) return;
+  stateRevision++;
   if (!booted) touched = true;      // 起動の読み込みより先に触った
-  const txt = JSON.stringify(packState(S));
   if (!idbOK) {                    // IndexedDBが使えない時だけ、今まで通り
+    const txt = JSON.stringify(packState(S));
     try { localStorage.setItem(KEY, txt); saveErr = false; return; }
     catch (e) { /* 空きを作って もう一度 */ }
     if (freeSpace()) {
@@ -968,7 +976,7 @@ function save() {
     saveErr = true;
     return;
   }
-  savePend = txt;
+  saveDirty = true;
   saveErr = false;
   clearTimeout(saveTimer);
   saveTimer = setTimeout(flushSave, 120);
@@ -3581,6 +3589,32 @@ function viewAlert(a) {
 // 入力中に画面を作り直すと、打っていた文字と入力位置が飛ぶ。
 // 誰かが文字を打っている間は組み直さず、離れた時にまとめてやり直す。
 let pendingRender = false;
+let deferredRenderTimer = null, pendingBackground = true, scrollingUntil = 0;
+const renderPointers = new Set();
+function resumeRender() {
+  clearTimeout(deferredRenderTimer);
+  if (!pendingRender) return;
+  deferredRenderTimer = setTimeout(() => {
+    if (typingNow() || renderPointers.size || Date.now() < scrollingUntil) return;
+    if (pendingBackground && (U.sheet || U.menu || U.picker)) return;
+    render(pendingBackground);
+  }, 160);
+}
+document.addEventListener("pointerdown", e => {
+  if (e.isPrimary === true) renderPointers.clear();
+  renderPointers.add(e.pointerId);
+}, true);
+for (const event of ["pointerup", "pointercancel"]) document.addEventListener(event, e => {
+  renderPointers.delete(e.pointerId); resumeRender();
+}, true);
+window.addEventListener("blur", () => { renderPointers.clear(); resumeRender(); });
+document.addEventListener("scroll", e => {
+  if (!e.target.matches?.("#app > .scroll, .mask .sheet, .note-details-content")) return;
+  scrollingUntil = Date.now() + 120;
+  resumeRender();
+  if (e.target.matches("#app > .scroll")) queueInkPaint();
+}, {capture:true, passive:true});
+window.addEventListener("resize", () => { if (U.view === "live") queueInkPaint(); });
 function typingNow() {
   const ae = document.activeElement;
   if (!ae) return false;
@@ -3589,10 +3623,15 @@ function typingNow() {
   if (ae.type === "file") return false;
   return true;
 }
-function render() {
+function render(background = false) {
   // メンバーへのお知らせだけは、打っていても割り込ませる
-  if (typingNow() && !alertPending()) { pendingRender = true; return; }
+  if ((typingNow() || renderPointers.size || Date.now() < scrollingUntil
+    || (background && (U.sheet || U.menu || U.picker))) && !alertPending()) {
+    pendingRender = true; pendingBackground = pendingBackground && background; resumeRender(); return;
+  }
+  clearTimeout(deferredRenderTimer);
   pendingRender = false;
+  pendingBackground = true;
   if (S.recMode && recSong()) {
     S.rsongId = recSong().id;
     U.songIdx = S.rsongs.findIndex((x) => x.id === S.rsongId);
@@ -3624,7 +3663,7 @@ function render() {
   const sc = app.querySelector(".scroll");
   if (sc && sameView) sc.scrollTop = st;
   renderSheet();
-  if (U.view === "live" && !U.overview) setTimeout(paintInk, 0);
+  if (U.view === "live" && !U.overview) queueInkPaint();
   if (U.view === "print" || U.view === "recprint") setTimeout(fitPrintDOM, 0);
   if (S.recMode) setTimeout(() => { tickPlan(); scrollTab(); }, 0);
   if (U.view === "setup") setTimeout(() => {
@@ -3727,7 +3766,15 @@ function viewLive() {
   if (!s) {
     body = `<div style="padding:64px 26px;text-align:center;color:var(--dim);font-size:14px">曲がありません</div>`;
   } else {
-    const ns0 = NOTES().filter((n) => n.songId === s.id && n.showId === S.showId && inTake(n));
+    const allNotes = NOTES();
+    const ns0 = allNotes.filter((n) => n.songId === s.id && n.showId === S.showId && inTake(n));
+    const previous = S.recMode ? null : prevSongOf(s);
+    const pastByLine = new Map();
+    if (previous && previous.id !== s.id) allNotes.forEach(n => {
+      if (n.songId !== previous.id || n.tags.includes("good")) return;
+      if (!pastByLine.has(n.lineIdx)) pastByLine.set(n.lineIdx, []);
+      pastByLine.get(n.lineIdx).push(n);
+    });
     const gp = groupPos(s.lines);
     const vm = S.recMode ? vtMarks(s) : { head: [], info: [] };
     // 表記の枠（ガヤなど）から飛べるよう、最初に出てくる行に目印を置く
@@ -3772,9 +3819,9 @@ function viewLive() {
         return `<span data-c="${ci}" style="${st}">${ch === " " ? "&nbsp;" : h(ch)}</span>${tail}`;
       }).join("");
       cells += ns.filter((n) => n.from == null && n.lineIdx === i).map(badge).join("");
-      const past = pastHits(s.id, i);
-      if (past.count) {
-        const t = [...new Set(past.notes.flatMap((n) => n.tags))].map(tagName).slice(0, 2).join("/");
+      const past = pastByLine.get(i);
+      if (past && past.length) {
+        const t = [...new Set(past.flatMap((n) => n.tags))].map(tagName).slice(0, 2).join("/");
         cells += `<b class="mk pastmk">前回 ${h(t)}</b>`;
       }
       const pills = ns.filter((n) => n.lineIdx === i && (n.memo || (n.at != null && hasRec(s)))).map((n) => `
@@ -3836,7 +3883,7 @@ function viewLive() {
     <button class="grow" style="text-align:left" data-act="picker">
       <div class="t1" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px">${S.recMode
         ? `<b style="color:var(--accent)">レコーディングモード</b>${s ? " ・ " + h((S.groups.find((x) => x.id === s.groupId) || {}).name || s.folder || "") : ""}`
-        : `<b style="color:var(--accent)">ライブモード</b>${s ? " ・ " + h((S.groups.find((x) => x.id === s.groupId) || {}).name || "") : ""} ・ ${h(showName() || "公演名未設定")}${SONGS().length ? ` ・ ${U.songIdx + 1}/${SONGS().length}` : ""}${showNoPub() ? ` ・ <span style="color:var(--dim)">配信しない</span>` : pushState ? ` ・ <span style="color:${pushState === "未送信" ? "var(--bad)" : "var(--dim)"}">${h(pushState)}</span>` : ""}`}${recWho()}</div>
+        : `<b style="color:var(--accent)">ライブモード</b>${s ? " ・ " + h((S.groups.find((x) => x.id === s.groupId) || {}).name || "") : ""} ・ ${h(showName() || "公演名未設定")}${SONGS().length ? ` ・ ${U.songIdx + 1}/${SONGS().length}` : ""}${showNoPub() ? ` ・ <span style="color:var(--dim)">配信しない</span>` : `<span data-push-state style="color:${pushState === "未送信" ? "var(--bad)" : "var(--dim)"}">${pushState ? " ・ " + h(pushState) : ""}</span>`}`}${recWho()}</div>
       ${VIEW() && S.pubAt ? `<div style="font-size:10px;line-height:1.4">${freshLine()}</div>` : ""}
       <div class="t2 clamp2">${s && s.mark ? `<b style="color:var(--accent)">★</b> ` : ""}${s && !S.recMode && takeLabel(s) ? `<b class="tkmk">${h(takeLabel(s))}</b>` : ""}${h(s ? s.title : "曲がありません")}</div>
     </button>
@@ -4061,6 +4108,7 @@ function viewOverview(s) {
 
 /* ---- sheet ---- */
 function renderSheet() {
+  resumeRender();
   // 記録シートの中で打っている最中も、組み直すと文字が飛ぶ
   if (typingNow() && overlay && overlay.contains(document.activeElement)) { pendingRender = true; return; }
   if (overlay) { overlay.remove(); overlay = null; }
@@ -6644,7 +6692,9 @@ document.addEventListener("click", (e) => {
         const prev = JSON.parse(undoStack.pop());
         if (Array.isArray(prev)) S.notes = prev;
         else {
-          S.notes = prev.notes; S.rsongs = prev.rsongs; S.plan = prev.plan;
+          S.notes = prev.notes;
+          if (prev.rsongs) S.rsongs = prev.rsongs;
+          if (prev.plan) S.plan = prev.plan;
           if (prev.livePending) S.livePending = prev.livePending;
           if (prev.liveChecks) S.liveChecks = prev.liveChecks;
           if (prev.shows) S.shows = prev.shows;
@@ -7931,7 +7981,7 @@ function commitNote() {
   if (!s || !sh) { renderSheet(); return; }
   const memo = (document.getElementById("memo") || {}).value || sh.memo || "";
   if (sh.sel.length || sh.tags.length || memo.trim() || (sh.seq && sh.seq.length)) {
-    pushUndo();
+    pushUndo(null, true);
     S.notes.push({
       id: uid(), songId: s.id,
       lineIdx: sh.range && sh.rangeLine != null ? sh.rangeLine : sh.lineIdx,
@@ -7996,7 +8046,7 @@ function quickMark(lineIdx, range) {
   const same = NOTES().filter((n) => n.songId === s.id && n.showId === S.showId
     && n.lineIdx === lineIdx && inTake(n) && plain(n)
     && (a == null ? n.from == null : (n.from != null && n.from <= b && n.to >= a)));
-  pushUndo();
+  pushUndo(null, true);
   if (same.length) {
     const ids = same.map((n) => n.id);
     S.notes = S.notes.filter((n) => !ids.includes(n.id));
@@ -8038,6 +8088,7 @@ function clearTagSwipe() {
 }
 document.addEventListener("pointerdown", (e) => {
   tagClickUntil = 0;
+  if (e.isPrimary === true) tagPointers.clear();
   tagPointers.add(e.pointerId);
   if (tagPointers.size > 1) { clearTagSwipe(); return; }
   const t = e.target.closest && e.target.closest("[data-swipe]");
@@ -8250,13 +8301,23 @@ function paintInk() {
   const cv = document.getElementById("ink");
   const sc = app.querySelector(".scroll");
   if (!cv || !sc) return;
-  const w = sc.clientWidth, hgt = sc.scrollHeight;
+  const strokes = S.draws[drawKey()] || [];
+  if (!U.draw && !strokes.length) {
+    cv.hidden = true;
+    if (cv.width || cv.height) { cv.width = 0; cv.height = 0; }
+    cv.style.width = "0px"; cv.style.height = "0px"; cv.style.top = "0px";
+    return;
+  }
+  cv.hidden = false;
+  const w = sc.clientWidth, hgt = sc.clientHeight, top = sc.scrollTop;
+  cv.style.top = top + "px";
   if (cv.width !== w || cv.height !== hgt) { cv.width = w; cv.height = hgt; }
   cv.style.width = w + "px"; cv.style.height = hgt + "px";
   const g = cv.getContext("2d");
   g.clearRect(0, 0, w, hgt);
   g.lineCap = "round"; g.lineJoin = "round";
-  (S.draws[drawKey()] || []).forEach((st) => {
+  g.save(); g.translate(0, -top);
+  strokes.forEach((st) => {
     g.strokeStyle = st.c; g.lineWidth = st.w;
     g.beginPath();
     for (let i = 0; i < st.p.length; i += 2) {
@@ -8265,7 +8326,7 @@ function paintInk() {
     }
     g.stroke();
   });
-  if (inkPath && inkPath.p.length >= 4) {
+  if (inkPath && inkPath !== "erasing" && inkPath.p.length >= 4) {
     g.strokeStyle = inkPath.c; g.lineWidth = inkPath.w;
     g.beginPath();
     for (let i = 0; i < inkPath.p.length; i += 2) {
@@ -8274,6 +8335,13 @@ function paintInk() {
     }
     g.stroke();
   }
+  g.restore();
+}
+
+let inkFrame = 0;
+function queueInkPaint() {
+  if (inkFrame) return;
+  inkFrame = requestAnimationFrame(() => { inkFrame = 0; paintInk(); });
 }
 
 function inkPos(e) {
@@ -8328,7 +8396,7 @@ document.addEventListener("pointermove", (e) => {
   const n = inkPath.p.length;
   if (n < 2 || Math.abs(q[1] - inkPath.p[n - 1]) > 1.2 || Math.abs(q[0] - inkPath.p[n - 2]) > 0.002) {
     inkPath.p.push(Math.round(q[0] * 10000) / 10000, Math.round(q[1]));
-    paintInk();
+    queueInkPaint();
   }
 }, { passive: false });
 
@@ -8344,39 +8412,6 @@ document.addEventListener("pointerup", (e) => {
   paintInk();
 });
 document.addEventListener("pointercancel", (e) => { inkPts.delete(e.pointerId); inkPath = null; });
-
-/* ---- 歌詞を2本指で拡大・縮小する ---- */
-// ライブ・レコーディング・メンバー側のどれでも効く。
-let pinch = null;
-function pinchSize(v) {
-  if (S.recMode && U.overview) { S.recOvSize = Math.max(9, Math.min(28, Math.round(v))); return S.recOvSize; }
-  if (U.overview) { U.ovSize = Math.max(7, Math.min(20, Math.round(v))); return U.ovSize; }
-  S.size = Math.max(11, Math.min(34, Math.round(v)));
-  return S.size;
-}
-const pinchNow = () => (S.recMode && U.overview) ? S.recOvSize : (U.overview ? U.ovSize : S.size);
-document.addEventListener("touchstart", (e) => {
-  if (e.touches.length !== 2) return;
-  if (U.sheet || U.menu || U.picker) return;
-  if (U.view !== "live") return;
-  const t = e.touches;
-  pinch = { d: Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY) || 1, base: pinchNow() };
-}, { passive: true });
-document.addEventListener("touchmove", (e) => {
-  if (!pinch || e.touches.length !== 2) return;
-  const t = e.touches;
-  const d = Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY) || 1;
-  const v = pinchSize(pinch.base * (d / pinch.d));
-  // 描き直さずに、今出ている文字の大きさだけ変える（指の動きに遅れないように）
-  const sel = U.overview ? ".ovcols, .ogrid, .ovword, .ovpage" : ".txt";
-  document.querySelectorAll(sel).forEach((el) => { el.style.fontSize = (v + (U.overview ? 0 : 6)) + "px"; });
-  e.preventDefault();
-}, { passive: false });
-document.addEventListener("touchend", (e) => {
-  if (!pinch || e.touches.length) return;
-  pinch = null;
-  save(); render();
-});
 
 /* ---- シートの歌詞をなぞって選ぶ ---- */
 let rgDrag = null;
@@ -8456,12 +8491,12 @@ function charAtX(row, x, y) {
 }
 
 document.addEventListener("pointerdown", (e) => {
-  if (U.draw) return;
+  if (U.draw || VIEW() || e.isPrimary === false || e.button !== 0) { org = null; return; }
   const t = e.target.closest && e.target.closest(".txt");
-  if (!t || U.sheet || U.picker || U.overview) { org = null; return; }
+  if (!t || U.sheet || U.menu || U.picker || U.overview) { org = null; return; }
   if (e.target.closest("[data-act]")) { org = null; return; }
   const row = t;
-  org = { l: Number(row.dataset.l), row, x: e.clientX, y: e.clientY, c: null, end: null };
+  org = { pointerId:e.pointerId, songId:song()?.id, l: Number(row.dataset.l), row, x: e.clientX, y: e.clientY, c: null, end: null };
   org.c = charAtX(row, e.clientX, e.clientY);
   dragOn = false;
 });
@@ -8522,7 +8557,8 @@ function armHold() {
 }
 
 document.addEventListener("pointermove", (e) => {
-  if (!org) return;
+  if (!org || e.pointerId !== org.pointerId) return;
+  if (!org.row.isConnected || U.sheet || U.menu) { org = null; dragOn = false; clearHold(); clearHl(); return; }
   const dx = e.clientX - org.x, dy = e.clientY - org.y;
   if (!dragOn) {
     if (Math.abs(dy) > 14 && Math.abs(dy) > Math.abs(dx)) { org = null; clearHl(); clearHold(); return; }
@@ -8536,9 +8572,10 @@ document.addEventListener("pointermove", (e) => {
 }, { passive: false });
 
 document.addEventListener("pointerup", (e) => {
+  if (org && e.pointerId !== org.pointerId) return;
   const o = org; org = null;
   clearHold();
-  if (!o) { dragOn = false; return; }
+  if (!o || !o.row.isConnected || o.songId !== song()?.id || U.sheet || U.menu) { dragOn = false; clearHl(); return; }
   if (dragOn) {
     const a = o.c == null ? 0 : o.c;
     const b = o.end == null ? a : o.end;
@@ -8551,18 +8588,26 @@ document.addEventListener("pointerup", (e) => {
   dragOn = false; clearHl();
 });
 
+let highlightedChars = [];
 function highlight(l, a, b) {
+  clearHl();
   const lo = Math.min(a, b), hi = Math.max(a, b);
   const row = app.querySelector(`.txt[data-l="${l}"]`);
   if (!row) return;
   row.querySelectorAll("[data-c]").forEach((sp) => {
     const i = Number(sp.dataset.c);
-    sp.style.background = i >= lo && i <= hi ? "color-mix(in srgb,var(--accent) 34%,transparent)" : "";
+    if (i < lo || i > hi) return;
+    highlightedChars.push([sp, sp.style.background]);
+    sp.style.background = "color-mix(in srgb,var(--accent) 34%,transparent)";
   });
 }
 function clearHl() {
-  app.querySelectorAll(".txt [data-c]").forEach((sp) => { sp.style.background = ""; });
+  highlightedChars.forEach(([sp, background]) => { sp.style.background = background; });
+  highlightedChars = [];
 }
+function cancelLyricTouch() { org = null; dragOn = false; clearHold(); clearHl(); }
+document.addEventListener("pointercancel", cancelLyricTouch, true);
+window.addEventListener("blur", cancelLyricTouch);
 
 /* ---------------- files ---------------- */
 // 歌割だけを新しいファイルに入れ替える。曲のidは変えないので、
@@ -9015,15 +9060,25 @@ function schedulePush() {
   clearTimeout(pushTimer);
   // 短い間隔で送り続けるとGitHubに止められる。最短3秒あける。
   const wait = Math.max(8000 - (Date.now() - lastPushAt), 3000);
-  pushTimer = setTimeout(() => doPush(true), wait);
+  pushTimer = setTimeout(() => { pushTimer = null; doPush(true); }, wait);
 }
 
 // 1つのグループにだけ送る。お知らせのように相手が決まっている時に使う。
 // 全グループへ送ると、GitHubの送信回数をむだに使って「混み合っています」になりやすい。
+// 配信状態の変化だけで歌詞や指摘画面を作り直さない。
+function renderPublishStatus() {
+  if (U.view === "setup") { render(true); return; }
+  const status = app.querySelector("[data-push-state]");
+  if (status) {
+    status.textContent = pushState ? " ・ " + pushState : "";
+    status.style.color = pushState === "未送信" ? "var(--bad)" : "var(--dim)";
+  }
+}
+
 async function pushOne(gid) {
   const g = group(gid);
   if (!S.ghToken || !g || !g.gistId || g.nopub) { pushState = "未送信"; return; }
-  pushState = "送信中"; render();
+  pushState = "送信中"; renderPublishStatus();
   lastPushAt = Date.now();
   try {
     await gistPush(g.id, true);
@@ -9036,16 +9091,23 @@ async function pushOne(gid) {
       limitedAt = `${String(rt.getHours()).padStart(2, "0")}:${String(rt.getMinutes()).padStart(2, "0")}`;
       pushState = "順番待ち" + (limitedAt ? " " + limitedAt + "頃" : "");
       clearTimeout(pushTimer);
-      pushTimer = setTimeout(() => pushOne(gid), wait);
+      pushTimer = setTimeout(() => { pushTimer = null; pushOne(gid); }, wait);
     } else pushState = "未送信";
   }
-  render();
+  renderPublishStatus();
 }
 
+let publishInFlight = false;
 async function doPush(silent) {
+  if (publishInFlight) return;
+  publishInFlight = true;
+  try { await publishGroups(silent); }
+  finally { publishInFlight = false; }
+}
+async function publishGroups(silent) {
   const live = S.groups.filter((g) => g.gistId && !g.nopub);
   if (!S.ghToken || !live.length) return;
-  pushState = "送信中"; render();
+  pushState = "送信中"; renderPublishStatus();
   lastPushAt = Date.now();
   const failed = [];
   const gone = [];
@@ -9061,7 +9123,7 @@ async function doPush(silent) {
         const rt = new Date(Date.now() + wait);
         limitedAt = `${String(rt.getHours()).padStart(2, "0")}:${String(rt.getMinutes()).padStart(2, "0")}`;
         clearTimeout(pushTimer);
-        pushTimer = setTimeout(() => doPush(true), wait);
+        pushTimer = setTimeout(() => { pushTimer = null; doPush(true); }, wait);
       }
       else failed.push(g.name + "：" + e.message);
     }
@@ -9069,7 +9131,7 @@ async function doPush(silent) {
   if (limited) {
     pushState = "順番待ち" + (limitedAt ? " " + limitedAt + "頃" : "");
     if (silent !== true) alert("GitHubへの送信が混み合っています。\n記録は端末に残っていて、少し待つと自動で送り直します。");
-    render();
+    renderPublishStatus();
     return;
   }
   // 配信先が消えていたら、その場で作り直す
@@ -9090,24 +9152,29 @@ async function doPush(silent) {
     pushState = `公開済 ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
     if (silent === "force" && !sent) pushState += "（変更なし）";
   }
-  render();
+  renderPublishStatus();
 }
 
 window.addEventListener("online", () => { if (pushState === "未送信") doPush(true); });
 
 // 変わっていない相手には送らない
+let pendingCheck = null;
 function hasPending() {
-  return S.groups.some((g) => {
+  const keys = S.groups.map(g => [g.id, g.gistId, g.nopub, g.lastKey].join(":")).join("|");
+  if (pendingCheck && pendingCheck.revision === stateRevision && pendingCheck.keys === keys) return pendingCheck.result;
+  const result = S.groups.some((g) => {
     if (!g.gistId || g.nopub) return false;
     try { return payloadKey(publicationData(g.id)) !== g.lastKey; } catch (e) { return false; }
   });
+  pendingCheck = { revision:stateRevision, keys, result };
+  return result;
 }
 
 // アプリを開いている間、自動でやりとりする
 setInterval(() => {
-  if (document.hidden || preview) return;
+  if (document.hidden || preview || renderPointers.size || Date.now() < scrollingUntil || typingNow()) return;
   if (S.ghToken && S.groups.some((g) => g.gistId)) {
-    if (hasPending()) doPush(true);
+    if (S.autoPub && !publishInFlight && !pushTimer && Date.now() - lastPushAt >= 8000 && hasPending()) doPush(true);
   } else if (S.src) {
     if (syncBackoff && Date.now() < syncBackoff) return;
     syncSetlist(false);
@@ -9116,7 +9183,7 @@ setInterval(() => {
 
 setInterval(() => {
   if (document.hidden || preview) return;
-  if (VIEW() && S.pubAt && U.view === "live") render();     // 「◯分前」の表示を進める
+  if (VIEW() && S.pubAt && U.view === "live") render(true);     // 「◯分前」の表示を進める
 }, 60000);
 
 setInterval(() => {
@@ -9748,19 +9815,19 @@ async function syncSetlist(manual) {
     if (d === "badkey") S.key = "";
     // 裏で回っている同期は15秒ごとなので、毎回聞くと使い物にならない。
     // 自動の時は最初の1回だけ。あとは画面の「合言葉を入れる」から入れてもらう。
-    if (!manual && askedKey) { render(); return; }
+    if (!manual && askedKey) return;
     askedKey = true;
     const pw = prompt(d === "nokey"
       ? "合言葉を入れてください。"
       : "合言葉が違います。もう一度入れてください。", "");
     if (pw && pw.trim()) { S.key = pw.trim(); save(); askedKey = false; return syncSetlist(manual); }
-    render();
+    if (manual || !S.songs.length) render(true);
     return;
   }
   if (!d || !d.songs.length) {
     if (d && !d.songs.length) syncErr = "配信に曲が入っていません。配信元で「今すぐ送信」を押してもらってください。";
     if (manual) alert(syncErr || "配信されているセットリストが見つかりませんでした。");
-    render();
+    if (manual || !S.songs.length) render(true);
     return;
   }
   if (d.authorId && d.authorId === S.deviceId) {
@@ -9774,7 +9841,6 @@ async function syncSetlist(manual) {
   }
   // 受け取り側では確認を出さず、そのまま最新に入れ替える
   if (manual || (d.version && d.version !== S.setlistVer)) applySetlist(d);
-  render();
 }
 
 /* ---- 共有リンク：セットリストをURLに入れて渡す ---- */
@@ -10042,11 +10108,6 @@ const flushSheet = () => { if (U.sheet && sheetHasInput()) { clearTimeout(sheetT
 window.addEventListener("pagehide", () => { flushSheet(); commitFields(); save(); saveNow(); });
 document.addEventListener("visibilitychange", () => { if (document.hidden) { flushSheet(); commitFields(); save(); saveNow(); } });
 if ("serviceWorker" in navigator) {
-  let reloaded = false, wasControlled = !!navigator.serviceWorker.controller;
-  navigator.serviceWorker.addEventListener("controllerchange", () => {
-    // 初回のオフライン準備完了では、入力中の画面を再読み込みしない。
-    if (!wasControlled) { wasControlled = true; return; }
-    if (reloaded) return; reloaded = true; location.reload();
-  });
+  // 更新の到着だけでリハ中の画面や録音を中断しない。次の起動・再読み込みで反映する。
   navigator.serviceWorker.register("sw.js?v=" + APP_VER).then((r) => r.update()).catch(() => {});
 }

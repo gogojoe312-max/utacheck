@@ -8,7 +8,7 @@ const src=fs.readFileSync(path.join(__dirname,'..','app.js'),'utf8');
 function sheet() {
  let click,html='',memo='';
  const c=vm.createContext({U:{sheet:{lineIdx:0,range:[1,3],tags:[],sel:['member'],memo:'',seq:['C4']}},S:{notes:[],showId:'show'},overlay:null,
-  VIEW:()=>false,typingNow:()=>false,NOTES:()=>[],song:()=>({id:'song',lines:[{t:'新しい歌をここから始めます'}]}),labelOf:()=> '山田',rowNo:()=>1,
+  resumeRender(){},VIEW:()=>false,typingNow:()=>false,NOTES:()=>[],song:()=>({id:'song',lines:[{t:'新しい歌をここから始めます'}]}),labelOf:()=> '山田',rowNo:()=>1,
   pitchLabel:seq=>seq.join('-'),pianoHTML:()=>'<div id="pno"></div>',showPianoAtC4(){},
   document:{addEventListener(name,fn){click=fn;},getElementById:id=>id==='memo'&&c.U.sheet.detail?{value:memo}:null,
    createElement(){return {innerHTML:'',remove(){},querySelector(selector){return this.innerHTML.includes('note-details-content')?{open:true,addEventListener(){},scrollIntoView(){}}:null;}};},body:{appendChild(el){html=el.innerHTML;}}},

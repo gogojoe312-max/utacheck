@@ -13,7 +13,7 @@ const LiveFlow = (() => {
   function syncContext(so) {
     if (activeKey !== keyOf(so)) { activeKey = keyOf(so); message = ""; }
   }
-  function before() { pushUndo(); }
+  function before() { pushUndo(null, true); }
   function persist(text, publish) { message = text; save(); if (publish) schedulePush(); render(); }
   function prior(so) {
     const old = prevSongOf(so); if (!old || old.id === so.id) return [];
