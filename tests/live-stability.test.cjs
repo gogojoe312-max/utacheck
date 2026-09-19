@@ -62,6 +62,17 @@ test('saving during an outstanding database write persists the final edit too',a
  assert.deepEqual(writes,[{n:1},{n:2}]);
 });
 
+test('restoration save waits for an existing database write before reload can proceed',async()=>{
+ const time=clock(),writes=[];let finishFirst,done=false;
+ const c=vm.createContext({...time,S:{n:1},preview:null,booted:true,saveErr:false,packState:s=>s,idbPut(k,v){writes.push(JSON.parse(v.txt));return writes.length===1?new Promise(r=>{finishFirst=r;}):Promise.resolve();}});
+ vm.runInContext('let idbOK = true;'+block('let saveTimer = null','const REC_SHOW'),c);
+ vm.runInContext('save()',c);const first=vm.runInContext('saveNow()',c);
+ c.S.n=2;vm.runInContext('save()',c);const restored=vm.runInContext('saveNow()',c).then(()=>done=true);
+ await Promise.resolve();assert.equal(done,false);
+ finishFirst();await first;time.advance(10);await restored;
+ assert.deepEqual(writes,[{n:1},{n:2}]);assert.equal(done,true);
+});
+
 test('note undo does not copy recording lyrics or erase recording state when restored',()=>{
  const songs=[{id:'recording',lines:Array(1000).fill('long lyric')}],plan={slots:[{id:'running'}]};
  const c=vm.createContext({S:{notes:[{id:'before'}],rsongs:songs,plan},undoStack:[],U:{},song:()=>({}),clearTimeout(){},save(){},schedulePush(){},render(){},document:{addEventListener(name,fn){c.click=fn;}}});

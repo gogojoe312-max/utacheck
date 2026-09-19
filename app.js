@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.31";
+const APP_VER = "16.32";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -971,7 +971,12 @@ function save() {
   saveTimer = setTimeout(flushSave, 120);
 }
 // 画面を閉じる時など、待たずに書き切る
-function saveNow() { clearTimeout(saveTimer); return flushSave(); }
+async function saveNow() {
+  clearTimeout(saveTimer);
+  // 復元直後の再読み込みは、進行中の書き込みと後続分の完了を待つ。
+  while (saving) await new Promise(resolve => setTimeout(resolve, 10));
+  return flushSave();
+}
 
 const REC_SHOW = "rec";
 const SONGS = () => (S.recMode
@@ -9252,7 +9257,7 @@ function backupState() {
   // 同じ歌詞を曲の数だけ持つと、送る量が何倍にも膨らむ。
   // 保存の時と同じように、歌詞は1か所にまとめてから送る。
   const c = packState(JSON.parse(JSON.stringify(S)));
-  delete c.ghToken;
+  delete c.ghToken; delete c.bkPendingParts;
   return c;
 }
 // 受け取った側で元に戻す
@@ -9449,9 +9454,8 @@ async function restoreFromId() {
     for (const v of vers) {
       let files = full.files;
       if (v.sha) { try { files = (await gh("/gists/" + id + "/" + v.sha)).files; } catch (e) { continue; } }
-      const key = Object.keys(files || {}).find((n) => /backup/i.test(n));
-      if (!key) continue;
-      let raw; try { raw = JSON.parse(files[key].content); } catch (e) { continue; }
+      if (!backupIndexFile(files)) continue;
+      let raw; try { raw = await readCloudBackup(files); } catch (e) { continue; }
       let obj = null;
       for (let tryN = 0; tryN < 3 && !obj; tryN++) {
         if (raw && raw.enc) {
@@ -9474,7 +9478,8 @@ async function restoreFromId() {
       Object.keys(S).forEach((k) => { delete S[k]; });
       Object.assign(S, st);
       S.ghToken = tk; S.bkGistId = id; if (bkk) S.bkKey = bkk;
-      save();
+      save(); await saveNow();
+      if (saveErr) throw new Error("端末への保存が完了していません。空き容量を確認してください。");
       alert("戻しました。");
       location.reload();
       return;
@@ -9500,8 +9505,7 @@ async function pickTarget() {
     let locked = false;
     try {
       const full = await gh("/gists/" + g.id);
-      const key = Object.keys(full.files).find((x) => /backup/i.test(x));
-      const obj = await unpackWithPass(JSON.parse(full.files[key].content), S.bkKey, true);
+      const obj = await unpackWithPass(await readCloudBackup(full.files), S.bkKey, true);
       const st = fromBackup(obj && obj.state);
       n = `公演${(st.shows || []).length}件・曲${(st.songs || []).length}件・記録${(st.notes || []).length}件`;
     } catch (e) {
@@ -9520,8 +9524,8 @@ async function pickTarget() {
       await restoreBackup(true);
     } else {
       S.bkHash = 0;                 // 送るべきものとして扱う
-      await doBackup(false);
-      alert("この端末の内容を送りました。\nもう一方の端末で「今すぐ揃える」を押してください。");
+      if (!await doBackup(false)) return;
+      alert("この端末の内容を送りました.\nもう一方の端末で「今すぐ揃える」を押してください。");
     }
     render();
     return;
@@ -9563,11 +9567,10 @@ async function findBackupInner() {
         try { files = (await gh("/gists/" + g.id + "/" + v.sha)).files; }
         catch (e) { continue; }
       }
-      const key = Object.keys(files || {}).find((n) => /backup/i.test(n));
-      if (!key) continue;
+      if (!backupIndexFile(files)) continue;
       let obj = null;
       let raw = null;
-      try { raw = JSON.parse(files[key].content); } catch (e) { continue; }
+      try { raw = await readCloudBackup(files); } catch (e) { continue; }
       // 合言葉が違うことがあるので、失敗したらその場で聞き直す（黙って飛ばさない）
       for (let tryN = 0; tryN < 3 && !obj; tryN++) {
         if (raw && raw.enc && (!S.bkKey || tryN > 0)) {
@@ -9600,7 +9603,8 @@ async function findBackupInner() {
           Object.keys(S).forEach((k) => { delete S[k]; });
           Object.assign(S, st);
           S.ghToken = tk; S.bkGistId = bk; if (bkk) S.bkKey = bkk;
-          save();
+          save(); await saveNow();
+          if (saveErr) throw new Error("端末への保存が完了していません。空き容量を確認してください。");
           alert("戻しました。");
           location.reload();
         } else {
@@ -9613,6 +9617,104 @@ async function findBackupInner() {
   alert(`中身のある版は ${seen}件 見つかりました。\n`
     + (fails.length ? `\n開けなかったもの:\n${fails.slice(0, 6).join("\n")}` : "")
     + `\n\nGist ${cands.length}件を調べました。`);
+}
+
+// 大容量でも1リクエストを小さく保つ。索引は全断片の保存後に切り替える。
+const BACKUP_FILE = "utacheck-backup.json";
+const BACKUP_PART_SIZE = 900000;
+const BACKUP_MAX_PARTS = 128;
+const backupPartName = name => /^utacheck-backup-part-[a-f0-9]{32}-\d{4}\.txt$/.test(name);
+async function backupDigest(text) {
+  const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(bytes), b => b.toString(16).padStart(2,"0")).join("");
+}
+async function backupFileText(file) {
+  if (!file) throw new Error("バックアップの一部が見つかりません。");
+  if (!file.truncated && typeof file.content === "string") return file.content;
+  const url = new URL(file.raw_url || "");
+  if (url.protocol !== "https:" || url.hostname !== "gist.githubusercontent.com") throw new Error("バックアップの取得先が不正です。");
+  // GitHubが返した、その版のraw_urlを使う。トークンは送らない。
+  const response = await fetch(url.href, {credentials:"omit",referrerPolicy:"no-referrer",cache:"no-store",signal:AbortSignal.timeout(60000)});
+  if (!response.ok) throw new Error("バックアップの読み込みに失敗しました（" + response.status + "）。");
+  return response.text();
+}
+function backupIndexFile(files) {
+  return files && (files[BACKUP_FILE] || files[Object.keys(files).find(name => /backup.*\.json$/i.test(name))]);
+}
+function validBackupParts(index) {
+  return index && index.bk === 2 && index.format === "utacheck-parts"
+    && Array.isArray(index.parts) && index.parts.length > 0 && index.parts.length <= BACKUP_MAX_PARTS
+    && index.parts.every(p => p && backupPartName(p.name))
+    && new Set(index.parts.map(p => p.name)).size === index.parts.length
+    && Number.isSafeInteger(index.length) && index.length > 0 && index.length <= BACKUP_PART_SIZE * BACKUP_MAX_PARTS
+    && /^[a-f0-9]{64}$/.test(index.sha256 || "");
+}
+async function readCloudBackupContent(files) {
+  const content = await backupFileText(backupIndexFile(files));
+  const index = JSON.parse(content);
+  if (index.bk !== 2) return content; // 旧版の1ファイル・暗号化形式もそのまま読める
+  if (!validBackupParts(index)) throw new Error("バックアップの構成情報が壊れています。");
+  const parts = [];
+  // 全部同時に取得せず、スマホのメモリと通信負荷を抑える。
+  for (const part of index.parts) {
+    const text = await backupFileText(files[part.name] || {raw_url:part.raw_url});
+    if (text.length > BACKUP_PART_SIZE) throw new Error("バックアップの一部が不正です。");
+    parts.push(text);
+  }
+  const joined = parts.join("");
+  if (joined.length !== index.length || await backupDigest(joined) !== index.sha256) throw new Error("バックアップが欠けているか、壊れています。別の版から復元してください。");
+  return joined;
+}
+const readCloudBackup = async files => JSON.parse(await readCloudBackupContent(files));
+async function uploadCloudBackup(content) {
+  let previous = {};
+  if (S.bkGistId) {
+    try { previous = (await gh("/gists/" + S.bkGistId, {signal:AbortSignal.timeout(60000)})).files || {}; }
+    catch (e) { if (e.status === 404) S.bkGistId = ""; else throw e; }
+  }
+  const oldIndexFile = backupIndexFile(previous);
+  const oldIndex = oldIndexFile ? JSON.parse(await backupFileText(oldIndexFile)) : null;
+  if (oldIndex?.bk === 2 && !validBackupParts(oldIndex)) throw new Error("現在のバックアップを確認できません。ファイルに保存してから再試行してください。");
+  const oldParts = oldIndex?.bk === 2 ? oldIndex.parts.map(p => p.name) : [];
+  const pending = S.bkPendingParts?.gistId === S.bkGistId ? S.bkPendingParts.names || [] : [];
+  const write = async files => {
+    const opts = {signal:AbortSignal.timeout(60000),method:S.bkGistId ? "PATCH" : "POST",
+      body:JSON.stringify(S.bkGistId ? {files} : {description:"歌チェック バックアップ",public:false,files})};
+    const result = await gh(S.bkGistId ? "/gists/" + S.bkGistId : "/gists", opts);
+    if (!result.id) throw new Error("保存先を確認できませんでした。");
+    if (!S.bkGistId) { S.bkGistId = result.id; save(); }
+    return result;
+  };
+  // 削除対象は前回成功分と、この端末の中断分だけ。他端末の送信中断片には触れない。
+  const discard = Object.fromEntries([...new Set([...oldParts, ...pending.filter(name => previous[name])])].filter(backupPartName).map(name => [name,null]));
+  let saved;
+  if (content.length <= BACKUP_PART_SIZE) {
+    saved = await write({...discard, [BACKUP_FILE]:{content}});
+  } else {
+    const count = Math.ceil(content.length / BACKUP_PART_SIZE);
+    if (count > BACKUP_MAX_PARTS) throw new Error("バックアップが非常に大きいため、今回は「ファイルに保存」を使用してください。");
+    const generation = crypto.randomUUID().replace(/-/g, "");
+    const parts = Array.from({length:count}, (_,i) => ({name:`utacheck-backup-part-${generation}-${String(i+1).padStart(4,"0")}.txt`}));
+    const index = {bk:2,format:"utacheck-parts",length:content.length,sha256:await backupDigest(content),parts};
+    // 前回の中断ファイルだけ先に片付け、失敗を繰り返しても不要な断片が増えないようにする。
+    const abandoned = Object.fromEntries(pending.filter(name => backupPartName(name) && !oldParts.includes(name) && previous[name]).map(name => [name,null]));
+    if (Object.keys(abandoned).length) {
+      await write(abandoned);
+      Object.keys(abandoned).forEach(name => delete discard[name]);
+    }
+    S.bkPendingParts = {gistId:S.bkGistId,names:parts.map(p=>p.name)}; save();
+    for (let i=0;i<count;i++) {
+      const part = parts[i];
+      const uploaded = await write({[part.name]:{content:content.slice(i*BACKUP_PART_SIZE,(i+1)*BACKUP_PART_SIZE)}});
+      S.bkPendingParts.gistId = S.bkGistId; save();
+      // 300ファイルで一覧が省略されても、保存した版のURLから復元できる。
+      part.raw_url = uploaded.files?.[part.name]?.raw_url;
+    }
+    saved = await write({...discard, [BACKUP_FILE]:{content:JSON.stringify(index)}});
+  }
+  const files = saved.files || (await gh("/gists/" + S.bkGistId, {signal:AbortSignal.timeout(60000)})).files;
+  if (await readCloudBackupContent(files) !== content) throw new Error("保存内容の照合に失敗しました。もう一度バックアップしてください。");
+  delete S.bkPendingParts;
 }
 
 let backupInFlight = false, backupRetryAt = 0;
@@ -9628,18 +9730,7 @@ async function doBackup(silent) {
     commitFields();
     const snapshot = backupState(), at = Date.now(), signature = backupSignature(snapshot);
     const content = JSON.stringify(await packBackup(snapshot, at));
-    if (content.length > 950000) throw new Error("クラウド保存の容量を超えています。「ファイルに保存」で全内容を保存してください。");
-    const files = { "utacheck-backup.json": { content } };
-    const options = {signal:AbortSignal.timeout(30000)};
-    if (S.bkGistId) {
-      try { await gh("/gists/" + S.bkGistId, {...options, method:"PATCH", body:JSON.stringify({files})}); }
-      catch (e) { if (e.status === 404) S.bkGistId = ""; else throw e; }
-    }
-    if (!S.bkGistId) {
-      const g = await gh("/gists", {...options, method:"POST", body:JSON.stringify({description:"歌チェック バックアップ",public:false,files})});
-      if (!g.id) throw new Error("保存先を確認できませんでした。");
-      S.bkGistId = g.id;
-    }
+    await uploadCloudBackup(content);
     S.bkAt = at; S.bkSeen = at; S.bkHash = signature; S.bkError = "";
     backupRetryAt = 0;
     save();
@@ -9660,9 +9751,7 @@ async function restoreBackup(silent) {
   if (!S.ghToken || !S.bkGistId) { alert("バックアップがありません。"); return; }
   try {
     const g = await gh("/gists/" + S.bkGistId);
-    const f = g.files && g.files["utacheck-backup.json"];
-    if (!f) throw new Error("中身が見つかりません。");
-    const raw = JSON.parse(f.content);
+    const raw = await readCloudBackup(g.files);
     let obj = null;
     for (let tryN = 0; tryN < 4 && !obj; tryN++) {
       try { obj = await unpackWithPass(raw, S.bkKey, true); }
@@ -9683,7 +9772,8 @@ async function restoreBackup(silent) {
     Object.keys(S).forEach((k) => { delete S[k]; });
     Object.assign(S, st);
     S.ghToken = tk; S.bkGistId = bk; if (bkk) S.bkKey = bkk;
-    save();
+    save(); await saveNow();
+    if (saveErr) throw new Error("端末への保存が完了していません。空き容量を確認してください。");
     alert(silent
       ? `${when} の内容を取り込みました。\nこの端末でも編集できます。\n\n※ 同時に2台で書き換えると、あとから送った方で上書きされます。`
       : "戻しました。");
@@ -10029,9 +10119,8 @@ async function checkOther() {
   syncing = true;
   try {
     const g = await gh("/gists/" + S.bkGistId);
-    const f = g.files && g.files["utacheck-backup.json"];
-    if (!f) return;
-    const obj = await unpackBackup(JSON.parse(f.content));
+    if (!backupIndexFile(g.files)) return;
+    const obj = await unpackBackup(await readCloudBackup(g.files));
     const at = Number(obj.at || 0);
     if (at <= (S.bkSeen || 0)) { otherAt = 0; return; }
     const dirty = bkSignature() !== S.bkHash;
