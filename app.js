@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.33";
+const APP_VER = "16.34";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -12,7 +12,7 @@ const TAGS = [
   { c: "音程",    id: "pHi",    l: "音程高"     },
   { c: "音程",    id: "pLo",    l: "音程低"     },
   { c: "音程",    id: "pUn",    l: "不自然"     },
-  { c: "音程",    id: "pWob",   l: "揺れ"       },
+  { c: "音程",    id: "pWob",   l: "音程不安定" },
 
   { c: "タイミング", id: "rhythm", l: "リズム"   },
   { c: "タイミング", id: "fast",   l: "速い"     },
@@ -47,6 +47,7 @@ const TAGS = [
   { c: "良い",    id: "close",  l: "惜しい"     },
   { c: "良い",    id: "oke",    l: "オケ聴く"   },
   { c: "良い",    id: "swap",   l: "差し替え"   },
+  { c: "良い",    id: "sing",   l: "歌う"       },
 ];
 const CATCOL = {
   "音程": "#FF6B4A", "タイミング": "#F0B23C", "出音": "#3FC7C0",
@@ -66,24 +67,25 @@ const SWIPES = [
   { id: "nuance", up: "bright", dn: "dark",   lf: "face",   rt: "mic" },
   { id: "lyric",  up: "flip",   dn: "nuke",   lf: "noise",  rt: "gara" },
   { id: "level",  up: "lvHi",   dn: "lvLo",   lf: "lenEq",  rt: null },
-  { id: "good",   up: "close",  dn: null,     lf: "oke",    rt: "swap" },
+  { id: "good",   up: "close",  dn: "sing",   lf: "oke",    rt: "swap" },
 ];
 // 以前つけた記録が生IDで出ないように
 const LEGACY = { breath: "ブレス", volume: "声量", tone: "声色" };
 const tagName = (id) => (TAGS.find((t) => t.id === id) || {}).l || LEGACY[id] || id;
 
-// 指先の4方向。履歴で場所を変えず、設定で明示的に変更した時だけ入れ替える。
-const QUICK_SWIPE = { id: "quick", up: "pHi", dn: "pLo", lf: "fast", rt: "slow" };
+// 指先の8方向。履歴で場所を変えず、設定で明示的に変更した時だけ入れ替える。
+const QUICK_SWIPE = { id: "quick", up: "pHi", dn: "pLo", lf: "fast", rt: "slow", ul:"pWob", ur:"rhythm", dl:"lyric", dr:"sing" };
 const TAG_DIRS = [["up","↑","上"],["dn","↓","下"],["lf","←","左"],["rt","→","右"]];
+const QUICK_DIRS = TAG_DIRS.concat([["ul","↖","左上"],["ur","↗","右上"],["dl","↙","左下"],["dr","↘","右下"]]);
 function quickSwipeMap() {
   const sw = {...QUICK_SWIPE};
-  TAG_DIRS.forEach(([key]) => { if (TAGS.some(t => t.id === S.quickTags?.[key])) sw[key] = S.quickTags[key]; });
+  QUICK_DIRS.forEach(([key]) => { if (TAGS.some(t => t.id === S.quickTags?.[key])) sw[key] = S.quickTags[key]; });
   return sw;
 }
 const swipeMap = id => id === "quick" ? quickSwipeMap() : SWIPES.find(x => x.id === id);
 function tagMenuHTML() {
   const colors = ["#efa795","#dec18c","#94cec8","#bfaee4","#e9a5b5","#9bbce5","#9aceaf"];
-  const labels = {pHi:"高い",pLo:"低い",lvHi:"大きい",lvLo:"小さい",lenEq:"長さ揃える",good:"良い",accent:"アクセント"};
+  const labels = {pHi:"高い",pLo:"低い",pWob:"不安定",lvHi:"大きい",lvLo:"小さい",lenEq:"長さ揃える",good:"良い",accent:"アクセント"};
   return `<div class="tag-circles">${SWIPES.map((sw, index) => {
       const name = catOf(sw.id), label = tagName(sw.id);
       const help = `${name}：タップで${label}` + TAG_DIRS.filter(([key]) => sw[key]).map(([key,,direction]) => `、${direction}で${tagName(sw[key])}`).join("");
@@ -93,7 +95,7 @@ function tagMenuHTML() {
           <b>${h(name)}</b>${name !== label ? `<small>${h(label)}</small>` : ""}
         </button>
       </section>`;
-    }).join("")}<button class="circle-return" data-act="note-quick"><span aria-hidden="true">↑<br>← ＋ →<br>↓</span>4方向に戻る</button></div>
+    }).join("")}<button class="circle-return" data-act="note-quick">8方向に戻る</button></div>
     <output class="swipe-feedback" aria-live="polite" hidden></output>`;
 }
 
@@ -119,14 +121,14 @@ function renderQuickMenu(sh, contextText) {
   overlay = document.createElement("div");
   overlay.className = "mask note-quick-mask";
   overlay.innerHTML = `<button class="quick-backdrop" data-act="cancel" aria-label="指摘画面を閉じる"></button>
-    <div class="quick-note" role="dialog" aria-modal="true" aria-label="4方向で指摘">
+    <div class="quick-note" role="dialog" aria-modal="true" aria-label="8方向で指摘">
       <button class="quick-context" data-act="note-detail" data-id="range" aria-label="歌詞の範囲を選ぶ">${h(contextText)}</button>
-      <section class="quick-dial" data-swipe="quick" aria-label="4方向メニュー">
-        ${TAG_DIRS.map(([key, arrow]) => `<button class="quick-direction dir-${key}" data-act="tag-choice" data-id="${sw[key]}" data-tag-id="${sw[key]}" aria-label="${h(tagName(sw[key]))}"><i aria-hidden="true">${arrow}</i><span>${h(tagName(sw[key]))}</span></button>`).join("")}
+      <section class="quick-dial" data-swipe="quick" aria-label="8方向メニュー">
+        ${QUICK_DIRS.map(([key, arrow]) => `<button class="quick-direction dir-${key}" data-act="tag-choice" data-id="${sw[key]}" data-tag-id="${sw[key]}" aria-label="${h(tagName(sw[key]))}"><i aria-hidden="true">${arrow}</i><span>${h(tagName(sw[key]))}</span></button>`).join("")}
         <button class="quick-center" data-act="note-all">ほかの<br>指摘</button>
       </section>
       <output class="swipe-feedback" aria-live="polite" hidden></output>
-      <footer><button class="note-tools" data-act="note-detail" data-id="memo">メモ・音</button><button class="note-close" data-act="cancel" aria-label="指摘画面を閉じる"><span aria-hidden="true">×</span>閉じる</button></footer>
+      <footer><button class="note-tools" data-act="note-voice">音声</button><button class="note-tools" data-act="note-detail" data-id="memo">メモ・音</button><button class="note-close" data-act="cancel" aria-label="指摘画面を閉じる"><span aria-hidden="true">×</span>閉じる</button></footer>
     </div>`;
   document.body.appendChild(overlay);
   positionQuickMenu();
@@ -3644,6 +3646,7 @@ for (const event of ["pointerup", "pointercancel"]) document.addEventListener(ev
 window.addEventListener("blur", () => { renderPointers.clear(); resumeRender(); });
 document.addEventListener("scroll", e => {
   if (!e.target.matches?.("#app > .scroll, .mask .sheet, .note-details-content")) return;
+  if (typeof LyricScroll !== "undefined" && LyricScroll.isDriving(e.target)) { queueInkPaint(); return; }
   scrollingUntil = Date.now() + 120;
   resumeRender();
   if (e.target.matches("#app > .scroll")) queueInkPaint();
@@ -3697,6 +3700,7 @@ function render(background = false) {
   const sc = app.querySelector(".scroll");
   if (sc && sameView) sc.scrollTop = st;
   renderSheet();
+  if (typeof LyricScroll !== "undefined") LyricScroll.mount();
   if (U.view === "live" && !U.overview) queueInkPaint();
   if (U.view === "print" || U.view === "recprint") setTimeout(fitPrintDOM, 0);
   if (S.recMode) setTimeout(() => { tickPlan(); scrollTab(); }, 0);
@@ -4142,6 +4146,8 @@ function viewOverview(s) {
 
 /* ---- sheet ---- */
 function renderSheet() {
+  if (typeof NoteVoice !== "undefined") NoteVoice.stop();
+  if ((U.sheet || U.menu || U.picker) && typeof LyricScroll !== "undefined") LyricScroll.stop();
   resumeRender();
   // 記録シートの中で打っている最中も、組み直すと文字が飛ぶ
   if (typingNow() && overlay && overlay.contains(document.activeElement)) { pendingRender = true; return; }
@@ -4538,6 +4544,7 @@ ${shows}</div>
   const contextText = sh.range
     ? Array.from((s.lines[rangeLine] || {}).t || "").slice(sh.range[0], sh.range[1] + 1).join("")
     : s.lines.slice(rl0, rl1 + 1).map(x => x.t || "").join(" / ");
+  if (sh.voice && typeof NoteVoice !== "undefined") { NoteVoice.render(sh, contextText); return; }
   if (sh.quick && !sh.detail) { renderQuickMenu(sh, contextText || gapWhere(s, sh.lineIdx) || "歌詞のない箇所"); return; }
   const lineHtml = (li) => {
     const cs = Array.from(s.lines[li] ? s.lines[li].t : "");
@@ -4594,6 +4601,7 @@ ${shows}</div>
       </div>`).join("")}</div>` : ""}
     </div>` : `<div class="note-choice-content"><div class="tag-menu">${tagMenuHTML()}</div></div>`}
     <footer class="note-sheet-foot">
+      ${!sh.detail ? '<button class="note-voice-open" data-act="note-voice">音声</button>' : ""}
       ${!sh.detail ? `<button class="note-tools" data-act="note-detail" data-id="memo"><span>メモ・音・記録${sh.memo || sh.seq.length ? " · 入力あり" : ""}</span><i aria-hidden="true">›</i></button>` : ""}
       <button class="note-close" data-act="cancel" aria-label="指摘画面を閉じる"><span aria-hidden="true">×</span>閉じる</button>
     </footer>`;
@@ -5123,8 +5131,8 @@ function lyricDisplaySettings() {
 function quickTagSettingsHTML() {
   if (VIEW()) return "";
   const sw = quickSwipeMap();
-  return `<div class="card"><p class="note">4方向メニュー</p><div class="quick-tag-settings">
-    ${TAG_DIRS.map(([key, arrow, name]) => `<label>${arrow} ${name}<select data-quick-dir="${key}" aria-label="4方向メニュー・${name}">
+  return `<div class="card"><p class="note">8方向メニュー</p><div class="quick-tag-settings">
+    ${QUICK_DIRS.map(([key, arrow, name]) => `<label>${arrow} ${name}<select data-quick-dir="${key}" aria-label="8方向メニュー・${name}">
       ${Object.keys(CATCOL).map(cat => `<optgroup label="${h(cat)}">${TAGS.filter(t => t.c === cat).map(t => `<option value="${t.id}" ${sw[key] === t.id ? "selected" : ""}>${h(t.l)}</option>`).join("")}</optgroup>`).join("")}
     </select></label>`).join("")}</div></div>`;
 }
@@ -6677,6 +6685,12 @@ document.addEventListener("click", (e) => {
   const s = song();
 
   switch (a) {
+    case "note-voice":
+      if (!U.sheet || VIEW() || typeof NoteVoice === "undefined") break;
+      commitFields(); U.sheet.voice = true; renderSheet(); NoteVoice.start(); break;
+    case "note-voice-back":
+      if (!U.sheet) break;
+      U.sheet.voice = false; renderSheet(); break;
     case "note-all":
     case "note-quick":
       if (!U.sheet || VIEW()) break;
@@ -8021,7 +8035,7 @@ document.addEventListener("focusout", () => {
 
 document.addEventListener("change", (e) => {
   const dir = e.target.dataset?.quickDir;
-  if (dir && !VIEW() && TAG_DIRS.some(([key]) => key === dir) && TAGS.some(t => t.id === e.target.value)) {
+  if (dir && !VIEW() && QUICK_DIRS.some(([key]) => key === dir) && TAGS.some(t => t.id === e.target.value)) {
     S.quickTags = {...S.quickTags, [dir]:e.target.value}; save();
     return;
   }
@@ -8170,6 +8184,11 @@ let swOrg = null, tagClickUntil = 0;
 const tagPointers = new Set();
 function swipeTagAt(sw, dx, dy, tapId) {
   if (Math.max(Math.abs(dx), Math.abs(dy)) <= 24) return tapId;
+  if (sw.id === "quick") {
+    // 8等分した方向。従来の円形ジャンルは4方向のまま。
+    const sector = (Math.round(Math.atan2(dy, dx) / (Math.PI / 4)) + 8) % 8;
+    return sw[["rt","dr","dn","dl","lf","ul","up","ur"][sector]];
+  }
   return Math.abs(dy) >= Math.abs(dx) ? sw[dy < 0 ? "up" : "dn"] : sw[dx < 0 ? "lf" : "rt"];
 }
 function showTagFeedback(id) {

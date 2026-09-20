@@ -27,8 +27,12 @@ test('touching, scrolling and open dialogs defer background renders until intera
  doc.fire('scroll',{target:{matches:()=>true}});run('render(true)');assert.equal(writes,1);time.advance(170);assert.equal(writes,2);
  c.U.sheet={tags:[]};run('render(true)');time.advance(170);assert.equal(writes,2);
  c.U.sheet=null;run('resumeRender()');time.advance(170);assert.equal(writes,3);
+ // Animation scrolls must not indefinitely postpone all background updates.
+ c.LyricScroll={isDriving:()=>true,mount(){}};
+ for(let i=0;i<8;i++){doc.fire('scroll',{target:{matches:()=>true}});time.advance(16);}
+ run('render(true)');assert.equal(writes,4);
  // A missing release must not trap the next gesture forever.
- doc.fire('pointerdown',{pointerId:8});run('render(true)');doc.fire('pointerdown',{pointerId:9});doc.fire('pointerup',{pointerId:9});time.advance(170);assert.equal(writes,4);
+ doc.fire('pointerdown',{pointerId:8});run('render(true)');doc.fire('pointerdown',{pointerId:9});doc.fire('pointerup',{pointerId:9});time.advance(170);assert.equal(writes,5);
 });
 
 test('drawing allocates no full-song bitmap, preserves stroke positions and coalesces paints',()=>{
