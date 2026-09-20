@@ -66,6 +66,16 @@ test('wheel scrolling is learned, while automatic, programmatic and horizontal m
  const other=setup();other.touchStart();other.fire('touchmove',{touches:[{identifier:1,clientX:200,clientY:500}]});other.fire('touchend',{touches:[]});other.click();assert.equal(other.button().textContent,'待機');
 });
 
+test('discrete wheel steps learn their real interval without treating the first instantaneous step as a speed',()=>{
+ const s=setup();s.click();s.fire('wheel',{deltaX:0,deltaY:30});s.sc().scrollTop+=30;s.advance(300);
+ assert.equal(s.button().textContent,'待機');assert.equal(s.sc().scrollTop,30);
+ s.fire('wheel',{deltaX:0,deltaY:30});s.sc().scrollTop+=30;s.advance(260);
+ assert.equal(s.button().textContent,'停止');const at=s.sc().scrollTop;s.advance(1000);assert(Math.abs(s.sc().scrollTop-at-100)<3);
+ const moved=setup();moved.fire('wheel',{deltaX:0,deltaY:30});moved.sc().scrollTop+=30;moved.advance(300);moved.sc().scrollTop=500;
+ moved.fire('wheel',{deltaX:0,deltaY:30});moved.sc().scrollTop+=30;moved.advance(300);moved.click();assert.equal(moved.button().textContent,'待機');
+ const stale=setup();stale.fire('wheel',{deltaX:0,deltaY:30});stale.sc().scrollTop+=30;stale.advance(1000);stale.fire('wheel',{deltaX:0,deltaY:30});stale.sc().scrollTop+=30;stale.advance(300);stale.click();assert.equal(stale.button().textContent,'待機');
+});
+
 test('dialogs, drawing, backgrounding, cancelled and multi-touch gestures cannot keep scrolling',()=>{
  for(const action of [s=>{s.c.U.sheet={};},s=>{s.c.U.draw=true;},s=>{s.doc.hidden=true;s.fire('visibilitychange');},
   s=>s.fire('touchcancel'),s=>{s.touchStart();s.fire('touchstart',{touches:[{},{}]});},s=>s.win.blur.forEach(fn=>fn())]){

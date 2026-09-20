@@ -4,6 +4,7 @@ const LyricScroll = (() => {
   let sc = null, context = "", speed = 0, enabled = false, running = false;
   let frame = 0, lastFrame = 0, position = 0, manual = null;
   let settleTimer = 0, wheelTimer = 0, pendingStart = false, lastManualScroll = -Infinity;
+  let wheelAnchor = null;
   const now = () => performance.now();
   const key = () => JSON.stringify([S.showId, song()?.id, takeCtx(), S.recMode, U.mode, U.secView, U.view, U.overview, VIEW()]);
   const available = () => U.view === "live" && !!song() && !U.overview && !U.draw && !document.hidden;
@@ -24,7 +25,7 @@ const LyricScroll = (() => {
   }
   function stop() {
     pause(); clearTimeout(wheelTimer); wheelTimer = 0;
-    enabled = false; manual = null; updateButton();
+    enabled = false; manual = null; wheelAnchor = null; updateButton();
   }
   function tick(t) {
     frame = 0;
@@ -78,6 +79,10 @@ const LyricScroll = (() => {
   function begin(kind, x, y, id) {
     pause(); clearTimeout(wheelTimer);
     manual = {kind, x, y, id, sc, context, samples:[{top:sc.scrollTop, time:now()}], vertical:kind === "wheel"};
+    // 段階的に動くホイールは、直前の一目盛りとの間隔からも速度を測る。
+    if (kind === "wheel" && wheelAnchor?.sc === sc && wheelAnchor.context === context
+      && wheelAnchor.top === sc.scrollTop && now() - wheelAnchor.time < 800) manual.samples = [wheelAnchor];
+    wheelAnchor = null;
   }
   function move(x, y) {
     if (!manual || manual.kind === "wheel") return;
@@ -89,7 +94,8 @@ const LyricScroll = (() => {
     const g = manual; manual = null;
     if (!g || !g.vertical || g.sc !== sc || g.context !== key() || !allowed()) { stop(); return; }
     const v = velocity(g);
-    if (!v) { stop(); return; }
+    if (g.kind === "wheel") wheelAnchor = {...g.samples.at(-1), sc, context};
+    if (!v) { if (g.kind !== "wheel") stop(); return; }
     speed = v; updateButton();
     if (enabled) afterMomentum();
   }
