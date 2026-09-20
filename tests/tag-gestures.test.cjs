@@ -60,13 +60,12 @@ test('release consumes its follow-up click, permits the next tap and clears poin
  s.c.U.sheet={tags:[]};s.fire('click',100,100,{detail:0});assert.equal(s.commits.length,3);
 });
 
-test('quick choices stay in the same bottom positions regardless of note history',()=>{
+test('quick directions remain stable regardless of note history',()=>{
  const s=setup([{tags:['good','mic'],ts:100}]);
  const before=s.run('tagMenuHTML()');
  s.c.S.notes=[{tags:['pLo'],ts:200}];
  assert.equal(s.run('tagMenuHTML()'),before);
- assert.deepEqual(Array.from(s.run('QUICK_TAGS')),['pHi','pLo','fast','slow']);
- assert(before.indexOf('quick-tags')>before.indexOf('swipe-tags'));
+ assert.deepEqual(JSON.parse(s.run('JSON.stringify(quickSwipeMap())')),{id:'quick',up:'pHi',dn:'pLo',lf:'fast',rt:'slow'});
 });
 test('swipe feedback follows direction and disappears on cancellation and release',()=>{
  const s=setup();s.fire('pointerdown');s.fire('pointermove',100,40);
@@ -110,12 +109,65 @@ test('cancelled choice taps do not save through native clicks, and fixed shortcu
  assert.equal(s.commits.at(-1)[0],'fast');assert.equal(s.commits.length,2);
 });
 
-test('every genre appears after its direct choices, at the right end of the row',()=>{
- const html=setup().run('tagMenuHTML()');
- const rows=[...html.matchAll(/<section class="swipe-row"[\s\S]*?<\/section>/g)].map(m=>m[0]);
- assert.equal(rows.length,7);
- for(const row of rows){
-  assert.match(row, /^<section class="swipe-row" data-swipe=/);
-  assert(row.indexOf('class="swipe-choices"')<row.indexOf('class="swipe-tile"'));
+test('all circular palettes show the original center and spatial directions',()=>{
+ const s=setup();
+ const html=s.run('tagMenuHTML()');
+ const circles=[...html.matchAll(/<section class="tag-circle"[\s\S]*?<\/section>/g)].map(m=>m[0]);
+ assert.equal(circles.length,7);
+ for(const [i,circle] of circles.entries()){
+  const sw=s.run(`SWIPES[${i}]`);
+  assert(circle.includes(`data-swipe="${sw.id}"`));
+  assert(circle.includes('class="circle-center"'));
+  for(const dir of ['up','dn','lf','rt'])if(sw[dir])assert(circle.includes(`class="circle-option dir-${dir}" data-tag-id="${sw[dir]}"`));
  }
+});
+
+test('four directions work from every part of the quick dial, with the new timing mapping',()=>{
+ const s=setup();s.row.dataset.swipe='quick';
+ for(const startId of ['pHi','pLo','fast','slow']){
+  const target=s.choice(startId);
+  for(const [dx,dy,id] of [[0,0,startId],[0,-60,'pHi'],[0,60,'pLo'],[-60,0,'fast'],[60,0,'slow']]){
+   s.c.U.sheet={tags:[]};s.fire('pointerdown',150,200,{target});s.fire('pointermove',150+dx,200+dy,{target});s.fire('pointerup',150+dx,200+dy,{target});
+   assert.equal(s.commits.at(-1)[0],id);
+   assert.equal(s.fire('click').stopped,true);
+  }
+ }
+ assert.equal(s.commits.length,20);
+});
+
+test('center tap opens all tags, center swipe chooses a direction, and cancellation writes nothing',()=>{
+ const s=setup();s.row.dataset.swipe='quick';let renders=0;s.c.renderSheet=()=>renders++;
+ const target={dataset:{act:'note-all'},closest(sel){return sel==='[data-swipe]'?s.row:sel==='[data-act]'?this:null;}};
+ s.c.U.sheet={quick:true,tags:[]};
+ s.fire('pointerdown',150,200,{target});s.fire('pointerup',150,200,{target});
+ assert.equal(s.c.U.sheet.quick,false);assert.equal(renders,1);assert.equal(s.commits.length,0);
+ s.c.U.sheet={quick:true,tags:[]};
+ s.fire('pointerdown',150,200,{target});s.fire('pointerup',90,200,{target});
+ assert.equal(s.commits[0][0],'fast');
+ s.c.U.sheet={quick:true,tags:[]};s.fire('pointerdown',150,200,{target});s.fire('pointermove',150,140,{target});s.fire('pointermove',150,200,{target});s.fire('pointercancel');s.fire('pointerup');
+ assert.equal(s.commits.length,1);assert.equal(renders,1);
+});
+
+test('custom assignments validate stored tags and are stable throughout an active gesture',()=>{
+ const s=setup();s.c.S.quickTags={up:'good',dn:'deleted',lf:'lyric'};
+ assert.deepEqual(JSON.parse(s.run('JSON.stringify(quickSwipeMap())')),{id:'quick',up:'good',dn:'pLo',lf:'lyric',rt:'slow'});
+ s.row.dataset.swipe='quick';s.fire('pointerdown');s.c.S.quickTags.up='pitch';s.fire('pointerup',100,40);
+ assert.equal(s.commits[0][0],'good');
+});
+
+test('quick menus stay inside viewport edges, landscape and the visible viewport offset',()=>{
+ const s=setup();
+ for(const v of [{width:390,height:700},{width:320,height:568},{width:844,height:390},{left:0,top:40,width:390,height:620}]){
+  for(const point of [{x:0,y:0},{x:10,y:690},{x:385,y:20},{x:385,y:690},{x:195,y:350},null]){
+   s.c.point=point;s.c.v=v;const p=s.run('quickMenuPosition(point,280,338,158,v)');
+   assert(p.left>=(v.left||0)+8);assert(p.top>=(v.top||0)+8);
+   assert(p.left+280<=(v.left||0)+v.width-8);assert(p.top+338<=(v.top||0)+v.height-8);
+  }
+ }
+});
+
+test('returning a quick swipe to its starting point cancels without committing or opening another palette',()=>{
+ const s=setup();s.row.dataset.swipe='quick';let renders=0;s.c.renderSheet=()=>renders++;
+ s.fire('pointerdown');s.fire('pointermove',100,40);s.fire('pointermove',100,100);s.fire('pointerup');
+ assert.equal(s.commits.length,0);assert.equal(renders,0);assert.equal(s.fire('click').stopped,true);
 });

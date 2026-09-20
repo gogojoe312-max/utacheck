@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.32";
+const APP_VER = "16.33";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -72,24 +72,64 @@ const SWIPES = [
 const LEGACY = { breath: "ブレス", volume: "声量", tone: "声色" };
 const tagName = (id) => (TAGS.find((t) => t.id === id) || {}).l || LEGACY[id] || id;
 
-// 使用履歴で位置を変えず、親指側の4項目を固定する。
-const QUICK_TAGS = ["pHi", "pLo", "fast", "slow"];
+// 指先の4方向。履歴で場所を変えず、設定で明示的に変更した時だけ入れ替える。
+const QUICK_SWIPE = { id: "quick", up: "pHi", dn: "pLo", lf: "fast", rt: "slow" };
+const TAG_DIRS = [["up","↑","上"],["dn","↓","下"],["lf","←","左"],["rt","→","右"]];
+function quickSwipeMap() {
+  const sw = {...QUICK_SWIPE};
+  TAG_DIRS.forEach(([key]) => { if (TAGS.some(t => t.id === S.quickTags?.[key])) sw[key] = S.quickTags[key]; });
+  return sw;
+}
+const swipeMap = id => id === "quick" ? quickSwipeMap() : SWIPES.find(x => x.id === id);
 function tagMenuHTML() {
   const colors = ["#efa795","#dec18c","#94cec8","#bfaee4","#e9a5b5","#9bbce5","#9aceaf"];
-  const labels = {pHi:"高い",pLo:"低い",lvHi:"大きい",lvLo:"小さい",good:"良い"};
-  const dirs = [["up","↑","上"],["dn","↓","下"],["lf","←","左"],["rt","→","右"]];
-  return `<div class="swipe-tags">${SWIPES.map((sw, index) => {
+  const labels = {pHi:"高い",pLo:"低い",lvHi:"大きい",lvLo:"小さい",lenEq:"長さ揃える",good:"良い",accent:"アクセント"};
+  return `<div class="tag-circles">${SWIPES.map((sw, index) => {
       const name = catOf(sw.id), label = tagName(sw.id);
-      const help = `${name}：タップで${label}` + dirs.filter(([key]) => sw[key]).map(([key,,direction]) => `、${direction}で${tagName(sw[key])}`).join("");
-      return `<section class="swipe-row" data-swipe="${sw.id}" aria-label="${h(name)}" style="--tag-color:${colors[index]}">
-        <div class="swipe-choices">${dirs.map(([key, arrow]) => sw[key] ? `<button class="swipe-option" data-tag-id="${sw[key]}" data-act="tag-choice" data-id="${sw[key]}" aria-label="${h(tagName(sw[key]))}"><i>${arrow}</i><span>${h(labels[sw[key]] || tagName(sw[key]))}</span></button>` : '<span aria-hidden="true"></span>').join("")}</div>
-        <button class="swipe-tile" data-act="tag-choice" data-id="${sw.id}" data-tag-id="${sw.id}" aria-label="${h(help)}">
+      const help = `${name}：タップで${label}` + TAG_DIRS.filter(([key]) => sw[key]).map(([key,,direction]) => `、${direction}で${tagName(sw[key])}`).join("");
+      return `<section class="tag-circle" data-swipe="${sw.id}" aria-label="${h(name)}" style="--tag-color:${colors[index]}">
+        ${TAG_DIRS.map(([key]) => sw[key] ? `<button class="circle-option dir-${key}" data-tag-id="${sw[key]}" data-act="tag-choice" data-id="${sw[key]}" aria-label="${h(tagName(sw[key]))}">${h(labels[sw[key]] || tagName(sw[key]))}</button>` : "").join("")}
+        <button class="circle-center" data-act="tag-choice" data-id="${sw.id}" data-tag-id="${sw.id}" aria-label="${h(help)}">
           <b>${h(name)}</b>${name !== label ? `<small>${h(label)}</small>` : ""}
         </button>
       </section>`;
-    }).join("")}</div>
-    <section class="quick-tags" aria-label="よく使う指摘"><div class="quick-tag-options">${QUICK_TAGS.map(id => `<button data-act="tag-choice" data-id="${id}">${h(tagName(id))}</button>`).join("")}</div></section>
+    }).join("")}<button class="circle-return" data-act="note-quick"><span aria-hidden="true">↑<br>← ＋ →<br>↓</span>4方向に戻る</button></div>
     <output class="swipe-feedback" aria-live="polite" hidden></output>`;
+}
+
+function quickMenuPosition(point, width, height, centerY, viewport) {
+  const {left = 0, top = 0, width:vw, height:vh} = viewport;
+  const clamp = (n, min, max) => Math.min(Math.max(n, min), Math.max(min, max));
+  return {
+    left: clamp((point?.x ?? left + vw - width / 2 - 12) - width / 2, left + 8, left + vw - width - 8),
+    top: clamp((point?.y ?? top + vh - height + centerY - 16) - centerY, top + 8, top + vh - height - 8),
+  };
+}
+function positionQuickMenu() {
+  if (!U.sheet?.quick || U.sheet.detail || !overlay) return;
+  const panel = overlay.querySelector(".quick-note"), dial = overlay.querySelector(".quick-dial");
+  if (!panel || !dial) return;
+  const v = window.visualViewport;
+  const pos = quickMenuPosition(U.sheet.point, panel.offsetWidth, panel.offsetHeight, dial.offsetTop + dial.offsetHeight / 2,
+    {left:v?.offsetLeft || 0, top:v?.offsetTop || 0, width:v?.width || innerWidth, height:v?.height || innerHeight});
+  panel.style.left = pos.left + "px"; panel.style.top = pos.top + "px";
+}
+function renderQuickMenu(sh, contextText) {
+  const sw = quickSwipeMap();
+  overlay = document.createElement("div");
+  overlay.className = "mask note-quick-mask";
+  overlay.innerHTML = `<button class="quick-backdrop" data-act="cancel" aria-label="指摘画面を閉じる"></button>
+    <div class="quick-note" role="dialog" aria-modal="true" aria-label="4方向で指摘">
+      <button class="quick-context" data-act="note-detail" data-id="range" aria-label="歌詞の範囲を選ぶ">${h(contextText)}</button>
+      <section class="quick-dial" data-swipe="quick" aria-label="4方向メニュー">
+        ${TAG_DIRS.map(([key, arrow]) => `<button class="quick-direction dir-${key}" data-act="tag-choice" data-id="${sw[key]}" data-tag-id="${sw[key]}" aria-label="${h(tagName(sw[key]))}"><i aria-hidden="true">${arrow}</i><span>${h(tagName(sw[key]))}</span></button>`).join("")}
+        <button class="quick-center" data-act="note-all">ほかの<br>指摘</button>
+      </section>
+      <output class="swipe-feedback" aria-live="polite" hidden></output>
+      <footer><button class="note-tools" data-act="note-detail" data-id="memo">メモ・音</button><button class="note-close" data-act="cancel" aria-label="指摘画面を閉じる"><span aria-hidden="true">×</span>閉じる</button></footer>
+    </div>`;
+  document.body.appendChild(overlay);
+  positionQuickMenu();
 }
 
 /* ---------------- state ---------------- */
@@ -4495,6 +4535,10 @@ ${shows}</div>
   // まとめて選んだ時は、その範囲の行を全部出す
   const rl0 = sh.lineIdx, rl1 = sh.lineEnd != null ? sh.lineEnd : sh.lineIdx;
   const rangeLine = sh.rangeLine != null ? sh.rangeLine : rl0;
+  const contextText = sh.range
+    ? Array.from((s.lines[rangeLine] || {}).t || "").slice(sh.range[0], sh.range[1] + 1).join("")
+    : s.lines.slice(rl0, rl1 + 1).map(x => x.t || "").join(" / ");
+  if (sh.quick && !sh.detail) { renderQuickMenu(sh, contextText || gapWhere(s, sh.lineIdx) || "歌詞のない箇所"); return; }
   const lineHtml = (li) => {
     const cs = Array.from(s.lines[li] ? s.lines[li].t : "");
     return cs.map((ch, ci) => {
@@ -4511,9 +4555,6 @@ ${shows}</div>
     : `<span class="rgtx" data-rl="${rl0}">${lineHtml(rl0)}</span>`;
   const ex = NOTES().filter((n) => n.songId === s.id && n.showId === S.showId && covers(n, sh.lineIdx));
 
-  const contextText = sh.range
-    ? Array.from((s.lines[rangeLine] || {}).t || "").slice(sh.range[0], sh.range[1] + 1).join("")
-    : s.lines.slice(rl0, rl1 + 1).map(x => x.t || "").join(" / ");
   const inner = `
     <header class="note-sheet-head">
       <div class="note-sheet-title">
@@ -5079,6 +5120,14 @@ function lyricDisplaySettings() {
       ${[[1.6,"標準"],[1.8,"広め"]].map(([v,label]) => `<button data-act="lyric-spacing" data-id="${v}" aria-pressed="${(S.lyricLineHeight || 1.6) === v}">${label}</button>`).join("")}</div>
   </div>`;
 }
+function quickTagSettingsHTML() {
+  if (VIEW()) return "";
+  const sw = quickSwipeMap();
+  return `<div class="card"><p class="note">4方向メニュー</p><div class="quick-tag-settings">
+    ${TAG_DIRS.map(([key, arrow, name]) => `<label>${arrow} ${name}<select data-quick-dir="${key}" aria-label="4方向メニュー・${name}">
+      ${Object.keys(CATCOL).map(cat => `<optgroup label="${h(cat)}">${TAGS.filter(t => t.c === cat).map(t => `<option value="${t.id}" ${sw[key] === t.id ? "selected" : ""}>${h(t.l)}</option>`).join("")}</optgroup>`).join("")}
+    </select></label>`).join("")}</div></div>`;
+}
 function memberPreviewSettings() {
   const groups = S.groups.filter(g => !g.nopub && g.src);
   return `<h4 class="head">メンバー画面</h4><div class="card">
@@ -5123,6 +5172,7 @@ function viewSetupRec() {
              : `<button data-act="recon" class="chip sm" style="color:var(--accent)">レコーディングモード ⇄</button>`}</div>
   <div class="scroll pad">
     ${lyricDisplaySettings()}
+    <h4 class="head">指摘</h4>${quickTagSettingsHTML()}
     <h4 class="head">曲</h4>
     ${list || `<p class="note">曲がありません</p>`}
     <div class="card"><button class="primary" data-act="rpick">歌詞のWordを読み込む（複数可）</button></div>
@@ -6297,7 +6347,7 @@ function viewSetup() {
     <div class="scroll pad">
     ${preview ? '<button class="primary" data-act="endpv">メンバー画面の確認を終わる</button>' : ""}
     ${lyricDisplaySettings()}
-    <h4 class="head">指摘</h4><div class="card"><button class="primary" data-act="go-summary">指摘の集計を見る</button></div>
+    <h4 class="head">指摘</h4><div class="card"><button class="primary" data-act="go-summary">指摘の集計を見る</button></div>${quickTagSettingsHTML()}
     <h4 class="head">公演</h4>
     ${list || `<p class="note">公演がありません</p>`}
     ${allShows.length > 12 ? `<button class="ghost" data-act="allshowlist" style="margin-bottom:10px">${U.allShowList ? "最近の12公演だけ表示" : `すべて表示（全${allShows.length}公演）`}</button>` : ""}
@@ -6385,7 +6435,7 @@ function viewSetup() {
   <div class="scroll pad">
     ${memberPreviewSettings()}
     ${lyricDisplaySettings()}
-    <h4 class="head">指摘</h4><div class="card"><button class="primary" data-act="go-summary">指摘の集計を見る</button></div>
+    <h4 class="head">指摘</h4><div class="card"><button class="primary" data-act="go-summary">指摘の集計を見る</button></div>${quickTagSettingsHTML()}
     <h4 class="head">公演</h4>
     ${S.groups.length > 1 ? `<div class="chips" style="margin-bottom:10px">
       <button class="chip sm" data-act="showfilter" data-id="" style="${!S.showFilter ? "background:var(--accent);color:#0A0A0A" : ""}">すべて</button>
@@ -6627,6 +6677,11 @@ document.addEventListener("click", (e) => {
   const s = song();
 
   switch (a) {
+    case "note-all":
+    case "note-quick":
+      if (!U.sheet || VIEW()) break;
+      commitFields(); U.sheet.quick = a === "note-quick"; U.sheet.detail = false;
+      renderSheet(); break;
     case "note-detail":
     case "note-detail-back":
       if (!U.sheet || VIEW()) break;
@@ -6637,7 +6692,7 @@ document.addEventListener("click", (e) => {
       if (U.sheet.detail && id === "memo") overlay.querySelector(".note-memo")?.scrollIntoView({block:"nearest"});
       break;
     case "tag-choice":
-      // 指摘行の指・マウス操作は pointerup で確定。固定ショートカットとキーボードはクリックで選ぶ。
+      // スワイプ面の指・マウス操作は pointerup で確定。キーボードはクリックで選ぶ。
       if (b.closest("[data-swipe]") && e.detail !== 0) break;
       if (!U.sheet || VIEW() || !TAGS.some(t => t.id === id)) break;
       U.sheet.tags = [id]; scheduleCommit(); break;
@@ -6651,7 +6706,7 @@ document.addEventListener("click", (e) => {
     case "pt-settings": if (window.PTLink) window.PTLink.open(); break;
     case "go-setup": commitFields(); U.view = "setup"; render(); break;
     case "go-live": commitFields(); U.view = "live"; render(); break;
-    case "note": openSheet(i, null); break;
+    case "note": openSheet(i, null, null, e.detail ? {x:e.clientX, y:e.clientY} : null); break;
     case "assignline": {
       if (VIEW()) break;
       const so2 = song(); if (!so2) break;
@@ -6670,7 +6725,7 @@ document.addEventListener("click", (e) => {
       while (st > 0 && so.lines[st].cont && !so.lines[st].gap) st--;
       let en = st;
       while (en + 1 < so.lines.length && so.lines[en + 1].cont && !so.lines[en + 1].gap) en++;
-      openSheet(st, null, en);
+      openSheet(st, null, en, e.detail ? {x:e.clientX, y:e.clientY} : null);
       break;
     }
     // ✕ と背景タップで閉じる。メモや音を入れてあれば、押し忘れても消えないよう記録して閉じる。
@@ -7965,6 +8020,11 @@ document.addEventListener("focusout", () => {
 });
 
 document.addEventListener("change", (e) => {
+  const dir = e.target.dataset?.quickDir;
+  if (dir && !VIEW() && TAG_DIRS.some(([key]) => key === dir) && TAGS.some(t => t.id === e.target.value)) {
+    S.quickTags = {...S.quickTags, [dir]:e.target.value}; save();
+    return;
+  }
   if (e.target.id === "summary-show") { selectSummaryShow(e.target.value); return; }
   if (e.target.id === "file") {
     // 一覧を控えてから空にする。同じファイルをもう一度選んでも読み込めるように。
@@ -8092,13 +8152,13 @@ function quickMark(lineIdx, range) {
   save(); schedulePush(); render();
 }
 
-function openSheet(lineIdx, range, lineEnd) {
+function openSheet(lineIdx, range, lineEnd, point) {
   if (VIEW()) return;
   const s = song(); if (!s) return;
   const l = s.lines[lineIdx];
   // 誰が歌う行かは歌割から自明なので、その行の担当をそのまま記録に入れる
   U.sheet = { lineIdx, lineEnd: (lineEnd != null && lineEnd > lineIdx) ? lineEnd : null,
-    range: range || null, anchor: null, tags: [], memo: "", seq: [], rec: false,
+    range: range || null, anchor: null, point:point || null, quick:true, tags: [], memo: "", seq: [], rec: false,
     sel: partsOf(s, lineIdx).slice() };
   renderSheet();
 }
@@ -8131,15 +8191,16 @@ document.addEventListener("pointerdown", (e) => {
   const t = e.target.closest && e.target.closest("[data-swipe]");
   if (!t || !U.sheet || VIEW() || e.button !== 0) return;
   const choice = e.target.closest('[data-act="tag-choice"]');
-  swOrg = {id:t.dataset.swipe, tapId:choice?.dataset.id || null, pointerId:e.pointerId, sheet:U.sheet, row:t, x:e.clientX, y:e.clientY};
+  const sw = swipeMap(t.dataset.swipe); if (!sw) return;
+  swOrg = {sw, tapId:choice?.dataset.id || null, tapAction:e.target.closest('[data-act]')?.dataset.act, pointerId:e.pointerId, sheet:U.sheet, row:t, x:e.clientX, y:e.clientY};
   t.setPointerCapture(e.pointerId);
 }, true);
 document.addEventListener("pointermove", (e) => {
   if (!swOrg || e.pointerId !== swOrg.pointerId) return;
-  const sw = SWIPES.find(x => x.id === swOrg.id);
-  const id = swipeTagAt(sw, e.clientX - swOrg.x, e.clientY - swOrg.y, swOrg.tapId);
-  swOrg.row.querySelectorAll("[data-tag-id]").forEach(el => el.classList.toggle("is-selected", el.dataset.tagId === id));
   const moved = Math.max(Math.abs(e.clientX - swOrg.x), Math.abs(e.clientY - swOrg.y)) > 24;
+  swOrg.moved ||= moved;
+  const id = swOrg.sw.id === "quick" && swOrg.moved && !moved ? null : swipeTagAt(swOrg.sw, e.clientX - swOrg.x, e.clientY - swOrg.y, swOrg.tapId);
+  swOrg.row.querySelectorAll("[data-tag-id]").forEach(el => el.classList.toggle("is-selected", el.dataset.tagId === id));
   showTagFeedback(moved ? id : null);
   e.preventDefault();
 }, {passive:false});
@@ -8151,8 +8212,12 @@ document.addEventListener("pointerup", (e) => {
   tagClickUntil = Date.now() + 500;
   e.preventDefault();
   if (U.sheet !== o.sheet || VIEW()) return;
-  const sw = SWIPES.find(x => x.id === o.id);
-  const id = swipeTagAt(sw, e.clientX - o.x, e.clientY - o.y, o.tapId);
+  const dx = e.clientX - o.x, dy = e.clientY - o.y;
+  if (o.sw.id === "quick" && o.moved && Math.max(Math.abs(dx), Math.abs(dy)) <= 24) return;
+  const id = swipeTagAt(o.sw, dx, dy, o.tapId);
+  if (!id && o.tapAction === "note-all" && Math.max(Math.abs(dx), Math.abs(dy)) <= 24) {
+    U.sheet.quick = false; renderSheet(); return;
+  }
   if (!id) return;
   U.sheet.tags = [id];
   commitFields(); scheduleCommit();
@@ -8170,9 +8235,12 @@ document.addEventListener("keydown", (e) => {
   const key = {ArrowUp:"up",ArrowDown:"dn",ArrowLeft:"lf",ArrowRight:"rt"}[e.key];
   if (!key) return;
   e.preventDefault();
-  const sw = SWIPES.find(x => x.id === t.dataset.swipe), id = sw && sw[key];
+  const sw = swipeMap(t.dataset.swipe), id = sw && sw[key];
   if (id) { U.sheet.tags = [id]; commitFields(); scheduleCommit(); }
 });
+window.addEventListener("resize", positionQuickMenu);
+window.visualViewport?.addEventListener("resize", positionQuickMenu);
+window.visualViewport?.addEventListener("scroll", positionQuickMenu);
 
 /* ---- 公演をつまんでフォルダにまとめる ---- */
 let sdrag = null;
@@ -8591,7 +8659,7 @@ function armHold() {
     const b = o.end == null ? a : o.end;
     org = null; dragOn = false;
     clearHl();
-    openSheet(o.l, [Math.min(a, b), Math.max(a, b)]);
+    openSheet(o.l, [Math.min(a, b), Math.max(a, b)], null, o.point || {x:o.x, y:o.y});
   }, 500);
 }
 
@@ -8606,6 +8674,7 @@ document.addEventListener("pointermove", (e) => {
     if (org.c == null) org.c = 0;
   }
   e.preventDefault();
+  org.point = {x:e.clientX, y:e.clientY};
   const c = charAtX(org.row, e.clientX, e.clientY);
   if (c != null && c !== org.end) { org.end = c; highlight(org.l, org.c, c); armHold(); }
 }, { passive: false });
@@ -8620,10 +8689,12 @@ document.addEventListener("pointerup", (e) => {
     const b = o.end == null ? a : o.end;
     // レコーディング中は、なぞったら印だけ。指を止めれば指摘画面が出る（上の armHold）。
     if (S.recMode) quickMark(o.l, [Math.min(a, b), Math.max(a, b)]);
-    else openSheet(o.l, [Math.min(a, b), Math.max(a, b)]);
+    else openSheet(o.l, [Math.min(a, b), Math.max(a, b)], null, {x:e.clientX, y:e.clientY});
   } else {
-    openSheet(o.l, null);
+    openSheet(o.l, null, null, {x:e.clientX, y:e.clientY});
   }
+  // メニューが指先に現れても、今離した指のクリックでは選ばない。
+  if (U.sheet) tagClickUntil = Date.now() + 500;
   dragOn = false; clearHl();
 });
 
