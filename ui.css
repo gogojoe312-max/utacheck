@@ -276,3 +276,7 @@ select.field{appearance:auto}textarea.field{resize:vertical}
 .note-pill-wrap .tagpill{margin:0}
 .pill-del{flex:0 0 30px;width:30px;height:30px;margin-left:2px;border-radius:9px;background:#3a2528;color:#ff9c92;font-size:17px;font-weight:700;touch-action:manipulation}
 @media(max-height:520px){.quick-context{min-height:34px;padding-bottom:4px}.quick-four{gap:5px}.quick-four button{min-height:48px;font-size:17px}.quick-type{margin-top:5px}.quick-type .field,.quick-type .note-close{height:42px}}
+
+/* v16.38: the keyboard opens immediately, while the action sheet stays pinned to the visible viewport. */
+.quick-note{transform:none!important;transition:none!important}
+.quick-type .field{font-size:16px!important}

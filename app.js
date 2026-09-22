@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.37.0";
+const APP_VER = "16.38.0";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -64,6 +64,35 @@ const LEGACY = { breath: "ブレス", volume: "声量", tone: "声色" };
 const tagName = (id) => (TAGS.find((t) => t.id === id) || {}).l || LEGACY[id] || id;
 
 // 指摘はこの4つで固定。詳しい指示はiPhoneの文字入力ですぐ残す。既存の手書き記録は表示だけ維持する。
+// 現場用の短縮語。完全一致を先に、語尾/語頭の定型を次に展開する。
+// 例: 「たかい」→「音程高い」。自由文はそのまま残す。
+const NOTE_SHORTHAND = new Map([
+  ["たかい","音程高い"],["高い","音程高い"],["ひくい","音程低い"],["低い","音程低い"],
+  ["おんてい","音程"],["音程","音程"],["ふあんてい","音程不安定"],["不安定","音程不安定"],
+  ["はやい","リズム速い"],["速い","リズム速い"],["おそい","リズム遅い"],["遅い","リズム遅い"],
+  ["ながい","長い"],["長い","長い"],["みじかい","短い"],["短い","短い"],
+  ["つよい","強い"],["強い","強い"],["よわい","弱い"],["弱い","弱い"],
+  ["くらい","暗い"],["暗い","暗い"],["あかるい","明るい"],["明るい","明るい"],
+  ["かつぜつ","滑舌"],["滑舌","滑舌"],["かし","歌詞"],["歌詞","歌詞"],
+  ["うらがえり","裏返り"],["裏返り","裏返り"],["がらつき","ガラつき"],["のいず","ノイズ"],
+  ["おおきい","レベル大きい"],["大きい","レベル大きい"],["ちいさい","レベル小さい"],["小さい","レベル小さい"],
+  ["おしい","惜しい"],["惜しい","惜しい"],["おけ","オケ聴く"],["うたう","歌う"],["さしかえ","差し替え"]
+]);
+function expandNoteMemo(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const compact = raw.replace(/[\s　]+/g, "");
+  if (NOTE_SHORTHAND.has(compact)) return NOTE_SHORTHAND.get(compact);
+  // 「たかい○○」「○○たかい」のような短い補足も、意味を壊さない範囲だけ展開。
+  const rules = [
+    [/^たかい(.+)$/,"音程高い $1"],[/^ひくい(.+)$/,"音程低い $1"],
+    [/^はやい(.+)$/,"リズム速い $1"],[/^おそい(.+)$/,"リズム遅い $1"],
+    [/(.+)たかい$/,"$1 音程高い"],[/(.+)ひくい$/,"$1 音程低い"]
+  ];
+  for (const [re, out] of rules) if (re.test(compact)) return compact.replace(re, out);
+  return raw;
+}
+
 function renderQuickMenu(sh, contextText) {
   overlay = document.createElement("div");
   overlay.className = "mask note-quick-mask";
@@ -78,8 +107,10 @@ function renderQuickMenu(sh, contextText) {
     </section>`;
   document.body.appendChild(overlay);
   positionQuickNote();
-  // まず4分類を確実に押せる状態で出す。文字欄に触れた瞬間だけキーボードを出す。
-  // iOSは自動focusするとvisualViewportが縮み、分類ボタンがキーボード裏へずれるため自動focusしない。
+  // 歌詞を選んだ同じユーザー操作の中でフリックを開く。visualViewport追従で位置は固定する。
+  const memo = overlay.querySelector("#memo");
+  try { memo?.focus({preventScroll:true}); } catch (_) { memo?.focus(); }
+  requestAnimationFrame(positionQuickNote);
 }
 function positionQuickNote() {
   const q = overlay?.querySelector(".quick-note");
@@ -7991,7 +8022,10 @@ document.addEventListener("click", (e) => {
 });
 
 document.addEventListener("focusin", (e) => { if (e.target.id === "memo") clearTimeout(sheetTimer); });
-document.addEventListener("keydown", (e) => { if (e.target.id === "memo" && e.key === "Enter") commitNote(); });
+document.addEventListener("keydown", (e) => {
+  if (e.target.id !== "memo" || e.key !== "Enter" || e.isComposing || e.keyCode === 229) return;
+  e.preventDefault(); commitNote();
+});
 
 document.addEventListener("input", (e) => { if (e.target.id === "aubar") seekAudio(e.target.value); });
 // 入力欄から離れたら、待たせていた画面の組み直しをやる
@@ -8044,7 +8078,7 @@ function commitNote() {
   const s = song(), sh = U.sheet;
   U.sheet = null;
   if (!s || !sh) { renderSheet(); return; }
-  const memo = (document.getElementById("memo") || {}).value || sh.memo || "";
+  const memo = expandNoteMemo((document.getElementById("memo") || {}).value || sh.memo || "");
   if (sh.sel.length || sh.tags.length || memo.trim() || (sh.seq && sh.seq.length)) {
     pushUndo(null, true);
     const note = {
