@@ -1,0 +1,40 @@
+/* A fixed four-choice layout within right-thumb reach. */
+.note-quick-mask{display:block;background:#0006;backdrop-filter:none;-webkit-backdrop-filter:none}
+.quick-backdrop{position:absolute;inset:0;width:100%;height:100%}
+.quick-note{position:absolute;right:max(8px,env(safe-area-inset-right));bottom:calc(8px + env(safe-area-inset-bottom));width:min(360px,calc(100% - 16px));padding:12px;border:1px solid #ffffff18;border-radius:24px;background:#1b2028;box-shadow:0 12px 50px #0007}
+.quick-context{display:flex;align-items:center;gap:10px;width:100%;min-height:44px;padding:0 6px 8px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;text-align:left;color:#b5c0cf;font-size:14px}
+.quick-context>span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}.quick-context>i{color:var(--dim);font-size:24px;font-style:normal}
+.quick-four{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.quick-four button{min-height:66px;border-radius:16px;background:color-mix(in srgb,var(--tag-color) 10%,#242a33);border:1px solid color-mix(in srgb,var(--tag-color) 25%,transparent);color:var(--tag-color);font-size:20px;font-weight:650;touch-action:manipulation}
+.quick-four button:active{background:color-mix(in srgb,var(--tag-color) 30%,#242a33)}
+.quick-note footer{display:flex;gap:8px;margin-top:10px}
+.quick-note footer button{min-height:50px;border-radius:14px;font-size:16px}
+.hand-open{flex:1;text-align:left;padding:0 16px;background:#303844;color:#e8edf5;font-weight:600}
+.quick-note .note-close{flex:0 0 112px;min-height:50px;background:#252c36}
+.hand-mask{align-items:flex-end}
+.sheet.hand-sheet{flex:none;width:min(440px,100%);padding:14px 16px calc(12px + env(safe-area-inset-bottom));max-height:calc(100% - 8px);border-radius:24px 24px 0 0;overflow-y:auto;background:#1b2028;touch-action:pan-y}
+.hand-sheet header{display:flex;gap:12px;align-items:center;min-height:44px}
+.hand-sheet h2{font-size:20px;flex:1}
+.hand-sheet header button{min-width:60px;min-height:44px;color:#a9caff;font-size:15px}
+.hand-sheet header>span{font-size:12px;color:var(--dim)}
+.hand-context{font-size:14px;color:#b5c0cf;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:6px 0}
+.hand-hint{font-size:12px;color:#99a5b6;margin:10px 0 8px}
+.hand-grid{width:100%;max-width:392px;margin:0 auto;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px}
+.hand-grid canvas{display:block;width:100%;height:auto;aspect-ratio:1;border-radius:10px;background:#11161e;outline:1px solid #ffffff18;touch-action:none;user-select:none;-webkit-user-select:none}
+.hand-tools{display:flex;align-items:center;gap:6px;margin-top:6px;font-size:13px}
+.hand-tools button{min-height:44px;min-width:50px;color:#b9cee9}
+.hand-tools>span{flex:1;text-align:center;color:var(--dim)}
+.hand-sheet button:disabled{opacity:.35}
+#hand-status{font-size:12px;line-height:1.4;color:#99a5b6;min-height:18px;margin:4px 0 10px}
+.hand-sheet footer{display:flex;gap:8px}
+.hand-sheet footer button{flex:1;min-height:50px;font-size:15px;border-radius:14px;background:#2d3642}
+.hand-sheet footer .hand-save{flex:1.35;background:#a9caff;color:#142035;font-weight:650}
+.hand-sheet label{display:block;font-size:13px;color:#b5c0cf;margin:12px 0 8px}
+.hand-sheet textarea{font-size:18px;min-height:90px;resize:vertical;margin-bottom:12px}
+.hand-note{display:flex;flex-direction:column;align-items:flex-start;gap:3px;max-width:100%;margin-top:6px;padding:8px 10px;border-radius:10px;border:1px solid #ffffff16;color:#c8d5e5;text-align:left;background:#829ccc09}
+.hand-note small{font-size:11px;color:#8b9bb0}
+.hand-text{font-size:16px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere}
+.hand-original{display:block;max-width:100%;height:auto;color:inherit}
+@media(max-height:620px){.hand-sheet header{min-height:40px}.hand-hint{margin:4px 0 6px}.hand-grid{max-width:284px}.hand-context{margin:0}.hand-tools{margin:2px 0}#hand-status{margin:0 0 6px}.sheet.hand-sheet{padding-top:8px}.quick-four button{min-height:56px}}
+@media(orientation:landscape) and (max-height:500px){.sheet.hand-sheet{width:min(620px,100%)}.hand-grid{max-width:560px;grid-template-columns:repeat(6,minmax(0,1fr))}.hand-hint,.hand-context{display:inline-block;margin-right:10px}.quick-note{padding:8px}.quick-four button{min-height:48px}.quick-note footer{margin-top:6px}}
+@media print{.hand-note{background:none;border-color:#aaa;color:#222;break-inside:avoid}.hand-note small{color:#555}}
