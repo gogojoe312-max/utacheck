@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.34.1";
+const APP_VER = "16.35";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -3646,7 +3646,6 @@ for (const event of ["pointerup", "pointercancel"]) document.addEventListener(ev
 window.addEventListener("blur", () => { renderPointers.clear(); resumeRender(); });
 document.addEventListener("scroll", e => {
   if (!e.target.matches?.("#app > .scroll, .mask .sheet, .note-details-content")) return;
-  if (typeof LyricScroll !== "undefined" && LyricScroll.isDriving(e.target)) { queueInkPaint(); return; }
   scrollingUntil = Date.now() + 120;
   resumeRender();
   if (e.target.matches("#app > .scroll")) queueInkPaint();
@@ -3700,7 +3699,6 @@ function render(background = false) {
   const sc = app.querySelector(".scroll");
   if (sc && sameView) sc.scrollTop = st;
   renderSheet();
-  if (typeof LyricScroll !== "undefined") LyricScroll.mount();
   if (U.view === "live" && !U.overview) queueInkPaint();
   if (U.view === "print" || U.view === "recprint") setTimeout(fitPrintDOM, 0);
   if (S.recMode) setTimeout(() => { tickPlan(); scrollTab(); }, 0);
@@ -4147,7 +4145,6 @@ function viewOverview(s) {
 /* ---- sheet ---- */
 function renderSheet() {
   if (typeof NoteVoice !== "undefined") NoteVoice.stop();
-  if ((U.sheet || U.menu || U.picker) && typeof LyricScroll !== "undefined") LyricScroll.stop();
   resumeRender();
   // 記録シートの中で打っている最中も、組み直すと文字が飛ぶ
   if (typingNow() && overlay && overlay.contains(document.activeElement)) { pendingRender = true; return; }

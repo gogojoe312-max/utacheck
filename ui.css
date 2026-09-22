@@ -272,17 +272,6 @@ select.field{appearance:auto}textarea.field{resize:vertical}
 .quick-tag-settings select{flex:1;min-width:0;min-height:44px;padding:8px 4px;border:1px solid var(--line);border-radius:10px;background:var(--panel2);color:var(--text);font-size:16px}
 }
 
-@media screen{
- #app .auto-scroll{min-width:56px;min-height:48px;padding:8px 10px;border:1px solid #ffffff12;border-radius:12px;background:#ffffff08;color:var(--text);font-size:14px;font-weight:600;touch-action:manipulation;flex-shrink:0}
- #app .auto-scroll[aria-pressed="true"]{background:#2c4c75;border-color:#75aaff66;color:#dfedff}
- #app .auto-scroll[data-state="waiting"]{background:#333c49;color:#dce8f8}
- #app .rec-tools-meta .auto-scroll{min-height:44px;margin-left:auto}
- @media(max-width:360px){
-  #app[data-rec="0"][data-screen="live"] .bottom{gap:3px;padding-left:6px;padding-right:6px}
-  #app[data-rec="0"][data-screen="live"] .bottom [data-act="undoall"]{min-width:56px;padding-left:6px;padding-right:6px}
-  #app[data-rec="0"][data-screen="live"] .bottom .auto-scroll{min-width:48px;padding-left:6px;padding-right:6px}
- }
-}
 
 @media screen{
  .dir-ul{grid-column:1;grid-row:1}.dir-ur{grid-column:3;grid-row:1}.dir-dl{grid-column:1;grid-row:3}.dir-dr{grid-column:3;grid-row:3}
