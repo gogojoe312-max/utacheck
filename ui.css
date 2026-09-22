@@ -247,36 +247,32 @@ select.field{appearance:auto}textarea.field{resize:vertical}
 }
 
 
-/* Live quick note: four fixed choices + immediate iPhone text entry. */
-.note-quick-mask{display:block;background:#0006;backdrop-filter:none;-webkit-backdrop-filter:none}
-.quick-backdrop{position:absolute;inset:0;width:100%;height:100%}
-.quick-note{position:absolute;right:max(8px,env(safe-area-inset-right));bottom:calc(8px + env(safe-area-inset-bottom));width:min(360px,calc(100% - 16px));padding:12px;border:1px solid #ffffff18;border-radius:24px;background:#1b2028;box-shadow:0 12px 50px #0007}
-.quick-context{display:flex;align-items:center;gap:10px;width:100%;min-height:44px;padding:0 6px 8px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;text-align:left;color:#b5c0cf;font-size:14px}
-.quick-context>span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}.quick-context>i{color:var(--dim);font-size:24px;font-style:normal}
-.quick-four{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
-.quick-four button{min-height:66px;border-radius:16px;background:color-mix(in srgb,var(--tag-color) 10%,#242a33);border:1px solid color-mix(in srgb,var(--tag-color) 25%,transparent);color:var(--tag-color);font-size:20px;font-weight:650;touch-action:manipulation}
-.quick-four button:active{background:color-mix(in srgb,var(--tag-color) 30%,#242a33)}
-.quick-type{display:flex;gap:8px;align-items:center;margin-top:10px}
-.quick-type .field{flex:1;min-width:0;height:50px;font-size:17px}
-.quick-type .note-close{flex:0 0 50px;height:50px;border-radius:14px;background:#252c36;font-size:20px}
+/* Note dialogs follow visualViewport, not the keyboard-obscured layout viewport. */
+@media screen {
+ .mask{top:var(--note-vv-top,0px);left:var(--note-vv-left,0px);right:auto;bottom:auto;width:var(--note-vv-width,100%);height:var(--note-vv-height,100%)}
+ .note-quick-mask{display:block;background:#0006;backdrop-filter:none;-webkit-backdrop-filter:none}
+ .quick-backdrop{position:absolute;inset:0;width:100%;height:100%}
+ .quick-note{position:absolute;right:max(8px,env(safe-area-inset-right));bottom:var(--note-bottom-gap,calc(8px + env(safe-area-inset-bottom)));width:min(360px,calc(100% - 16px));max-height:calc(100% - 16px);overflow-y:auto;overscroll-behavior:contain;padding:12px;border:1px solid #ffffff18;border-radius:20px;background:#1b2028;box-shadow:0 12px 50px #0007;touch-action:pan-y;transition:none;animation:none}
+ .quick-context{display:flex;align-items:center;gap:10px;width:100%;min-height:44px;padding:0 6px 8px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;text-align:left;color:#b5c0cf;font-size:14px}
+ .quick-context>span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}.quick-context>i{color:var(--dim);font-size:24px;font-style:normal}
+ .quick-four{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+ .quick-four button{min-width:0;min-height:60px;border-radius:14px;background:color-mix(in srgb,var(--tag-color) 10%,#242a33);border:1px solid color-mix(in srgb,var(--tag-color) 25%,transparent);color:var(--tag-color);font-size:20px;font-weight:650;touch-action:manipulation}
+ .quick-four button:active{background:color-mix(in srgb,var(--tag-color) 30%,#242a33)}
+ .quick-type{display:flex;gap:8px;align-items:center;margin-top:10px}
+ .quick-type .field{flex:1;min-width:0;height:50px;font-size:17px!important;-webkit-user-select:text;user-select:text}
+ .quick-type .note-close{flex:0 0 68px;min-height:50px;padding:8px;white-space:nowrap;border-radius:14px;background:#303844;color:#c2daff;font-size:16px;font-weight:600;touch-action:manipulation}
+ .note-compact .quick-note{padding:10px}.note-compact .quick-four button{min-height:52px}
+ .note-short .quick-note{padding:8px}.note-short .quick-four{gap:6px}.note-short .quick-four button{min-height:44px;font-size:17px}
+ .note-short .quick-type{margin-top:6px}.note-short .quick-type .field,.note-short .quick-type .note-close{min-height:44px;height:44px}
+ .note-short .quick-context{padding-bottom:0}
+}
+@media screen and (min-width:560px){.note-short .quick-note{width:min(600px,calc(100% - 16px))}.note-short .quick-four{grid-template-columns:repeat(4,minmax(0,1fr))}}
 .legacy-hand-text{margin-top:5px;font-size:13px;color:var(--dim);white-space:pre-wrap}
-@media(max-height:620px){.quick-four button{min-height:56px}}
-@media(orientation:landscape) and (max-height:500px){.quick-note{padding:8px}.quick-four button{min-height:48px}}
 
-
-/* Field-speed pass: keep actions inside the visible iOS viewport and make correction/deletion one-touch. */
-.note-quick-mask{position:fixed;inset:0;overflow:hidden}
-.quick-note{position:fixed!important;bottom:auto!important;max-height:calc(100dvh - 12px);overflow:hidden}
-.quick-four button{min-height:60px}
-.quick-type{margin-top:8px}.quick-type .field{height:46px}.quick-type .note-close{height:46px;flex-basis:46px}
+/* Retain the one-touch deletion controls from the current main branch. */
 .mark-edit{display:inline-flex;align-items:center;vertical-align:middle;margin:0 1px}
 .mark-edit .mk{margin-right:0;border-radius:3px 0 0 3px}
 .mark-del{width:26px;height:26px;display:inline-flex;align-items:center;justify-content:center;border-radius:0 7px 7px 0;background:#3a2528;color:#ff9c92;font-size:16px;font-weight:700;touch-action:manipulation}
 .note-pill-wrap{display:inline-flex;align-items:center;max-width:100%;vertical-align:middle;margin:2px 2px 2px 0}
 .note-pill-wrap .tagpill{margin:0}
 .pill-del{flex:0 0 30px;width:30px;height:30px;margin-left:2px;border-radius:9px;background:#3a2528;color:#ff9c92;font-size:17px;font-weight:700;touch-action:manipulation}
-@media(max-height:520px){.quick-context{min-height:34px;padding-bottom:4px}.quick-four{gap:5px}.quick-four button{min-height:48px;font-size:17px}.quick-type{margin-top:5px}.quick-type .field,.quick-type .note-close{height:42px}}
-
-/* v16.38: the keyboard opens immediately, while the action sheet stays pinned to the visible viewport. */
-.quick-note{transform:none!important;transition:none!important}
-.quick-type .field{font-size:16px!important}

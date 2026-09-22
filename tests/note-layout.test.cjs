@@ -4,11 +4,11 @@ const src=fs.readFileSync(path.join(__dirname,'..','app.js'),'utf8');
 function sheet(){
  let click,html='',memo='',commits=[];
  const c=vm.createContext({U:{sheet:{lineIdx:0,range:[1,3],tags:[],sel:['member'],memo:'',seq:['C4']}},S:{notes:[],showId:'show'},overlay:null,
-  window:{},resumeRender(){},VIEW:()=>false,typingNow:()=>false,NOTES:()=>[],song:()=>({id:'song',lines:[{t:'新しい歌をここから始めます'}]}),labelOf:()=> '山田',rowNo:()=>1,
+  requestAnimationFrame:()=>1,window:{},resumeRender(){},VIEW:()=>false,typingNow:()=>false,NOTES:()=>[],song:()=>({id:'song',lines:[{t:'新しい歌をここから始めます'}]}),labelOf:()=> '山田',rowNo:()=>1,
   pitchLabel:seq=>seq.join('-'),pianoHTML:()=>'<div id="pno"></div>',showPianoAtC4(){},
   scheduleCommit(){commits.push(c.U.sheet);c.U.sheet=null;},
   document:{addEventListener(name,fn){click=fn;},getElementById:id=>id==='memo'&&c.U.sheet?.detail?{value:memo}:null,
-   createElement(){return {innerHTML:'',remove(){},querySelector(){return this.innerHTML.includes('note-details-content')?{open:true,addEventListener(){},scrollIntoView(){}}:null;}};},body:{appendChild(el){html=el.innerHTML;}}},
+   createElement(){return {innerHTML:'',remove(){},querySelector(){return this.innerHTML.includes('note-details-content')?{open:true,addEventListener(){},scrollIntoView(){},focus(){}}:null;}};},body:{appendChild(el){html=el.innerHTML;}}},
   commitFields(){if(c.U.sheet?.detail)c.U.sheet.memo=memo;}});
  vm.runInContext(src.slice(0,src.indexOf('/* ---------------- state')),c);
  vm.runInContext(src.slice(src.indexOf('function renderSheet()'),src.indexOf('/* ---- summary ---- */')),c);
@@ -20,7 +20,7 @@ function sheet(){
 test('only four fixed choices appear; history cannot move their positions',()=>{
  const s=sheet(),html=s.render();
  const ids=[...html.matchAll(/data-act="tag-choice" data-id="([^"]+)"/g)].map(m=>m[1]);
- assert.deepEqual(ids,['pitch','rhythm','nuance','good']);assert(html.includes('しい歌'));assert(html.includes('hand-open'));
+ assert.deepEqual(ids,['pitch','rhythm','nuance','good']);assert(html.includes('しい歌'));assert(html.includes('quick-type'));assert(html.includes('id="memo"'));assert(!html.includes('hand-open'));
  assert(!html.includes('data-swipe'));assert(!html.includes('id="pno"'));
  s.c.S.notes=[{tags:['pLo','pHi','lyric']}];assert.equal(s.render(),html);
  // Detailed historical tags still have their names.
