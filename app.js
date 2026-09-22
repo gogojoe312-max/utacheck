@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.38.1";
+const APP_VER = "16.38.2";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -4702,6 +4702,7 @@ function selectSummaryShow(id) {
 }
 
 function viewSummary() {
+  if (VIEW() && U.mode === "show") U.mode = "member";
   const ns0 = shownNotes();
   const selectedMember = U.mode === "member" ? member(U.sumOpen) : null;
   const noMemberNotes = selectedMember && !ns0.some(n => n.memberIds.includes(selectedMember.id));
@@ -4796,7 +4797,7 @@ function viewSummary() {
     ${preview ? '<button class="chip sm" data-act="endpv">確認を終わる</button>' : ""}
     <span class="grow"></span>
     <span style="font-size:11px;color:var(--dim)" class="trunc">${h(U.allShows ? "全公演" : showName())}</span></div>
-  <div class="tabs">${tab("member", "メンバー別")}${tab("song", "曲別")}${tab("show", "公演別")}${tab("diff", "前回との差")}</div>
+  <div class="tabs">${tab("member", "メンバー別")}${tab("song", "曲別")}${VIEW() ? "" : tab("show", "公演別")}${tab("diff", "前回との差")}</div>
   ${summaryShowPicker()}
   <div class="scroll pad">${body}<div style="height:40px"></div></div>`;
 }
@@ -4820,7 +4821,7 @@ function viewDiff() {
     ${preview ? '<button class="chip sm" data-act="endpv">確認を終わる</button>' : ""}
     <span class="grow"></span>
     <span style="font-size:11px;color:var(--dim)" class="trunc">${h(showName())}</span></div>
-  <div class="tabs">${tab("member", "メンバー別")}${tab("song", "曲別")}${tab("show", "公演別")}${tab("diff", "前回との差")}</div>${summaryShowPicker()}`;
+  <div class="tabs">${tab("member", "メンバー別")}${tab("song", "曲別")}${VIEW() ? "" : tab("show", "公演別")}${tab("diff", "前回との差")}</div>${summaryShowPicker()}`;
 
   const key = (n) => n.lineIdx + "|" + (n.lineEnd || "");
   const cards = SONGS().map((so) => {
