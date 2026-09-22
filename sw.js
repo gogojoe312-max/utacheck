@@ -1,9 +1,8 @@
 /* 自分のコードは毎回ネットワークを見に行き、圏外のときだけキャッシュを使う。
    重い vendor/ だけはキャッシュ優先。これで「更新したのに変わらない」が起きない。 */
-const CACHE = "utacheck-16.36.2-flick";
+const CACHE = "utacheck-16.36.3-clean";
 const ASSETS = [
   "./", "./index.html", "./app.js", "./manifest.webmanifest",
-  "./hand-notes.css", "./hand-data.js", "./hand-notes.js", "./hand-worker.js", "./hand-model.js", "./hand-model-worker.js", "./vendor/kanjicanvas.js", "./vendor/hand-patterns.json",
   "./ui.css", "./ui.js", "./voice-notes.js", "./reading.js", "./gestures.js", "./liveflow.js", "./liveflow.css",
   "./recflow.css", "./ptlink.js", "./ptmac.html",
   "./icon-192.png", "./icon-512.png", "./setlist.json",

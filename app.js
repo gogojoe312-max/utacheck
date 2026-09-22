@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.36.2";
+const APP_VER = "16.36.3";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -73,12 +73,15 @@ function renderQuickMenu(sh, contextText) {
       <div class="quick-four">
         ${[["pitch","音程"],["rhythm","リズム"],["nuance","ニュアンス"],["good","良い"]].map(([id, label]) => `<button data-act="tag-choice" data-id="${id}" style="--tag-color:${CATCOL[catOf(id)]}">${label}</button>`).join("")}
       </div>
-      <footer><button class="hand-open" data-act="note-detail" data-id="memo">文字入力${sh.memo ? " · 入力あり" : ""}</button><button class="note-close" data-act="cancel" aria-label="指摘画面を閉じる"><span aria-hidden="true">×</span>閉じる</button></footer>
+      <footer><button class="text-open" data-act="note-detail" data-id="memo">文字入力${sh.memo ? " · 入力あり" : ""}</button><button class="note-close" data-act="cancel" aria-label="指摘画面を閉じる"><span aria-hidden="true">×</span>閉じる</button></footer>
     </section>`;
   document.body.appendChild(overlay);
 }
-function handHTML(n, editable = true) {
-  return n.hand && typeof HandNotes !== "undefined" ? HandNotes.preview(n, editable) : "";
+function handHTML(n) {
+  // 旧版で保存済みの手書きだけは文字が読めていた場合に限りテキストとして残す。
+  // 新しい手書き入力・認識処理はもう読み込まない。
+  const text = String(n?.hand?.text || "").trim();
+  return text ? `<div class="legacy-hand-text">${h(text)}</div>` : "";
 }
 
 /* ---------------- state ---------------- */
@@ -774,7 +777,6 @@ function fromTrash(tid) {
   });
   S.trash = S.trash.filter((x) => x.id !== tid);
   save(); schedulePush();
-  if (typeof HandNotes !== "undefined") HandNotes.resume();
 }
 function dropTrash(tid) {
   const t = (S.trash || []).find((x) => x.id === tid);
@@ -4098,8 +4100,6 @@ function renderSheet() {
   if (typingNow() && overlay && overlay.contains(document.activeElement)) { pendingRender = true; return; }
   if (overlay) { overlay.remove(); overlay = null; }
 
-  if (U.menu?.kind === "hand-edit" && typeof HandNotes !== "undefined") { HandNotes.renderEdit(U.menu); return; }
-
   if (U.menu && U.menu.kind.startsWith("lf-") && typeof LiveFlow !== "undefined") {
     overlay = document.createElement("div"); overlay.className = "mask";
     overlay.innerHTML = `<button class="sp" data-act="lf-close" aria-label="閉じる"></button><div class="sheet" role="dialog" aria-modal="true" aria-label="ライブの確認">${LiveFlow.sheet(U.menu)}</div>`;
@@ -4492,7 +4492,6 @@ ${shows}</div>
     ? Array.from((s.lines[rangeLine] || {}).t || "").slice(sh.range[0], sh.range[1] + 1).join("")
     : s.lines.slice(rl0, rl1 + 1).map(x => x.t || "").join(" / ");
   if (sh.voice && typeof NoteVoice !== "undefined") { NoteVoice.render(sh, contextText); return; }
-  if (sh.handOpen && !sh.detail && typeof HandNotes !== "undefined") { HandNotes.render(sh, contextText); return; }
   if (!sh.detail) { renderQuickMenu(sh, contextText || gapWhere(s, sh.lineIdx) || "歌詞のない箇所"); return; }
   const lineHtml = (li) => {
     const cs = Array.from(s.lines[li] ? s.lines[li].t : "");
@@ -4765,7 +4764,7 @@ function copyRecords(oldSo, newSo) {
   S.notes.filter((n) => n.songId === oldSo.id).forEach((n) => {
     if (!map.has(n.lineIdx)) { lost++; return; }
     const c = Object.assign({}, n, { id: uid(), songId: newSo.id, lineIdx: map.get(n.lineIdx) });
-    if (n.hand) c.hand = HandData.clean(n.hand);
+    if (n.hand) c.hand = JSON.parse(JSON.stringify(n.hand));
     if (n.lineEnd != null) c.lineEnd = map.has(n.lineEnd) ? map.get(n.lineEnd) : map.get(n.lineIdx);
     S.notes.push(c);
     moved++;
@@ -4791,8 +4790,6 @@ function copyRecords(oldSo, newSo) {
     Object.keys(src).forEach((i) => { if (map.has(Number(i))) dst[map.get(Number(i))] = src[i].slice(); });
     if (Object.keys(dst).length) S.subs[sid + "|" + newSo.id] = dst;
   });
-
-  if (typeof HandNotes !== "undefined") HandNotes.resume();
   return { moved, lost };
 }
 
@@ -6623,7 +6620,6 @@ document.addEventListener("click", (e) => {
   if (b.tagName === "BUTTON" && typingNow()) {
     commitFields(); document.activeElement.blur();
   }
-  if (typeof HandNotes !== "undefined" && HandNotes.handle(a, id)) return;
   if (typeof LiveFlow !== "undefined" && LiveFlow.handle(a, id, i, b)) return;
   const s = song();
 
@@ -6641,7 +6637,12 @@ document.addEventListener("click", (e) => {
       if (typingNow() && document.activeElement) document.activeElement.blur();
       U.sheet.detail = a === "note-detail";
       renderSheet();
-      if (U.sheet.detail && id === "memo") {\n        const memo = overlay.querySelector("#memo");\n        memo?.scrollIntoView({block:"nearest"});\n        // iPhoneの日本語フリックを、このタップから直接開く。\n        memo?.focus({preventScroll:true});\n      }
+      if (U.sheet.detail && id === "memo") {
+        const memo = overlay.querySelector("#memo");
+        memo?.scrollIntoView({block:"nearest"});
+        // iPhoneの日本語フリックを、このタップから直接開く。
+        memo?.focus({preventScroll:true});
+      }
       break;
     case "tag-choice":
       if (!U.sheet || VIEW() || !TAGS.some(t => t.id === id)) break;
@@ -6741,7 +6742,6 @@ document.addEventListener("click", (e) => {
           }
         }
         save(); schedulePush();
-        if (typeof HandNotes !== "undefined") HandNotes.resume();
         render();
       }
       break;
@@ -8006,7 +8006,7 @@ document.addEventListener("input", (e) => {
 function sheetHasInput() {
   const sh = U.sheet; if (!sh) return false;
   const memo = (document.getElementById("memo") || {}).value || sh.memo || "";
-  return !!(memo.trim() || (sh.seq && sh.seq.length) || (sh.hand && HandData.hasInk(sh.hand)));
+  return !!(memo.trim() || (sh.seq && sh.seq.length));
 }
 // タグを押したらその場で確定して戻る
 let sheetTimer = null;
@@ -8017,7 +8017,7 @@ function commitNote() {
   U.sheet = null;
   if (!s || !sh) { renderSheet(); return; }
   const memo = (document.getElementById("memo") || {}).value || sh.memo || "";
-  if (sh.sel.length || sh.tags.length || memo.trim() || (sh.seq && sh.seq.length) || (sh.hand && HandData.hasInk(sh.hand))) {
+  if (sh.sel.length || sh.tags.length || memo.trim() || (sh.seq && sh.seq.length)) {
     pushUndo(null, true);
     const note = {
       id: uid(), songId: s.id,
@@ -8026,7 +8026,6 @@ function commitNote() {
       memo: memo.trim(), pitch: sh.seq && sh.seq.length ? sh.seq.join("-") : null,
       lineEnd: sh.range ? null : (sh.lineEnd || null),   // 文字を選んだ時はその行だけ
       from: sh.range ? sh.range[0] : null, to: sh.range ? sh.range[1] : null,
-      ...(sh.hand && HandData.hasInk(sh.hand) ? {hand:HandData.clean(sh.hand)} : {}),
       at: recAt(),
       tk: takeCtx() || undefined,
       showId: S.showId, ts: Date.now(),
@@ -8034,7 +8033,6 @@ function commitNote() {
     S.notes.push(note);
     save();
     schedulePush();
-    if (note.hand && typeof HandNotes !== "undefined") HandNotes.recognize(note);
   }
   render();
 }
@@ -8925,7 +8923,7 @@ function publicationData(gid) {
       notes: S.notes.filter((n) => idx.has(n.songId)).map((n) => ({
         songIdx: idx.get(n.songId), lineIdx: n.lineIdx,
         memberNames: n.memberIds.map((mid) => (member(mid) || {}).name).filter(Boolean),
-        tags: n.tags, memo: n.memo, ...(n.hand ? {hand:HandData.clean(n.hand)} : {}), pitch: n.pitch || null, lineEnd: n.lineEnd || null,
+        tags: n.tags, memo: n.memo, ...(n.hand ? {hand:JSON.parse(JSON.stringify(n.hand))} : {}), pitch: n.pitch || null, lineEnd: n.lineEnd || null,
         from: n.from, to: n.to, showId: n.showId, at: n.at != null ? n.at : null,
       })),
       memos: Object.entries(S.memos || {}).map(([k, v]) => {
@@ -9372,7 +9370,7 @@ function mergeDelivery(d, gist, label) {
       id: uid(), showId: n.showId || so.showId, songId: so.id, lineIdx: n.lineIdx,
       lineEnd: n.lineEnd || null, from: n.from, to: n.to,
       memberIds: (n.memberNames || []).map((nm) => addMember(nm).id),
-      tags: n.tags || [], memo: n.memo || "", ...(n.hand ? {hand:HandData.clean(n.hand)} : {}), pitch: n.pitch || null,
+      tags: n.tags || [], memo: n.memo || "", ...(n.hand ? {hand:JSON.parse(JSON.stringify(n.hand))} : {}), pitch: n.pitch || null,
       at: n.at != null ? n.at : null, ts: Date.now(),
     });
   });
@@ -9780,7 +9778,6 @@ async function restoreBackupFile(file) {
     U.view = "setup"; U.songIdx = 0; U.sheet = null; U.menu = null;
     save(); await saveNow();
     if (saveErr) throw new Error("端末に保存できません。空き容量を確認してください。");
-    if (typeof HandNotes !== "undefined") HandNotes.resume();
     render(); alert("ファイルから復元しました。");
   } catch (e) { alert("復元できませんでした。\n" + e.message); }
 }
@@ -10042,7 +10039,6 @@ function endPreview() {
   preview = null;
   Object.keys(S).forEach((k) => { delete S[k]; });
   Object.assign(S, back);
-  if (typeof HandNotes !== "undefined") HandNotes.resume();
   U.view = "setup"; U.songIdx = 0;
   render();
 }
@@ -10086,7 +10082,6 @@ async function checkOther() {
       S.ghToken = tk; S.bkGistId = bk; S.bkKey = bkk; S.editPass = ep;
       S.bkSeen = at; S.bkAt = at; S.bkHash = bkSignature();
       save(); otherAt = 0;
-      if (typeof HandNotes !== "undefined") HandNotes.resume();
       render();
       return;
     }
@@ -10217,7 +10212,6 @@ setTimeout(readViewport, 400);
 (async () => {
   await load();
   booted = true;
-  if (typeof HandNotes !== "undefined") HandNotes.resume();
   if (VIEW() || /^#g=/.test(location.hash)) { U.view = "summary"; U.mode = "member"; }
   // 前まで localStorage に置いていた分は、IndexedDB へ引っ越す。
   // 移し終えてから消すので、途中で止まっても元は残る。

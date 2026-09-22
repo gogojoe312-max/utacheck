@@ -245,3 +245,20 @@ select.field{appearance:auto}textarea.field{resize:vertical}
  #voice-status{font-size:14px;color:var(--dim);min-height:40px;line-height:1.5;margin-top:12px}.voice-service{font-size:11px;color:var(--dim);margin-bottom:12px}
  .voice-sheet footer{display:flex;gap:8px;padding-bottom:env(safe-area-inset-bottom)}.voice-sheet footer button{flex:1;min-height:48px;border-radius:12px;background:var(--panel2);font-size:14px}.voice-sheet footer #voice-save{background:#81b1ff;color:#10141b;font-weight:650}.voice-sheet footer #voice-save:disabled{opacity:.3}
 }
+
+
+/* Live quick note: four fixed choices + immediate iPhone text entry. */
+.note-quick-mask{display:block;background:#0006;backdrop-filter:none;-webkit-backdrop-filter:none}
+.quick-backdrop{position:absolute;inset:0;width:100%;height:100%}
+.quick-note{position:absolute;right:max(8px,env(safe-area-inset-right));bottom:calc(8px + env(safe-area-inset-bottom));width:min(360px,calc(100% - 16px));padding:12px;border:1px solid #ffffff18;border-radius:24px;background:#1b2028;box-shadow:0 12px 50px #0007}
+.quick-context{display:flex;align-items:center;gap:10px;width:100%;min-height:44px;padding:0 6px 8px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;text-align:left;color:#b5c0cf;font-size:14px}
+.quick-context>span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}.quick-context>i{color:var(--dim);font-size:24px;font-style:normal}
+.quick-four{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.quick-four button{min-height:66px;border-radius:16px;background:color-mix(in srgb,var(--tag-color) 10%,#242a33);border:1px solid color-mix(in srgb,var(--tag-color) 25%,transparent);color:var(--tag-color);font-size:20px;font-weight:650;touch-action:manipulation}
+.quick-four button:active{background:color-mix(in srgb,var(--tag-color) 30%,#242a33)}
+.quick-note footer{display:flex;gap:8px;margin-top:10px}.quick-note footer button{min-height:50px;border-radius:14px;font-size:16px}
+.text-open{flex:1;text-align:left;padding:0 16px;background:#303844;color:#e8edf5;font-weight:600}
+.quick-note .note-close{flex:0 0 112px;min-height:50px;background:#252c36}
+.legacy-hand-text{margin-top:5px;font-size:13px;color:var(--dim);white-space:pre-wrap}
+@media(max-height:620px){.quick-four button{min-height:56px}}
+@media(orientation:landscape) and (max-height:500px){.quick-note{padding:8px}.quick-four button{min-height:48px}.quick-note footer{margin-top:6px}}
