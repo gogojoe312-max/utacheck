@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.36.3";
+const APP_VER = "16.36.4";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -73,9 +73,13 @@ function renderQuickMenu(sh, contextText) {
       <div class="quick-four">
         ${[["pitch","音程"],["rhythm","リズム"],["nuance","ニュアンス"],["good","良い"]].map(([id, label]) => `<button data-act="tag-choice" data-id="${id}" style="--tag-color:${CATCOL[catOf(id)]}">${label}</button>`).join("")}
       </div>
-      <footer><button class="text-open" data-act="note-detail" data-id="memo">文字入力${sh.memo ? " · 入力あり" : ""}</button><button class="note-close" data-act="cancel" aria-label="指摘画面を閉じる"><span aria-hidden="true">×</span>閉じる</button></footer>
+      <div class="quick-type"><input class="field" id="memo" enterkeyhint="done" autocomplete="off" autocorrect="on"
+        placeholder="そのままフリック入力" value="${h(sh.memo)}"><button class="note-close" data-act="cancel" aria-label="指摘画面を閉じる"><span aria-hidden="true">×</span></button></div>
     </section>`;
   document.body.appendChild(overlay);
+  // 歌詞をタップ／なぞった同じ操作の流れでキーボードまで出す。文字入力ボタンは挟まない。
+  const memo = overlay.querySelector("#memo");
+  try { memo?.focus({preventScroll:true}); } catch (_) { memo?.focus(); }
 }
 function handHTML(n) {
   // 旧版で保存済みの手書きだけは文字が読めていた場合に限りテキストとして残す。
