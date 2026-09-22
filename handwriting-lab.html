@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#10151e">
+  <title>手書きの読み取り比較 · 歌チェック</title>
+  <link rel="stylesheet" href="handwriting-lab.css">
+  <script src="hand-data.js" defer></script>
+  <script src="handwriting-lab.js" defer></script>
+</head>
+<body>
+  <main class="lab-shell">
+    <header class="lab-header">
+      <a class="lab-back" href="index.html">‹ 歌チェックへ戻る</a>
+      <span class="lab-badge">試用</span>
+      <h1>手書きの読み取り比較</h1>
+      <p class="lab-lead">同じ筆跡を、これまでの方式と新しい方式で読み取ります。</p>
+    </header>
+
+    <details class="lab-about">
+      <summary>初回は約17MBを読み込みます</summary>
+      <p>筆跡はこの端末内だけで処理・保存します。歌チェックの記録は変わりません。</p>
+      <p>新しい方式は、初回の比較時に約17MBの認識データを読み込みます。通信が必要です。初回は最大90秒ほどお待ちください。</p>
+      <p>1文字ずつの認識を試すページです。続け書きや小さい「っ」「ゅ」などは、正しく読めない場合があります。</p>
+    </details>
+
+    <section class="lab-writing" aria-labelledby="lab-writing-title">
+      <div class="lab-section-heading">
+        <h2 id="lab-writing-title">いつもの字で書く</h2>
+        <span>1マスに1文字</span>
+      </div>
+      <p class="lab-hint">左から右へ、上の段から順に書いてください。6文字まで試せます。</p>
+      <div class="lab-grid" id="lab-grid"></div>
+      <div class="lab-edit-tools">
+        <button id="lab-undo" type="button" disabled>一つ戻す</button>
+        <button id="lab-clear" type="button" disabled>全部消す</button>
+      </div>
+      <p class="lab-storage" id="lab-storage" role="status">このページの筆跡を端末に保存します。</p>
+    </section>
+
+    <section class="lab-results" id="lab-results" aria-labelledby="lab-results-title">
+      <div class="lab-section-heading"><h2 id="lab-results-title">読み取り結果</h2></div>
+      <p class="lab-hint">候補は読み取り順です。正しさを保証するものではありません。</p>
+      <div class="lab-result-grid">
+        <article class="lab-result" id="lab-result-legacy" aria-labelledby="lab-legacy-title">
+          <h3 id="lab-legacy-title">これまでの方式</h3>
+          <p class="lab-result-state">まだ比較していません。</p>
+          <p class="lab-result-text" hidden></p>
+          <ol class="lab-candidates" hidden></ol>
+        </article>
+        <article class="lab-result lab-result-new" id="lab-result-model" aria-labelledby="lab-model-title">
+          <h3 id="lab-model-title">新しい方式</h3>
+          <p class="lab-result-state">まだ比較していません。</p>
+          <p class="lab-result-text" hidden></p>
+          <ol class="lab-candidates" hidden></ol>
+        </article>
+      </div>
+    </section>
+    <noscript><p class="lab-error">手書きの比較にはJavaScriptを有効にしてください。</p></noscript>
+  </main>
+  <footer class="lab-bottom">
+    <div class="lab-bottom-inner">
+      <p id="lab-status" role="status" aria-live="polite">文字を書いてから「読み取りを比較」を押してください。</p>
+      <button class="lab-compare" id="lab-compare" type="button" disabled>読み取りを比較</button>
+    </div>
+  </footer>
+</body>
+</html>
