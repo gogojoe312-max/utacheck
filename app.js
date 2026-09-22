@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.38.2";
+const APP_VER = "16.39.0";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -171,18 +171,6 @@ function renderQuickMenu(sh, contextText) {
   try { memo?.focus({preventScroll:true}); } catch (_) { memo?.focus(); }
   requestAnimationFrame(positionQuickNote);
 }
-function positionQuickNote() {
-  const q = overlay?.querySelector(".quick-note");
-  if (!q) return;
-  const vv = window.visualViewport;
-  const top = vv ? vv.offsetTop : 0;
-  const height = vv ? vv.height : window.innerHeight;
-  q.style.top = Math.max(top + 6, top + height - q.offsetHeight - 6) + "px";
-}
-if (window.visualViewport) {
-  visualViewport.addEventListener("resize", () => { if (U.sheet && !U.sheet.detail) positionQuickNote(); });
-  visualViewport.addEventListener("scroll", () => { if (U.sheet && !U.sheet.detail) positionQuickNote(); });
-}
 
 function handHTML(n) {
   // 旧版で保存済みの手書きだけは文字が読めていた場合に限りテキストとして残す。
@@ -195,7 +183,7 @@ function handHTML(n) {
 let S = {
   members: [], songs: [], notes: [],
   shows: [], showId: "",
-  src: "", setlistVer: 0,
+  setlistVer: 0,
   deviceId: "", pubNotes: [], alertMsg: null, pubAlert: null, alertSeen: "",
   bkGistId: "", bkAt: 0, bkKey: "", bkHash: 0, bkSeen: 0, editPass: "",
   ghToken: "", autoPub: true,
@@ -944,7 +932,7 @@ function pastHits(songId, lineIdx) {
   return { count: ns.length ? 1 : 0, notes: ns };
 }
 const memoKey = (songId) => S.showId + "|" + songId;
-const songMemo = (songId) => (S.memos || {})[memoKey(songId)] || "";
+const songMemo = (songId, showId = S.showId) => (S.memos || {})[showId + "|" + songId] || "";
 const shownNotes = () => (U.allShows ? NOTES() : NOTES().filter((n) => n.showId === S.showId));
 let pushTimer = null, pushState = "";
 let undoStack = [];
@@ -3731,7 +3719,7 @@ function render(background = false) {
   }
   const keep = app.querySelector(".scroll");
   const st = keep ? keep.scrollTop : 0;
-  const sig = JSON.stringify([U.view, S.showId, song()?.id, takeCtx(), U.mode, U.allShows, U.overview]);
+  const sig = JSON.stringify([U.view, S.showId, song()?.id, takeCtx(), U.mode, U.allShows, U.overview, U.memberName]);
   const sameView = app.dataset.view === sig;
   app.dataset.view = sig;
   app.dataset.rec = S.recMode ? "1" : "0";
@@ -3979,7 +3967,7 @@ function viewLive() {
     <button class="grow" style="text-align:left" data-act="picker">
       <div class="t1" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px">${S.recMode
         ? `<b style="color:var(--accent)">レコーディングモード</b>${s ? " ・ " + h((S.groups.find((x) => x.id === s.groupId) || {}).name || s.folder || "") : ""}`
-        : `<b style="color:var(--accent)">ライブモード</b>${s ? " ・ " + h((S.groups.find((x) => x.id === s.groupId) || {}).name || "") : ""} ・ ${h(showName() || "公演名未設定")}${SONGS().length ? ` ・ ${U.songIdx + 1}/${SONGS().length}` : ""}${showNoPub() ? ` ・ <span style="color:var(--dim)">配信しない</span>` : `<span data-push-state style="color:${pushState === "未送信" ? "var(--bad)" : "var(--dim)"}">${pushState ? " ・ " + h(pushState) : ""}</span>`}`}${recWho()}</div>
+        : `<b style="color:var(--accent)">${VIEW() ? "公演" : "ライブモード"}</b>${s ? " ・ " + h((S.groups.find((x) => x.id === s.groupId) || {}).name || "") : ""} ・ ${h(showName() || "公演名未設定")}${SONGS().length ? ` ・ ${U.songIdx + 1}/${SONGS().length}` : ""}${showNoPub() ? ` ・ <span style="color:var(--dim)">配信しない</span>` : `<span data-push-state style="color:${pushState === "未送信" ? "var(--bad)" : "var(--dim)"}">${pushState ? " ・ " + h(pushState) : ""}</span>`}`}${recWho()}</div>
       ${VIEW() && S.pubAt ? `<div style="font-size:10px;line-height:1.4">${freshLine()}</div>` : ""}
       <div class="t2 clamp2">${s && s.mark ? `<b style="color:var(--accent)">★</b> ` : ""}${s && !S.recMode && takeLabel(s) ? `<b class="tkmk">${h(takeLabel(s))}</b>` : ""}${h(s ? s.title : "曲がありません")}</div>
     </button>
@@ -3992,7 +3980,7 @@ function viewLive() {
   <div class="scroll" style="position:relative">
     <canvas id="ink" class="ink" style="pointer-events:${U.draw && !VIEW() ? "auto" : "none"};touch-action:${U.draw ? "none" : "auto"}"></canvas>
     ${body}
-    ${s && !S.recMode ? `<div class="card" style="margin:18px 12px 0">
+    ${s && !S.recMode && (!VIEW() || songMemo(s.id).trim()) ? `<div class="card" style="margin:18px 12px 0">
       <h4 style="font-size:11px;color:var(--dim);margin-bottom:8px">総括</h4>
       ${VIEW()
         ? `<div style="font-size:13px;white-space:pre-wrap">${h(songMemo(s.id)) || "—"}</div>`
@@ -4031,7 +4019,7 @@ function viewLive() {
           <path d="M4 20.5h16" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/>
         </svg></button>
       ` : ""}
-    ${VIEW() ? '<button data-act="go-summary">集計</button>' : ""}
+    ${VIEW() ? '<button data-act="go-summary">指摘</button>' : ""}
     ${VIEW() && unreadSongs().length ? `<button data-act="nextunread" style="color:var(--accent);font-weight:700">未読${unreadSongs().length}</button>` : ""}
 
     <span class="grow"></span>
@@ -4183,7 +4171,7 @@ function viewOverview(s) {
 
   return `
   <div class="hd">
-    <div class="grow"><div class="t1 clamp2"><b style="color:var(--accent)">${S.recMode ? "レコーディングモード" : "ライブモード"}</b> ・ ${h(showName())} ・ 全体表示</div>
+    <div class="grow"><div class="t1 clamp2"><b style="color:var(--accent)">${S.recMode ? "レコーディングモード" : VIEW() ? "公演" : "ライブモード"}</b> ・ ${h(showName())} ・ 全体表示</div>
       <div class="t2 trunc">${h(songName(s))}</div></div>
     <button class="ic" data-act="ovsize">${S.recMode ? S.recOvSize : U.ovSize}px</button>
   </div>
@@ -4701,6 +4689,89 @@ function selectSummaryShow(id) {
   save(); render();
 }
 
+// Member preferences stay on this device, separately from published/replaced data.
+function viewerMembers() {
+  const roster = (S.rosters || {})[(group() || {}).name || S.srcGroup] || [];
+  return roster.length ? roster.map(name => S.members.find(m => m.name === name)).filter(Boolean) : S.members;
+}
+function viewerMemberKey() { return "utacheck.member:" + (S.linkSrc || S.src || S.groupId || "default"); }
+function restoreViewerMember() {
+  const key = viewerMemberKey();
+  if (U.memberScope !== key) {
+    U.memberScope = key;
+    U.memberName = "";
+    if (!preview) { try { U.memberName = localStorage.getItem(key) || ""; } catch (_) {} }
+  }
+  const m = viewerMembers().find(m => m.name === U.memberName);
+  U.sumOpen = m ? m.id : "";
+  return m || null;
+}
+function selectViewerMember(id) {
+  if (!VIEW()) return;
+  restoreViewerMember();
+  const m = viewerMembers().find(m => m.id === id);
+  U.memberName = m ? m.name : "";
+  U.sumOpen = m ? m.id : "";
+  if (!preview) { try { localStorage.setItem(viewerMemberKey(), U.memberName); } catch (_) {} }
+  render();
+}
+function summarySongs() {
+  const allowed = new Set(summaryShows().map(sw => sw.id));
+  return S.songs.filter(so => (U.allShows ? allowed.has(so.showId) : so.showId === S.showId)
+    && (!S.groupId || !so.groupId || so.groupId === S.groupId));
+}
+function summaryMemo(so) { return String(songMemo(so.id, so.showId)).trim(); }
+function viewerSummaryBody() {
+  const selected = restoreViewerMember();
+  const byMember = U.mode === "member";
+  const all = shownNotes();
+  const ns = byMember && selected ? all.filter(n => n.memberIds.includes(selected.id)) : all;
+  const picker = byMember ? `<label class="summary-show-picker member-picker"><span>メンバー</span>
+    <select id="summary-member" aria-label="メンバー"><option value="">全員</option>
+    ${viewerMembers().map(m => `<option value="${h(m.id)}" ${selected && selected.id === m.id ? "selected" : ""}>${h(m.name)}</option>`).join("")}</select></label>
+    <p class="member-hint">${selected ? h(selected.name) + "さんへの指摘と、全員共通の総括を表示しています。" : "名前を選ぶと、自分への指摘を表示します。次回もこの端末で記憶します。"}</p>` : "";
+  const cards = summarySongs().map(so => {
+    const notes = ns.filter(n => n.songId === so.id && n.showId === so.showId).sort((a,b) => a.lineIdx - b.lineIdx);
+    const memo = summaryMemo(so);
+    if (!notes.length && !memo) return "";
+    return `<section class="card member-song">
+      <div class="member-song-head"><div class="grow">${U.allShows ? `<div class="member-caption">${h(showName(so.showId))}</div>` : ""}<h3>${h(songName(so))}</h3></div>
+      <button class="chip sm" data-act="summary-song" data-id="${h(so.id)}" aria-label="${h(songName(so))}の歌詞を開く">歌詞</button></div>
+      ${memo ? `<div class="song-summary"><h4>総括 <span>全員共通</span></h4><div>${h(memo)}</div></div>` : ""}
+      ${notes.length ? `<h4 class="member-notes-title">${byMember && selected ? h(selected.name) + "さんへの指摘" : "指摘"}<span>${notes.length}件</span></h4>
+        ${notes.map(n => `<div class="member-note"><div class="member-lyric">${h(lyricOf(n))}</div>
+          ${partOf(n) ? `<div class="member-caption">対象：${h(partOf(n))}</div>` : ""}
+          ${!byMember || !selected ? `<div class="member-caption">${h(names(n.memberIds) || "全員")}</div>` : ""}
+          <div class="member-note-tags" style="color:${noteColor(n)}">${h(n.tags.map(tagName).join("・"))}${n.pitch ? "（正しい音 " + h(pitchLabel(n.pitch)) + "）" : ""}</div>
+          ${n.memo ? `<div class="member-note-memo">${h(n.memo)}</div>` : ""}${handHTML(n)}</div>`).join("")}`
+        : `<p class="member-hint">${byMember && selected ? h(selected.name) + "さんへの個別の指摘はありません。" : "個別の指摘はありません。"}</p>`}
+    </section>`;
+  }).join("");
+  return picker + (cards || `<p class="member-empty">${byMember && selected ? h(selected.name) + "さんへの指摘・曲の総括は" : "指摘・曲の総括は"}${U.allShows ? "まだ" : "この公演には"}ありません。</p>`);
+}
+function openSummarySong(id) {
+  const so = summarySongs().find(so => so.id === id);
+  if (!so) return;
+  S.showId = so.showId;
+  U.songIdx = Math.max(0, SONGS().findIndex(x => x.id === id));
+  U.view = "live"; save(); render();
+}
+
+function summaryHeader() {
+  const tab = (id, label) => `<button class="chip sm" data-act="mode" data-id="${id}"
+    style="${U.mode === id ? "background:var(--accent);color:#0A0A0A" : ""}">${label}</button>`;
+
+  return `
+  <div class="hd"><button class="ic" data-act="go-live" aria-label="歌詞を開く">${VIEW() ? "歌詞" : "‹"}</button><b>${VIEW() ? "指摘" : "集計"}</b>
+    ${VIEW() ? '<button class="ic" data-act="go-setup">設定</button>' : ""}
+    ${preview ? '<button class="chip sm" data-act="endpv">確認を終わる</button>' : ""}
+    <span class="grow"></span>
+    <span style="font-size:11px;color:var(--dim)" class="trunc">${h(U.allShows ? "全公演" : showName())}</span></div>
+  <div class="tabs">${tab("member", "メンバー別")}${tab("song", "曲別")}${VIEW() ? "" : tab("show", "公演別")}${tab("diff", "前回との差")}</div>
+  ${summaryShowPicker()}
+`;
+}
+
 function viewSummary() {
   if (VIEW() && U.mode === "show") U.mode = "member";
   const ns0 = shownNotes();
@@ -4714,7 +4785,8 @@ function viewSummary() {
     </div>`;
 
   let body = "";
-  if (!ns0.length) body = `<p style="padding:40px;text-align:center;color:var(--dim);font-size:14px">この公演の記録はまだありません。</p>`;
+  if (VIEW() && (U.mode === "member" || U.mode === "song")) body = viewerSummaryBody();
+  else if (!ns0.length) body = `<p style="padding:40px;text-align:center;color:var(--dim);font-size:14px">この公演の記録はまだありません。</p>`;
   else if (U.mode === "member") {
     // 登録した名簿の順（＝年齢順）に並べ、グループごとに見出しを付ける
     const named = S.groups.map((g) => g.name).filter(Boolean);
@@ -4762,7 +4834,7 @@ function viewSummary() {
     body = (U.allShows ? S.songs : SONGS()).map((so) => {
       const ns = ns0.filter((n) => n.songId === so.id).sort((a, b) => a.lineIdx - b.lineIdx);
       if (!ns.length) return "";
-      const mm = (S.memos || {})[S.showId + "|" + so.id];
+      const mm = summaryMemo(so);
       return `<div class="card"><b>${h(songName(so))}</b> <span style="color:var(--dim);font-size:13px">${ns.length}件</span>
         ${mm ? `<div style="margin-top:8px;padding:8px 10px;border-radius:8px;background:var(--panel2);font-size:13px;white-space:pre-wrap">${h(mm)}</div>` : ""}
         ${ns.map((n) => `<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--line);font-size:13px">
@@ -4783,24 +4855,14 @@ function viewSummary() {
     }).join("");
   }
 
-  if (noMemberNotes) {
+  if (noMemberNotes && !VIEW()) {
     const empty = `<p class="note" style="padding:12px">${h(selectedMember.name)}さんの指摘は${U.allShows ? "まだ" : "この公演には"}ありません。</p>`;
     body = empty + (ns0.length ? body : "");
   }
   if (U.mode === "diff") return viewDiff();
-  const tab = (id, label) => `<button class="chip sm" data-act="mode" data-id="${id}"
-    style="${U.mode === id ? "background:var(--accent);color:#0A0A0A" : ""}">${label}</button>`;
-
-  return `
-  <div class="hd"><button class="ic" data-act="go-live" aria-label="歌詞を開く">${VIEW() ? "歌詞" : "‹"}</button><b>集計</b>
-    ${VIEW() ? '<button class="ic" data-act="go-setup">設定</button>' : ""}
-    ${preview ? '<button class="chip sm" data-act="endpv">確認を終わる</button>' : ""}
-    <span class="grow"></span>
-    <span style="font-size:11px;color:var(--dim)" class="trunc">${h(U.allShows ? "全公演" : showName())}</span></div>
-  <div class="tabs">${tab("member", "メンバー別")}${tab("song", "曲別")}${VIEW() ? "" : tab("show", "公演別")}${tab("diff", "前回との差")}</div>
-  ${summaryShowPicker()}
-  <div class="scroll pad">${body}<div style="height:40px"></div></div>`;
+  return summaryHeader() + `<div class="scroll pad">${body}<div style="height:40px"></div></div>`;
 }
+
 
 /* ---- 前回との差 ---- */
 function prevShowId() {
@@ -4813,15 +4875,7 @@ function prevShowId() {
 
 function viewDiff() {
   const pid = prevShowId();
-  const tab = (id, label) => `<button class="chip sm" data-act="mode" data-id="${id}"
-    style="${U.mode === id ? "background:var(--accent);color:#0A0A0A" : ""}">${label}</button>`;
-  const head = `
-  <div class="hd"><button class="ic" data-act="go-live" aria-label="歌詞を開く">${VIEW() ? "歌詞" : "‹"}</button><b>集計</b>
-    ${VIEW() ? '<button class="ic" data-act="go-setup">設定</button>' : ""}
-    ${preview ? '<button class="chip sm" data-act="endpv">確認を終わる</button>' : ""}
-    <span class="grow"></span>
-    <span style="font-size:11px;color:var(--dim)" class="trunc">${h(showName())}</span></div>
-  <div class="tabs">${tab("member", "メンバー別")}${tab("song", "曲別")}${VIEW() ? "" : tab("show", "公演別")}${tab("diff", "前回との差")}</div>${summaryShowPicker()}`;
+  const head = summaryHeader();
 
   const key = (n) => n.lineIdx + "|" + (n.lineEnd || "");
   const cards = SONGS().map((so) => {
@@ -6401,15 +6455,17 @@ function viewSetup() {
     return `
     <div class="hd"><button class="ic" data-act="go-live">‹</button><b>設定</b>
       <span class="grow"></span>
-      <span style="font-size:11px;color:var(--accent)">ライブモード</span></div>
+      <span style="font-size:11px;color:var(--accent)">${h(showName())}</span></div>
     <div class="scroll pad">
     ${preview ? '<button class="primary" data-act="endpv">メンバー画面の確認を終わる</button>' : ""}
     ${lyricDisplaySettings()}
-    <h4 class="head">指摘</h4><div class="card"><button class="primary" data-act="go-summary">指摘の集計を見る</button></div>
+    <h4 class="head">指摘</h4><div class="card"><button class="primary" data-act="go-summary">指摘を見る</button></div>
     <h4 class="head">公演</h4>
     ${list || `<p class="note">公演がありません</p>`}
     ${allShows.length > 12 ? `<button class="ghost" data-act="allshowlist" style="margin-bottom:10px">${U.allShowList ? "最近の12公演だけ表示" : `すべて表示（全${allShows.length}公演）`}</button>` : ""}
 
+    <h4 class="head">練習ツール</h4>
+    <details class="practice-tools card"><summary>鍵盤・ピッチ・メトロノーム</summary>
     <h4 class="head">音を確かめる</h4>
     <div class="card">${pianoHTML(null)}</div>
     <h4 class="head">ピッチを見る</h4>
@@ -6417,6 +6473,7 @@ function viewSetup() {
 
     <h4 class="head">メトロノーム</h4>
     ${metroHTML()}
+    </details>
     <h4 class="head">歌割をPDFにする</h4>
     <div class="card"><button class="primary" data-act="gopdf">PDFにする</button></div>
     ${footerHTML()}
@@ -6764,6 +6821,7 @@ document.addEventListener("click", (e) => {
     case "size": S.size = S.size >= 26 ? 15 : S.size + 2; save(); render(); break;
     case "prev": if (U.songIdx > 0) { commitFields(); markRead(song()); U.songIdx--; if (S.recMode) { S.rsongId = SONGS()[U.songIdx].id; U.secView = ""; save(); } render(); } break;
     case "next": if (U.songIdx < SONGS().length - 1) { commitFields(); markRead(song()); U.songIdx++; if (S.recMode) { S.rsongId = SONGS()[U.songIdx].id; U.secView = ""; save(); } render(); } break;
+    case "summary-song": openSummarySong(id); break;
     case "go-summary": commitFields(); U.view = "summary"; render(); break;
     case "pt-settings": if (window.PTLink) window.PTLink.open(); break;
     case "go-setup": commitFields(); U.view = "setup"; render(); break;
@@ -8095,6 +8153,7 @@ document.addEventListener("focusout", () => {
 });
 
 document.addEventListener("change", (e) => {
+  if (e.target.id === "summary-member") { selectViewerMember(e.target.value); return; }
   if (e.target.id === "summary-show") { selectSummaryShow(e.target.value); return; }
   if (e.target.id === "file") {
     // 一覧を控えてから空にする。同じファイルをもう一度選んでも読み込めるように。
@@ -10013,7 +10072,7 @@ function applySetlist(d) {
     S.memos = {};
     (d.memos || []).forEach((m) => {
       const so = S.songs[m.songIdx];
-      if (so) S.memos[m.showId + "|" + so.id] = m.text;
+      if (so) S.memos[(m.showId || so.showId) + "|" + so.id] = m.text;
     });
 
     if (Array.isArray(d.shows)) {
@@ -10158,6 +10217,7 @@ async function startPreview(src, key) {
   S.subs = {}; S.subsMan = {}; S.gsubs = {}; S.draws = {}; S.recs = {};
   S.viewer = true; S.recMode = false;
   applySetlist(d);
+  U.memberScope = null;
   U.view = "summary"; U.mode = "member"; U.allShows = false; U.sumOpen = ""; U.songIdx = 0;
   render();
 }
@@ -10167,6 +10227,7 @@ function endPreview() {
   preview = null;
   Object.keys(S).forEach((k) => { delete S[k]; });
   Object.assign(S, back);
+  U.memberScope = null;
   U.view = "setup"; U.songIdx = 0;
   render();
 }
