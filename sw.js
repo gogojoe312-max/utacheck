@@ -1,9 +1,9 @@
 /* 自分のコードは毎回ネットワークを見に行き、圏外のときだけキャッシュを使う。
    重い vendor/ だけはキャッシュ優先。これで「更新したのに変わらない」が起きない。 */
-const CACHE = "utacheck-16.36.1";
+const CACHE = "utacheck-16.36.1-hand2";
 const ASSETS = [
   "./", "./index.html", "./app.js", "./manifest.webmanifest",
-  "./hand-notes.css", "./hand-data.js", "./hand-notes.js", "./hand-worker.js", "./vendor/kanjicanvas.js", "./vendor/hand-patterns.json",
+  "./hand-notes.css", "./hand-data.js", "./hand-notes.js", "./hand-worker.js", "./hand-model.js", "./hand-model-worker.js", "./vendor/kanjicanvas.js", "./vendor/hand-patterns.json",
   "./ui.css", "./ui.js", "./voice-notes.js", "./reading.js", "./gestures.js", "./liveflow.js", "./liveflow.css",
   "./recflow.css", "./ptlink.js", "./ptmac.html",
   "./icon-192.png", "./icon-512.png", "./setlist.json",
@@ -21,6 +21,7 @@ self.addEventListener("activate", (e) => {
 });
 
 const put = (req, res) => {
+  if (!res.ok) return res;
   const copy = res.clone();
   caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
   return res;
@@ -47,6 +48,7 @@ self.addEventListener("fetch", (e) => {
     fetch(e.request, { cache: "no-store" })
       .then((r) => put(e.request, r))
       .catch(() => caches.match(e.request, { ignoreSearch: true })
-        .then((hit) => hit || caches.match("./index.html")))
+        .then((hit) => hit || (e.request.mode === "navigate" ? caches.match("./index.html") : null))
+        .then((hit) => hit || Response.error()))
   );
 });

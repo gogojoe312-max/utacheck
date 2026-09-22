@@ -38,3 +38,22 @@
 @media(max-height:620px){.hand-sheet header{min-height:40px}.hand-hint{margin:4px 0 6px}.hand-grid{max-width:284px}.hand-context{margin:0}.hand-tools{margin:2px 0}#hand-status{margin:0 0 6px}.sheet.hand-sheet{padding-top:8px}.quick-four button{min-height:56px}}
 @media(orientation:landscape) and (max-height:500px){.sheet.hand-sheet{width:min(620px,100%)}.hand-grid{max-width:560px;grid-template-columns:repeat(6,minmax(0,1fr))}.hand-hint,.hand-context{display:inline-block;margin-right:10px}.quick-note{padding:8px}.quick-four button{min-height:48px}.quick-note footer{margin-top:6px}}
 @media print{.hand-note{background:none;border-color:#aaa;color:#222;break-inside:avoid}.hand-note small{color:#555}}
+
+/* Candidate correction is confined to the saved-handwriting editor. */
+.hand-model-trial{margin:10px 0;border:1px solid #ffffff18;border-radius:12px;padding:0 12px}
+.hand-model-trial summary{min-height:44px;display:flex;align-items:center;color:#b9cee9;font-size:13px;cursor:pointer}
+.hand-model-trial summary::before{content:"＋";margin-right:8px}.hand-model-trial[open] summary::before{content:"−"}
+.hand-model-trial p{font-size:12px;line-height:1.6;color:#99a5b6;margin:0 0 8px}
+.hand-model-trial button{min-height:44px;width:100%;margin-bottom:10px;border-radius:10px;background:#303844;color:#d8e6fa;font-size:14px}
+#hand-edit-status{font-size:12px;line-height:1.5;color:#99a5b6;margin:8px 0;overflow-wrap:anywhere}
+#hand-edit-status:empty{display:none}
+.hand-candidate-hint{font-size:12px;line-height:1.5;color:#99a5b6;margin:8px 0}
+.hand-candidate-row{display:flex;gap:8px;align-items:flex-start;margin:6px 0}
+.hand-candidate-row>span{flex:0 0 32px;padding-top:12px;font-size:11px;color:#99a5b6}
+.hand-candidate-row>div{flex:1;min-width:0;display:flex;flex-wrap:wrap;gap:4px}
+.hand-candidate-row button{min-width:44px;min-height:44px;font-size:22px;border:1px solid #ffffff18;background:#252d39;border-radius:10px;color:#d8e6fa}
+.hand-candidate-row button[aria-pressed="true"]{border-color:#a9caff;background:#344966;color:#fff}
+.hand-candidate-row .hand-kana{display:flex;align-items:center;justify-content:center;gap:4px;padding:0 8px}
+.hand-kana small{font-size:10px;color:#b9cee9}
+#hand-candidates{max-height:min(320px,36dvh);overflow-y:auto;overscroll-behavior:contain;padding-bottom:2px}
+.hand-sheet:has(#hand-text) footer{position:sticky;bottom:0;background:#1b2028;padding-top:8px}

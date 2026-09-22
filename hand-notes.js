@@ -1,7 +1,8 @@
 /* Four quick notes + optional handwriting. Save the original before recognition. */
 "use strict";
 const HandNotes = (() => {
-  let worker = null, serial = 0;
+  let worker = null, serial = 0, modelRun = null;
+  const MODEL_TIMEOUT = 90000;
   const jobs = new Map(), queued = new WeakSet();
   const status = text => { const el = document.getElementById("hand-status"); if (el) el.textContent = text; };
   function finish(id, text, error) {
@@ -15,19 +16,21 @@ const HandNotes = (() => {
     save(); schedulePush();
     if (!U.sheet && !U.menu && !typingNow()) render(true);
   }
+  function stopWorker(expected) {
+    if (!expected || worker !== expected) return;
+    expected.terminate(); worker = null;
+    for (const id of [...jobs.keys()]) finish(id, "", true);
+  }
   function getWorker() {
     if (worker) return worker;
     try {
-      worker = new Worker("hand-worker.js?v=16.36.1");
-      worker.onmessage = e => {
-        if (!e.data.error) { finish(e.data.id, e.data.text, false); return; }
-        worker?.terminate(); worker = null;
-        for (const id of [...jobs.keys()]) finish(id, "", true);
+      const current = new Worker("hand-worker.js?v=16.36.1"); worker = current;
+      current.onmessage = e => {
+        if (worker !== current || !e.data) return;
+        if (e.data.error) stopWorker(current);
+        else finish(e.data.id, e.data.text, false);
       };
-      worker.onerror = () => {
-        worker?.terminate(); worker = null;
-        for (const id of [...jobs.keys()]) finish(id, "", true);
-      };
+      current.onerror = current.onmessageerror = () => stopWorker(current);
     } catch (_) { worker = null; }
     return worker;
   }
@@ -35,7 +38,10 @@ const HandNotes = (() => {
     if (!HandData.hasInk(note?.hand) || note.hand.state !== "pending" || queued.has(note.hand)) return;
     const hand = note.hand, id = ++serial;
     queued.add(hand);
-    const job = {note, hand, timer:setTimeout(() => finish(id, "", true), 25000)};
+    const job = {note, hand, timer:setTimeout(() => {
+      // A stalled worker must not trap all subsequent notes in the same queue.
+      if (jobs.has(id)) { if (worker) stopWorker(worker); else finish(id, "", true); }
+    }, 25000)};
     jobs.set(id, job);
     try { const w = getWorker(); if (!w) throw new Error("worker unavailable"); w.postMessage({id, hand}); }
     catch (_) { finish(id, "", true); }
@@ -113,19 +119,117 @@ const HandNotes = (() => {
     };
     canvas.addEventListener("pointerup", end); canvas.addEventListener("pointercancel", end); canvas.addEventListener("lostpointercapture", end);
   }
+  const SMALL_KANA = "ぁあぃいぅうぇえぉおっつゃやゅゆょよゎわァアィイゥウェエォオッツャヤュユョヨヮワヵカヶケ";
+  function alternateKana(text) {
+    const i = SMALL_KANA.indexOf(text);
+    return i < 0 || Array.from(text).length !== 1 ? "" : SMALL_KANA[i % 2 ? i - 1 : i + 1];
+  }
+  function choicesFor(response, hand) {
+    const list = Array.isArray(response?.candidates) ? response.candidates : [];
+    const text = Array.from(String(response?.text || "")); let position = 0;
+    return hand.cells.flatMap((cell, index) => {
+      if (!cell.length) return [];
+      const fallback = text[position++] || "", seen = new Set();
+      const entry = list.find(item => item?.index === index);
+      const source = [fallback, ...(Array.isArray(entry?.choices) ? entry.choices.slice(0, 5).map(c => c?.text) : [])];
+      const choices = source.filter(value => {
+        if (typeof value !== "string" || Array.from(value).length !== 1 || /[\s\u0000-\u001f\u007f]/u.test(value) || seen.has(value)) return false;
+        seen.add(value); return true;
+      }).slice(0, 5);
+      return [{index, choices}];
+    });
+  }
+  function candidatesHTML(menu) {
+    if (!menu.candidates?.length) return "";
+    const chars = Array.from(menu.text || "");
+    if (chars.length !== menu.candidates.length) return "";
+    return `<p class="hand-candidate-hint">違う字は候補をタップ · 保存するまで記録は変わりません</p>${menu.candidates.map((entry, position) => {
+      const current = chars[position], small = alternateKana(current);
+      return `<div class="hand-candidate-row"><span>${position + 1}字目</span><div>${entry.choices.map((text, choice) =>
+        `<button data-act="hand-candidate" data-id="${position}:${choice}" aria-label="${position + 1}字目を${h(text)}にする" aria-pressed="${current === text}">${h(text)}</button>`).join("")}${small ?
+        `<button class="hand-kana" data-act="hand-kana" data-id="${position}" aria-label="${position + 1}字目を${h(small)}にする">${h(small)}<small>大小</small></button>` : ""}</div></div>`;
+    }).join("")}`;
+  }
+  function updateEdit(menu, replaceText = false) {
+    if (U.menu !== menu) return;
+    const message = document.getElementById("hand-edit-status");
+    if (message) message.textContent = menu.modelStatus || "";
+    const choices = document.getElementById("hand-candidates");
+    if (choices) choices.innerHTML = candidatesHTML(menu);
+    const button = document.getElementById("hand-model-read");
+    if (button) { button.disabled = !!menu.modelBusy; button.textContent = menu.modelBusy ? "読み取り中…" : "別方式で読み直す"; }
+    const field = document.getElementById("hand-text");
+    if (replaceText && field) field.value = menu.text || "";
+  }
+  function cancelModel() {
+    const run = modelRun; if (!run) return;
+    modelRun = null; clearTimeout(run.timer); run.worker?.terminate();
+    run.menu.modelBusy = false;
+  }
+  function readWithModel(menu, note) {
+    if (modelRun || !HandData.hasInk(note.hand) || note.ro) return;
+    const run = {menu, note, hand:note.hand, revision:menu.editRevision || 0, id:++serial, worker:null, timer:null};
+    modelRun = run; menu.modelBusy = true;
+    menu.modelStatus = "端末内で読み取り中です。今の文字や原文はそのまま残ります。";
+    updateEdit(menu);
+    const complete = (response, failed = false) => {
+      if (modelRun !== run) return;
+      cancelModel();
+      if (U.menu !== menu || !S.notes.includes(note) || note.hand !== run.hand || note.ro || VIEW()) return;
+      if ((menu.editRevision || 0) !== run.revision) {
+        menu.modelStatus = "入力した文字を優先しました。読み取り候補は反映していません。";
+        updateEdit(menu); return;
+      }
+      const choices = failed ? [] : choicesFor(response, run.hand);
+      if (!choices.length || choices.some(entry => !entry.choices.length)) {
+        menu.modelStatus = "読み取れませんでした。今の文字と原文は残っています。文字で修正するか、もう一度お試しください。";
+        updateEdit(menu); return;
+      }
+      menu.candidates = choices;
+      menu.text = choices.map(entry => entry.choices[0]).join("");
+      menu.editRevision = (menu.editRevision || 0) + 1;
+      menu.modelStatus = "別方式の候補・未確認。内容を確かめてから保存してください。";
+      updateEdit(menu, true);
+      const trial = document.getElementById("hand-model-trial"); if (trial) trial.open = false;
+    };
+    try {
+      run.worker = new Worker("hand-model-worker.js?v=16.36.1-hand2");
+      run.worker.onmessage = ({data}) => { if (data?.id === run.id) complete(data, !!data.error); };
+      run.worker.onerror = run.worker.onmessageerror = () => complete(null, true);
+      run.timer = setTimeout(() => complete(null, true), MODEL_TIMEOUT);
+      run.worker.postMessage({id:run.id, hand:HandData.clean(run.hand)});
+    } catch (_) { complete(null, true); }
+  }
   function renderEdit(menu) {
-    const n = S.notes.find(n => n.id === menu.id); if (!n?.hand || VIEW()) { U.menu = null; return; }
+    const n = S.notes.find(n => n.id === menu.id); if (!n?.hand || n.ro || VIEW()) { U.menu = null; return; }
     if (menu.text == null) menu.text = n.hand.text || "";
     overlay = document.createElement("div"); overlay.className = "mask hand-mask";
     overlay.innerHTML = `<button class="sp" data-act="closemenu" aria-label="閉じる"></button><section class="sheet hand-sheet" role="dialog" aria-modal="true" aria-label="手書きの文字を修正">
       <header><h2>手書きの文字</h2><button data-act="closemenu">閉じる</button></header>
       ${HandData.svg(n.hand)}<label for="hand-text">${n.hand.state === "draft" ? "自動認識・内容を確認してください" : "文字を修正"}</label>
-      <textarea id="hand-text" class="field" rows="2" placeholder="手書きの内容を入力">${h(menu.text)}</textarea>
+      <textarea id="hand-text" class="field" rows="2" maxlength="1000" placeholder="手書きの内容を入力">${h(menu.text)}</textarea>
+      <div id="hand-candidates">${candidatesHTML(menu)}</div>
+      <details id="hand-model-trial" class="hand-model-trial"><summary>別方式で読み直す（試用）</summary>
+        <p>初回は約17MBを読み込みます。筆跡は端末内で処理し、外部へ送りません。候補は「保存」するまで記録に反映しません。</p>
+        <button id="hand-model-read" data-act="hand-model-read" ${menu.modelBusy ? "disabled" : ""}>${menu.modelBusy ? "読み取り中…" : "別方式で読み直す"}</button>
+      </details>
+      <p id="hand-edit-status" role="status">${h(menu.modelStatus || "")}</p>
       <footer><button data-act="hand-retry">再認識</button><button class="hand-save" data-act="hand-text-save">保存</button></footer>
     </section>`;
     document.body.appendChild(overlay);
   }
-  document.addEventListener("input", e => { if (e.target.id === "hand-text" && U.menu?.kind === "hand-edit") U.menu.text = e.target.value; });
+  document.addEventListener("input", e => {
+    if (e.target.id !== "hand-text" || U.menu?.kind !== "hand-edit") return;
+    U.menu.text = e.target.value; U.menu.editRevision = (U.menu.editRevision || 0) + 1;
+    // A typed rewrite may no longer correspond to one character per original cell.
+    U.menu.candidates = null; updateEdit(U.menu);
+  });
+  document.addEventListener("click", e => {
+    if (!modelRun) return;
+    const action = e.target.closest?.("[data-act]")?.dataset.act;
+    if (["closemenu", "cancel", "hand-text-save", "hand-retry"].includes(action)) cancelModel();
+  });
+  if (typeof window !== "undefined") window.addEventListener("pagehide", cancelModel);
   function handle(action, id) {
     if (!action.startsWith("hand-")) return false;
     if (VIEW()) return true;
@@ -137,12 +241,27 @@ const HandNotes = (() => {
     if (action === "hand-undo" && sh) {
       const i = sh.handHistory?.pop(); if (i != null) { sh.hand.cells[i]?.pop(); renderSheet(); }
     }
-    if (action === "hand-edit") { U.menu = {kind:"hand-edit", id}; renderSheet(); }
+    if (action === "hand-edit") {
+      const n = S.notes.find(note => note.id === id); if (!n?.hand || n.ro) return true;
+      cancelModel(); U.menu = {kind:"hand-edit", id}; renderSheet();
+    }
+    if (action === "hand-model-read" && U.menu?.kind === "hand-edit") {
+      const n = S.notes.find(note => note.id === U.menu.id); if (n?.hand && !n.ro) readWithModel(U.menu, n);
+    }
+    if ((action === "hand-candidate" || action === "hand-kana") && U.menu?.kind === "hand-edit") {
+      const menu = U.menu, [position, choice] = String(id).split(":").map(Number);
+      const n = S.notes.find(note => note.id === menu.id), chars = Array.from(menu.text || "");
+      if (!n?.hand || n.ro || !Number.isInteger(position) || position < 0 || position >= chars.length || chars.length !== menu.candidates?.length) return true;
+      const text = action === "hand-kana" ? alternateKana(chars[position]) : menu.candidates[position]?.choices[choice];
+      if (typeof text !== "string" || Array.from(text).length !== 1) return true;
+      chars[position] = text; menu.text = chars.join(""); menu.editRevision = (menu.editRevision || 0) + 1;
+      updateEdit(menu, true);
+    }
     if ((action === "hand-text-save" || action === "hand-retry") && U.menu?.kind === "hand-edit") {
       const n = S.notes.find(n => n.id === U.menu.id);
-      if (!n?.hand) { U.menu = null; render(); return true; }
-      pushUndo(null, true);
-      n.hand = {...n.hand, text:action === "hand-retry" ? "" : String(U.menu.text || "").trim(), state:action === "hand-retry" ? "pending" : "manual"};
+      if (!n?.hand || n.ro) { U.menu = null; render(); return true; }
+      cancelModel(); pushUndo(null, true);
+      n.hand = {...n.hand, text:action === "hand-retry" ? "" : String(U.menu.text || "").trim().slice(0, 1000), state:action === "hand-retry" ? "pending" : "manual"};
       U.menu = null; save(); schedulePush(); render(); if (action === "hand-retry") recognize(n);
     }
     return true;
