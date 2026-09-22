@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.36.1";
+const APP_VER = "16.36.2";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -63,7 +63,7 @@ const noteColor = (n) => {
 const LEGACY = { breath: "ブレス", volume: "声量", tone: "声色" };
 const tagName = (id) => (TAGS.find((t) => t.id === id) || {}).l || LEGACY[id] || id;
 
-// 指摘はこの4つで固定。詳しい指示は手書きの原文と認識した文字で残す。
+// 指摘はこの4つで固定。詳しい指示はiPhoneの文字入力ですぐ残す。既存の手書き記録は表示だけ維持する。
 function renderQuickMenu(sh, contextText) {
   overlay = document.createElement("div");
   overlay.className = "mask note-quick-mask";
@@ -73,7 +73,7 @@ function renderQuickMenu(sh, contextText) {
       <div class="quick-four">
         ${[["pitch","音程"],["rhythm","リズム"],["nuance","ニュアンス"],["good","良い"]].map(([id, label]) => `<button data-act="tag-choice" data-id="${id}" style="--tag-color:${CATCOL[catOf(id)]}">${label}</button>`).join("")}
       </div>
-      <footer><button class="hand-open" data-act="hand-open">手書き${sh.hand ? " · 入力あり" : ""}</button><button class="note-close" data-act="cancel" aria-label="指摘画面を閉じる"><span aria-hidden="true">×</span>閉じる</button></footer>
+      <footer><button class="hand-open" data-act="note-detail" data-id="memo">文字入力${sh.memo ? " · 入力あり" : ""}</button><button class="note-close" data-act="cancel" aria-label="指摘画面を閉じる"><span aria-hidden="true">×</span>閉じる</button></footer>
     </section>`;
   document.body.appendChild(overlay);
 }
@@ -6641,7 +6641,7 @@ document.addEventListener("click", (e) => {
       if (typingNow() && document.activeElement) document.activeElement.blur();
       U.sheet.detail = a === "note-detail";
       renderSheet();
-      if (U.sheet.detail && id === "memo") overlay.querySelector(".note-memo")?.scrollIntoView({block:"nearest"});
+      if (U.sheet.detail && id === "memo") {\n        const memo = overlay.querySelector("#memo");\n        memo?.scrollIntoView({block:"nearest"});\n        // iPhoneの日本語フリックを、このタップから直接開く。\n        memo?.focus({preventScroll:true});\n      }
       break;
     case "tag-choice":
       if (!U.sheet || VIEW() || !TAGS.some(t => t.id === id)) break;
