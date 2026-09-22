@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.36.4";
+const APP_VER = "16.37.0";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -74,13 +74,26 @@ function renderQuickMenu(sh, contextText) {
         ${[["pitch","音程"],["rhythm","リズム"],["nuance","ニュアンス"],["good","良い"]].map(([id, label]) => `<button data-act="tag-choice" data-id="${id}" style="--tag-color:${CATCOL[catOf(id)]}">${label}</button>`).join("")}
       </div>
       <div class="quick-type"><input class="field" id="memo" enterkeyhint="done" autocomplete="off" autocorrect="on"
-        placeholder="そのままフリック入力" value="${h(sh.memo)}"><button class="note-close" data-act="cancel" aria-label="指摘画面を閉じる"><span aria-hidden="true">×</span></button></div>
+        placeholder="フリック入力" value="${h(sh.memo)}"><button class="note-close" data-act="cancel" aria-label="閉じる"><span aria-hidden="true">×</span></button></div>
     </section>`;
   document.body.appendChild(overlay);
-  // 歌詞をタップ／なぞった同じ操作の流れでキーボードまで出す。文字入力ボタンは挟まない。
-  const memo = overlay.querySelector("#memo");
-  try { memo?.focus({preventScroll:true}); } catch (_) { memo?.focus(); }
+  positionQuickNote();
+  // まず4分類を確実に押せる状態で出す。文字欄に触れた瞬間だけキーボードを出す。
+  // iOSは自動focusするとvisualViewportが縮み、分類ボタンがキーボード裏へずれるため自動focusしない。
 }
+function positionQuickNote() {
+  const q = overlay?.querySelector(".quick-note");
+  if (!q) return;
+  const vv = window.visualViewport;
+  const top = vv ? vv.offsetTop : 0;
+  const height = vv ? vv.height : window.innerHeight;
+  q.style.top = Math.max(top + 6, top + height - q.offsetHeight - 6) + "px";
+}
+if (window.visualViewport) {
+  visualViewport.addEventListener("resize", () => { if (U.sheet && !U.sheet.detail) positionQuickNote(); });
+  visualViewport.addEventListener("scroll", () => { if (U.sheet && !U.sheet.detail) positionQuickNote(); });
+}
+
 function handHTML(n) {
   // 旧版で保存済みの手書きだけは文字が読めていた場合に限りテキストとして残す。
   // 新しい手書き入力・認識処理はもう読み込まない。
@@ -3798,9 +3811,10 @@ function viewLive() {
         const c = noteColor(n);
         const txt = n.tags.length ? n.tags.map(tagName).join("/") : (n.hand ? "手書き" : n.memo ? "メモ" : "・");
         const body = `${h(txt)}${n.pitch ? " ♪" + h(pitchLabel(n.pitch)) : ""}`;
-        return n.pitch
+        const main = n.pitch
           ? `<button class="mk" data-act="playnote" data-id="${n.id}" style="background:${c}">${body}</button>`
           : `<b class="mk" style="background:${c}">${body}</b>`;
+        return n.ro ? main : `<span class="mark-edit">${main}<button class="mark-del" data-act="delnote" data-id="${n.id}" aria-label="${h(txt)}を削除">×</button></span>`;
       };
       let cells = chars.map((ch, ci) => {
         const mk = ns.find((n) => n.from != null && ci >= n.from && ci <= n.to);
@@ -3815,9 +3829,11 @@ function viewLive() {
         cells += `<b class="mk pastmk">前回 ${h(t)}</b>`;
       }
       const pills = ns.filter((n) => n.lineIdx === i && (n.hand || n.memo || (n.at != null && hasRec(s)))).map((n) => `
-        ${n.at != null && hasRec(s) ? `<button class="tagpill" data-act="playfrom" data-id="${n.id}"
-            style="color:var(--good)">🔊 ${mmss(n.at)}</button>` : ""}
-        ${n.memo ? `<button class="tagpill" data-act="note" data-i="${i}" style="color:var(--dim)">${n.from != null ? `「${h(chars.slice(n.from, n.to + 1).join(""))}」 ` : ""}${h(n.memo)}</button>` : ""}${handHTML(n)}`).join("");
+        <span class="note-pill-wrap">
+          ${n.at != null && hasRec(s) ? `<button class="tagpill" data-act="playfrom" data-id="${n.id}" style="color:var(--good)">🔊 ${mmss(n.at)}</button>` : ""}
+          ${n.memo ? `<button class="tagpill" data-act="note" data-i="${i}" style="color:var(--dim)">${n.from != null ? `「${h(chars.slice(n.from, n.to + 1).join(""))}」 ` : ""}${h(n.memo)}</button>` : ""}${handHTML(n)}
+          ${n.ro ? "" : `<button class="pill-del" data-act="delnote" data-id="${n.id}" aria-label="この指摘を削除">×</button>`}
+        </span>`).join("");
       const st2 = lineStatus(s, i);
       const newSec = S.recMode && l.sec && l.sec !== (s.lines[i - 1] || {}).sec;
       const foc = U.focus && partsOf(s, i).includes(U.focus);
@@ -6947,7 +6963,15 @@ document.addEventListener("click", (e) => {
       if (overlay) overlay.querySelectorAll(".wk.on,.bk.on").forEach((el) => el.classList.remove("on"));
       break;
     case "rangeoff": U.sheet.rangeLine = null; U.sheet.range = null; U.sheet.anchor = null; commitFields(); renderSheet(); break;
-    case "delnote": pushUndo(); delClip(id); S.notes = S.notes.filter((n) => n.id !== id); save(); schedulePush(); commitFields(); render(); break;
+    case "delnote": {
+      const target = S.notes.find((n) => n.id === id);
+      if (!target || target.ro) break;
+      pushUndo(null, true); delClip(id);
+      S.notes = S.notes.filter((n) => n.id !== id);
+      save(); schedulePush();
+      if (U.sheet) U.sheet = null;
+      render(); break;
+    }
     case "mode": U.mode = id; render(); break;
     case "allshows": U.allShows = !U.allShows; render(); break;
 

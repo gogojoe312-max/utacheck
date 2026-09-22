@@ -262,3 +262,17 @@ select.field{appearance:auto}textarea.field{resize:vertical}
 .legacy-hand-text{margin-top:5px;font-size:13px;color:var(--dim);white-space:pre-wrap}
 @media(max-height:620px){.quick-four button{min-height:56px}}
 @media(orientation:landscape) and (max-height:500px){.quick-note{padding:8px}.quick-four button{min-height:48px}}
+
+
+/* Field-speed pass: keep actions inside the visible iOS viewport and make correction/deletion one-touch. */
+.note-quick-mask{position:fixed;inset:0;overflow:hidden}
+.quick-note{position:fixed!important;bottom:auto!important;max-height:calc(100dvh - 12px);overflow:hidden}
+.quick-four button{min-height:60px}
+.quick-type{margin-top:8px}.quick-type .field{height:46px}.quick-type .note-close{height:46px;flex-basis:46px}
+.mark-edit{display:inline-flex;align-items:center;vertical-align:middle;margin:0 1px}
+.mark-edit .mk{margin-right:0;border-radius:3px 0 0 3px}
+.mark-del{width:26px;height:26px;display:inline-flex;align-items:center;justify-content:center;border-radius:0 7px 7px 0;background:#3a2528;color:#ff9c92;font-size:16px;font-weight:700;touch-action:manipulation}
+.note-pill-wrap{display:inline-flex;align-items:center;max-width:100%;vertical-align:middle;margin:2px 2px 2px 0}
+.note-pill-wrap .tagpill{margin:0}
+.pill-del{flex:0 0 30px;width:30px;height:30px;margin-left:2px;border-radius:9px;background:#3a2528;color:#ff9c92;font-size:17px;font-weight:700;touch-action:manipulation}
+@media(max-height:520px){.quick-context{min-height:34px;padding-bottom:4px}.quick-four{gap:5px}.quick-four button{min-height:48px;font-size:17px}.quick-type{margin-top:5px}.quick-type .field,.quick-type .note-close{height:42px}}
