@@ -18,7 +18,7 @@ const HandNotes = (() => {
   function getWorker() {
     if (worker) return worker;
     try {
-      worker = new Worker("hand-worker.js?v=16.36");
+      worker = new Worker("hand-worker.js?v=16.36.1");
       worker.onmessage = e => {
         if (!e.data.error) { finish(e.data.id, e.data.text, false); return; }
         worker?.terminate(); worker = null;

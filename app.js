@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.36";
+const APP_VER = "16.36.1";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -774,6 +774,7 @@ function fromTrash(tid) {
   });
   S.trash = S.trash.filter((x) => x.id !== tid);
   save(); schedulePush();
+  if (typeof HandNotes !== "undefined") HandNotes.resume();
 }
 function dropTrash(tid) {
   const t = (S.trash || []).find((x) => x.id === tid);
@@ -4764,6 +4765,7 @@ function copyRecords(oldSo, newSo) {
   S.notes.filter((n) => n.songId === oldSo.id).forEach((n) => {
     if (!map.has(n.lineIdx)) { lost++; return; }
     const c = Object.assign({}, n, { id: uid(), songId: newSo.id, lineIdx: map.get(n.lineIdx) });
+    if (n.hand) c.hand = HandData.clean(n.hand);
     if (n.lineEnd != null) c.lineEnd = map.has(n.lineEnd) ? map.get(n.lineEnd) : map.get(n.lineIdx);
     S.notes.push(c);
     moved++;
@@ -4790,6 +4792,7 @@ function copyRecords(oldSo, newSo) {
     if (Object.keys(dst).length) S.subs[sid + "|" + newSo.id] = dst;
   });
 
+  if (typeof HandNotes !== "undefined") HandNotes.resume();
   return { moved, lost };
 }
 
@@ -6737,7 +6740,9 @@ document.addEventListener("click", (e) => {
             if (k >= 0) S.songs[k] = prev.song;
           }
         }
-        save(); schedulePush(); render();
+        save(); schedulePush();
+        if (typeof HandNotes !== "undefined") HandNotes.resume();
+        render();
       }
       break;
     case "jump": markRead(song()); U.picker = false; U.songIdx = i; if (S.recMode && SONGS()[i]) { S.rsongId = SONGS()[i].id; U.secView = ""; save(); } render(); break;
@@ -9775,6 +9780,7 @@ async function restoreBackupFile(file) {
     U.view = "setup"; U.songIdx = 0; U.sheet = null; U.menu = null;
     save(); await saveNow();
     if (saveErr) throw new Error("端末に保存できません。空き容量を確認してください。");
+    if (typeof HandNotes !== "undefined") HandNotes.resume();
     render(); alert("ファイルから復元しました。");
   } catch (e) { alert("復元できませんでした。\n" + e.message); }
 }
@@ -10079,7 +10085,9 @@ async function checkOther() {
       Object.assign(S, fromBackup(obj.state));
       S.ghToken = tk; S.bkGistId = bk; S.bkKey = bkk; S.editPass = ep;
       S.bkSeen = at; S.bkAt = at; S.bkHash = bkSignature();
-      save(); otherAt = 0; render();
+      save(); otherAt = 0;
+      if (typeof HandNotes !== "undefined") HandNotes.resume();
+      render();
       return;
     }
     otherAt = at;

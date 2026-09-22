@@ -10,12 +10,12 @@ const ink=()=>({v:1,cells:[clone(ku),clone(ii)],text:'',state:'pending'});
 function setup(){
  const timers=new Map(),workers=[],events={},canvases=[];let serial=0,saves=0,renders=0;
  const c=vm.createContext({S:{notes:[],songs:[],showId:'show'},U:{sheet:null},overlay:null,booted:false,
-  Worker:class{constructor(){workers.push(this);}postMessage(msg){this.msg=clone(msg);}terminate(){this.terminated=true;}},
+  Worker:class{constructor(){this.messages=[];workers.push(this);}postMessage(msg){this.msg=clone(msg);this.messages.push(this.msg);}terminate(){this.terminated=true;}},
   setTimeout(fn){timers.set(++serial,fn);return serial;},clearTimeout(id){timers.delete(id);},
   document:{getElementById:()=>null,addEventListener(name,fn){events[name]=fn;},body:{appendChild(el){c.html=el.innerHTML;}},
    createElement(){return {innerHTML:'',querySelectorAll:()=>canvases,querySelector:()=>({disabled:true})};}},
   VIEW:()=>false,typingNow:()=>false,save(){saves++;},schedulePush(){},render(){renders++;},renderSheet(){renders++;},commitFields(){},pushUndo(){},
-  recAt:()=>12,takeCtx:()=> 'take1',uid:()=> 'note1',clearTimeout:()=>{},
+  recAt:()=>12,takeCtx:()=> 'take1',uid:()=> 'note1',
   song:()=>({id:'song1'}),h:s=>String(s??'').replaceAll('<','&lt;'),
  });
  vm.runInContext(read('hand-data.js'),c);vm.runInContext(read('hand-notes.js'),c);
@@ -39,6 +39,55 @@ test('late results never resurrect undone notes or overwrite manual corrections'
   if(mutation==='manual')n.hand={...n.hand,text:'低い',state:'manual'};
   s.response('別の文字');assert.equal(s.saves,0);assert.notEqual(s.c.S.notes[0]?.hand.text,'別の文字');
  }
+});
+test('undo resumes retained pending handwriting once and discards replies for the replaced note',()=>{
+ const s=setup(),n={id:'n1',hand:ink()};s.c.S.notes=[n];s.run('HandNotes.recognize(S.notes[0])');
+ const oldJob=s.workers[0].msg.id;
+ s.c.undoStack=[JSON.stringify({notes:s.c.S.notes})];s.c.S.notes.push({id:'n2',tags:['pitch']});
+ vm.runInContext(block('document.addEventListener("click",', 'document.addEventListener("focusin",'),s.c);
+ const button={dataset:{act:'undo'},tagName:'BUTTON'};
+ s.events.click({target:{closest:selector=>selector==='[data-act]'?button:null}});
+ const restored=s.c.S.notes[0];assert.notEqual(restored,n);assert.equal(s.c.S.notes.length,1);
+ s.run('HandNotes.resume();HandNotes.resume()');assert.equal(s.workers[0].messages.length,2);
+ s.workers[0].onmessage({data:{id:oldJob,text:'古い返信'}});assert.equal(restored.hand.state,'pending');
+ s.response('くい');assert.equal(restored.hand.state,'draft');assert.equal(restored.hand.text,'くい');
+ assert.equal(s.timers.size,0);
+});
+test('file restoration resumes pending recognition and keeps reviewed handwriting unchanged',async()=>{
+ const s=setup();
+ Object.assign(s.c,{unpackWithPass:async raw=>raw,fromBackup:clone,confirm:()=>true,alert(){},saveNow:async()=>{},saveErr:false});
+ vm.runInContext(block('async function restoreBackupFile(', '/* ---- 受け取り'),s.c);
+ const state={songs:[],notes:[{id:'pending',hand:ink()},{id:'manual',hand:{...ink(),text:'修正済み',state:'manual'}}]};
+ await s.c.restoreBackupFile({text:async()=>JSON.stringify({app:'utacheck',state})});
+ s.run('HandNotes.resume()');assert.equal(s.workers[0].messages.length,1);
+ s.response('くい');assert.equal(s.c.S.notes[0].hand.state,'draft');
+ assert.equal(s.c.S.notes[1].hand.text,'修正済み');assert.equal(s.c.S.notes[1].hand.state,'manual');
+});
+test('automatic restore from another device resumes imported pending handwriting',async()=>{
+ const s=setup();Object.assign(s.c.S,{ghToken:'test',bkGistId:'test',bkHash:10,bkSeen:0});
+ Object.assign(s.c,{backupInFlight:false,preview:null,gh:async()=>({files:{}}),backupIndexFile:()=>true,
+  readCloudBackup:async()=>({at:20,state:{songs:[],notes:[{id:'pending',hand:ink()}]}}),unpackBackup:async x=>x,fromBackup:clone,bkSignature:()=>10});
+ vm.runInContext('let otherAt=0,syncing=false;'+block('async function checkOther()', 'async function takeOther()'),s.c);
+ await s.run('checkOther()');s.run('HandNotes.resume()');assert.equal(s.workers[0].messages.length,1);
+ s.response('くい');assert.equal(s.c.S.notes[0].hand.state,'draft');assert.equal(s.c.S.notes[0].hand.text,'くい');
+});
+test('trash recovery restarts pending handwriting whose original recognition already finished',()=>{
+ const s=setup(),n={id:'n',hand:ink()};s.c.S.notes=[n];s.run('HandNotes.recognize(S.notes[0])');
+ s.c.S.trash=[{id:'trash',notes:[clone(n)]}];s.c.S.shows=[];s.c.S.notes=[];
+ s.response('削除後の返信');
+ vm.runInContext(block('function fromTrash(', 'function dropTrash('),s.c);s.run('fromTrash("trash");HandNotes.resume()');
+ assert.equal(s.workers[0].messages.length,2);s.response('くい');assert.equal(s.c.S.notes[0].hand.state,'draft');
+});
+test('copied pending handwriting completes independently after its original note is removed',()=>{
+ const s=setup(),n={id:'original',songId:'old',lineIdx:0,hand:ink()};s.c.S.notes=[n];s.run('HandNotes.recognize(S.notes[0])');
+ const oldJob=s.workers[0].msg.id;
+ vm.runInContext(block('function copyRecords(', '/* ---- チェック結果'),s.c);
+ s.c.oldSong={id:'old',lines:[{t:'同じ歌詞'}]};s.c.newSong={id:'new',lines:[{t:'同じ歌詞'}]};
+ assert.equal(s.run('copyRecords(oldSong,newSong)').moved,1);
+ const copied=s.c.S.notes[1];assert.notEqual(copied.hand,n.hand);assert.deepEqual(clone(copied.hand.cells),ink().cells);
+ s.c.S.notes=[copied];s.run('HandNotes.resume()');assert.equal(s.workers[0].messages.length,2);
+ s.workers[0].onmessage({data:{id:oldJob,text:'古い返信'}});assert.equal(copied.hand.state,'pending');
+ s.response('くい');assert.equal(copied.hand.state,'draft');assert.equal(copied.hand.text,'くい');
 });
 test('recognition failure keeps the original and a saved correction remains editable',()=>{
  const s=setup(),n={id:'n',hand:ink()};s.c.S.notes=[n];s.run('HandNotes.recognize(S.notes[0])');s.response('',true);
