@@ -68,6 +68,12 @@ const NoteKeyboard = (() => {
     field.setAttribute('aria-label', '指摘を入力');
     field.setAttribute('inputmode', 'text');
     field.setAttribute('lang', 'ja');
+    const recognized = document.getElementById('note-recognized');
+    if (recognized && typeof parseNoteInput === 'function') {
+      const names = parseNoteInput(field.value).tags.map(tagName);
+      recognized.textContent = names.length ? '→ ' + names.join('・') : '';
+      recognized.hidden = !names.length;
+    }
     const close = field.closest('.quick-type')?.querySelector('.note-close');
     if (close) {
       const hasText = !!field.value.trim();
@@ -120,7 +126,7 @@ const NoteKeyboard = (() => {
   // pointerdown/mousedown and moves the button before the finger is released.
   const keepTarget = e => {
     if (e.button !== 0 || e.isPrimary === false) return;
-    if (e.target.closest?.('.note-quick-mask button') && document.activeElement?.id === 'memo') e.preventDefault();
+    if (e.target.closest?.('.note-quick-mask button,.note-sheet button') && document.activeElement?.id === 'memo') e.preventDefault();
   };
   document.addEventListener('pointerdown', keepTarget, {capture:true,passive:false});
   document.addEventListener('mousedown', keepTarget, {capture:true,passive:false});
@@ -133,4 +139,3 @@ const NoteKeyboard = (() => {
 function positionQuickNote() { NoteKeyboard.fit(); }
 
 if (typeof render === 'function') render();
-

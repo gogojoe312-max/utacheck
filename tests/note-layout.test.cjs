@@ -24,7 +24,7 @@ test('only four fixed choices appear; history cannot move their positions',()=>{
  assert(!html.includes('data-swipe'));assert(!html.includes('id="pno"'));
  s.c.S.notes=[{tags:['pLo','pHi','lyric']}];assert.equal(s.render(),html);
  // Detailed historical tags still have their names.
- assert.equal(s.run('tagName("pLo")'),'音程低');assert.equal(s.run('tagName("breath")'),'ブレス');
+ assert.equal(s.run('tagName("pLo")'),'音程低い');assert.equal(s.run('tagName("breath")'),'ブレス');
 });
 test('one button press immediately commits the chosen tag and selected lyric range',()=>{
  for(const id of ['pitch','rhythm','nuance','good']){

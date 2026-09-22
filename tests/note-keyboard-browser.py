@@ -92,7 +92,7 @@ with sync_playwright() as p:
  page.locator('#memo').dispatch_event('keydown',{'key':'Enter','keyCode':229,'bubbles':True})
  assert page.evaluate('S.notes.length')==0
  page.wait_for_timeout(90);page.locator('#memo').fill('低い');page.keyboard.press('Enter');page.wait_for_timeout(180)
- assert page.evaluate('S.notes[0].memo')=='音程低い'
+ assert page.evaluate('S.notes[0].tags')==['pLo'] and page.evaluate('S.notes[0].memo')==''
  # Clearing text must not resurrect the old draft or create an empty note.
  vv(page,844);page.evaluate(SEED);open_note(page);page.locator('#memo').fill('削除する文字');page.locator('#memo').fill('')
  assert page.evaluate('U.sheet.memo')=='';page.keyboard.press('Enter');page.wait_for_timeout(180)
@@ -128,16 +128,20 @@ with sync_playwright() as p:
  box=page.locator(f'.txt[data-l="{row}"] [data-c="2"]').bounding_box();page.touchscreen.tap(box['x']+3,box['y']+3);vv(page,400)
  page.keyboard.insert_text('確認');page.keyboard.press('Enter');page.wait_for_timeout(200)
  assert page.evaluate('document.querySelector("#app>.scroll").scrollTop')==before
- # Current main's shorthand expansion and one-touch deletion must survive the UI merge.
- vv(page,844);page.evaluate(SEED);open_note(page);vv(page,400)
- page.keyboard.insert_text('たかい');page.keyboard.press('Enter');page.wait_for_timeout(180)
- assert page.evaluate('S.notes[0].memo')=='音程高い'
- vv(page,844)
- for selector in ['.pill-del','.mark-del']:
-  _,x,y=center(page,selector);page.touchscreen.tap(x,y);page.wait_for_timeout(180)
+ # Canonical shorthand tags and both deletion controls preserve one-touch save/Undo.
+ for selector,text,tag in [('.mark-del','たか','pHi'),('.mark-del','はや','fast'),('.mark-del','まい','mic'),('.mark-del','なが','long'),('.pill-del','語尾を丸く',None)]:
+  vv(page,844);page.evaluate(SEED);open_note(page);vv(page,400)
+  page.keyboard.insert_text(text)
+  if tag: assert page.locator('#note-recognized').is_visible()
+  page.keyboard.press('Enter');page.wait_for_timeout(180);vv(page,844)
+  expected=page.evaluate('JSON.stringify(S.notes[0])')
+  assert page.evaluate('S.notes[0].tags')==([tag] if tag else [])
+  assert page.evaluate('S.notes[0].memo')==('' if tag else text)
+  box,x,y=center(page,selector);assert box['width']>=44 and box['height']>=44
+  page.touchscreen.tap(x,y);page.wait_for_timeout(180)
   assert page.evaluate('S.notes.length')==0 and page.evaluate('U.sheet===null')
   _,x,y=center(page,'[data-act="undoall"]');page.touchscreen.tap(x,y);page.wait_for_timeout(180)
-  assert page.evaluate('S.notes.length')==1 and page.evaluate('S.notes[0].memo')=='音程高い'
+  assert page.evaluate('S.notes.length')==1 and page.evaluate('JSON.stringify(S.notes[0])')==expected
  assert not errors,errors
  result={'source':str(ROOT),'engine':'Chromium /usr/bin/chromium','native_iPhone':False,'cases':rows,'category_taps':32,
  'other_checks':['initial boot with every shipped script','automatic focus','Enter saves once and closes','Japanese composition guards','deleted drafts stay empty','pointer hold does not blur/move target','background render keeps same input','save button','lyric drag preserves range','same-view scroll preserved','current shorthand expansion preserved','direct badge and memo deletion plus Undo'],'errors':errors}

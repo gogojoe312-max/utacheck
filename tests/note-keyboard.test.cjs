@@ -8,7 +8,7 @@ function setup({visual=true}={}){
  const close={textContent:'',setAttribute(k,v){this[k]=v;}};
  const field={id:'memo',value:'',attrs:{},setAttribute(k,v){this.attrs[k]=v;},closest:()=>({querySelector:()=>close}),blur(){c.document.activeElement=null;}};
  const doc={documentElement:{clientHeight:844,style:{setProperty:(k,v)=>styles[k]=v},classList:{toggle:(k,v)=>classes[k]=v}},body:{},activeElement:field,
-  querySelector:()=>field,addEventListener:listen};
+  getElementById:()=>null,querySelector:()=>field,addEventListener:listen};
  const viewport={height:844,width:390,offsetTop:0,offsetLeft:0,addEventListener:listen};
  const c=vm.createContext({window:{innerHeight:844,innerWidth:390,visualViewport:visual?viewport:undefined,addEventListener:listen},document:doc,
   U:{sheet:{memo:'',tags:[]}},WeakSet,WeakMap,Number,Math,Infinity,performance:{now:()=>now},

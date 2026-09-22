@@ -272,7 +272,11 @@ select.field{appearance:auto}textarea.field{resize:vertical}
 /* Retain the one-touch deletion controls from the current main branch. */
 .mark-edit{display:inline-flex;align-items:center;vertical-align:middle;margin:0 1px}
 .mark-edit .mk{margin-right:0;border-radius:3px 0 0 3px}
-.mark-del{width:26px;height:26px;display:inline-flex;align-items:center;justify-content:center;border-radius:0 7px 7px 0;background:#3a2528;color:#ff9c92;font-size:16px;font-weight:700;touch-action:manipulation}
+.mark-del{flex:0 0 44px;min-width:44px;width:44px;height:44px;display:inline-flex;align-items:center;justify-content:center;border-radius:0 7px 7px 0;background:#3a2528;color:#ff9c92;font-size:16px;font-weight:700;touch-action:manipulation}
 .note-pill-wrap{display:inline-flex;align-items:center;max-width:100%;vertical-align:middle;margin:2px 2px 2px 0}
 .note-pill-wrap .tagpill{margin:0}
-.pill-del{flex:0 0 30px;width:30px;height:30px;margin-left:2px;border-radius:9px;background:#3a2528;color:#ff9c92;font-size:17px;font-weight:700;touch-action:manipulation}
+.pill-del{flex:0 0 44px;width:44px;height:44px;margin-left:2px;border-radius:9px;background:#3a2528;color:#ff9c92;font-size:17px;font-weight:700;touch-action:manipulation}
+
+@media screen{.note-pill-wrap .tagpill{min-width:0;white-space:normal;overflow-wrap:anywhere}.mark-edit{gap:2px;margin:2px}.mark-del:active,.pill-del:active{background:#66353a}}
+
+.quick-context #note-recognized{flex:0 1 auto;min-width:0;max-width:65%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--accent);font-size:13px;font-weight:600}

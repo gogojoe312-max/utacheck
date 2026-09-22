@@ -2,21 +2,21 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.38.0";
+const APP_VER = "16.38.1";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
 const TAGS = [
   { c: "音程",    id: "pitch",  l: "音程"       },
-  { c: "音程",    id: "pHi",    l: "音程高"     },
-  { c: "音程",    id: "pLo",    l: "音程低"     },
+  { c: "音程",    id: "pHi",    l: "音程高い"     },
+  { c: "音程",    id: "pLo",    l: "音程低い"     },
   { c: "音程",    id: "pUn",    l: "不自然"     },
   { c: "音程",    id: "pWob",   l: "音程不安定" },
 
   { c: "タイミング", id: "rhythm", l: "リズム"   },
-  { c: "タイミング", id: "fast",   l: "速い"     },
-  { c: "タイミング", id: "slow",   l: "遅い"     },
+  { c: "タイミング", id: "fast",   l: "リズム速い"     },
+  { c: "タイミング", id: "slow",   l: "リズム遅い"     },
   { c: "タイミング", id: "long",   l: "長い"     },
   { c: "タイミング", id: "short",  l: "短い"     },
 
@@ -69,27 +69,86 @@ const tagName = (id) => (TAGS.find((t) => t.id === id) || {}).l || LEGACY[id] ||
 const NOTE_SHORTHAND = new Map([
   ["たかい","音程高い"],["高い","音程高い"],["ひくい","音程低い"],["低い","音程低い"],
   ["おんてい","音程"],["音程","音程"],["ふあんてい","音程不安定"],["不安定","音程不安定"],
-  ["はやい","リズム速い"],["速い","リズム速い"],["おそい","リズム遅い"],["遅い","リズム遅い"],
+  ["はやい","リズム速い"],["早い","リズム速い"],["速い","リズム速い"],["おそい","リズム遅い"],["遅い","リズム遅い"],
   ["ながい","長い"],["長い","長い"],["みじかい","短い"],["短い","短い"],
   ["つよい","強い"],["強い","強い"],["よわい","弱い"],["弱い","弱い"],
   ["くらい","暗い"],["暗い","暗い"],["あかるい","明るい"],["明るい","明るい"],
   ["かつぜつ","滑舌"],["滑舌","滑舌"],["かし","歌詞"],["歌詞","歌詞"],
   ["うらがえり","裏返り"],["裏返り","裏返り"],["がらつき","ガラつき"],["のいず","ノイズ"],
   ["おおきい","レベル大きい"],["大きい","レベル大きい"],["ちいさい","レベル小さい"],["小さい","レベル小さい"],
+  ["りずむ","リズム"],["にゅあんす","ニュアンス"],["よい","良い"],["いい","良い"],["ぶれす","ブレス"],
   ["おしい","惜しい"],["惜しい","惜しい"],["おけ","オケ聴く"],["うたう","歌う"],["さしかえ","差し替え"]
 ]);
+// 入力の省略形は、既存の指摘IDにだけ対応させる。
+const NOTE_ALIASES = [
+  ["pHi",["たか","たかい","高い"]], ["pLo",["ひく","ひくい","低い"]],
+  ["fast",["はや","はやい","早い","速い"]], ["slow",["おそ","おそい","遅い"]],
+  ["long",["なが","ながい"]], ["short",["みじ","みじかい"]],
+  ["mic",["まい","まいく"]], ["pitch",["おん","おんてい"]],
+  ["pWob",["ふあ","ふあんてい"]], ["pUn",["ふし","ふしぜん"]],
+  ["rhythm",["りず","りずむ"]], ["nuance",["にゅ","にゅあんす"]],
+  ["attack",["あた","あたっく"]], ["accent",["あく","あくせんと"]],
+  ["diction",["かつ","かつぜつ"]], ["strong",["つよ","つよい"]],
+  ["weak",["よわ","よわい"]], ["dark",["くら","くらい"]],
+  ["bright",["あか","あかるい"]], ["face",["かお"]],
+  ["flip",["うら","うらがえり"]], ["nuke",["ぬけ","ぬけた"]],
+  ["lyric",["かし"]], ["gara",["がら","がらつき"]], ["noise",["のい","のいず"]],
+  ["level",["れべ","れべる"]], ["lvHi",["おお","おおきい"]],
+  ["lvLo",["ちい","ちいさい"]], ["lenEq",["そろ","そろえる","ながさそろえる"]],
+  ["good",["よい","いい"]], ["close",["おし","おしい"]],
+  ["oke",["おけ"]], ["swap",["さし","さしかえ"]], ["sing",["うた","うたう"]],
+  ["breath",["ぶれ","ぶれす"]]
+];
+const noteInputKey = value => String(value).normalize("NFKC")
+  .replace(/[ァ-ヶ]/g, c => String.fromCharCode(c.charCodeAt(0) - 0x60));
+const NOTE_INPUT_TAGS = new Map();
+for (const tag of TAGS) NOTE_INPUT_TAGS.set(noteInputKey(tag.l), tag.id);
+for (const [id, words] of NOTE_ALIASES) for (const word of words) {
+  NOTE_INPUT_TAGS.set(noteInputKey(word), id);
+  NOTE_SHORTHAND.set(word, id === "good" ? "良い" : tagName(id));
+}
+NOTE_INPUT_TAGS.set("良い", "good");
+NOTE_INPUT_TAGS.set("ブレス", "breath");
+NOTE_INPUT_TAGS.set("ぶれす", "breath");
+
+function parseNoteInput(value) {
+  const text = String(value ?? "").trim();
+  if (!text) return {tags: [], memo: ""};
+  const parts = noteInputKey(text).split(/[\s、,／/・]+/).filter(Boolean);
+  const ids = parts.map(part => NOTE_INPUT_TAGS.get(part));
+  if (ids.length && ids.every(Boolean)) return {tags: [...new Set(ids)], memo: ""};
+  return {tags: [], memo: expandNoteMemo(text)};
+}
+
 function expandNoteMemo(value) {
-  const raw = String(value || "").trim();
+  const raw = String(value ?? "").trim();
   if (!raw) return "";
-  const compact = raw.replace(/[\s　]+/g, "");
-  if (NOTE_SHORTHAND.has(compact)) return NOTE_SHORTHAND.get(compact);
-  // 「たかい○○」「○○たかい」のような短い補足も、意味を壊さない範囲だけ展開。
-  const rules = [
-    [/^たかい(.+)$/,"音程高い $1"],[/^ひくい(.+)$/,"音程低い $1"],
-    [/^はやい(.+)$/,"リズム速い $1"],[/^おそい(.+)$/,"リズム遅い $1"],
-    [/(.+)たかい$/,"$1 音程高い"],[/(.+)ひくい$/,"$1 音程低い"]
-  ];
-  for (const [re, out] of rules) if (re.test(compact)) return compact.replace(re, out);
+  // 表記ゆれだけを照合用に揃える。自由文そのものは書き換えない。
+  const key = raw.normalize("NFKC").replace(/[ァ-ヶ]/g, c => String.fromCharCode(c.charCodeAt(0) - 0x60));
+  const lookup = text => NOTE_SHORTHAND.get(text.replace(/[\s　]+/g, ""));
+  const exact = lookup(key);
+  if (exact) return exact;
+  // 複数の短縮語はすべて解釈できるときだけ変換する。
+  const tokens = key.split(/[\s、,／/・]+/).filter(Boolean);
+  if (tokens.length > 1 && tokens.every(t => lookup(t))) return tokens.map(lookup).join(" / ");
+  const locations = "(語尾|ごび|出だし|でだし|頭|あたま|入り|いり|最後|さいご|全体|ぜんたい|さび|Aめろ|Bめろ)";
+  const degrees = "(少し|すこし|ちょっと|やや|かなり|もっと)?";
+  const term = "(たかい|高い|ひくい|低い|はやい|早い|速い|おそい|遅い|ふあんてい|不安定|ながい|長い|みじかい|短い)";
+  const compact = key.replace(/[\s　]+/g, "");
+  const names = {ごび:"語尾",でだし:"出だし",あたま:"頭",いり:"入り",さいご:"最後",ぜんたい:"全体",さび:"サビ","Aめろ":"Aメロ","Bめろ":"Bメロ",すこし:"少し"};
+  const name = x => names[x] || x || "";
+  // 語尾たかい / 少し低い のような、明確な定型だけを認識する。
+  let match = compact.match(new RegExp("^" + locations + "(?:が|は)?" + degrees + term + "$"));
+  if (match) return name(match[1]) + " " + name(match[2]) + lookup(match[3]);
+  match = compact.match(new RegExp("^" + degrees + term + "$"));
+  if (match) return name(match[1]) + lookup(match[2]);
+  match = compact.match(new RegExp("^" + term + locations + "$"));
+  if (match) return name(match[2]) + " " + lookup(match[1]);
+  match = compact.match(/^(音程|おんてい)(たかい|高い|ひくい|低い|ふあんてい|不安定)$/);
+  if (match) return lookup(match[2]);
+  match = compact.match(/^(リズム|りずむ)(はやい|早い|速い|おそい|遅い)$/);
+  if (match) return lookup(match[2]);
+  // 「あたたかい」「高くしない」「たかい声で」などは意味を推測しない。
   return raw;
 }
 
@@ -98,7 +157,7 @@ function renderQuickMenu(sh, contextText) {
   overlay.className = "mask note-quick-mask";
   overlay.innerHTML = `<button class="quick-backdrop" data-act="cancel" aria-label="指摘画面を閉じる"></button>
     <section class="quick-note" role="dialog" aria-modal="true" aria-label="指摘">
-      <button class="quick-context" data-act="note-detail" data-id="range" aria-label="歌詞の範囲・メモ・記録"><span>${h(contextText)}</span><i aria-hidden="true">›</i></button>
+      <button class="quick-context" data-act="note-detail" data-id="range" aria-label="歌詞の範囲・メモ・記録"><span>${h(contextText)}</span><b id="note-recognized" aria-live="polite" hidden></b><i aria-hidden="true">›</i></button>
       <div class="quick-four">
         ${[["pitch","音程"],["rhythm","リズム"],["nuance","ニュアンス"],["good","良い"]].map(([id, label]) => `<button data-act="tag-choice" data-id="${id}" style="--tag-color:${CATCOL[catOf(id)]}">${label}</button>`).join("")}
       </div>
@@ -6995,6 +7054,7 @@ document.addEventListener("click", (e) => {
       break;
     case "rangeoff": U.sheet.rangeLine = null; U.sheet.range = null; U.sheet.anchor = null; commitFields(); renderSheet(); break;
     case "delnote": {
+      if (VIEW()) break;
       const target = S.notes.find((n) => n.id === id);
       if (!target || target.ro) break;
       pushUndo(null, true); delClip(id);
@@ -8067,7 +8127,7 @@ document.addEventListener("input", (e) => {
 // 指摘の画面に、メモか正しい音が入っているか（入っていれば閉じるときに記録する）
 function sheetHasInput() {
   const sh = U.sheet; if (!sh) return false;
-  const memo = (document.getElementById("memo") || {}).value || sh.memo || "";
+  const memo = document.getElementById("memo")?.value ?? sh.memo ?? "";
   return !!(memo.trim() || (sh.seq && sh.seq.length));
 }
 // タグを押したらその場で確定して戻る
@@ -8078,13 +8138,18 @@ function commitNote() {
   const s = song(), sh = U.sheet;
   U.sheet = null;
   if (!s || !sh) { renderSheet(); return; }
-  const memo = expandNoteMemo((document.getElementById("memo") || {}).value || sh.memo || "");
-  if (sh.sel.length || sh.tags.length || memo.trim() || (sh.seq && sh.seq.length)) {
+  const parsed = parseNoteInput(document.getElementById("memo")?.value ?? sh.memo ?? "");
+  const memo = parsed.memo;
+  // 入力された具体的な指摘を優先し、同じ系統の大分類だけを置き換える。
+  const generic = new Set(["pitch", "rhythm", "nuance"]);
+  const tags = [...new Set(sh.tags.filter(id => !generic.has(id)
+    || !parsed.tags.some(tag => catOf(tag) === catOf(id))).concat(parsed.tags))];
+  if (sh.sel.length || tags.length || memo.trim() || (sh.seq && sh.seq.length)) {
     pushUndo(null, true);
     const note = {
       id: uid(), songId: s.id,
       lineIdx: sh.range && sh.rangeLine != null ? sh.rangeLine : sh.lineIdx,
-      memberIds: sh.sel, tags: sh.tags,
+      memberIds: sh.sel, tags,
       memo: memo.trim(), pitch: sh.seq && sh.seq.length ? sh.seq.join("-") : null,
       lineEnd: sh.range ? null : (sh.lineEnd || null),   // 文字を選んだ時はその行だけ
       from: sh.range ? sh.range[0] : null, to: sh.range ? sh.range[1] : null,
