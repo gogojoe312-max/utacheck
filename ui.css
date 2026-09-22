@@ -288,7 +288,6 @@ select.field{appearance:auto}textarea.field{resize:vertical}
 .member-song{padding:16px;margin-bottom:12px;overflow-wrap:anywhere}
 .member-song-head{display:flex;align-items:center;gap:12px;margin-bottom:12px}
 .member-song-head h3{font-size:16px;line-height:1.6;margin:0}
-.member-song-head .chip{flex-shrink:0;min-height:44px;min-width:52px}
 .song-summary{background:var(--panel2);border-radius:10px;padding:12px;font-size:14px;line-height:1.8;white-space:pre-wrap}
 .song-summary h4{font-size:12px;margin:0 0 6px;color:var(--accent)}
 .song-summary h4 span{font-weight:400;color:var(--dim);margin-left:6px}
@@ -304,3 +303,15 @@ select.field{appearance:auto}textarea.field{resize:vertical}
 .practice-tools>summary{cursor:pointer;min-height:44px;align-content:center;font-size:14px;line-height:1.6}
 .practice-tools .head{margin:20px 0 10px;font-size:13px;color:var(--dim)}
 #app[data-viewer="1"][data-screen="summary"]>.scroll{width:100%;max-width:800px;margin:0 auto;box-sizing:border-box}
+
+@media screen {
+#app[data-viewer="1"] .summary-tabs{display:grid;grid-template-columns:1.2fr .7fr 1.2fr .6fr;gap:4px;padding:8px 10px}
+#app[data-viewer="1"] .summary-tabs>button{min-width:0;min-height:44px;padding:8px 5px;font-size:12px;white-space:nowrap}
+.member-note-link{display:block;position:relative;width:100%;min-height:44px;text-align:left;padding-right:24px;font:inherit;color:inherit;line-height:1.7;border-radius:6px}
+.member-note-link:active{background:var(--panel2)}
+.member-note-arrow{position:absolute;right:5px;top:12px;color:var(--dim);font-size:22px;line-height:1}
+.member-back{flex:none;min-height:44px;padding:8px 12px;border-radius:10px;background:var(--panel2);color:var(--accent);font-size:14px;font-weight:600;white-space:nowrap}
+.member-back span{font-size:22px;line-height:1;vertical-align:-1px}
+#app[data-viewer="1"] .bottom .member-back-bottom{min-height:44px;color:var(--accent);font-weight:600;background:var(--panel2)}
+#app[data-viewer="1"] .member-lyric-target{outline:2px solid var(--accent);outline-offset:-3px;border-radius:10px;scroll-margin:16px}
+}

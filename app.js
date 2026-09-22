@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.39.0";
+const APP_VER = "16.39.1";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -3743,6 +3743,7 @@ function render(background = false) {
   }
   const sc = app.querySelector(".scroll");
   if (sc && sameView) sc.scrollTop = st;
+  if (VIEW()) applyMemberNavigation();
   renderSheet();
   if (U.view === "live" && !U.overview) queueInkPaint();
   if (U.view === "print" || U.view === "recprint") setTimeout(fitPrintDOM, 0);
@@ -3877,7 +3878,7 @@ function viewLive() {
         const gp2 = gns.filter((n) => n.memo).map((n) =>
           `<button class="tagpill" data-act="note" data-i="${i}" style="color:var(--dim)">${h(n.memo)}</button>`).join("");
         const gt = gns.length ? noteColor(gns[0]) : "";
-        return `<div class="ln lngap" style="${gt ? `background:color-mix(in srgb,${gt} 9%,transparent)` : ""}">
+        return `<div class="ln lngap" data-lyric-line="${i}" style="${gt ? `background:color-mix(in srgb,${gt} 9%,transparent)` : ""}">
           <button class="lbl" data-act="noteblock" data-i="${i}"></button>
           <div class="brk"></div>
           <div class="grow" style="min-width:0"><button data-act="noteblock" data-i="${i}"
@@ -3922,7 +3923,7 @@ function viewLive() {
       const vh = vm.info[i];
       return `${newSec ? `<div class="secdiv" id="sec-${h(l.sec)}"><span>${h(l.sec)}</span></div>` : ""}
       ${vh ? `<div class="vtdiv" style="color:${vh.c}"><span>${h(vh.vt)}</span></div>` : ""}
-      <div class="ln${S.recMode && l.add ? " lnadd" : ""}${S.recMode && l.skip ? " lnskip" : ""}${l.cut ? " lncut" : ""}${isAgeri(l) ? " lnage" : ""}"${
+      <div data-lyric-line="${i}" class="ln${S.recMode && l.add ? " lnadd" : ""}${S.recMode && l.skip ? " lnskip" : ""}${l.cut ? " lncut" : ""}${isAgeri(l) ? " lnage" : ""}"${
         l.tag && tanc[l.tag] === i ? ` id="sec-${h(l.tag)}"` : ""} style="${tint ? `background:color-mix(in srgb,${tint} ${strength}%,transparent);` : ""}${vtc ? `box-shadow:inset 3px 0 0 ${vtc}` : ""}">
         <button class="lbl" data-act="${S.recMode ? "rbar" : "noteblock"}" data-i="${i}"${S.recMode || VIEW() ? "" : ` data-hold="assignline"`}
           style="${st2 ? `color:${st2 === "need" ? "var(--bad)" : "#F0B23C"}` : ""}">${S.recMode && l.tag ? `<b class="tagmk">${h(l.tag)}</b>` : ""}${l.cut ? `<b class="cutmk">カット</b>` : ""}${labelHTML(s, i)}</button>
@@ -3964,6 +3965,7 @@ function viewLive() {
       </div>
     </div>` : ""}
   <div class="hd">
+    ${viewerBackButton()}
     <button class="grow" style="text-align:left" data-act="picker">
       <div class="t1" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px">${S.recMode
         ? `<b style="color:var(--accent)">レコーディングモード</b>${s ? " ・ " + h((S.groups.find((x) => x.id === s.groupId) || {}).name || s.folder || "") : ""}`
@@ -4019,7 +4021,7 @@ function viewLive() {
           <path d="M4 20.5h16" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/>
         </svg></button>
       ` : ""}
-    ${VIEW() ? '<button data-act="go-summary">指摘</button>' : ""}
+    ${VIEW() ? '<button data-act="summary-back" class="member-back-bottom">指摘に戻る</button>' : ""}
     ${VIEW() && unreadSongs().length ? `<button data-act="nextunread" style="color:var(--accent);font-weight:700">未読${unreadSongs().length}</button>` : ""}
 
     <span class="grow"></span>
@@ -4171,6 +4173,7 @@ function viewOverview(s) {
 
   return `
   <div class="hd">
+    ${viewerBackButton()}
     <div class="grow"><div class="t1 clamp2"><b style="color:var(--accent)">${S.recMode ? "レコーディングモード" : VIEW() ? "公演" : "ライブモード"}</b> ・ ${h(showName())} ・ 全体表示</div>
       <div class="t2 trunc">${h(songName(s))}</div></div>
     <button class="ic" data-act="ovsize">${S.recMode ? S.recOvSize : U.ovSize}px</button>
@@ -4735,26 +4738,67 @@ function viewerSummaryBody() {
     const memo = summaryMemo(so);
     if (!notes.length && !memo) return "";
     return `<section class="card member-song">
-      <div class="member-song-head"><div class="grow">${U.allShows ? `<div class="member-caption">${h(showName(so.showId))}</div>` : ""}<h3>${h(songName(so))}</h3></div>
-      <button class="chip sm" data-act="summary-song" data-id="${h(so.id)}" aria-label="${h(songName(so))}の歌詞を開く">歌詞</button></div>
+      <div class="member-song-head"><div class="grow">${U.allShows ? `<div class="member-caption">${h(showName(so.showId))}</div>` : ""}<h3>${h(songName(so))}</h3></div></div>
       ${memo ? `<div class="song-summary"><h4>総括 <span>全員共通</span></h4><div>${h(memo)}</div></div>` : ""}
       ${notes.length ? `<h4 class="member-notes-title">${byMember && selected ? h(selected.name) + "さんへの指摘" : "指摘"}<span>${notes.length}件</span></h4>
-        ${notes.map(n => `<div class="member-note"><div class="member-lyric">${h(lyricOf(n))}</div>
+        ${notes.map(n => `<button class="member-note member-note-link" data-act="summary-note" data-id="${h(so.id)}" data-i="${n.lineIdx}" aria-label="${h(songName(so))}：${h(lyricOf(n))}の指摘箇所を歌詞で見る"><span class="member-note-arrow" aria-hidden="true">›</span><div class="member-lyric">${h(lyricOf(n))}</div>
           ${partOf(n) ? `<div class="member-caption">対象：${h(partOf(n))}</div>` : ""}
           ${!byMember || !selected ? `<div class="member-caption">${h(names(n.memberIds) || "全員")}</div>` : ""}
           <div class="member-note-tags" style="color:${noteColor(n)}">${h(n.tags.map(tagName).join("・"))}${n.pitch ? "（正しい音 " + h(pitchLabel(n.pitch)) + "）" : ""}</div>
-          ${n.memo ? `<div class="member-note-memo">${h(n.memo)}</div>` : ""}${handHTML(n)}</div>`).join("")}`
+          ${n.memo ? `<div class="member-note-memo">${h(n.memo)}</div>` : ""}${handHTML(n)}</button>`).join("")}`
         : `<p class="member-hint">${byMember && selected ? h(selected.name) + "さんへの個別の指摘はありません。" : "個別の指摘はありません。"}</p>`}
     </section>`;
   }).join("");
   return picker + (cards || `<p class="member-empty">${byMember && selected ? h(selected.name) + "さんへの指摘・曲の総括は" : "指摘・曲の総括は"}${U.allShows ? "まだ" : "この公演には"}ありません。</p>`);
 }
-function openSummarySong(id) {
-  const so = summarySongs().find(so => so.id === id);
+function viewerBackButton() {
+  return VIEW() ? '<button class="member-back" data-act="summary-back" aria-label="指摘に戻る"><span aria-hidden="true">‹</span> 戻る</button>' : "";
+}
+function openSummarySong(id, lineIdx = null) {
+  if (!VIEW()) return;
+  const allowed = new Set(summaryShows().map(sw => sw.id));
+  const so = id ? S.songs.find(so => so.id === id && allowed.has(so.showId)
+    && (!S.groupId || !so.groupId || so.groupId === S.groupId)) : SONGS()[U.songIdx] || summarySongs()[0];
   if (!so) return;
+  if (U.view === "summary") U.summaryReturn = {
+    showId: S.showId, allShows: U.allShows, mode: U.mode,
+    scrollTop: app.querySelector(".scroll")?.scrollTop || 0,
+  };
   S.showId = so.showId;
-  U.songIdx = Math.max(0, SONGS().findIndex(x => x.id === id));
+  U.songIdx = Math.max(0, SONGS().findIndex(x => x.id === so.id));
+  U.overview = false; U.picker = false;
+  U.lyricTarget = Number.isInteger(lineIdx) && lineIdx >= 0 && lineIdx < (so.lines || []).length
+    ? { songId: so.id, lineIdx, pending: true } : null;
   U.view = "live"; save(); render();
+}
+function backToSummary() {
+  if (!VIEW()) return;
+  const back = U.summaryReturn;
+  if (back) {
+    if (summaryShows().some(sw => sw.id === back.showId)) S.showId = back.showId;
+    U.allShows = back.allShows; U.mode = back.mode;
+    U.summaryScroll = back.scrollTop;
+  }
+  U.summaryReturn = null; U.lyricTarget = null;
+  U.overview = false; U.picker = false; U.view = "summary";
+  save(); render();
+}
+// Run after an actual render, so deferred touch/scroll renders cannot lose a jump.
+function applyMemberNavigation() {
+  if (!VIEW()) return;
+  if (U.view === "summary" && U.summaryScroll != null) {
+    const sc = app.querySelector(".scroll");
+    if (sc) { sc.scrollTop = U.summaryScroll; U.summaryScroll = null; }
+  }
+  const target = U.lyricTarget;
+  if (U.view !== "live" || U.overview || !target || song()?.id !== target.songId) return;
+  const row = app.querySelector(`[data-lyric-line="${target.lineIdx}"]`);
+  if (!row) return;
+  row.classList.add("member-lyric-target");
+  if (target.pending) {
+    row.scrollIntoView({ block: "center", behavior: "instant" });
+    target.pending = false;
+  }
 }
 
 function summaryHeader() {
@@ -4762,12 +4806,12 @@ function summaryHeader() {
     style="${U.mode === id ? "background:var(--accent);color:#0A0A0A" : ""}">${label}</button>`;
 
   return `
-  <div class="hd"><button class="ic" data-act="go-live" aria-label="歌詞を開く">${VIEW() ? "歌詞" : "‹"}</button><b>${VIEW() ? "指摘" : "集計"}</b>
+  <div class="hd">${VIEW() ? "" : '<button class="ic" data-act="go-live" aria-label="歌詞を開く">‹</button>'}<b>${VIEW() ? "指摘" : "集計"}</b>
     ${VIEW() ? '<button class="ic" data-act="go-setup">設定</button>' : ""}
     ${preview ? '<button class="chip sm" data-act="endpv">確認を終わる</button>' : ""}
     <span class="grow"></span>
     <span style="font-size:11px;color:var(--dim)" class="trunc">${h(U.allShows ? "全公演" : showName())}</span></div>
-  <div class="tabs">${tab("member", "メンバー別")}${tab("song", "曲別")}${VIEW() ? "" : tab("show", "公演別")}${tab("diff", "前回との差")}</div>
+  <div class="tabs summary-tabs">${tab("member", "メンバー別")}${tab("song", "曲別")}${VIEW() ? "" : tab("show", "公演別")}${tab("diff", "前回との差")}${VIEW() ? '<button class="chip sm" data-act="summary-lyrics">歌詞</button>' : ""}</div>
   ${summaryShowPicker()}
 `;
 }
@@ -4891,10 +4935,11 @@ function viewDiff() {
     const row = (n, src, col) => {
       const sg2 = src === "now" ? so : prevSong;
       const t = (sg2.lines[n.lineIdx] || {}).t || "";
-      return `<div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--line);font-size:13px">
+      return `<${VIEW() ? `button class="member-note-link" data-act="summary-note" data-id="${h(sg2.id)}" data-i="${n.lineIdx}" aria-label="${h(songName(sg2))}：${h(t)}の指摘箇所を歌詞で見る"` : "div"} style="margin-top:6px;padding-top:6px;border-top:1px solid var(--line);font-size:13px">
+        ${VIEW() ? '<span class="member-note-arrow" aria-hidden="true">›</span>' : ""}
         <div>${h(t)}</div>
         <div style="font-size:11px;color:${col};margin-top:2px">${h(names(n.memberIds) || "—")} / ${h(n.tags.map(tagName).join("・"))}${n.memo ? " — " + h(n.memo) : ""}</div>${handHTML(n)}
-      </div>`;
+      </${VIEW() ? "button" : "div"}>`;
     };
     const sec = (title, arr, col, src) => arr.length
       ? `<div style="margin-top:10px"><b style="font-size:12px;color:${col}">${title} ${arr.length}</b>${arr.map((n) => row(n, src, col)).join("")}</div>`
@@ -6821,7 +6866,9 @@ document.addEventListener("click", (e) => {
     case "size": S.size = S.size >= 26 ? 15 : S.size + 2; save(); render(); break;
     case "prev": if (U.songIdx > 0) { commitFields(); markRead(song()); U.songIdx--; if (S.recMode) { S.rsongId = SONGS()[U.songIdx].id; U.secView = ""; save(); } render(); } break;
     case "next": if (U.songIdx < SONGS().length - 1) { commitFields(); markRead(song()); U.songIdx++; if (S.recMode) { S.rsongId = SONGS()[U.songIdx].id; U.secView = ""; save(); } render(); } break;
-    case "summary-song": openSummarySong(id); break;
+    case "summary-lyrics": openSummarySong(); break;
+    case "summary-note": openSummarySong(id, i); break;
+    case "summary-back": backToSummary(); break;
     case "go-summary": commitFields(); U.view = "summary"; render(); break;
     case "pt-settings": if (window.PTLink) window.PTLink.open(); break;
     case "go-setup": commitFields(); U.view = "setup"; render(); break;

@@ -39,3 +39,26 @@ test('song view shows every member and opening a historic song changes the corre
 test('summary header keeps member tabs simple and editor show tab available',()=>{
  const {c,run}=fixture();assert(!run('summaryHeader()').includes('公演別'));c.VIEW=()=>false;assert(run('summaryHeader()').includes('公演別'));
 });
+test('a feedback point opens its exact line and back restores the summary context and scroll',()=>{
+ const {c,run}=fixture();let sc={scrollTop:360},jumped=0,highlighted=0;
+ c.app={querySelector:q=>q==='.scroll'?sc:{classList:{add(){highlighted++;}},scrollIntoView(){jumped++;}}};
+ c.song=()=>c.SONGS()[c.U.songIdx||0];c.S.songs[2].lines=[{},{}];
+ c.U.view='summary';c.U.mode='diff';c.U.overview=true;
+ run("openSummarySong('s3',1)");
+ assert.equal(c.S.showId,'day2');assert.equal(c.U.overview,false);assert.equal(c.U.lyricTarget.lineIdx,1);
+ run('applyMemberNavigation();applyMemberNavigation()');assert.equal(jumped,1);assert.equal(highlighted,2);
+ sc.scrollTop=0;run('backToSummary();applyMemberNavigation()');
+ assert.equal(c.S.showId,'day1');assert.equal(c.U.mode,'diff');assert.equal(c.U.view,'summary');assert.equal(sc.scrollTop,360);assert.equal(c.U.lyricTarget,null);
+});
+test('summary uses feedback links and a single lyric tab after comparison',()=>{
+ const {run}=fixture();const body=run('viewerSummaryBody()'),head=run('summaryHeader()');
+ assert(body.includes('data-act="summary-note" data-id="s1" data-i="1"'));assert(!body.includes('data-act="summary-song"'));
+ assert(head.indexOf('前回との差')<head.indexOf('data-act="summary-lyrics"'));assert.equal((head.match(/>歌詞</g)||[]).length,1);
+ assert(run('viewerBackButton()').includes('指摘に戻る'));
+});
+test('lyric entry without a note opens current song, handles empty songs, and rejects other groups',()=>{
+ const {c,run}=fixture();c.app={querySelector:()=>({scrollTop:20})};c.U.view='summary';c.U.songIdx=1;
+ run('openSummarySong()');assert.equal(c.U.view,'live');assert.equal(c.U.songIdx,1);assert.equal(c.U.lyricTarget,null);
+ c.U.view='summary';run("openSummarySong('other',0)");assert.equal(c.U.view,'summary');
+ c.S.songs=[];run('openSummarySong()');assert.equal(c.U.view,'summary');
+});
