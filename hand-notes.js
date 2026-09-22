@@ -13,7 +13,7 @@ const HandNotes = (() => {
     hand.text = error ? "" : String(text || "").slice(0, 1000);
     hand.state = error || !hand.text ? "unread" : "draft";
     save(); schedulePush();
-    if (!U.sheet && !U.menu && !typingNow()) render();
+    if (!U.sheet && !U.menu && !typingNow()) render(true);
   }
   function getWorker() {
     if (worker) return worker;

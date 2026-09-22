@@ -445,8 +445,8 @@ function splitAssign(so, i) {
 function noteSig(so) {
   if (!so) return 0;
   const ns = NOTES().filter((n) => n.songId === so.id)
-    .map((n) => [n.lineIdx, n.lineEnd, n.from, n.to, (n.tags || []).join(","), n.memo, n.pitch, JSON.stringify(n.hand || null),
-      (n.memberIds || []).map((m) => (member(m) || {}).name).sort().join("・")].join(":"))
+    .map((n) => [n.lineIdx, n.lineEnd, n.from, n.to, (n.tags || []).join(","), n.memo, n.pitch,
+      (n.memberIds || []).map((m) => (member(m) || {}).name).sort().join("・")].join(":") + (n.hand ? ":" + JSON.stringify(n.hand) : ""))
     .sort().join("|");
   // 曲は公演に属するので、今どの公演を開いているかに関係なく、その曲の総括を見る
   const mk = (so.showId || S.showId) + "|" + so.id;
@@ -8448,6 +8448,15 @@ document.addEventListener("pointercancel", () => { rgDrag = null; });
 
 /* ---- なぞって範囲指定 ---- */
 let org = null, dragOn = false;
+let noteClickUntil = 0;
+// Ignore only the synthetic click from the gesture that opened the menu.
+// A fresh touch or mouse press can immediately select one of the four buttons.
+document.addEventListener("pointerdown", () => { noteClickUntil = 0; }, true);
+document.addEventListener("click", e => {
+  if (e.isTrusted && e.detail !== 0 && Date.now() < noteClickUntil) {
+    noteClickUntil = 0; e.preventDefault(); e.stopImmediatePropagation();
+  }
+}, true);
 
 // 指の位置から、その行の何文字目かを求める。
 // 文字の上を外れても（バッジの上、行の外、折り返しの先でも）必ず一番近い文字を返す。
@@ -8562,7 +8571,7 @@ document.addEventListener("pointerup", (e) => {
     openSheet(o.l, null, null, {x:e.clientX, y:e.clientY});
   }
   // メニューが指先に現れても、今離した指のクリックでは選ばない。
-  if (U.sheet) tagClickUntil = Date.now() + 500;
+  if (U.sheet) noteClickUntil = Date.now() + 500;
   dragOn = false; clearHl();
 });
 

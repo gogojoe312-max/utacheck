@@ -88,12 +88,16 @@ test('cancelled lyric gestures and second fingers cannot open notes; highlights 
  const chars=Array.from({length:3},(_,i)=>({dataset:{c:String(i)},style:{background:i===1?'red':''},getBoundingClientRect:()=>({left:i*20,right:i*20+20,top:0,bottom:30})}));
  const row={dataset:{l:'0'},isConnected:true,querySelectorAll:()=>chars};
  const target={closest:sel=>sel==='.txt'?row:null};
- const c=vm.createContext({...time,document:doc,window:win,U:{},S:{recMode:false},VIEW:()=>false,song:()=>({id:'a'}),openSheet:(...a)=>notes.push(a),app:{querySelector:()=>row}});
+ const c=vm.createContext({...time,document:doc,window:win,U:{},S:{recMode:false},VIEW:()=>false,song:()=>({id:'a'}),openSheet:(...a)=>{notes.push(a);c.U.sheet={};},app:{querySelector:()=>row}});
  vm.runInContext(block('let org = null, dragOn = false;', '/* ---------------- files'),c);
  const fire=(name,more={})=>doc.fire(name,{target,clientX:5,clientY:10,preventDefault(){},...more});
  fire('pointerdown');fire('pointercancel');fire('pointerup');assert.equal(notes.length,0);
  fire('pointerdown',{isPrimary:false});fire('pointerup');assert.equal(notes.length,0);
  fire('pointerdown');fire('pointerup');assert.equal(notes.length,1);
+ let suppressed=false;
+ fire('click',{isTrusted:true,detail:1,stopImmediatePropagation(){suppressed=true;}});assert.equal(suppressed,true);
+ suppressed=false;fire('pointerdown');fire('click',{isTrusted:true,detail:1,stopImmediatePropagation(){suppressed=true;}});assert.equal(suppressed,false);
+ c.U.sheet=null;
  vm.runInContext('highlight(0,0,2);clearHl()',c);assert.equal(chars[1].style.background,'red');assert.equal(chars[0].style.background,'');
  fire('pointerdown');row.isConnected=false;fire('pointerup');assert.equal(notes.length,1);
 });
