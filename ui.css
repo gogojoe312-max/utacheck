@@ -98,14 +98,16 @@ select.field{appearance:auto}textarea.field{resize:vertical}
  .settings-section .row.card[data-drop]>.grow>.trunc:first-child{white-space:normal;overflow:visible;overflow-wrap:anywhere}
  .settings-section .row.card[data-drop]>button:not(.grow):not([data-act="picksong"]){background:#ffffff04;padding:6px 10px!important}
 }
-/* Keep controls separate so performance and song names use the full width. */
+/* Two compact rows: full-width performance context, then title and direct controls. */
 @media screen {
-#app[data-screen="live"] .song-header{flex-wrap:wrap;padding:calc(20px + env(safe-area-inset-top,0px)) calc(12px + env(safe-area-inset-right,0px)) 12px calc(12px + env(safe-area-inset-left,0px));gap:4px}
-.song-header .song-mode{flex:1 1 100px;min-width:0;color:var(--accent);font-size:11px;line-height:1.5;overflow-wrap:anywhere}
-.song-header .song-heading{flex:1 0 100%;width:100%;min-width:0;text-align:left;padding:0;white-space:normal;overflow-wrap:anywhere}
+#app[data-screen="live"] .song-header{flex-wrap:wrap;padding:calc(8px + env(safe-area-inset-top,0px)) calc(12px + env(safe-area-inset-right,0px)) 6px calc(12px + env(safe-area-inset-left,0px));gap:2px 4px}
+.song-header .song-context{flex:1 0 100%;min-width:0;text-align:left;padding:0;white-space:normal;overflow-wrap:anywhere}
+.song-header .song-heading{flex:1 1 0;min-width:0;min-height:44px;display:flex;align-items:center;text-align:left;padding:0;white-space:normal;overflow-wrap:anywhere}
+.song-header .song-freshness{font-size:10px;line-height:1.4}
+.song-header .member-back{padding:6px 8px;background:transparent}
 .song-header .t1,.song-header .t2{display:block;white-space:normal;overflow:visible;text-overflow:clip;-webkit-line-clamp:unset}
-#app[data-screen="live"] .hd .t2{font-size:18px;margin-top:0;line-height:1.3}
-#app[data-screen="live"] .hd .t1{font-size:12px;line-height:1.6;margin-bottom:4px}
+#app[data-screen="live"] .hd .t2{font-size:18px;margin-top:0;line-height:1.35}
+#app[data-screen="live"] .hd .t1{font-size:12px;line-height:1.5;margin:0}
 #app[data-screen="live"] .hd .ic{min-width:44px;width:44px;height:44px;font-size:12px!important}
 #app[data-screen="live"] .blk{padding:4px 12px;gap:12px}
 #app[data-screen="live"] .ln:not(.lngap){display:grid;grid-template-columns:minmax(0,1fr);gap:0 5px;padding:6px 14px}
