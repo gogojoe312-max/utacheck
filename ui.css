@@ -103,12 +103,12 @@ select.field{appearance:auto}textarea.field{resize:vertical}
  .settings-section .row.card[data-drop]>.grow>.trunc:first-child{white-space:normal;overflow:visible;overflow-wrap:anywhere}
  .settings-section .row.card[data-drop]>button:not(.grow):not([data-act="picksong"]){background:#ffffff04;padding:6px 10px!important}
 }
-/* Lyrics first: one quiet review row, no always-visible quick-tag palette. */
+/* Keep song controls below the iPhone status area with comfortable spacing. */
 @media screen {
-#app[data-screen="live"] .hd:has([data-act="picker"]){flex-wrap:nowrap;padding:8px 12px;gap:4px}
+#app[data-screen="live"] .hd:has([data-act="picker"]){flex-wrap:nowrap;padding:calc(20px + env(safe-area-inset-top,0px)) calc(12px + env(safe-area-inset-right,0px)) 12px calc(12px + env(safe-area-inset-left,0px));gap:4px}
 #app[data-screen="live"] .hd>button[data-act="picker"]{flex:1 1 auto;max-width:none}
 #app[data-screen="live"] .hd .t2{font-size:18px;margin-top:0;line-height:1.3}
-#app[data-screen="live"] .hd .t1{font-size:10px!important;line-height:1.4}
+#app[data-screen="live"] .hd .t1{font-size:11px!important;line-height:1.5;margin-bottom:3px}
 #app[data-screen="live"] .hd .ic{min-width:44px;width:44px;height:44px;font-size:12px!important}
 #app[data-screen="live"] .blk{padding:4px 12px;gap:12px}
 #app[data-screen="live"] .ln:not(.lngap){display:grid;grid-template-columns:minmax(0,1fr);gap:0 5px;padding:6px 14px}
@@ -126,20 +126,17 @@ select.field{appearance:auto}textarea.field{resize:vertical}
 #app[data-screen="live"] .sectabs{padding-top:3px;padding-bottom:0}
 #app[data-screen="live"] .sectab{padding:6px 12px;min-height:34px}
 @media(min-width:700px){
- #app[data-screen="live"] .hd:has([data-act="picker"]){padding:12px 24px}
+ #app[data-screen="live"] .hd:has([data-act="picker"]){padding-left:calc(24px + env(safe-area-inset-left,0px));padding-right:calc(24px + env(safe-area-inset-right,0px))}
  #app[data-screen="live"] .hd .t2{font-size:22px}
  #app[data-screen="live"] .ln:not(.lngap){padding:7px 28px;grid-template-columns:minmax(0,1fr) 36px}
 
 }
 }
 @media screen {
-/* Keep the compact header below the notch, including installed iPhone PWAs. */
-#app[data-screen="live"] .hd:has([data-act="picker"]){padding-top:calc(8px + env(safe-area-inset-top));padding-left:calc(12px + env(safe-area-inset-left));padding-right:calc(12px + env(safe-area-inset-right))}
 #app[data-screen="live"] .bottom{padding-bottom:calc(3px + env(safe-area-inset-bottom))}
 
 .reading-notes{font-size:13px;line-height:1.7;color:#bfd8ff;margin:5px 0 3px;white-space:pre-wrap;overflow-wrap:anywhere}
 .reading-notes>div{border-left:2px solid #6688b5;padding-left:8px;margin-top:4px}
-@media(min-width:700px){#app[data-screen="live"] .hd:has([data-act="picker"]){padding-top:calc(12px + env(safe-area-inset-top));padding-left:calc(24px + env(safe-area-inset-left));padding-right:calc(24px + env(safe-area-inset-right))}}
 }
 @media screen{
 #app[data-viewer="1"] .ln:has(.reading-notes) .tagpill[data-act="note"]{display:none}
