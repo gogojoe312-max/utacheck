@@ -31,7 +31,7 @@ SEED='''() => {
  S.shows=[{id:'s',name:'操作検証',ts:1}];S.showId='s';
  S.songs=[{id:'song',title:'キーボード操作確認',groupId:'g',showId:'s',roster:['m'],take:1,
  lines:Array.from({length:40},(_,i)=>({t:'歌詞のテスト '+(i+1)+'行目を確認します',parts:['m']}))}];
- S.notes=[];S.livePending=[];renderPointers.clear();scrollingUntil=0;pendingRender=false;render();document.querySelector('#app>.scroll').scrollTop=0;
+ S.notes=[];renderPointers.clear();scrollingUntil=0;pendingRender=false;render();document.querySelector('#app>.scroll').scrollTop=0;
 }'''
 def vv(page,h,top=0):
  page.evaluate('([h,t])=>resizeVV(h,t)',[h,top]);page.wait_for_timeout(40)

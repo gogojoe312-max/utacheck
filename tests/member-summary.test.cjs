@@ -7,7 +7,7 @@ function fixture(){
  shows:[{id:'day1',name:'初日'},{id:'day2',name:'二日目'}],songs:[{id:'s1',title:'一曲目',showId:'day1',groupId:'g'},{id:'s2',title:'総括だけの曲',showId:'day1',groupId:'g'},{id:'s3',title:'翌日の曲',showId:'day2',groupId:'g'},{id:'other',title:'別グループ',showId:'day1',groupId:'other'}],memos:{'day1|s1':'共通の総括\n二行目','day1|s2':'指摘ゼロでも表示','day2|s3':'二日目の総括','day1|other':'漏らさない'}},U:{mode:'member',sumOpen:'',allShows:false},preview:null,
  notes:[{songId:'s1',showId:'day1',memberIds:['a'],lineIdx:1,tags:['音程'],memo:'山田向け'},{songId:'s1',showId:'day1',memberIds:['b'],lineIdx:2,tags:['リズム'],memo:'田中向け'}],
  localStorage:{getItem:k=>stored.get(k),setItem:(k,v)=>stored.set(k,v)},VIEW:()=>true,group:()=>({name:'グループ'}),h:x=>String(x??'').replace(/</g,'&lt;'),render(){},save(){},handHTML:()=>'',noteColor:()=>'',tagName:x=>x,pitchLabel:x=>x,lyricOf:n=>'歌詞'+n.lineIdx,partOf:()=>'',songName:so=>so.title,names:ids=>ids.join('・')});
- c.showsNewestFirst=()=>c.S.shows;c.shownNotes=()=>c.notes.filter(n=>c.U.allShows||n.showId===c.S.showId);c.showName=id=>c.S.shows.find(sw=>sw.id===(id||c.S.showId))?.name;c.SONGS=()=>c.S.songs.filter(so=>so.showId===c.S.showId&&so.groupId===c.S.groupId);
+ c.songDeliveryGroupId=so=>so.groupId;c.showsNewestFirst=()=>c.S.shows;c.shownNotes=()=>c.notes.filter(n=>c.U.allShows||n.showId===c.S.showId);c.showName=id=>c.S.shows.find(sw=>sw.id===(id||c.S.showId))?.name;c.SONGS=()=>c.S.songs.filter(so=>so.showId===c.S.showId&&so.groupId===c.S.groupId);
  vm.runInContext(src.slice(src.indexOf('const songMemo ='),src.indexOf('const shownNotes =')),c);
  vm.runInContext(src.slice(src.indexOf('function summaryShows()'),src.indexOf('function viewSummary()')),c);
  return {c,stored,run:code=>vm.runInContext(code,c)};
@@ -61,4 +61,8 @@ test('lyric entry without a note opens current song, handles empty songs, and re
  run('openSummarySong()');assert.equal(c.U.view,'live');assert.equal(c.U.songIdx,1);assert.equal(c.U.lyricTarget,null);
  c.U.view='summary';run("openSummarySong('other',0)");assert.equal(c.U.view,'summary');
  c.S.songs=[];run('openSummarySong()');assert.equal(c.U.view,'summary');
+});
+test('remembered member opens on another performance after relaunch and a roster refresh',()=>{
+ const {c,run}=fixture();run("selectViewerMember('b')");c.S.showId='day2';c.S.members=[{id:'new-b',name:'田中'},{id:'new-a',name:'山田'}];c.U={view:'summary',mode:'member',allShows:false};
+ const html=run('viewerSummaryBody()');assert(html.includes('田中さんへの指摘と'));assert(html.includes('二日目の総括'));assert.equal(c.U.sumOpen,'new-b');
 });

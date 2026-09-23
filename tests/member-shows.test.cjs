@@ -4,7 +4,7 @@ const fs=require('node:fs'),vm=require('node:vm');
 const src=fs.readFileSync(require('node:path').join(__dirname,'..','app.js'),'utf8');
 const block=(a,b)=>src.slice(src.indexOf(a),src.indexOf(b,src.indexOf(a)));
 test('summary changes day while keeping member open and excludes other groups',()=>{
- const c=vm.createContext({S:{groupId:'g',showId:'today',shows:[{id:'today',name:'今日'},{id:'yesterday',name:'昨日'},{id:'other',name:'別グループ'}],songs:[{showId:'today',groupId:'g'},{showId:'yesterday',groupId:'g'},{showId:'other',groupId:'other'}]},U:{view:'summary',mode:'member',sumOpen:'member1'},save(){},render(){},h:x=>x});
+ const c=vm.createContext({S:{groupId:'g',showId:'today',shows:[{id:'today',name:'今日'},{id:'yesterday',name:'昨日'},{id:'other',name:'別グループ'}],songs:[{showId:'today',groupId:'g'},{showId:'yesterday',groupId:'g'},{showId:'other',groupId:'other'}]},U:{view:'summary',mode:'member',sumOpen:'member1'},VIEW:()=>true,save(){},render(){},h:x=>x});
  c.showsNewestFirst=()=>c.S.shows;
  vm.runInContext(block('function summaryShows()', 'function viewSummary()'),c);
  vm.runInContext("selectSummaryShow('yesterday')",c);

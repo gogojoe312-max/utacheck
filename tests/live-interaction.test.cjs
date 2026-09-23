@@ -15,7 +15,7 @@ function gestures() {
  vm.runInContext(source('gestures.js'), ctx);
  function target(kind) { return {closest(sel){
   if(sel === '#app>.scroll' && !kind.startsWith('control')) return {};
-  if(sel === '#app>.bottom,#app>.lf-dock,#app>.aubar' && kind.startsWith('control')) return {};
+  if(sel === '#app>.bottom,#app>.aubar' && kind.startsWith('control')) return {};
   if(kind === 'control-input' && sel.includes('input')) return {};
   if(kind === 'text' && sel.includes('[data-c]')) return {};
   if(kind === 'button' && sel.includes('button')) return {};
@@ -39,27 +39,6 @@ test('vertical scrolling, pinch, overview and recording do not switch songs',()=
  assert.equal(g.clicks.length,0);
  g.ctx.U.overview=true;g.swipe('control-button');g.ctx.U.overview=false;g.ctx.S.recMode=true;g.swipe('control-button');assert.equal(g.clicks.length,0);
 });
-function live() {
- const so={id:'song',lines:[{t:'test lyric',parts:[]}]};let publishes=0;
- const c=vm.createContext({S:{showId:'show',songs:[so],notes:[{id:'confirmed'}],livePending:[{id:'other',showId:'other-show',songId:'song',lineIdx:0,text:'test lyric'}]},U:{},preview:null,
-  VIEW:()=>false,song:()=>so,uid:()=> 'new',recAt:()=>null,partsOf:()=>[],undoStack:[],
-  pushUndo(){c.undoStack.push(JSON.stringify(c.S));},save(){},render(){},schedulePush(){publishes++;},TAGS:[],h:String,
-  window:{addEventListener(){}},document:{addEventListener(){}},setTimeout,clearTimeout});
- vm.runInContext(source('liveflow.js'),c);
- return {c,run:code=>vm.runInContext(code,c),publishes:()=>publishes};
-}
-test('temporary check toggles off without deleting confirmed notes or another show, and can be undone',()=>{
- const l=live();l.run('LiveFlow.handle("lf-line", "", 0)');assert.equal(l.c.S.livePending.length,2);
- assert.match(l.run('LiveFlow.lineButton(song(),0)'),/aria-pressed="true"/);
- l.run('LiveFlow.handle("lf-line", "", 0)');assert.equal(l.c.S.livePending.length,1);assert.equal(l.c.S.livePending[0].id,'other');
- assert.equal(l.c.S.notes[0].id,'confirmed');assert.equal(l.publishes(),0);
- assert.equal(JSON.parse(l.c.undoStack.at(-1)).livePending.length,2);
- assert.match(l.run('LiveFlow.lineButton(song(),0)'),/aria-pressed="false"/);
-});
-test('member preview cannot change temporary checks',()=>{
- const l=live();l.c.preview='saved-state';l.run('LiveFlow.handle("lf-line", "", 0)');assert.equal(l.c.S.livePending.length,1);
-});
-
 test('members can swipe lyrics to change songs while editors keep lyric gestures for notes',()=>{
  const g=gestures();g.ctx.VIEW=()=>true;g.swipe('text');assert.equal(g.clicks.length,1);
  g.swipe('button');assert.equal(g.clicks.length,1);
@@ -92,14 +71,4 @@ test('footer song swipes recover after another interaction consumes pointerup',(
 test('footer swipes use the same song navigation as arrows while live audio is recording',()=>{
  const g=gestures();g.ctx.REC=true;g.swipe('control-button');
  assert.equal(g.clicks.length,1);assert.equal(g.ctx.REC,true);
-});
-
-test('a temporary check still becomes a published note with its memo and recording position',()=>{
- const l=live();l.c.S.songs[0].showId='show';l.c.prevSongOf=()=>null;l.c.renderSheet=()=>{};l.c.TAGS=[{id:'pLo'}];
- l.run('LiveFlow.handle("lf-line", "", 0)');
- const d=l.c.S.livePending.find(n=>n.id==='new');d.at=12;d.recKey='show|song|1';d.memberIds=['singer'];
- l.c.U.menu={kind:'lf-item',showId:'show',songId:'song',itemId:d.id,itemKind:'draft',tag:'pLo',memo:'語尾を確認'};
- l.run('LiveFlow.handle("lf-confirm", "", 0)');
- const note=l.c.S.notes.at(-1);assert.equal(note.memo,'語尾を確認');assert.deepEqual(Array.from(note.tags),['pLo']);assert.equal(note.at,12);assert.equal(note.recKey,'show|song|1');assert.deepEqual(Array.from(note.memberIds),['singer']);
- assert.equal(l.c.S.livePending.length,1);assert.equal(l.publishes(),1);
 });

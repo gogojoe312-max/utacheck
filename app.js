@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.39.1";
+const APP_VER = "16.40.0";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -356,6 +356,7 @@ function migrate() {
   S.songs.forEach((x) => { if (!x.groupId) x.groupId = S.groupId; });
   // 曲は公演ごとに持つ。旧データは今の公演に入れる。
   S.songs.forEach((x) => { if (!x.showId) x.showId = S.showId; });
+  syncShowGroup();
   // 「全（データ）」等が人名として登録されてしまった分を掃除し、全員扱いに直す
   const zen = S.members.filter((m) => /^全/.test(m.name));
   if (zen.length) {
@@ -452,13 +453,61 @@ function groupShows(list) {
   return keys.map((k) => [k, map.get(k)]);
 }
 
+// Each show owns its default delivery group. A manual override affects delivery only.
+function autoShowGroupId(sw) {
+  if (!sw) return "";
+  const valid = id => S.groups.some(g => g.id === id);
+  if (valid(sw.groupId)) return sw.groupId;
+  const norm = v => String(v || "").normalize("NFKC").toLowerCase().replace(/[\s・･_—–-]/g, "");
+  const title = norm(sw.name + " " + (sw.folder || ""));
+  const named = S.groups.filter(g => {
+    if (g.nopub || !g.name) return false;
+    const full = norm(g.name), short = (g.name.match(/^[A-Za-z]{4,}\b/) || [])[0];
+    return full.length > 1 && (title.includes(full) || (short && title.includes(norm(short))));
+  });
+  if (named.length === 1) return named[0].id;
+  const ids = [...new Set(S.songs.filter(so => so.showId === sw.id).map(so => so.groupId).filter(valid))];
+  return ids.length === 1 ? ids[0] : "";
+}
+function showDeliveryGroupId(sw) {
+  if (!sw) return "";
+  return S.groups.some(g => g.id === sw.deliveryGroupId) ? sw.deliveryGroupId : autoShowGroupId(sw);
+}
+function songDeliveryGroupId(so) {
+  return showDeliveryGroupId(S.shows.find(sw => sw.id === so.showId)) || so.groupId;
+}
+function showDeliveryLabel(sw) {
+  if (sw.nopub) return "配信しない";
+  const id = showDeliveryGroupId(sw), g = S.groups.find(g => g.id === id);
+  return g ? (g.nopub ? "配信しない" : g.name) : "曲ごとのグループ";
+}
+function syncShowGroup() {
+  if (VIEW() || S.recMode) return;
+  const id = showDeliveryGroupId(S.shows.find(sw => sw.id === S.showId));
+  if (id) S.groupId = id;
+}
+function selectShow(id) {
+  if (!S.shows.some(sw => sw.id === id)) return;
+  S.showId = id; U.songIdx = 0;
+  syncShowGroup(); save();
+  if (!VIEW()) schedulePush();
+}
+function setShowDelivery(id, groupId) {
+  if (VIEW() || (groupId && !S.groups.some(g => g.id === groupId))) return;
+  const sw = S.shows.find(sw => sw.id === id); if (!sw) return;
+  if (groupId) sw.deliveryGroupId = groupId;
+  else delete sw.deliveryGroupId;
+  syncShowGroup(); U.menu = null; save(); schedulePush(); render();
+}
+
 function showsFor() {
   const gid = S.showFilter;
   const all = showsNewestFirst().filter((x) => !x.hidden);
   if (!gid || !S.groups.some((g) => g.id === gid)) return all;
   return all.filter((sw) => sw.id === S.showId
     || !S.songs.some((x) => x.showId === sw.id)
-    || S.songs.some((x) => x.showId === sw.id && x.groupId === gid));
+    || showDeliveryGroupId(sw) === gid
+    || S.songs.some((x) => x.showId === sw.id && songDeliveryGroupId(x) === gid));
 }
 const showsNewestFirst = () => S.shows.slice().sort((a, b) => (b.ts || 0) - (a.ts || 0));
 const showName = (id) => (S.shows.find((x) => x.id === (id || S.showId)) || {}).name || "";
@@ -938,7 +987,7 @@ let pushTimer = null, pushState = "";
 let undoStack = [];
 let readTimer = null;
 function pushUndo(songId, notesOnly = false) {
-  const snap = { livePending: S.livePending || [], liveChecks: S.liveChecks || [], notes: S.notes };
+  const snap = { notes: S.notes };
   if (!notesOnly) Object.assign(snap, { rsongs: S.rsongs, plan: S.plan,
     shows: S.shows, folders: S.folders, folderOrder: S.folderOrder });
   // 歌割を差し替える時だけ、その1曲と代役も控える。
@@ -3930,7 +3979,7 @@ function viewLive() {
         <div class="brk ${gp[i]}"></div>
         <div class="grow" style="min-width:0">
           <div class="txt" data-l="${i}" style="font-size:${S.size + 6}px;line-height:${S.lyricLineHeight === 1.8 ? 1.8 : S.lyricLineHeight === 1.5 ? 1.5 : 1.6}">${cells}</div>${pills}
-        </div>${typeof LiveFlow !== "undefined" ? LiveFlow.lineButton(s, i) : ""}</div>`;
+        </div></div>`;
     }).join("");
   }
 
@@ -3969,7 +4018,7 @@ function viewLive() {
     <button class="grow" style="text-align:left" data-act="picker">
       <div class="t1" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px">${S.recMode
         ? `<b style="color:var(--accent)">レコーディングモード</b>${s ? " ・ " + h((S.groups.find((x) => x.id === s.groupId) || {}).name || s.folder || "") : ""}`
-        : `<b style="color:var(--accent)">${VIEW() ? "公演" : "ライブモード"}</b>${s ? " ・ " + h((S.groups.find((x) => x.id === s.groupId) || {}).name || "") : ""} ・ ${h(showName() || "公演名未設定")}${SONGS().length ? ` ・ ${U.songIdx + 1}/${SONGS().length}` : ""}${showNoPub() ? ` ・ <span style="color:var(--dim)">配信しない</span>` : `<span data-push-state style="color:${pushState === "未送信" ? "var(--bad)" : "var(--dim)"}">${pushState ? " ・ " + h(pushState) : ""}</span>`}`}${recWho()}</div>
+        : `<b style="color:var(--accent)">${VIEW() ? "公演" : "ライブモード"}</b>${s ? " ・ " + h((S.groups.find((x) => x.id === (VIEW() ? s.groupId : songDeliveryGroupId(s))) || {}).name || "") : ""} ・ ${h(showName() || "公演名未設定")}${SONGS().length ? ` ・ ${U.songIdx + 1}/${SONGS().length}` : ""}${showNoPub() ? ` ・ <span style="color:var(--dim)">配信しない</span>` : `<span data-push-state style="color:${pushState === "未送信" ? "var(--bad)" : "var(--dim)"}">${pushState ? " ・ " + h(pushState) : ""}</span>`}`}${recWho()}</div>
       ${VIEW() && S.pubAt ? `<div style="font-size:10px;line-height:1.4">${freshLine()}</div>` : ""}
       <div class="t2 clamp2">${s && s.mark ? `<b style="color:var(--accent)">★</b> ` : ""}${s && !S.recMode && takeLabel(s) ? `<b class="tkmk">${h(takeLabel(s))}</b>` : ""}${h(s ? s.title : "曲がありません")}</div>
     </button>
@@ -4008,7 +4057,6 @@ function viewLive() {
         : `<button data-act="recstart" class="aub" style="color:var(--bad)">●</button>
            <span class="grow" style="font-size:11px;color:var(--dim)">録音</span>`}
   </div>` : "")}
-  ${typeof LiveFlow !== "undefined" ? LiveFlow.bar() : ""}
   ${S.recMode ? "" : `<div class="bottom">
     <button data-act="prev" class="${U.songIdx <= 0 ? "off" : ""}">‹</button>
          <button data-act="next" class="${U.songIdx >= SONGS().length - 1 ? "off" : ""}">›</button>
@@ -4021,7 +4069,6 @@ function viewLive() {
           <path d="M4 20.5h16" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/>
         </svg></button>
       ` : ""}
-    ${VIEW() ? '<button data-act="summary-back" class="member-back-bottom">指摘に戻る</button>' : ""}
     ${VIEW() && unreadSongs().length ? `<button data-act="nextunread" style="color:var(--accent);font-weight:700">未読${unreadSongs().length}</button>` : ""}
 
     <span class="grow"></span>
@@ -4184,7 +4231,6 @@ function viewOverview(s) {
       <h4 style="font-size:11px;color:var(--dim);margin-bottom:6px">総括</h4>
       <div style="font-size:13px;white-space:pre-wrap">${h(songMemo(s.id))}</div></div>` : ""}
     <div style="height:30px"></div></div>
-  ${typeof LiveFlow !== "undefined" ? LiveFlow.bar() : ""}
   <div class="bottom">
     <button data-act="prev" class="${U.songIdx <= 0 ? "off" : ""}">‹</button>
     <button data-act="next" class="${U.songIdx >= SONGS().length - 1 ? "off" : ""}">›</button>
@@ -4201,9 +4247,18 @@ function renderSheet() {
   if (typingNow() && overlay && overlay.contains(document.activeElement)) { pendingRender = true; return; }
   if (overlay) { overlay.remove(); overlay = null; }
 
-  if (U.menu && U.menu.kind.startsWith("lf-") && typeof LiveFlow !== "undefined") {
+  if (U.menu && U.menu.kind === "show-delivery" && !VIEW()) {
+    const sw = S.shows.find(sw => sw.id === U.menu.id);
+    if (!sw) { U.menu = null; return; }
+    const auto = S.groups.find(g => g.id === autoShowGroupId(sw));
+    const option = (id, label) => `<button class="show-delivery-option" data-act="set-show-delivery" data-id="${h(sw.id)}" data-group="${h(id)}" aria-pressed="${(sw.deliveryGroupId || "") === id}">${h(label)}${(sw.deliveryGroupId || "") === id ? ' <span aria-hidden="true">✓</span>' : ""}</button>`;
     overlay = document.createElement("div"); overlay.className = "mask";
-    overlay.innerHTML = `<button class="sp" data-act="lf-close" aria-label="閉じる"></button><div class="sheet" role="dialog" aria-modal="true" aria-label="ライブの確認">${LiveFlow.sheet(U.menu)}</div>`;
+    overlay.innerHTML = `<button class="sp" data-act="closemenu" aria-label="閉じる"></button><div class="sheet" role="dialog" aria-modal="true" aria-label="公演の配信先">
+      <div class="row"><b class="grow">配信先</b><button class="chip" data-act="closemenu">閉じる</button></div>
+      <p class="note">${h(sw.name)}</p>
+      ${option("", "自動（" + (auto ? auto.name : "曲ごとのグループ") + "）")}
+      ${S.groups.map(g => option(g.id, g.name)).join("")}
+    </div>`;
     document.body.appendChild(overlay); return;
   }
 
@@ -4675,7 +4730,7 @@ const songTitle = (n) => { const so = S.songs.find((x) => x.id === n.songId); re
 
 function summaryShows() {
   return showsNewestFirst().filter(sw => !sw.hidden && S.songs.some(so =>
-    so.showId === sw.id && (!S.groupId || !so.groupId || so.groupId === S.groupId)));
+    so.showId === sw.id && (!S.groupId || !so.groupId || (VIEW() ? so.groupId : songDeliveryGroupId(so)) === S.groupId)));
 }
 function summaryShowPicker() {
   if (S.recMode) return "";
@@ -4687,7 +4742,7 @@ function summaryShowPicker() {
 function selectSummaryShow(id) {
   if (S.recMode || (id && !summaryShows().some(sw => sw.id === id))) return;
   U.allShows = !id;
-  if (id) S.showId = id;
+  if (id) { S.showId = id; if (!VIEW()) syncShowGroup(); }
   U.songIdx = 0;
   save(); render();
 }
@@ -4732,7 +4787,7 @@ function viewerSummaryBody() {
   const picker = byMember ? `<label class="summary-show-picker member-picker"><span>メンバー</span>
     <select id="summary-member" aria-label="メンバー"><option value="">全員</option>
     ${viewerMembers().map(m => `<option value="${h(m.id)}" ${selected && selected.id === m.id ? "selected" : ""}>${h(m.name)}</option>`).join("")}</select></label>
-    <p class="member-hint">${selected ? h(selected.name) + "さんへの指摘と、全員共通の総括を表示しています。" : "名前を選ぶと、自分への指摘を表示します。次回もこの端末で記憶します。"}</p>` : "";
+    <p class="member-hint">${selected ? h(selected.name) + "さんへの指摘と、全員共通の総括を表示しています。" : "名前を選ぶと、自分への指摘を表示します。公演が変わっても、次回は選んだ名前で開きます。"}</p>` : "";
   const cards = summarySongs().map(so => {
     const notes = ns.filter(n => n.songId === so.id && n.showId === so.showId).sort((a,b) => a.lineIdx - b.lineIdx);
     const memo = summaryMemo(so);
@@ -6533,8 +6588,9 @@ function viewSetup() {
       <span class="grip" data-drag="show:${sw.id}">⣿</span>
       <button class="grow" style="text-align:left;min-width:0" data-act="useshow" data-id="${sw.id}">
         <div class="clamp2" style="${sw.id === S.showId ? "color:var(--accent)" : ""}">${h(sw.name)}</div>
-        <div style="font-size:11px;color:var(--dim)">${S.songs.filter((x) => x.showId === sw.id).length}曲 ・ ${NOTES().filter((n) => n.showId === sw.id).length}件${sw.id === S.showId ? " ・ 記録中" : ""}${sw.nopub ? ` ・ <b style="color:var(--bad)">配信しない</b>` : ""}</div>
+        <div style="font-size:11px;color:var(--dim)">${S.songs.filter((x) => x.showId === sw.id).length}曲 ・ ${NOTES().filter((n) => n.showId === sw.id).length}件${sw.id === S.showId ? " ・ 記録中" : ""} ・ 配信先：${h(showDeliveryLabel(sw))}</div>
       </button>
+      <button data-act="show-delivery" data-id="${sw.id}" class="chip sm">配信先</button>
       <button data-act="showpub" data-id="${sw.id}" style="padding:4px 6px;font-size:12px;color:${sw.nopub ? "var(--bad)" : "var(--dim)"}">${sw.nopub ? "配信×" : "配信○"}</button>
       <button data-act="copyshow" data-id="${sw.id}" style="padding:4px 6px;color:var(--dim);font-size:12px">複製</button>
       <button data-act="sfset" data-id="${sw.id}" style="padding:4px 6px;color:${sw.folder ? "var(--accent)" : "var(--dim)"};font-size:12px">フォルダ</button>
@@ -6567,7 +6623,7 @@ function viewSetup() {
       <button data-act="picksong" data-id="${x.id}" style="width:26px;flex:0 0 26px;font-size:15px;color:${on ? "var(--accent)" : "var(--dim)"}">${on ? "☑" : "☐"}</button>
       <button class="grow" style="text-align:left;min-width:0" data-act="opensong" data-i="${i}">
         <div class="clamp2">${x.mark ? `<b style="color:var(--accent)">★</b> ` : ""}${h(songName(x))}</div>
-        <div class="trunc" style="font-size:11px;color:var(--dim)">${x.groupId ? h((S.groups.find((g) => g.id === x.groupId) || {}).name || "—") : "配信しない"}${
+        <div class="trunc" style="font-size:11px;color:var(--dim)">${x.groupId ? h((S.groups.find((g) => g.id === songDeliveryGroupId(x)) || {}).name || "—") : "配信しない"}${
         impOf(x) ? ` ・ 取り込み ${impLabel(impOf(x))}` : ""}${
         staleBy(x) ? `<span style="color:#F0B23C"> ・ 古い（別の公演に ${impLabel(staleBy(x))} 版）</span>` : ""}</div>
       </button>
@@ -6621,9 +6677,10 @@ function viewSetup() {
       <div style="font-size:11px;color:var(--dim);margin-top:6px">→ ${h(group().name || "")}</div>
     </div>
 
-    <h4 class="head">グループ</h4>
+    <h4 class="head">配信設定</h4>
+    <details class="card"><summary>接続・グループを管理</summary>
     ${S.groups.map((g) => {
-      const n = SONGS().filter((x) => x.groupId === g.id).length;
+      const n = SONGS().filter((x) => songDeliveryGroupId(x) === g.id).length;
       const cur = g.id === S.groupId;
       return `<div class="row card" style="padding:9px 12px;margin-bottom:6px;${cur ? "outline:1px solid var(--accent)" : ""}">
         <button class="grow" style="text-align:left;min-width:0" data-act="usegroup" data-id="${g.id}">
@@ -6641,6 +6698,7 @@ function viewSetup() {
       ${S.groups.some((g) => g.nopub) ? "" : `<button class="chip sm" data-act="addnopub">「配信しない」グループを作る</button>`}
     </div>
 
+    </details>
     ${(() => { const gg = group(); return gg && gg.gistId && !gg.nopub && !showNoPub(); })() ? `
     <h4 class="head">ライブ中のお知らせ</h4>
     <div class="card" style="margin-bottom:22px">
@@ -6833,7 +6891,6 @@ document.addEventListener("click", (e) => {
   if (b.tagName === "BUTTON" && typingNow()) {
     commitFields(); document.activeElement.blur();
   }
-  if (typeof LiveFlow !== "undefined" && LiveFlow.handle(a, id, i, b)) return;
   const s = song();
 
   switch (a) {
@@ -6945,8 +7002,6 @@ document.addEventListener("click", (e) => {
           S.notes = prev.notes;
           if (prev.rsongs) S.rsongs = prev.rsongs;
           if (prev.plan) S.plan = prev.plan;
-          if (prev.livePending) S.livePending = prev.livePending;
-          if (prev.liveChecks) S.liveChecks = prev.liveChecks;
           if (prev.shows) S.shows = prev.shows;
           if (prev.folders) S.folders = prev.folders;
           if (prev.folderOrder) S.folderOrder = prev.folderOrder;
@@ -7077,7 +7132,7 @@ document.addEventListener("click", (e) => {
     case "bpm": metSet(metBpm() + Number(id)); break;
     case "metsub": S.sub = Number(id); save(); render(); break;
     case "focus": U.focus = id; U.picker = false; render(); break;
-    case "jumpshow": S.showId = (S.showId === id ? "" : id); U.songIdx = 0; save(); renderSheet(); render(); break;
+    case "jumpshow": selectShow(id); renderSheet(); render(); break;
 
     case "key": {
       tone(id);
@@ -8100,7 +8155,7 @@ document.addEventListener("click", (e) => {
         const cur2 = S.shows.find((x) => x.id === S.showId);
         if (cur2 && !ok(cur2)) {
           const next = showsNewestFirst().find(ok);
-          if (next) { S.showId = next.id; U.songIdx = 0; }
+          if (next) selectShow(next.id);
         }
       }
       save(); render(); if (U.picker) renderSheet();
@@ -8125,6 +8180,8 @@ document.addEventListener("click", (e) => {
       break;
     }
     case "usegroup": S.groupId = id; save(); render(); break;
+    case "show-delivery": if (!VIEW()) { U.menu = {kind:"show-delivery", id}; renderSheet(); } break;
+    case "set-show-delivery": setShowDelivery(id, b.dataset.group || ""); break;
     case "renamegroup": {
       const g = group(id);
       const nm = prompt("グループ名", g.name);
@@ -8138,18 +8195,13 @@ document.addEventListener("click", (e) => {
         // 今開いている公演がフォルダに入っていれば、新しい公演も同じフォルダに入れる（散らばらない）
         const cur = S.shows.find((x) => x.id === S.showId);
         const nid = uid();
-        S.shows.push({ id: nid, name: nm, ts: Date.now(), folder: folderOf(cur) || undefined });
-        S.showId = nid; U.songIdx = 0; save(); render();
+        const sw = { id: nid, name: nm, ts: Date.now(), folder: folderOf(cur) || undefined };
+        sw.groupId = autoShowGroupId(sw) || S.groupId;
+        S.shows.push(sw); selectShow(nid); render();
       }
       break;
     }
-    case "useshow": {
-      const off = S.showId === id;
-      S.showId = off ? "" : id;
-      U.songIdx = 0; save();
-      if (!off) U.view = "live";
-      render(); break;
-    }
+    case "useshow": selectShow(id); U.view = "live"; render(); break;
     case "copyshow": { dupShow(id); break; }
     // つまんで重ねる以外にも、ボタンでフォルダに入れられるようにする
     case "sfset": {
@@ -8282,6 +8334,7 @@ function dupShow(fromId) {
   if (nm == null || !nm.trim()) return;
   const nid = uid();
   S.shows.push({ id: nid, name: nm.trim(), ts: Date.now(), from: fromId, folder: folderOf(sw),
+    groupId: autoShowGroupId(sw), deliveryGroupId: sw && sw.deliveryGroupId || undefined,
     nopub: sw && sw.nopub ? 1 : undefined });
   // テイクは引き継がない。リハでテイクが増えていても、本番は曲ごとに1本から始める。
   // 同じ曲に複数テイクがあれば、いちばん新しいテイク（歌割の直しが入っている方）を元にする。
@@ -8304,7 +8357,7 @@ function dupShow(fromId) {
       impAt: impOf(x),
     });
   });
-  S.showId = nid; U.songIdx = 0; U.picker = false;
+  selectShow(nid); U.picker = false;
   autoSubs();
   save(); schedulePush(); render();
 }
@@ -9073,10 +9126,12 @@ async function wrap(obj, g) {
 /* ---- GitHub Gist：グループごとに配信する ---- */
 function publicationData(gid) {
   const g = group(gid);
+  const routes = new Map(S.shows.map(sw => [sw.id, showDeliveryGroupId(sw)]));
+  const destination = so => routes.get(so.showId) || so.groupId;
   // 同じ歌詞を公演の数だけ送ると際限なく膨らむので、歌詞は1曲ぶんだけ持ち、
   // 各公演はそれを指す形にする。これで全公演をずっと残せる。
   const build = (showIds) => {
-    const songs = S.songs.filter((x) => x.groupId === g.id && showIds.includes(x.showId));
+    const songs = S.songs.filter((x) => destination(x) === g.id && showIds.includes(x.showId));
     const idx = new Map(songs.map((x, i) => [x.id, i]));
     const lib = [], libKey = new Map();
     const used = [];
@@ -9122,6 +9177,7 @@ function publicationData(gid) {
         fromIdx: x.from != null && idx.has(x.from) ? idx.get(x.from) : null,
       })),
       shows: S.shows.filter((x) => showIds.includes(x.id)).map((x) => Object.assign({}, x, {
+        groupId: undefined, deliveryGroupId: undefined,
         absent: (x.absent || []).map((mid) => (member(mid) || {}).name).filter(Boolean),
       })),
       gsubs: (() => {
@@ -9170,7 +9226,7 @@ function publicationData(gid) {
   // このグループの曲がある公演を、新しい順に全部。大きすぎる時だけ古い方から落とす。
   let ids = showsNewestFirst()
     .filter((sw) => !sw.hidden && !sw.nopub)          // 公演ごとに配信しない設定
-    .filter((sw) => S.songs.some((x) => x.showId === sw.id && x.groupId === g.id))
+    .filter((sw) => S.songs.some((x) => x.showId === sw.id && destination(x) === g.id))
     .map((x) => x.id);
   let d = build(ids);
   while (ids.length > 1 && JSON.stringify(d).length > 700000) {
@@ -10449,6 +10505,7 @@ setTimeout(readViewport, 400);
   await load();
   booted = true;
   if (VIEW() || /^#g=/.test(location.hash)) { U.view = "summary"; U.mode = "member"; }
+  if (VIEW()) restoreViewerMember();
   // 前まで localStorage に置いていた分は、IndexedDB へ引っ越す。
   // 移し終えてから消すので、途中で止まっても元は残る。
   if (idbOK) {

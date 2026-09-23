@@ -1,7 +1,7 @@
 /* Horizontal touch navigation. Text ranges remain selectable inside the note sheet. */
 (() => {
  let start=null, suppressUntil=0;
- const controls='#app>.bottom,#app>.lf-dock,#app>.aubar';
+ const controls='#app>.bottom,#app>.aubar';
  const allowed=()=>U.view==='live'&&!S.recMode&&!U.overview&&!U.draw&&!U.sheet&&!U.menu&&!U.picker;
  document.addEventListener('pointerdown',e=>{
   if(e.pointerType!=='touch')return;
