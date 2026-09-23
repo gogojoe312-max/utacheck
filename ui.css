@@ -10,7 +10,7 @@ html.ios-status-overlay,html.ios-status-overlay body{height:100vh}
    that native effect; opaque-status installs (zero top inset) need no guard.
    A CSS overlay cannot cancel a blur applied later by the iOS compositor. */
 @media(orientation:portrait){
- html.ios-status-overlay{--app-status-edge:48px}
+ html.ios-status-overlay{--app-status-edge:32px}
 }
 body{font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans",sans-serif;-webkit-font-smoothing:antialiased;letter-spacing:.01em}
 button{touch-action:manipulation;transition:background-color .15s,color .15s;}
