@@ -1,7 +1,4 @@
 /* 録音は歌詞が中心。よく使う操作だけを短いバーへ集約する。 */
-#app[data-rec="1"] .hd:has([data-act="picker"]){flex-wrap:wrap;gap:4px;padding-top:max(8px,env(safe-area-inset-top));padding-bottom:5px}
-#app[data-rec="1"] .hd>button[data-act="picker"]{flex:1 0 100%;max-width:100%}
-#app[data-rec="1"] .hd #pcd2{margin-right:auto!important}
 #app[data-rec="1"] .sectab{min-height:44px;padding:8px 16px;font-size:16px}
 #app[data-rec="1"] .rec-tools{flex-wrap:wrap;overflow:visible}
 #app[data-rec="1"] .rec-tools .chip{white-space:nowrap}

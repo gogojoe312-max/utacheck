@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.40.1";
+const APP_VER = "16.40.2";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -4013,19 +4013,20 @@ function viewLive() {
         ${/合言葉/.test(syncErr) ? `<button class="chip sm" data-act="askkey">合言葉を入れる</button>` : ""}
       </div>
     </div>` : ""}
-  <div class="hd">
+  <div class="hd song-header">
     ${viewerBackButton()}
-    <button class="grow" style="text-align:left" data-act="picker">
-      <div class="t1" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px">${S.recMode
-        ? `<b style="color:var(--accent)">レコーディングモード</b>${s ? " ・ " + h((S.groups.find((x) => x.id === s.groupId) || {}).name || s.folder || "") : ""}`
-        : `<b style="color:var(--accent)">${VIEW() ? "公演" : "ライブモード"}</b>${s ? " ・ " + h((S.groups.find((x) => x.id === (VIEW() ? s.groupId : songDeliveryGroupId(s))) || {}).name || "") : ""} ・ ${h(showName() || "公演名未設定")}${SONGS().length ? ` ・ ${U.songIdx + 1}/${SONGS().length}` : ""}${showNoPub() ? ` ・ <span style="color:var(--dim)">配信しない</span>` : `<span data-push-state style="color:${pushState === "未送信" ? "var(--bad)" : "var(--dim)"}">${pushState ? " ・ " + h(pushState) : ""}</span>`}`}${recWho()}</div>
-      ${VIEW() && S.pubAt ? `<div style="font-size:10px;line-height:1.4">${freshLine()}</div>` : ""}
-      <div class="t2 clamp2">${s && s.mark ? `<b style="color:var(--accent)">★</b> ` : ""}${s && !S.recMode && takeLabel(s) ? `<b class="tkmk">${h(takeLabel(s))}</b>` : ""}${h(s ? s.title : "曲がありません")}</div>
-    </button>
-    ${S.recMode ? `<span id="pcd2" style="font-size:12px;color:var(--dim);font-variant-numeric:tabular-nums;margin-right:4px"></span>` : ""}
+    <div class="song-mode">${S.recMode ? "レコーディングモード" : VIEW() ? "公演" : "ライブモード"}</div>
+    ${S.recMode ? `<span id="pcd2" style="font-size:12px;color:var(--dim);font-variant-numeric:tabular-nums"></span>` : ""}
     ${s ? `<button class="ic" data-act="overview" style="font-size:12px">全体</button>` : ""}
     ${!VIEW() && !S.recMode && s ? `<button class="ic" data-act="songmenu" data-i="${U.songIdx}">⋯</button>` : ""}
     <button class="ic" data-act="go-setup" style="font-size:12px">設定</button>
+    <button class="song-heading" data-act="picker">
+      <div class="t1">${S.recMode
+        ? h(s ? (S.groups.find((x) => x.id === s.groupId) || {}).name || s.folder || "" : "")
+        : `${s ? h((S.groups.find((x) => x.id === (VIEW() ? s.groupId : songDeliveryGroupId(s))) || {}).name || "") + " ・ " : ""}${h(showName() || "公演名未設定")}${SONGS().length ? ` ・ ${U.songIdx + 1}/${SONGS().length}` : ""}${showNoPub() ? ` ・ <span style="color:var(--dim)">配信しない</span>` : `<span data-push-state style="color:${pushState === "未送信" ? "var(--bad)" : "var(--dim)"}">${pushState ? " ・ " + h(pushState) : ""}</span>`}`}${recWho()}</div>
+      ${VIEW() && S.pubAt ? `<div style="font-size:10px;line-height:1.4">${freshLine()}</div>` : ""}
+      <div class="t2">${s && s.mark ? `<b style="color:var(--accent)">★</b> ` : ""}${s && !S.recMode && takeLabel(s) ? `<b class="tkmk">${h(takeLabel(s))}</b>` : ""}${h(s ? s.title : "曲がありません")}</div>
+    </button>
   </div>
   ${s ? blockBar(s) : ""}
   <div class="scroll" style="position:relative">
@@ -4219,11 +4220,12 @@ function viewOverview(s) {
   }
 
   return `
-  <div class="hd">
+  <div class="hd song-header">
     ${viewerBackButton()}
-    <div class="grow"><div class="t1 clamp2"><b style="color:var(--accent)">${S.recMode ? "レコーディングモード" : VIEW() ? "公演" : "ライブモード"}</b> ・ ${h(showName())} ・ 全体表示</div>
-      <div class="t2 trunc">${h(songName(s))}</div></div>
+    <div class="song-mode">${S.recMode ? "レコーディングモード" : VIEW() ? "公演" : "ライブモード"} ・ 全体表示</div>
     <button class="ic" data-act="ovsize">${S.recMode ? S.recOvSize : U.ovSize}px</button>
+    <div class="song-heading"><div class="t1">${h(showName())}</div>
+      <div class="t2">${h(songName(s))}</div></div>
   </div>
   ${blockBar(s)}
   <div class="scroll" style="padding:8px 10px">${bodyHTML}
