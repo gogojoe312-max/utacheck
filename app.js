@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.40.3";
+const APP_VER = "16.40.4";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -10471,35 +10471,6 @@ function copyText(t, msg) {
   const ta = document.createElement("textarea"); ta.value = t; document.body.appendChild(ta);
   ta.select(); document.execCommand("copy"); ta.remove(); done();
 }
-
-/* ---------------- 画面の大きさを調べる（表示には使わない） ---------------- */
-// 高さは CSS の inset で決める。ここでは、うまく合わない時の手がかりを控えるだけ。
-let vpInfo = "";
-function readViewport() {
-  try {
-    const el = document.getElementById("app");
-    const r = el ? el.getBoundingClientRect() : null;
-    const sc = window.screen || {};
-    let safeT = "-", safeB = "-";
-    const pr = document.getElementById("safeprobe");
-    if (pr && window.getComputedStyle) {
-      const cs = window.getComputedStyle(pr);
-      safeT = parseInt(cs.paddingTop, 10) || 0;
-      safeB = parseInt(cs.paddingBottom, 10) || 0;
-    }
-    vpInfo = `内 ${Math.round(window.innerHeight || 0)}`
-      + ` / 実 ${r ? Math.round(r.height) : "-"}`
-      + ` / 画面 ${Math.round(sc.width || 0)}x${Math.round(sc.height || 0)}`
-      + ` / 余白 上${safeT} 下${safeB}`
-      + ` / 比 ${window.devicePixelRatio || "-"}`;
-  } catch (e) { vpInfo = "測れません"; }
-}
-
-readViewport();
-window.addEventListener("resize", readViewport);
-window.addEventListener("orientationchange", () => setTimeout(readViewport, 250));
-setTimeout(readViewport, 400);
-
 
 /* ---------------- boot ---------------- */
 (async () => {

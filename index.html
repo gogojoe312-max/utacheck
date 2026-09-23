@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <title>歌チェック</title>
-<link rel="stylesheet" href="recflow.css?v=16.40.3">
+<link rel="stylesheet" href="recflow.css?v=16.40.4">
 <link rel="manifest" href="manifest.webmanifest">
-<meta name="theme-color" content="#101113">
+<meta name="theme-color" content="#111215">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="歌チェック">
@@ -23,10 +23,8 @@ body{
   font-family:"Hiragino Sans","Noto Sans JP",system-ui,sans-serif;
   font-size:15px;-webkit-user-select:none;user-select:none;
 }
-/* 画面いっぱいに広げる。height:100% は親に頼るので端末によって短くなる。
-   安全余白（ノッチ・ホームバー）は、上下のバーの中で取る。 */
-/* 画面いっぱい。inset で四辺を留めるのが、この端末の「見えている範囲」そのもの。 */
-#app{position:fixed;top:0;right:0;bottom:0;left:0;
+/* App height and safe areas are managed once by the screen layout in ui.css. */
+#app{position:relative;width:100%;height:100%;
   display:flex;flex-direction:column;overflow:hidden}
 button,input,textarea,select{font:inherit;color:inherit;background:none;border:none;outline:none}
 button{cursor:pointer}
@@ -37,7 +35,7 @@ button{cursor:pointer}
 /* 長い曲名で後半が切れないよう、2行まで折り返して出す */
 .clamp2{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;white-space:normal;word-break:break-word;line-height:1.35}
 .hd{flex:0 0 auto;display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--line);overflow:hidden;
-  padding:calc(10px + env(safe-area-inset-top)) calc(14px + env(safe-area-inset-right)) 10px calc(14px + env(safe-area-inset-left))}
+  padding:10px calc(14px + env(safe-area-inset-right)) 10px calc(14px + env(safe-area-inset-left))}
 .hd .grow,.hd .t1,.hd .t2{min-width:0}
 .hd .ic{flex:0 0 auto}
 .hd .t1{font-size:11px;color:var(--dim)}
@@ -303,7 +301,7 @@ button{cursor:pointer}
   .prs{margin:0!important;padding:0!important}
 }
 </style>
-<link rel="stylesheet" href="ui.css?v=16.40.3">
+<link rel="stylesheet" href="ui.css?v=16.40.4">
 </head>
 <body>
 <div id="app"></div>
@@ -311,11 +309,11 @@ button{cursor:pointer}
   padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom)"></div>
 <script src="vendor/pdf.min.js"></script>
 <script src="vendor/xlsx.full.min.js"></script>
-<script src="app.js?v=16.40.3"></script>
-<script src="reading.js?v=16.40.3"></script>
-<script src="gestures.js?v=16.40.3"></script>
-<script src="voice-notes.js?v=16.40.3"></script>
-<script src="ui.js?v=16.40.3"></script>
-  <script src="ptlink.js?v=16.40.3"></script>
+<script src="app.js?v=16.40.4"></script>
+<script src="reading.js?v=16.40.4"></script>
+<script src="gestures.js?v=16.40.4"></script>
+<script src="voice-notes.js?v=16.40.4"></script>
+<script src="ui.js?v=16.40.4"></script>
+  <script src="ptlink.js?v=16.40.4"></script>
 </body>
 </html>

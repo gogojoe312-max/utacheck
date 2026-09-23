@@ -1,11 +1,21 @@
 /* Quiet, high-contrast controls for stage and studio. Screen only: printed lyrics keep their layout. */
 @media screen {
 :root{color-scheme:dark;--bg:#111215;--panel:#1c1e23;--panel2:#2a2d34;--line:#343740;--text:#f3f4f7;--dim:#a9adb8;--accent:#a6c8ff;--good:#91d7ae;--bad:#f4a295}
+/* Safe top space belongs to the app shell, never to an individual header. */
+html,body{height:100vh;height:100dvh;overflow:hidden;overscroll-behavior:none;background:var(--bg)}
+#app{padding-top:calc(env(safe-area-inset-top,0px) + var(--app-status-edge,0px));background:var(--bg)}
+html.ios-status-overlay,html.ios-status-overlay body{height:100vh}
+/* iOS 27's status edge can blur the first 16px below its inset in installed apps.
+   Keep that strip opaque and empty without changing Safari or desktop spacing. */
+@media(orientation:portrait){
+ html.ios-standalone{--app-status-edge:16px}
+ html.ios-standalone body::before{content:"";position:fixed;top:0;left:0;right:0;height:calc(env(safe-area-inset-top,0px) + var(--app-status-edge));background:var(--bg);pointer-events:none;z-index:1}
+}
 body{font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans",sans-serif;-webkit-font-smoothing:antialiased;letter-spacing:.01em}
 button{touch-action:manipulation;transition:background-color .15s,color .15s;}
 button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 button:disabled{cursor:default}
-.hd{background:var(--bg);border-bottom:0;padding-top:calc(16px + env(safe-area-inset-top));padding-bottom:12px;gap:8px}
+.hd{background:var(--bg);border-bottom:0;padding-top:16px;padding-bottom:12px;gap:8px}
 .hd .t1{line-height:1.6;letter-spacing:.025em}.hd .t1 b{font-weight:500}
 .hd .t2{font-size:23px;font-weight:650;letter-spacing:-.035em;line-height:1.4;margin-top:3px}
 .hd .ic{background:transparent;color:var(--dim);border-radius:50%;min-width:40px;height:40px}
@@ -36,7 +46,7 @@ button:disabled{cursor:default}
  .bottom{padding-left:24px;padding-right:24px}.sheet{width:min(620px,100%);align-self:center;padding:28px;max-height:85%}
 }
 @media(max-height:650px){
- .hd{padding-top:calc(8px + env(safe-area-inset-top));padding-bottom:4px}.hd .t2{font-size:20px}.hd .ic{height:34px}
+ .hd{padding-top:8px;padding-bottom:4px}.hd .t2{font-size:20px}.hd .ic{height:34px}
 
  .aubar{padding-top:5px;padding-bottom:5px}.ln{padding-top:8px;padding-bottom:8px}
 }
@@ -100,7 +110,7 @@ select.field{appearance:auto}textarea.field{resize:vertical}
 }
 /* Two compact rows: full-width performance context, then title and direct controls. */
 @media screen {
-#app[data-screen="live"] .song-header{flex-wrap:wrap;padding:calc(8px + env(safe-area-inset-top,0px)) calc(12px + env(safe-area-inset-right,0px)) 6px calc(12px + env(safe-area-inset-left,0px));gap:2px 4px}
+#app[data-screen="live"] .song-header{flex-wrap:wrap;padding:8px calc(12px + env(safe-area-inset-right,0px)) 6px calc(12px + env(safe-area-inset-left,0px));gap:2px 4px}
 .song-header .song-context{flex:1 0 100%;min-width:0;text-align:left;padding:0;white-space:normal;overflow-wrap:anywhere}
 .song-header .song-heading{flex:1 1 0;min-width:0;min-height:44px;display:flex;align-items:center;text-align:left;padding:0;white-space:normal;overflow-wrap:anywhere}
 .song-header .song-freshness{font-size:10px;line-height:1.4}
@@ -130,8 +140,6 @@ select.field{appearance:auto}textarea.field{resize:vertical}
 }
 }
 @media screen {
-#app[data-screen="live"] .bottom{padding-bottom:calc(3px + env(safe-area-inset-bottom))}
-
 .reading-notes{font-size:13px;line-height:1.7;color:#bfd8ff;margin:5px 0 3px;white-space:pre-wrap;overflow-wrap:anywhere}
 .reading-notes>div{border-left:2px solid #6688b5;padding-left:8px;margin-top:4px}
 }

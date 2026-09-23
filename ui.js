@@ -1,3 +1,32 @@
+/* The installed iOS viewport can exclude the status inset from fixed/inset bounds.
+   A full viewport height is needed only when WebKit actually exposes that inset. */
+const AppViewport = (() => {
+  const root = document.documentElement;
+  const standalone = window.matchMedia('(display-mode: standalone)');
+  const ios = /iPad|iPhone|iPod/.test(navigator.userAgent)
+    || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const probe = document.getElementById('safeprobe');
+  let frame = 0;
+  function fit() {
+    const installed = ios && (navigator.standalone === true || standalone.matches);
+    const safeTop = probe ? parseFloat(getComputedStyle(probe).paddingTop) || 0 : 0;
+    root.classList.toggle('ios-standalone', installed);
+    // When iOS has already reserved the status bar, dvh is the usable height.
+    root.classList.toggle('ios-status-overlay', installed && safeTop > 0);
+  }
+  function schedule() {
+    if (frame) return;
+    frame = requestAnimationFrame(() => { frame = 0; fit(); });
+  }
+  for (const event of ['resize', 'orientationchange', 'pageshow'])
+    window.addEventListener(event, schedule, {passive:true});
+  standalone.addEventListener?.('change', schedule);
+  // Insets can become available after the first frame, even without a window resize.
+  if (probe && typeof ResizeObserver !== 'undefined') new ResizeObserver(schedule).observe(probe);
+  fit();
+  return {fit};
+})();
+
 /* Presentation only: keep settings values, handlers and storage unchanged. */
 function polishUI() {
   app.dataset.screen = U.view;
