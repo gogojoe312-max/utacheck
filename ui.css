@@ -5,11 +5,12 @@
 html,body{height:100vh;height:100dvh;overflow:hidden;overscroll-behavior:none;background:var(--bg)}
 #app{padding-top:calc(env(safe-area-inset-top,0px) + var(--app-status-edge,0px));background:var(--bg)}
 html.ios-status-overlay,html.ios-status-overlay body{height:100vh}
-/* iOS 27's status edge can blur the first 16px below its inset in installed apps.
-   Keep that strip opaque and empty without changing Safari or desktop spacing. */
+/* Older Home Screen installs can retain the translucent status-bar setting.
+   The user's screenshot still blurs text below a 16px guard. Keep text below
+   that native effect; opaque-status installs (zero top inset) need no guard.
+   A CSS overlay cannot cancel a blur applied later by the iOS compositor. */
 @media(orientation:portrait){
- html.ios-standalone{--app-status-edge:16px}
- html.ios-standalone body::before{content:"";position:fixed;top:0;left:0;right:0;height:calc(env(safe-area-inset-top,0px) + var(--app-status-edge));background:var(--bg);pointer-events:none;z-index:1}
+ html.ios-status-overlay{--app-status-edge:48px}
 }
 body{font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans",sans-serif;-webkit-font-smoothing:antialiased;letter-spacing:.01em}
 button{touch-action:manipulation;transition:background-color .15s,color .15s;}
