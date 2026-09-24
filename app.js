@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.40.7";
+const APP_VER = "16.41.0";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1300,12 +1300,13 @@ function splitNames(label) {
     .filter((t) => t && t.length < 6 && !/[（()）※★☆]/.test(t)); // 長いもの・括弧や記号は名前ではない
 }
 
-const cleanName = (n) => String(n || "").replace(/(\.(pdf|xlsx|xlsm|xls|csv|json))+$/i, "").trim() || "無題";
+const cleanName = (n) => String(n || "").replace(/(\.(pdf|docx|docm|doc|xlsx|xlsm|xls|csv|json))+$/i, "").trim() || "無題";
 
 /* ---------------- PDF 取り込み ---------------- */
 async function parsePDF(file) {
   pdfjsLib.GlobalWorkerOptions.workerSrc = "vendor/pdf.worker.min.js";
-  const doc = await pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
+  const doc = await pdfjsLib.getDocument({ data: await file.arrayBuffer(),
+    cMapUrl: "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/cmaps/", cMapPacked: true }).promise;
   let title = "", credit = "", allRows = [];
   for (let p = 1; p <= doc.numPages; p++) {
     const page = await doc.getPage(p);
@@ -1320,9 +1321,9 @@ async function parsePDF(file) {
     allRows = allRows.concat(r.rows);
   }
   // 曲名はファイル名。内題は歌詞から外すためだけに使う。
-  const readable = allRows.filter((r) => r[1] && r[1].length >= 4).length;
-  if (readable < 5) {
-    const e = new Error("この資料からは文字を取り出せませんでした。フォントの都合でブラウザが読めない資料です。Excelで渡すか、変換を依頼してください。");
+  const readable = allRows.some((r) => r[1] && r[1].trim());
+  if (!readable) {
+    const e = new Error("PDFから文字を取り出せませんでした。画像のみのPDFや文字情報のないPDFは、文字入りのPDFまたはWord・Excelで保存し直してください。");
     e.unreadable = true;
     throw e;
   }
@@ -1488,7 +1489,7 @@ function parsePage(items, isFirstPage, pageH) {
       list.splice(i, 1);
       // 作家名の直前にある、名前の付いていない行（題名・副題）も外す
       let k = i - 1, took = 0;
-      while (k >= 0 && took < 2 && !list[k].label && list[k].t
+      while (Number.isFinite(firstLabelTop) && k >= 0 && took < 2 && !list[k].label && list[k].t
              && (/[／/]/.test(list[k].t) || took === 0 || list[k].t.length < 30)) {
         head.unshift(list[k].t); list.splice(k, 1); k--; took++; i--;
       }
@@ -1505,7 +1506,7 @@ function parsePage(items, isFirstPage, pageH) {
         const r = list[i];
         if (r.label || r.top >= firstLabelTop - 2 || r.top > limit) continue;
         const isTop = r.top < limit * 0.55;
-        if (!isTop && !CREDIT.test(r.t)) continue;
+        if ((!isTop || !Number.isFinite(firstLabelTop)) && !CREDIT.test(r.t)) continue;
         head.unshift(r.t); list.splice(i, 1);
       }
     });
@@ -2704,35 +2705,106 @@ function pianoHTML(sel) {
 }
 
 /* ---------------- レコーディング：Wordの歌詞 ---------------- */
+function wordParagraphText(xml) {
+  const unesc = t => t.replace(/&(#x[0-9a-f]+|#\d+|lt|gt|quot|apos|amp);/gi, (m, v) => {
+    if (v[0] === "#") {
+      const n = v[1].toLowerCase() === "x" ? parseInt(v.slice(2),16) : Number(v.slice(1));
+      return n <= 0x10ffff ? String.fromCodePoint(n) : "";
+    }
+    return ({lt:"<",gt:">",quot:'"',apos:"'",amp:"&"})[v] || m;
+  });
+  const out = [];
+  xml.replace(/<w:del\b[^>]*>[\s\S]*?<\/w:del>/g, "")
+    .replace(/<w:t\b[^>]*>([\s\S]*?)<\/w:t>|<w:(tab|br|cr)\b([^>]*)\/>/g, (m, t, tag, attrs) => {
+      out.push(t != null ? unesc(t) : tag === "tab" ? "\t" : /w:type=["']column["']/.test(attrs) ? "\f" : "\n");
+      return "";
+    });
+  return out.join("");
+}
+
+// Word 97–2003: use the FIB/CLX piece table, never scan binary bytes for guessed text.
+function parseLegacyDoc(file, archive) {
+  const fail = () => { throw new Error("このWord形式を読み取れません。.docx形式で保存し直してください。"); };
+  const word = new Uint8Array(XLSX.CFB.find(archive, "WordDocument").content);
+  if (word.length < 34) return fail();
+  const d = new DataView(word.buffer,word.byteOffset,word.byteLength);
+  const u16 = n => { if(n + 2 > word.length) return fail(); return d.getUint16(n,true); };
+  const u32 = n => { if(n + 4 > word.length) return fail(); return d.getUint32(n,true); };
+  if (u16(0) !== 0xa5ec || u16(2) < 0xc1) return fail();
+  const flags = u16(10);
+  if (flags & 0x8100) throw new Error("パスワード付きのWordです。保護を解除して保存してください。");
+  const lw = 34 + u16(32) * 2 + 2;
+  const ccp = u32(lw + 12);
+  const pairs = lw + u16(lw - 2) * 4 + 2;
+  if (u16(pairs - 2) <= 33) return fail();
+  const start = u32(pairs + 33 * 8), size = u32(pairs + 33 * 8 + 4);
+  const entry = XLSX.CFB.find(archive, flags & 0x200 ? "1Table" : "0Table");
+  if (!entry) return fail();
+  const table = new Uint8Array(entry.content);
+  if (!size || start + size > table.length) return fail();
+  const v = new DataView(table.buffer, table.byteOffset, table.byteLength);
+  let at = start;
+  while (at + 3 <= start + size && table[at] === 1) at += 3 + v.getUint16(at + 1,true);
+  if (at + 5 > start + size || table[at] !== 2) return fail();
+  const len = v.getUint32(at + 1,true), count = (len - 4) / 12;
+  at += 5;
+  if (!Number.isInteger(count) || count < 1 || at + len > start + size) return fail();
+  let text = "";
+  for (let i=0;i<count;i++) {
+    const from=v.getUint32(at+i*4,true), to=v.getUint32(at+(i+1)*4,true);
+    if (to < from) return fail();
+    if (from >= ccp) break;
+    const fc=v.getUint32(at+(count+1)*4+i*8+2,true), compressed=!!(fc & 0x40000000);
+    const off=(fc & 0x3fffffff)/(compressed?2:1), bytes=(Math.min(to,ccp)-from)*(compressed?1:2);
+    if (!Number.isInteger(off) || off+bytes>word.length) return fail();
+    text += new TextDecoder(compressed?"windows-1252":"utf-16le").decode(word.subarray(off,off+bytes));
+  }
+  // Hide field instructions but retain displayed field results.
+  text=text.replace(/\x13[^\x14\x15]*(?:\x14([^\x15]*))?\x15/g, (m,result)=>result||"");
+  const lines=[];
+  text.split(/[\r\n\v\f\x07]/).forEach(part=>{
+    const t=softText(part);
+    if(t) lines.push({t,bars:4});
+    else if(lines.length&&!lines.at(-1).gap) lines.push({gap:true,t:""});
+  });
+  while(lines.length&&lines.at(-1).gap) lines.pop();
+  if(!lines.some(l=>l.t)) throw new Error("Wordに読み取れる本文がありません。");
+  return {id:uid(),title:cleanName(file.name),credit:"",intro:8,lines,cols:1,colBreaks:[],at:Date.now()};
+}
+
 // .docx は zip の中の XML。既に持っている zip の読み書きをそのまま使う。
 async function parseDocx(file, buf) {
-  const { files } = await unzip(buf || new Uint8Array(await file.arrayBuffer()));
-  const dec2 = (u8) => new TextDecoder().decode(u8);
+  // SheetJS already includes a portable ZIP/CFB reader; no Safari compression API required.
+  const raw = new Uint8Array(buf || await file.arrayBuffer());
+  let archive;
+  try { archive = XLSX.CFB.read(raw, {type:"array"}); }
+  catch (e) { throw new Error("Wordファイルを開けません。Wordで開いて保存し直してください。"); }
+  if (XLSX.CFB.find(archive, "EncryptedPackage") || XLSX.CFB.find(archive, "EncryptionInfo"))
+    throw new Error("パスワード付きのWordです。保護を解除して保存してください。");
+  if (XLSX.CFB.find(archive, "WordDocument")) return parseLegacyDoc(file, archive);
+  const files = {};
+  const root = archive.FullPaths[0];
+  archive.FullPaths.forEach((path, i) => { files[path.slice(root.length)] = archive.FileIndex[i].content; });
+  const dec2 = (u8) => new TextDecoder().decode(new Uint8Array(u8));
   const doc = files["word/document.xml"];
-  if (!doc) throw new Error("Wordの中身が見つかりません。");
+  if (!doc) throw new Error("Wordの本文が見つかりません。.docx形式で保存し直してください。");
   const xml = dec2(doc);
-
-  const unesc = (t) => t.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'").replace(/&#(\d+);/g, (m, n) => String.fromCharCode(Number(n))).replace(/&amp;/g, "&");
-  const textOf = (p) => {
-    const q = p.replace(/<w:rPr>[\s\S]*?<\/w:rPr>/g, "");
-    const parts = [];
-    q.replace(/<w:t[^>]*>([\s\S]*?)<\/w:t>/g, (m, t) => { parts.push(t); return ""; });
-    return softText(unesc(parts.join("")));
-  };
-  const paras = xml.match(/<w:p[ >][\s\S]*?<\/w:p>|<w:p\/>/g) || [];
-
-  // 空段落が続いても、区切りは1つにまとめる
+  const textOf = wordParagraphText;
+  const paras = xml.match(/<w:p\b[^>]*\/>|<w:p\b[^>]*>[\s\S]*?<\/w:p>/g) || [];
   const lines = [];
   paras.forEach((p) => {
-    const t = textOf(p);
-    const hasBrk = /w:type="column"/.test(p);
-    if (t) lines.push(hasBrk ? { t, bars: 4, brk: 1 } : { t, bars: 4 });
-    else if (hasBrk) lines.push({ gap: true, t: "", brk: 1 });
-    else if (lines.length && !lines[lines.length - 1].gap) lines.push({ gap: true, t: "" });
+    let brk = false;
+    textOf(p).split(/([\n\f])/).forEach((part) => {
+      if (part === "\f") { brk = true; return; }
+      if (part === "\n") return;
+      const t = softText(part);
+      if (t) { lines.push({t, bars:4, ...(brk ? {brk:1} : {})}); brk = false; }
+      else if (lines.length && !lines[lines.length - 1].gap) lines.push({gap:true,t:""});
+    });
+    if (brk) lines.push({gap:true,t:"",brk:1});
   });
-  while (lines.length && lines[lines.length - 1].gap) lines.pop();
-  while (lines.length && lines[0].gap) lines.shift();
+  while (lines.length && lines.at(-1).gap) lines.pop();
+  if (!lines.some(l => l.t)) throw new Error("Wordに読み取れる文字がありません。画像だけの資料は文字入りのWordで保存してください。");
 
   // 曲名と作家名はヘッダに入っていることが多い
   let head = "";
@@ -4371,7 +4443,7 @@ function renderSheet() {
           <button class="grow trunc" style="text-align:left" data-act="ruse" data-id="${x.id}">${h(x.title)}</button>
           <button data-act="rdel" data-id="${x.id}" style="padding:4px 6px;color:var(--bad)">✕</button>
         </div>`).join("") || `<p class="note">曲がありません</p>`}
-        <button class="primary" data-act="rpick">歌詞のWordを読み込む（複数可）</button>
+        <button class="primary" data-act="rpick">歌詞のWord / PDFを読み込む（複数可）</button>
       </div></div>`;
     document.body.appendChild(overlay);
     return;
@@ -5388,7 +5460,7 @@ function viewSetupRec() {
     ${lyricDisplaySettings()}
     <h4 class="head">曲</h4>
     ${list || `<p class="note">曲がありません</p>`}
-    <div class="card"><button class="primary" data-act="rpick">歌詞のWordを読み込む（複数可）</button></div>
+    <div class="card"><button class="primary" data-act="rpick">歌詞のWord / PDFを読み込む（複数可）</button></div>
 
     <h4 class="head">操作パネル</h4>
     <div class="card"><button class="primary" data-act="pt-settings">Pro Tools操作・表示設定</button></div>
@@ -6670,11 +6742,11 @@ function viewSetup() {
     ${cur.length ? bar : ""}
     ${songs}
     <div class="card">
-      <button class="primary" data-act="pickfile" style="margin-bottom:8px">歌割のPDF / Excel を選ぶ（複数可）</button>
+      <button class="primary" data-act="pickfile" style="margin-bottom:8px">歌詞・歌割のWord / PDF / Excel を選ぶ（複数可）</button>
       <input type="file" id="swapfile" style="display:none"
-        accept="application/pdf,.pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.xlsx,.xls,.csv">
+        accept=".doc,.docx,.docm,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf,.pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.xlsx,.xls,.csv">
       <input type="file" id="file" multiple style="display:none"
-        accept="application/pdf,.pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.xlsx,.xls,.csv,application/json,.json">
+        accept=".doc,.docx,.docm,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf,.pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.xlsx,.xls,.csv,application/json,.json">
       <div style="font-size:11px;color:var(--dim);margin-top:6px">→ ${h(group().name || "")}</div>
     </div>
 
@@ -8940,6 +9012,7 @@ async function swapSong(songId, file) {
   U.busy = `${file.name} を読んでいます…`; render();
   try {
     if (ext === "pdf") parsed = await parsePDF(file);
+    else if (["doc","docx","docm"].includes(ext)) parsed = await parseWordSong(file);
     else { buf = await file.arrayBuffer(); parsed = await parseXLSX(file, buf); }
   } catch (err) {
     U.busy = ""; render();
@@ -9013,6 +9086,11 @@ async function swapSong(songId, file) {
     : `差し替えました。\n指摘 ${kept}件はそのまま残っています。`);
 }
 
+async function parseWordSong(file) {
+  const so = await parseDocx(file);
+  return {title:so.title,credit:so.credit,lines:so.lines.map(l => ["", l.gap ? "" : l.t])};
+}
+
 // レコーディングの歌詞（Word）を読み込む
 // どの画面からでも使えるよう、本体に1つだけ置いておく。
 // 画面の中に書くと、その画面が出ていない時（レコーディング中など）に使えない。
@@ -9023,38 +9101,42 @@ function recFileInput() {
   el.type = "file";
   el.id = "recfile";
   el.multiple = true;
-  el.accept = ".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  el.accept = ".doc,.docx,.docm,.pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf";
   el.style.display = "none";
   document.body.appendChild(el);
   return el;
 }
 
 async function loadRecDocs(picked) {
-  let last = null, n = 0;
+  let last = null;
   for (const f of picked) {
     U.busy = `${f.name} を読んでいます…`; render();
     try {
-      const so = await parseDocx(f);
+      const parsed = /\.pdf$/i.test(f.name) ? await parsePDF(f) : null;
+      const so = parsed ? {id:uid(),title:parsed.title,credit:parsed.credit,intro:8,
+        lines:parsed.lines.map(r => r[1] ? {t:r[1],bars:4} : {gap:true,t:""}),cols:1,colBreaks:[],at:Date.now()}
+        : await parseDocx(f);
       // 今開いている曲と同じフォルダに入れる（続けて読み込む時に散らばらない）
       const near = recSong();
       if (near && near.folder) so.folder = near.folder;
       S.rsongs.push(so);
       S.rsongId = so.id;
-      last = so; n++;
+      last = so;
     } catch (e) { alert(f.name + " を読めませんでした。\n" + ((e && e.message) || e)); }
   }
   U.busy = "";
   if (last) {
     const k = SONGS().findIndex((x) => x.id === last.id);
     if (k >= 0) U.songIdx = k;
+    U.view = "live"; U.picker = false; U.overview = false;
   }
   save(); U.menu = null; render();
-  if (n) setTimeout(() => alert(n + "曲を読み込みました。"), 0);
 }
 
 async function handleFiles(files) {
   const list = [...files].sort((a, b) => a.name.localeCompare(b.name, "ja"));
   const failed = [];
+  let imported = null;
   for (let k = 0; k < list.length; k++) {
     const f = list[k];
     U.busy = `${k + 1}/${list.length} ${f.name}`; render();
@@ -9064,8 +9146,8 @@ async function handleFiles(files) {
         const d = JSON.parse(await f.text());
         (d.members || []).forEach((m) => addMember(m.name));
         (d.songs || []).forEach((sg) => S.songs.push(Object.assign(buildSong(sg), { groupId: S.groupId, showId: S.showId, impAt: Date.now() })));
-      } else if (ext === "pdf") {
-        S.songs.push(Object.assign(buildSong(await parsePDF(f)), { groupId: S.groupId, showId: S.showId, impAt: Date.now() }));
+      } else if (["pdf","doc","docx","docm"].includes(ext)) {
+        S.songs.push(Object.assign(buildSong(await (ext === "pdf" ? parsePDF(f) : parseWordSong(f))), { groupId: S.groupId, showId: S.showId, impAt: Date.now() }));
       } else {
         const buf = await f.arrayBuffer();
         const so = Object.assign(buildSong(await parseXLSX(f, buf)), { groupId: S.groupId, showId: S.showId, impAt: Date.now() });
@@ -9081,15 +9163,17 @@ async function handleFiles(files) {
           }
         }
       }
+      imported = S.songs.at(-1) || imported;
       save();
     } catch (err) {
-      failed.push(f.name + (err && err.unreadable ? "（文字を取り出せません）" : ""));
+      failed.push(f.name + "：" + ((err && err.message) || "読み取りに失敗しました"));
     }
   }
   // 読み込んだ曲にも、設定済みの欠席を反映させる
   autoSubs();
   // 入れ替えたら曲名順に並べ直す
   sortSongsByTitle();
+  if (imported) { U.songIdx = Math.max(0, SONGS().findIndex(s => s.id === imported.id)); U.view = "live"; U.picker = false; U.overview = false; }
   U.busy = ""; render();
   const el = document.getElementById("file"); if (el) el.value = "";
   if (failed.length) alert("読み込めませんでした：\n" + failed.join("\n"));
