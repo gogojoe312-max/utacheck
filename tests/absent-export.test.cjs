@@ -46,3 +46,11 @@ test('share happens immediately on the explicit click and cancel keeps the downl
  c.presentExcelExport('公演.zip',new Blob(['abc'],{type:'application/zip'}),1,[]);
  const promise=c.shareExcelExport();assert.equal(shared,true);await promise;assert(c.U.excelExport.url);assert.equal(c.U.sharingExcel,false);
 });
+
+test('repeated exports preserve existing version tabs and use unique worksheet names',async()=>{
+ const c=setup();let data=fixture();
+ for(let i=0;i<2;i++)data=(await c.addVersionTab(new Uint8Array(data),'相馬欠席ver',{A1:'橋田'},'歌割')).data;
+ const wb=XLSX.read(data,{type:'array'});
+ assert(wb.SheetNames.includes('相馬欠席ver'));assert(wb.SheetNames.includes('相馬欠席ver (2)'));
+ assert.equal(wb.Sheets['相馬欠席ver (2)'].A1.v,'橋田');assert.equal(wb.Sheets['歌割'].A1.v,'相馬');
+});

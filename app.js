@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.3";
+const APP_VER = "16.41.4";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1773,9 +1773,14 @@ async function addVersionTab(buf, tabName, edits, srcSheet) {
   const newRid = 'rId' + ((rids.length ? Math.max.apply(null, rids) : 0) + 1);
   const sids = (wbxml.match(/sheetId="(\d+)"/g) || []).map((x) => Number(x.replace(/\D/g, '')));
   const newSid = (sids.length ? Math.max.apply(null, sids) : 0) + 1;
-  const safe = tabName.replace(/[\\\/\?\*\[\]:]/g, '-').slice(0, 31);
+  const baseName = tabName.replace(/[\\\/\?\*\[\]:]/g, '-').slice(0, 31);
+  const existingNames = new Set(XLSX.read(buf, {type:"array", bookSheets:true}).SheetNames.map(n => n.toLowerCase()));
+  let safe = baseName, suffix = 2;
+  while (existingNames.has(safe.toLowerCase())) {
+    const tail = ` (${suffix++})`; safe = baseName.slice(0, 31 - tail.length) + tail;
+  }
 
-  files['xl/workbook.xml'] = enc(wbxml.replace('<sheets>', '<sheets><sheet name="' + esc(safe) + '" sheetId="' + newSid + '" r:id="' + newRid + '"/>'));
+  files['xl/workbook.xml'] = enc(wbxml.replace('<sheets>', '<sheets><sheet name="' + esc(safe).replace(/"/g, '&quot;') + '" sheetId="' + newSid + '" r:id="' + newRid + '"/>'));
   files['xl/_rels/workbook.xml.rels'] = enc(rels.replace('</Relationships>',
     '<Relationship Id="' + newRid + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet' + newNum + '.xml"/></Relationships>'));
   files['[Content_Types].xml'] = enc(ct.replace('</Types>',
