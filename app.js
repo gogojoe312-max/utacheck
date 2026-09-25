@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.4";
+const APP_VER = "16.41.5";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -5354,6 +5354,15 @@ async function buildAbsentWorkbook(so, tab, edits) {
   if (!(data[0] === 0x50 && data[1] === 0x4b) || !XLSX.CFB.read(data, {type:"array"}).FullPaths.some(p => p.endsWith('/xl/workbook.xml'))) {
     const wb = XLSX.read(data, {type:"array", cellStyles:true});
     data = new Uint8Array(XLSX.write(wb, {type:"array", bookType:"xlsx"}));
+    // Legacy column metadata contains an internal "level" alongside outlineLevel.
+    // Remove only that non-OOXML attribute so strict Excel readers accept the file.
+    const converted = await unzip(data);
+    for (const path of converted.order) {
+      if (!/^xl\/worksheets\/[^/]+\.xml$/.test(path)) continue;
+      converted.files[path] = enc(dec(converted.files[path]).replace(/<(?:col|row)\b[^>]*>/g, tag => tag.replace(/\slevel="[^"]*"/g, "")));
+    }
+    data = await zip(converted.files, converted.order);
+
   }
   data = (await addVersionTab(data, tab, edits, so.sheetName)).data;
   if (so.micSheet) {

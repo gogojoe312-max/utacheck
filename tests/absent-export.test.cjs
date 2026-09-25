@@ -27,9 +27,11 @@ test('portable ZIP roundtrip and original-sheet edits work without CompressionSt
 });
 test('legacy XLS and XLSB also produce a readable version workbook',async()=>{
  for(const type of ['biff8','xlsb']){
- const c=setup({getClip:async()=>new Blob([fixture(type)]),micEdits:()=>({})});
+ const legacy=XLSX.read(fixture(type),{type:'buffer'});legacy.Sheets['歌割']['!cols']=[{wch:20,level:1}];
+ const c=setup({getClip:async()=>new Blob([XLSX.write(legacy,{type:'buffer',bookType:type})]),micEdits:()=>({})});
  const data=await c.buildAbsentWorkbook({id:'one',sheetName:'歌割'},'欠席ver',{A1:'橋田'});
  assert.equal(XLSX.read(data,{type:'array'}).Sheets['欠席ver'].A1.v,'橋田');
+ const z=await c.unzip(data);for(const [name,bytes] of Object.entries(z.files))if(name.startsWith('xl/worksheets/'))assert.doesNotMatch(new TextDecoder().decode(bytes),/\slevel=/);
  }
 });
 test('batch continues after a broken song and preserves duplicate titles with explicit save',async()=>{
