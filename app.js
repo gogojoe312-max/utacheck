@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.0";
+const APP_VER = "16.41.1";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -423,8 +423,9 @@ function groupRSongs(list) {
     if (!map.has(k)) map.set(k, []);
     map.get(k).push(x);
   });
+  if (!VIEW()) (S.rfolderOrder || []).forEach(k => { if (k && !S.rsongs.some(x => folderOf(x) === k)) map.set(k, []); });
   const keys = [...map.keys()].filter(Boolean);
-  const newest = (k) => Math.max.apply(null, map.get(k).map((x) => Number(x.at || 0)));
+  const newest = (k) => Math.max(0, ...map.get(k).map(x => Number(x.at || 0)));
   const ord = S.rfolderOrder || [];
   keys.sort((a, b) => {
     const ia = ord.indexOf(a), ib = ord.indexOf(b);
@@ -441,8 +442,9 @@ function groupShows(list) {
     if (!map.has(k)) map.set(k, []);
     map.get(k).push(sw);
   });
+  if (!VIEW()) (S.folderOrder || []).forEach(k => { if (k && !S.shows.some(x => folderOf(x) === k)) map.set(k, []); });
   const keys = [...map.keys()].filter(Boolean);
-  const newest = (k) => Math.max.apply(null, map.get(k).map((x) => Number(x.ts || 0)));
+  const newest = (k) => Math.max(0, ...map.get(k).map(x => Number(x.ts || 0)));
   const ord = S.folderOrder || [];
   keys.sort((a, b) => {
     const ia = ord.indexOf(a), ib = ord.indexOf(b);
@@ -1300,7 +1302,7 @@ function splitNames(label) {
     .filter((t) => t && t.length < 6 && !/[（()）※★☆]/.test(t)); // 長いもの・括弧や記号は名前ではない
 }
 
-const cleanName = (n) => String(n || "").replace(/(\.(pdf|docx|docm|doc|xlsx|xlsm|xls|csv|json))+$/i, "").trim() || "無題";
+const cleanName = (n) => String(n || "").replace(/(\.(pdf|docx|docm|doc|xlsx|xlsm|xlsb|xls|csv|json))+$/i, "").trim() || "無題";
 
 /* ---------------- PDF 取り込み ---------------- */
 async function parsePDF(file) {
@@ -1866,10 +1868,10 @@ function pickSheet(wb) {
 }
 
 // Excelの吹き出し（テキストボックス）を読む。煽りがここに書かれていることがある。
-async function readBubbles(raw, sheetIdx) {
+function readBubbles(files, sheetIdx) {
   try {
-    const { files } = await unzip(raw);
-    const dec3 = (u8) => new TextDecoder().decode(u8);
+    if (!files) return [];
+    const dec3 = (entry) => new TextDecoder().decode(new Uint8Array(entry.content));
     const relPath = "xl/worksheets/_rels/sheet" + (sheetIdx + 1) + ".xml.rels";
     if (!files[relPath]) return [];
     const m = /Target="([^"]*drawings\/drawing\d+\.xml)"/.exec(dec3(files[relPath]));
@@ -1892,16 +1894,28 @@ async function readBubbles(raw, sheetIdx) {
   } catch (e) { return []; }
 }
 
+function trimExcelRange(sheet) {
+  let row = -1, col = -1;
+  for (const [address, cell] of Object.entries(sheet || {})) {
+    if (!/^[A-Z]+[1-9]\d*$/.test(address) || cell.v == null || String(cell.v).trim() === "") continue;
+    const at = XLSX.utils.decode_cell(address);
+    row = Math.max(row, at.r); col = Math.max(col, at.c);
+  }
+  if (row >= 0) sheet["!ref"] = XLSX.utils.encode_range({s:{r:0,c:0},e:{r:row,c:col}});
+  else delete sheet["!ref"];
+}
+
 async function parseXLSX(file, buf) {
   const raw0 = buf || new Uint8Array(await file.arrayBuffer());
   // cellStyles を付けると、セルの塗りつぶしの色が読める。
   // 歌割表ではワンハーフでカットした箇所をグレーで塗ってあるので、それを歌詞から外す。
   let wb;
-  try { wb = XLSX.read(raw0, { type: "array", cellStyles: true }); }
-  catch (e) { wb = XLSX.read(raw0, { type: "array" }); }
+  try { wb = XLSX.read(raw0, { type: "array", cellStyles: true, bookFiles: true }); }
+  catch (e) { wb = XLSX.read(raw0, { type: "array", bookFiles: true }); }
+  Object.values(wb.Sheets).forEach(trimExcelRange);
   const pickedName = pickSheet(wb);
   const sh = wb.Sheets[pickedName];
-  const bubbles = await readBubbles(raw0, wb.SheetNames.indexOf(pickedName));
+  const bubbles = readBubbles(wb.files, wb.SheetNames.indexOf(pickedName));
   const isGray = (ri, ci) => {
     const cell = sh[XLSX.utils.encode_cell({ r: ri, c: ci })];
     const f = cell && cell.s && (cell.s.fgColor || (cell.s.fill && cell.s.fill.fgColor));
@@ -1944,7 +1958,7 @@ async function parseXLSX(file, buf) {
   }
   if (!blocks.length) {
     const L = kind.indexOf("L");
-    if (L >= 0) { blocks.push([Math.max(0, L - 2), L]); usedL.add(L); }
+    if (L >= 0) { blocks.push([L === 0 ? -1 : Math.max(0, L - 2), L]); usedL.add(L); }
   }
   // 名前の付いていない歌詞列（右側の WOW WOW など）も落とさない。
   // 左隣が空の列なら、そこを（空の）名前列として組にする。担当は空のまま。
@@ -1956,7 +1970,7 @@ async function parseXLSX(file, buf) {
   }
   blocks.sort((a, b) => a[0] - b[0]);
   const orphan = new Set();
-  blocks.forEach(([nc, lc], bi) => { if (kind[nc] === ".") orphan.add(bi); });
+  blocks.forEach(([nc, lc], bi) => { if (nc < 0 || kind[nc] === ".") orphan.add(bi); });
   // 歌詞列のすぐ右にある「名前だけの列」は、ハモなどの追加担当とみなす
   const inBlock = new Set();
   blocks.forEach(([a, b]) => { inBlock.add(a); inBlock.add(b); });
@@ -1986,7 +2000,7 @@ async function parseXLSX(file, buf) {
   const HAMO = /(ハモ|ハーモニー|コーラス|ｺｰﾗｽ|Cho|cho)/gi;
 
   const CREDIT = /作詞|作曲|編曲|訳詞|Words|Music|Arr/i;
-  const col = (n) => { let t = ""; n++; while (n > 0) { const m = (n - 1) % 26; t = String.fromCharCode(65 + m) + t; n = (n - m - 1) / 26; } return t; };
+  const col = (n) => { if (n < 0) return ""; let t = ""; n++; while (n > 0) { const m = (n - 1) % 26; t = String.fromCharCode(65 + m) + t; n = (n - m - 1) / 26; } return t; };
   const head = [];
   const rows = [];
   let lead = [];              // 作家名より前の、名前の付いていない行（題名・副題）
@@ -2067,6 +2081,7 @@ async function parseXLSX(file, buf) {
   // どの行にも当てはまらなかった吹き出しは、最後にまとめて入れる
   Object.keys(bubbleAt).forEach((k) => bubbleAt[k].forEach((t2) => rows.push(["煽り", softText(t2), "", "", "", "", "煽り", ""])));
   const parsed0 = finalize(cleanName(file.name), head.join("　"), rows);
+  if (!parsed0.lines.some(r => r[1] && r[1].trim())) throw new Error("Excelに読み取れる歌詞がありません。");
   if (cutRows) parsed0.cutRows = cutRows;   // グレー＝カットとして外した行数
   parsed0.sheetName = sheetName;
   parsed0.micSheet = micName;
@@ -3606,7 +3621,7 @@ async function putClip(id, blob) {
   return new Promise((res, rej) => {
     const t = d.transaction("clips", "readwrite");
     t.objectStore("clips").put(blob, id);
-    t.oncomplete = res; t.onerror = () => rej(t.error);
+    t.oncomplete = res; t.onerror = t.onabort = () => rej(t.error || new Error("保存が中断されました"));
   });
 }
 async function getClip(id) {
@@ -4313,12 +4328,80 @@ function viewOverview(s) {
 }
 
 /* ---- sheet ---- */
+function folderNames(rec = false) {
+  const list = rec ? S.rsongs : S.shows, order = rec ? S.rfolderOrder : S.folderOrder;
+  return [...new Set([...(order || []), ...list.map(folderOf)].filter(Boolean))];
+}
+function rememberFolder(name, rec = false) {
+  if (!name) return;
+  const key = rec ? "rfolderOrder" : "folderOrder", state = rec ? "rfolders" : "folders";
+  if (!S[key].includes(name)) S[key].push(name);
+  S[state][name] = true;
+}
+function organizeSheetHTML(m) {
+  const rec = !!m.rec, item = (rec ? S.rsongs : S.shows).find(x => x.id === m.id);
+  const title = m.mode === "show" ? (item ? "公演を編集" : "公演を追加") : m.mode === "move" ? "フォルダを選択" : m.mode === "actions" ? (item?.name || "公演") : m.id ? "フォルダ名を変更" : "フォルダを作成";
+  const btn = (act,label,extra="") => `<button class="organize-action" data-act="${act}" data-id="${h(m.id || "")}" ${extra}>${label}</button>`;
+  let body = "";
+  if (m.mode === "actions" && item) {
+    body = btn("editshow","公演名・フォルダを編集") + btn("show-delivery","配信先を変更")
+      + btn("showpub", item.nopub ? "配信を有効にする" : "配信を止める")
+      + btn("copyshow","公演を複製") + btn("delshow","公演を削除",'style="color:var(--bad)"');
+  } else {
+    const folder = m.folder ?? folderOf(item), name = m.mode === "folder" ? (m.id || "") : (item?.name || "");
+    const nameField = `<label class="organize-field">${m.mode === "folder" ? "フォルダ名" : "公演名"}<input class="field" id="org-name" value="${h(name)}" placeholder="${m.mode === "folder" ? "例：秋ツアー" : "例：9/26 東京 昼公演"}" autocomplete="off" required></label>`;
+    body = `<form id="organize-form">${m.mode !== "move" ? nameField : `<p class="note">${h(item?.name || item?.title || "")}</p>`}`;
+    if (m.mode !== "folder") {
+      body += `<label class="organize-field">保存先フォルダ<select class="field" id="org-folder"><option value="">フォルダなし</option>${folderNames(rec).map(n => `<option value="${h(n)}" ${folder === n ? "selected" : ""}>${h(n)}</option>`).join("")}<option value="__new_folder__">＋ 新しいフォルダ</option></select></label>
+        <label class="organize-field" id="org-new-folder-row" hidden>新しいフォルダ名<input class="field" id="org-new-folder" autocomplete="off" placeholder="例：秋ツアー"></label>`;
+    }
+    if (m.mode === "show" && !item) body += `<label class="organize-field">配信先グループ<select class="field" id="org-group"><option value="">自動（公演名・フォルダから判定）</option>${S.groups.map(g => `<option value="${h(g.id)}">${h(g.name)}</option>`).join("")}</select></label><p class="note">判定できない場合は ${h(group().name)} に設定します。</p>`;
+    body += `<p id="org-error" role="alert" class="organize-error" hidden></p><button class="primary" type="submit">${m.mode === "move" ? "ここに移動" : m.mode === "show" && !item ? "公演を作成" : m.mode === "folder" && !m.id ? "フォルダを作成" : "保存"}</button></form>`;
+  }
+  return `<button class="sp" data-act="org-close" aria-label="閉じる"></button><div class="sheet organize-sheet" role="dialog" aria-modal="true" aria-label="${h(title)}"><div class="row"><b class="grow">${h(title)}</b><button class="chip" data-act="org-close">閉じる</button></div>${body}</div>`;
+}
+function saveOrganization(m, values) {
+  const rec = !!m.rec, list = rec ? S.rsongs : S.shows;
+  const item = list.find(x => x.id === m.id);
+  const name = (values.name || "").trim().normalize("NFC");
+  const folder = (values.folder || "").trim().normalize("NFC");
+  if (m.mode !== "move" && !name) return "名前を入力してください。";
+  if (m.mode === "folder") {
+    if (name !== m.id && folderNames(rec).includes(name)) return "同じ名前のフォルダがあります。";
+    pushUndo();
+    if (m.id) {
+      list.forEach(x => { if (folderOf(x) === m.id) x.folder = name; });
+      const key = rec ? "rfolderOrder" : "folderOrder", state = rec ? "rfolders" : "folders";
+      S[key] = S[key].map(n => n === m.id ? name : n); delete S[state][m.id];
+    }
+    rememberFolder(name, rec);
+  } else if (m.mode === "move") {
+    if (!item) return "移動する項目が見つかりません。";
+    pushUndo(); item.folder = folder; rememberFolder(folder, rec);
+  } else {
+    pushUndo(); rememberFolder(folder);
+    if (item) { item.name = name; item.folder = folder; }
+    else {
+      const sw = {id:uid(),name,folder,ts:Date.now()};
+      sw.groupId = S.groups.some(g => g.id === values.groupId) ? values.groupId : autoShowGroupId(sw) || S.groupId;
+      S.shows.push(sw); S.showFilter = ""; selectShow(sw.id);
+    }
+  }
+  U.allShowList = true; save(); return "";
+}
+
 function renderSheet() {
   if (typeof NoteVoice !== "undefined") NoteVoice.stop();
   resumeRender();
   // 記録シートの中で打っている最中も、組み直すと文字が飛ぶ
   if (typingNow() && overlay && overlay.contains(document.activeElement)) { pendingRender = true; return; }
   if (overlay) { overlay.remove(); overlay = null; }
+
+  if (U.menu && U.menu.kind === "organize" && !VIEW()) {
+    overlay = document.createElement("div"); overlay.className = "mask organize-mask";
+    overlay.innerHTML = organizeSheetHTML(U.menu);
+    document.body.appendChild(overlay); return;
+  }
 
   if (U.menu && U.menu.kind === "show-delivery" && !VIEW()) {
     const sw = S.shows.find(sw => sw.id === U.menu.id);
@@ -5431,7 +5514,7 @@ function viewSetupRec() {
         <div class="trunc" style="font-size:11px;color:var(--dim)">${x.lines.filter((l) => !l.gap).length}行${x.cols > 1 ? ` ・ ${x.cols}段` : ""}</div>
       </button>
       <button data-act="rpdf" data-id="${x.id}" style="padding:4px 7px;color:var(--dim);font-size:12px">PDF</button>
-      <button data-act="rfset" data-id="${x.id}" style="padding:4px 7px;color:var(--dim);font-size:12px">箱</button>
+      <button data-act="rfset" data-id="${x.id}" style="padding:4px 7px;color:var(--dim);font-size:12px">フォルダ</button>
       <button data-act="rdel" data-id="${x.id}" style="padding:4px 6px;color:var(--bad)">✕</button>
     </div>`;
   const curFolder = folderOf(recSong());
@@ -5459,6 +5542,7 @@ function viewSetupRec() {
   <div class="scroll pad">
     ${lyricDisplaySettings()}
     <h4 class="head">曲</h4>
+    <div class="organize-create"><button class="chip" data-act="newfolder" data-rec="1">＋ フォルダを作成</button></div>
     ${list || `<p class="note">曲がありません</p>`}
     <div class="card"><button class="primary" data-act="rpick">歌詞のWord / PDFを読み込む（複数可）</button></div>
 
@@ -6663,12 +6747,7 @@ function viewSetup() {
         <div class="clamp2" style="${sw.id === S.showId ? "color:var(--accent)" : ""}">${h(sw.name)}</div>
         <div style="font-size:11px;color:var(--dim)">${S.songs.filter((x) => x.showId === sw.id).length}曲 ・ ${NOTES().filter((n) => n.showId === sw.id).length}件${sw.id === S.showId ? " ・ 記録中" : ""} ・ 配信先：${h(showDeliveryLabel(sw))}</div>
       </button>
-      <button data-act="show-delivery" data-id="${sw.id}" class="chip sm">配信先</button>
-      <button data-act="showpub" data-id="${sw.id}" style="padding:4px 6px;font-size:12px;color:${sw.nopub ? "var(--bad)" : "var(--dim)"}">${sw.nopub ? "配信×" : "配信○"}</button>
-      <button data-act="copyshow" data-id="${sw.id}" style="padding:4px 6px;color:var(--dim);font-size:12px">複製</button>
-      <button data-act="sfset" data-id="${sw.id}" style="padding:4px 6px;color:${sw.folder ? "var(--accent)" : "var(--dim)"};font-size:12px">フォルダ</button>
-      <button data-act="renameshow" data-id="${sw.id}" style="padding:4px 6px;color:var(--dim);font-size:12px">名前</button>
-      <button data-act="delshow" data-id="${sw.id}" style="padding:4px 6px;color:var(--bad)">✕</button>
+      <button class="organize-more" data-act="show-actions" data-id="${sw.id}" aria-label="${h(sw.name)}の操作">⋯</button>
     </div>`;
   const shows = groupShows(U.allShowList ? allShows : allShows.slice(0, 12)).map(([fname, list]) => {
     if (!fname) return list.map(showRow).join("");
@@ -6679,9 +6758,8 @@ function viewSetup() {
           <span class="grow trunc">${h(fname)}</span>
           <span style="font-size:11px;color:var(--dim)">${list.length}公演</span>
         </button>
-        <button data-act="fup" data-id="${h(fname)}" style="padding:4px 6px;color:var(--dim)">↑</button>
-        <button data-act="fdown" data-id="${h(fname)}" style="padding:4px 6px;color:var(--dim)">↓</button>
-        <button data-act="frename" data-id="${h(fname)}" style="padding:4px 6px;color:var(--dim);font-size:12px">名前</button>
+        <button class="chip sm" data-act="newshow" data-folder="${h(fname)}">＋公演</button>
+        <button class="organize-more" data-act="frename" data-id="${h(fname)}" aria-label="${h(fname)}の名前を変更">⋯</button>
       </div>
       ${open ? `<div style="margin-left:14px">${list.map(showRow).join("")}</div>` : ""}`;
   }).join("");
@@ -6726,6 +6804,7 @@ function viewSetup() {
     ${lyricDisplaySettings()}
     <h4 class="head">指摘</h4><div class="card"><button class="primary" data-act="go-summary">指摘の集計を見る</button></div>
     <h4 class="head">公演</h4>
+    <div class="organize-create"><button class="primary" data-act="newshow">＋ 公演を追加</button><button class="chip" data-act="newfolder">＋ フォルダ</button></div>
     ${S.groups.length > 1 ? `<div class="chips" style="margin-bottom:10px">
       <button class="chip sm" data-act="showfilter" data-id="" style="${!S.showFilter ? "background:var(--accent);color:#0A0A0A" : ""}">すべて</button>
       ${S.groups.map((g) => `<button class="chip sm" data-act="showfilter" data-id="${g.id}"
@@ -6733,20 +6812,13 @@ function viewSetup() {
     </div>` : ""}
     ${shows}
     ${allShows.length > 12 ? `<button class="ghost" data-act="allshowlist" style="margin-bottom:10px">${U.allShowList ? "最近の12公演だけ表示" : `すべて表示（全${allShows.length}公演）`}</button>` : ""}
-    <div class="row" style="margin-bottom:22px">
-      <input class="field grow" id="newshow" placeholder="">
-      <button class="chip" data-act="addshow">追加</button>
-    </div>
+
 
     <h4 class="head">セットリスト</h4>
     ${cur.length ? bar : ""}
     ${songs}
     <div class="card">
       <button class="primary" data-act="pickfile" style="margin-bottom:8px">歌詞・歌割のWord / PDF / Excel を選ぶ（複数可）</button>
-      <input type="file" id="swapfile" style="display:none"
-        accept=".doc,.docx,.docm,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf,.pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.xlsx,.xls,.csv">
-      <input type="file" id="file" multiple style="display:none"
-        accept=".doc,.docx,.docm,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf,.pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.xlsx,.xls,.csv,application/json,.json">
       <div style="font-size:11px;color:var(--dim);margin-top:6px">→ ${h(group().name || "")}</div>
     </div>
 
@@ -7308,11 +7380,12 @@ document.addEventListener("click", (e) => {
       const tmp = S.songs[p1]; S.songs[p1] = S.songs[p2]; S.songs[p2] = tmp;
       save(); schedulePush(); render(); break;
     }
-    case "pickfile": document.getElementById("file").click(); break;
+    case "pickfile": if (!U.importing) songFileInput().click(); break;
     case "m-swap": {
+      if (U.importing) break;
       U.swapId = U.menu && U.menu.id;
       U.menu = null; renderSheet(); render();
-      const el2 = document.getElementById("swapfile");
+      const el2 = songFileInput(true);
       if (el2) el2.click();
       break;
     }
@@ -8018,23 +8091,8 @@ document.addEventListener("click", (e) => {
       break;
     }
     case "rfolder": S.rfolders[id] = !(S.rfolders[id] === true); save(); render(); break;
-    case "rfset": {
-      const so = S.rsongs.find((x) => x.id === id);
-      if (!so) break;
-      const nm = prompt("フォルダ名（空にすると外に出ます）", so.folder || "");
-      if (nm != null) { pushUndo(); so.folder = nm.trim(); save(); render(); }
-      break;
-    }
-    case "rfrename": {
-      const nm = prompt("フォルダの名前", id);
-      if (nm == null) break;
-      const v = nm.trim();
-      pushUndo();
-      S.rsongs.forEach((x) => { if (folderOf(x) === id) x.folder = v; });
-      S.rfolderOrder = (S.rfolderOrder || []).map((x) => (x === id ? v : x)).filter(Boolean);
-      if (S.rfolders[id] != null) { S.rfolders[v] = S.rfolders[id]; delete S.rfolders[id]; }
-      save(); render(); break;
-    }
+    case "rfset": U.menu = {kind:"organize",mode:"move",rec:true,id}; renderSheet(); break;
+    case "rfrename": U.menu = {kind:"organize",mode:"folder",rec:true,id}; renderSheet(); break;
     case "rfup": case "rfdown": {
       const names = groupRSongs(S.rsongs).map(([k]) => k).filter(Boolean);
       let ord = (S.rfolderOrder || []).filter((x) => names.includes(x));
@@ -8057,7 +8115,7 @@ document.addEventListener("click", (e) => {
       break;
     }
     case "rpick": {
-      recFileInput().click();
+      if (!U.importing) recFileInput().click();
       break;
     }
     case "gopdf": commitFields(); U.picker = false; U.printPick = null; U.view = "print"; render(); autoPrint(); break;
@@ -8197,16 +8255,7 @@ document.addEventListener("click", (e) => {
       render();
       break;
     }
-    case "frename": {
-      const nm = prompt("フォルダの名前", id);
-      if (nm == null) break;
-      const v = nm.trim();
-      pushUndo();
-      S.shows.forEach((sw) => { if (folderOf(sw) === id) sw.folder = v; });
-      S.folderOrder = (S.folderOrder || []).map((x) => (x === id ? v : x)).filter(Boolean);
-      if (S.folders[id] != null) { S.folders[v] = S.folders[id]; delete S.folders[id]; }
-      save(); render(); break;
-    }
+    case "frename": U.menu = {kind:"organize",mode:"folder",id}; renderSheet(); break;
     case "fup": case "fdown": {
       const names = groupShows(S.shows.filter((x) => !x.hidden)).map(([k]) => k).filter(Boolean);
       let ord = (S.folderOrder || []).filter((x) => names.includes(x));
@@ -8261,30 +8310,17 @@ document.addEventListener("click", (e) => {
       if (nm != null && nm.trim()) { g.name = nm.trim(); save(); render(); }
       break;
     }
-    case "addshow": {
-      const el = document.getElementById("newshow");
-      const nm = el && el.value.trim();
-      if (nm) {
-        // 今開いている公演がフォルダに入っていれば、新しい公演も同じフォルダに入れる（散らばらない）
-        const cur = S.shows.find((x) => x.id === S.showId);
-        const nid = uid();
-        const sw = { id: nid, name: nm, ts: Date.now(), folder: folderOf(cur) || undefined };
-        sw.groupId = autoShowGroupId(sw) || S.groupId;
-        S.shows.push(sw); selectShow(nid); render();
-      }
-      break;
+    case "newshow": {
+      U.menu = {kind:"organize",mode:"show",folder:b.dataset.folder ?? folderOf(S.shows.find(x => x.id === S.showId))}; renderSheet(); break;
     }
+    case "newfolder": U.menu = {kind:"organize",mode:"folder",rec:b.dataset.rec === "1"}; renderSheet(); break;
+    case "show-actions": U.menu = {kind:"organize",mode:"actions",id}; renderSheet(); break;
+    case "editshow": U.menu = {kind:"organize",mode:"show",id}; renderSheet(); break;
+    case "org-close": document.activeElement?.blur(); U.menu = null; renderSheet(); break;
     case "useshow": selectShow(id); U.view = "live"; render(); break;
-    case "copyshow": { dupShow(id); break; }
+    case "copyshow": { U.menu = null; dupShow(id); renderSheet(); break; }
     // つまんで重ねる以外にも、ボタンでフォルダに入れられるようにする
-    case "sfset": {
-      const sw = S.shows.find((x) => x.id === id);
-      if (!sw) break;
-      const names = [...new Set(S.shows.map(folderOf).filter(Boolean))];
-      const nm = prompt("フォルダ名（空にすると外に出ます）" + (names.length ? "\n今あるフォルダ: " + names.join("、") : ""), sw.folder || "");
-      if (nm != null) { pushUndo(); sw.folder = nm.trim(); if (sw.folder) S.folders[sw.folder] = true; save(); render(); }
-      break;
-    }
+    case "sfset": U.menu = {kind:"organize",mode:"move",id}; renderSheet(); break;
     case "renameshow": {
       const sw = S.shows.find((x) => x.id === id);
       const nm = prompt("公演名", sw ? sw.name : "");
@@ -8292,6 +8328,7 @@ document.addEventListener("click", (e) => {
       break;
     }
     case "delshow": {
+      U.menu = null; renderSheet();
       if (S.shows.length <= 1) { alert("公演は1つ以上必要です。"); break; }
       const sw = S.shows.find((x) => x.id === id);
       const cnt = S.notes.filter((n) => n.showId === id).length;
@@ -8324,25 +8361,33 @@ document.addEventListener("focusout", () => {
   setTimeout(() => { if (pendingRender && !typingNow()) render(); }, 0);
 });
 
+document.addEventListener("submit", e => {
+  if (e.target.id !== "organize-form") return;
+  e.preventDefault();
+  const m = U.menu; if (!m || m.kind !== "organize" || VIEW()) return;
+  const selected = document.getElementById("org-folder")?.value || "";
+  const fresh = selected === "__new_folder__";
+  const values = {name:document.getElementById("org-name")?.value || "",
+    folder:fresh ? document.getElementById("org-new-folder").value : selected,
+    groupId:document.getElementById("org-group")?.value || ""};
+  const error = fresh && !values.folder.trim() ? "新しいフォルダ名を入力してください。" : saveOrganization(m,values);
+  const out = document.getElementById("org-error"); out.textContent = error; out.hidden = !error;
+  if (error) return;
+  document.activeElement?.blur(); U.menu = null; render();
+});
+
 document.addEventListener("change", (e) => {
+  if (e.target.id === "org-folder") {
+    const fresh = e.target.value === "__new_folder__";
+    document.getElementById("org-new-folder-row").hidden = !fresh;
+    if (fresh) document.getElementById("org-new-folder").focus();
+    return;
+  }
   if (e.target.id === "summary-member") { selectViewerMember(e.target.value); return; }
   if (e.target.id === "summary-show") { selectSummaryShow(e.target.value); return; }
-  if (e.target.id === "file") {
-    // 一覧を控えてから空にする。同じファイルをもう一度選んでも読み込めるように。
-    const picked = Array.from(e.target.files || []);
-    e.target.value = "";
-    if (picked.length) handleFiles(picked);
-  }
-  if (e.target.id === "recfile") {
-    const picked = Array.from(e.target.files || []);
-    e.target.value = "";
-    if (picked.length) loadRecDocs(picked);
-  }
-  if (e.target.id === "swapfile") {
-    const one = (e.target.files || [])[0];
-    e.target.value = "";
-    const sid = U.swapId; U.swapId = "";
-    if (one && sid) swapSong(sid, one);
+  if (["file", "recfile", "swapfile"].includes(e.target.id)) {
+    importSelection(e.target);
+    return;
   }
   if (e.target.id === "songmemo") commitFields();
 });
@@ -9091,7 +9136,54 @@ async function parseWordSong(file) {
   return {title:so.title,credit:so.credit,lines:so.lines.map(l => ["", l.gap ? "" : l.t])};
 }
 
-// レコーディングの歌詞（Word）を読み込む
+// 選択欄を画面の再描画で消さず、読み取りが終わるまで選択を保持する。
+function songFileInput(swap = false) {
+  const id = swap ? "swapfile" : "file";
+  let el = document.getElementById(id);
+  if (el) return el;
+  el = document.createElement("input");
+  el.type = "file"; el.id = id; el.multiple = !swap; el.hidden = true;
+  el.accept = ".doc,.docx,.docm,.pdf,.xlsx,.xlsm,.xlsb,.xls,.csv" + (swap ? "" : ",.json")
+    + ",application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,application/vnd.ms-excel.sheet.macroEnabled.12";
+  document.body.appendChild(el);
+  return el;
+}
+
+async function importSelection(input) {
+  if (U.importing) return;
+  const picked = Array.from(input.files || []);
+  if (!picked.length) return;
+  U.importing = true;
+  const sid = U.swapId;
+  try {
+    if (input.id === "swapfile") { U.swapId = ""; if (sid) await swapSong(sid, picked[0]); }
+    else if (input.id === "recfile") await loadRecDocs(picked);
+    else await handleFiles(picked);
+  } catch (e) {
+    alert("読み込みを完了できませんでした。\n" + (e.message || e));
+  } finally {
+    input.value = ""; U.importing = false; U.busy = ""; render();
+  }
+}
+
+function importTimeout(promise, ms, message) {
+  let timer;
+  return Promise.race([promise, new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms);
+  })]).finally(() => clearTimeout(timer));
+}
+
+// クラウド上の選択ファイルも、前の曲の解析・保存を待たずに読み取りを開始する。
+function captureImportFiles(files) {
+  return Array.from(files).sort((a,b) => a.name.localeCompare(b.name,"ja",{numeric:true})).map(file => ({
+    name:file.name,
+    ready:importTimeout(Promise.resolve().then(() => file.arrayBuffer()), 60000,
+      "ファイルの取得が完了しませんでした。ファイルアプリでダウンロードしてから再選択してください。")
+      .then(buffer => ({buffer}), error => ({error}))
+  }));
+}
+
+// レコーディングの歌詞（Word / PDF）を読み込む
 // どの画面からでも使えるよう、本体に1つだけ置いておく。
 // 画面の中に書くと、その画面が出ていない時（レコーディング中など）に使えない。
 function recFileInput() {
@@ -9134,49 +9226,72 @@ async function loadRecDocs(picked) {
 }
 
 async function handleFiles(files) {
-  const list = [...files].sort((a, b) => a.name.localeCompare(b.name, "ja"));
-  const failed = [];
-  let imported = null;
-  for (let k = 0; k < list.length; k++) {
-    const f = list[k];
-    U.busy = `${k + 1}/${list.length} ${f.name}`; render();
-    try {
-      const ext = (f.name.split(".").pop() || "").toLowerCase();
-      if (ext === "json") {
-        const d = JSON.parse(await f.text());
-        (d.members || []).forEach((m) => addMember(m.name));
-        (d.songs || []).forEach((sg) => S.songs.push(Object.assign(buildSong(sg), { groupId: S.groupId, showId: S.showId, impAt: Date.now() })));
-      } else if (["pdf","doc","docx","docm"].includes(ext)) {
-        S.songs.push(Object.assign(buildSong(await (ext === "pdf" ? parsePDF(f) : parseWordSong(f))), { groupId: S.groupId, showId: S.showId, impAt: Date.now() }));
-      } else {
-        const buf = await f.arrayBuffer();
-        const so = Object.assign(buildSong(await parseXLSX(f, buf)), { groupId: S.groupId, showId: S.showId, impAt: Date.now() });
-        // 同じ曲の入れ直しなら、古い方の記録を写せるようにする
-        const prevSo = SONGS().find((x) => x.title === so.title || sigOf(x) === sigOf(so));
-        const had = prevSo ? S.notes.filter((n) => n.songId === prevSo.id).length : 0;
-        S.songs.push(so);
-        try { await putClip("xls:" + so.id, new Blob([buf])); so.xls = 1; so.xlsAt = Date.now(); } catch (e) { /* 保管できなくても取り込みは続ける */ }
-        if (prevSo && had) {
-          if (confirm(`この公演に「${songName(prevSo)}」があります。\nそちらの記録 ${had}件 を新しい方に写しますか？\n\n古い方はそのまま残ります。`)) {
-            const r = copyRecords(prevSo, so);
-            if (r.lost) alert(`${r.moved}件を写しました。\n${r.lost}件は歌詞が変わっていて写せませんでした。古い方に残っています。`);
-          }
-        }
+  const list = captureImportFiles(files), failed = [], archiveFailed = [], archives = [], copies = [];
+  const groupId = S.groupId, showId = S.showId;
+  let imported = null, count = 0;
+  try {
+    for (let k = 0; k < list.length; k++) {
+      const item = list[k];
+      U.busy = `${k + 1}/${list.length} ${item.name}`; render();
+      // 複数のExcelを連続解析しても、進捗を描画する時間を確保する。
+      await new Promise(resolve => setTimeout(resolve, 0));
+      try {
+        const result = await item.ready; item.ready = null;
+        if (result.error) throw result.error;
+        const buf = result.buffer;
+        if (!buf.byteLength) throw new Error("ファイルが空です。ダウンロードが完了しているか確認してください。");
+        const f = {name:item.name,arrayBuffer:async () => buf};
+        const ext = f.name.split(".").pop().toLowerCase();
+        const add = parsed => {
+          const so = Object.assign(buildSong(parsed), {groupId,showId,impAt:Date.now()});
+          S.songs.push(so); imported = so; count++;
+          return so;
+        };
+        if (ext === "json") {
+          const d = JSON.parse(new TextDecoder().decode(buf));
+          (d.members || []).forEach(m => addMember(m.name));
+          (d.songs || []).forEach(add);
+        } else if (["pdf","doc","docx","docm"].includes(ext)) {
+          add(await (ext === "pdf" ? parsePDF(f) : parseWordSong(f)));
+        } else if (["xlsx","xlsm","xlsb","xls","csv"].includes(ext)) {
+          const parsed = await parseXLSX(f, buf);
+          const so = add(parsed);
+          const prev = S.songs.find(x => x.id !== so.id && x.showId === showId
+            && (x.title === so.title || sigOf(x) === sigOf(so)));
+          if (prev && S.notes.some(n => n.songId === prev.id)) copies.push({prev,so});
+          // 歌詞は先に保存。元Excelの保管待ちで、残りのファイルを止めない。
+          archives.push(importTimeout(putClip("xls:" + so.id, new Blob([buf])), 5000,
+            "元Excelを保存できませんでした")
+            .then(() => { so.xls = 1; so.xlsAt = Date.now(); })
+            .catch(() => archiveFailed.push(f.name)));
+        } else throw new Error("対応していないファイル形式です。");
+        save();
+      } catch (err) {
+        failed.push(item.name + "：" + (err.message || "読み取りに失敗しました"));
       }
-      imported = S.songs.at(-1) || imported;
-      save();
-    } catch (err) {
-      failed.push(f.name + "：" + ((err && err.message) || "読み取りに失敗しました"));
     }
+    await Promise.all(archives);
+    // 再取り込みの確認は全ファイルの読み取り後にまとめる。
+    if (copies.length && confirm(`${copies.length}曲に前の記録があります。新しい曲にも写しますか？\n\n` + copies.map(x => songName(x.prev)).join("\n") + "\n\n古い曲はそのまま残ります。")) {
+      let lost = 0;
+      copies.forEach(({prev,so}) => { lost += copyRecords(prev,so).lost || 0; });
+      if (lost) alert(`${lost}件は歌詞が変わっていて写せませんでした。古い曲に残っています。`);
+    }
+    autoSubs();
+    if (imported) {
+      S.showId = showId; S.recMode = false;
+      sortSongsByTitle();
+      U.songIdx = Math.max(0, SONGS().findIndex(s => s.id === imported.id));
+      U.view = "live"; U.picker = false; U.overview = false;
+    }
+    save();
+  } finally {
+    U.busy = ""; render();
   }
-  // 読み込んだ曲にも、設定済みの欠席を反映させる
-  autoSubs();
-  // 入れ替えたら曲名順に並べ直す
-  sortSongsByTitle();
-  if (imported) { U.songIdx = Math.max(0, SONGS().findIndex(s => s.id === imported.id)); U.view = "live"; U.picker = false; U.overview = false; }
-  U.busy = ""; render();
-  const el = document.getElementById("file"); if (el) el.value = "";
-  if (failed.length) alert("読み込めませんでした：\n" + failed.join("\n"));
+  if (failed.length || archiveFailed.length) {
+    alert(`${count}曲を読み込みました。` + (failed.length ? "\n\n読み込めなかったファイル：\n" + failed.join("\n") : "")
+      + (archiveFailed.length ? "\n\n歌詞は読み込み済みですが、元Excelを保存できませんでした（Excel書き出しには再取り込みが必要です）：\n" + archiveFailed.join("\n") : ""));
+  }
 }
 
 
