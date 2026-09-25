@@ -8,7 +8,7 @@ function setup(extra={}){
  const c=vm.createContext({XLSX,Uint8Array,Uint32Array,DataView,TextEncoder,TextDecoder,Blob,File,Response,setTimeout,clearTimeout,console,
  U:{},S:{songs:[]},render(){},renderSheet(){},URL:{createObjectURL:()=> 'blob:test',revokeObjectURL(){}},...extra});
  vm.runInContext(source.slice(source.indexOf('const CRCT ='),source.indexOf('\n\n',source.indexOf('  return { data: await zip(files, names), changed };'))),c);
- for(const n of ['importTimeout','closeExcelExport','presentExcelExport','buildAbsentWorkbook','absentExportFilename','runAbsentExport','shareExcelExport'])vm.runInContext(fn(n),c);
+ for(const n of ['fileFailureReason','showFileReport','importTimeout','closeExcelExport','presentExcelExport','buildAbsentWorkbook','absentExportFilename','runAbsentExport','shareExcelExport'])vm.runInContext(fn(n),c);
  return c;
 }
 function fixture(type='xlsx'){
@@ -55,4 +55,12 @@ test('repeated exports preserve existing version tabs and use unique worksheet n
  const wb=XLSX.read(data,{type:'array'});
  assert(wb.SheetNames.includes('相馬欠席ver'));assert(wb.SheetNames.includes('相馬欠席ver (2)'));
  assert.equal(wb.Sheets['相馬欠席ver (2)'].A1.v,'橋田');assert.equal(wb.Sheets['歌割'].A1.v,'相馬');
+});
+test('a failure preparing one song cannot stop later exports; all-failed reports remain visible',async()=>{
+ const c=setup({alert(){throw Error('unexpected alert');},absentIds:()=>['a'],absentTab:()=> '欠席ver',showName:()=> '公演',
+ absentEdits:so=>{if(so.id==='bad')throw new TypeError('Cannot read properties of undefined');return {A1:'橋田'};},getClip:async()=>new Blob([fixture()]),micEdits:()=>({})});
+ await c.runAbsentExport([{id:'bad',title:'準備失敗'},{id:'good',title:'成功曲',sheetName:'歌割'}],true);
+ assert.equal(c.U.excelExport.count,1);assert.match(c.U.excelExport.failures[0],/準備失敗/);assert.match(c.U.excelExport.failures[0],/原因の特定/);
+ await c.runAbsentExport([{id:'bad',title:'準備失敗'}],true);
+ assert.equal(c.U.excelExport,null);assert.equal(c.U.fileReport.succeeded.length,0);assert.equal(c.U.fileReport.failed.length,1);assert.equal(c.U.menu.kind,'file-result');assert.equal(c.U.exportingExcel,false);
 });

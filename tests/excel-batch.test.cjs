@@ -15,7 +15,7 @@ function setup(overrides={}){
   putClip:async(key,blob)=>captures.push({key,blob}),...overrides});
  vm.runInContext(source.match(/^const NAMESEP = .+$/m)[0]+source.match(/^const HAMO_RE = .+$/m)[0]+source.match(/^const cleanName = .+$/m)[0],c);
  vm.runInContext('const looksName = v => nameScore(v) >= 0.6; const SONGS=()=>S.recMode ? S.rsongs : S.songs.filter(s=>s.showId===S.showId);',c);
- for(const n of ['cleanText','softText','stripParens','splitNames','nameScore','pickSheet','readBubbles','trimExcelRange','parseXLSX','finalize','sortSongsByTitle','importTimeout','captureImportFiles','handleFiles','loadRecDocs','importSelection']) vm.runInContext(fn(n),c);
+ for(const n of ['fileFailureReason','showFileReport','cleanText','softText','stripParens','splitNames','nameScore','pickSheet','readBubbles','trimExcelRange','parseXLSX','finalize','sortSongsByTitle','importTimeout','captureImportFiles','handleFiles','loadRecDocs','importSelection']) vm.runInContext(fn(n),c);
  return {c,alerts,captures};
 }
 function workbook(n,type='xlsx'){
@@ -36,12 +36,12 @@ test('one rejected or stalled source does not prevent later Excel imports',async
  {name:'M1.xlsx',arrayBuffer:()=>Promise.reject(new Error('download failed'))},
  {name:'M2.xlsx',arrayBuffer:()=>new Promise(()=>{})},file('M3.xlsx',workbook(3))]);
  assert.equal(c.S.songs.length,1);assert.equal(c.S.songs[0].title,'M3');assert.equal(c.U.busy,'');
- assert.equal(alerts.length,1);assert.match(alerts[0],/1曲/);assert.match(alerts[0],/M1.xlsx/);assert.match(alerts[0],/M2.xlsx/);
+ assert.equal(c.U.fileReport.succeeded.length,1);assert.equal(c.U.fileReport.failed.length,2);assert.match(c.U.fileReport.failed.join(' '),/M1.xlsx/);assert.match(c.U.fileReport.failed.join(' '),/M2.xlsx/);
 });
 test('a stalled original Excel save cannot block the other songs or erase imported lyrics',async()=>{
  let calls=0;const {c,alerts}=setup({putClip:()=>++calls===1?new Promise(()=>{}):Promise.resolve()});
  await c.handleFiles([file('M1.xlsx',workbook(1)),file('M2.xlsx',workbook(2))]);
- assert.equal(calls,2);assert.equal(c.S.songs.length,2);assert.equal(c.S.songs[0].xls,undefined);assert.equal(c.S.songs[1].xls,1);assert.equal(c.U.busy,'');assert.match(alerts[0],/歌詞は読み込み済み/);
+ assert.equal(calls,2);assert.equal(c.S.songs.length,2);assert.equal(c.S.songs[0].xls,undefined);assert.equal(c.S.songs[1].xls,1);assert.equal(c.U.busy,'');assert.match(c.U.fileReport.warnings[0],/歌詞は読み込み済み/);
 });
 test('file selection remains intact until all files finish; duplicate starts are ignored',async()=>{
  const {c}=setup();let release;const second=workbook(2),first=workbook(1);let reads=0;
@@ -51,7 +51,7 @@ test('file selection remains intact until all files finish; duplicate starts are
 });
 test('empty workbook fails clearly while the following song still imports',async()=>{
  const w=XLSX.utils.book_new();XLSX.utils.book_append_sheet(w,XLSX.utils.aoa_to_sheet([]),'歌割');
- const {c,alerts}=setup();await c.handleFiles([file('M1.xlsx',XLSX.write(w,{type:'buffer'})),file('M2.xlsx',workbook(2))]);assert.equal(c.S.songs.length,1);assert.match(alerts[0],/読み取れる歌詞/);
+ const {c,alerts}=setup();await c.handleFiles([file('M1.xlsx',XLSX.write(w,{type:'buffer'})),file('M2.xlsx',workbook(2))]);assert.equal(c.S.songs.length,1);assert.match(c.U.fileReport.failed[0],/読み取れる歌詞/);
 });
 test('IndexedDB abort rejects original-file storage instead of leaving the batch pending',async()=>{
  let transaction;const c=vm.createContext({db:async()=>({transaction:()=>{transaction={objectStore:()=>({put(){}})};return transaction;}})});vm.runInContext(fn('putClip'),c);
@@ -81,4 +81,13 @@ test('recording mode accepts multiple Excel files and keeps lyric text',async()=
 });
 test('single-column short lyrics do not disappear as name labels',async()=>{
  const {c}=setup(),w=XLSX.utils.book_new();XLSX.utils.book_append_sheet(w,XLSX.utils.aoa_to_sheet([['夢'],['希望'],['空']]),'歌詞');const r=await c.parseXLSX(file('歌詞.xlsx',XLSX.write(w,{type:'buffer'})));assert.deepEqual(Array.from(r.lines,r=>[r[0],r[1]]),[['','夢'],['','希望'],['','空']]);
+});
+test('recording imports finish valid files around a failed file and explain every failure',async()=>{
+ const {c}=setup();c.S.recMode=true;
+ await c.loadRecDocs([file('M1.xlsx',workbook(1)),{name:'M2.xlsx',arrayBuffer:async()=>{throw Object.assign(new Error('file unavailable'),{name:'NotReadableError'});}},file('M3.xls',workbook(3,'biff8'))]);
+ assert.equal(c.S.rsongs.length,2);assert.equal(c.U.fileReport.succeeded.length,2);assert.equal(c.U.fileReport.failed.length,1);assert.match(c.U.fileReport.failed[0],/M2.xlsx/);assert.match(c.U.fileReport.failed[0],/取得できません/);assert.equal(c.U.busy,'');
+});
+test('error explanations retain details and separate known capacity errors from unknown structure errors',()=>{
+ const {c}=setup();assert.match(c.fileFailureReason(Object.assign(new Error('Quota exceeded'),{name:'QuotaExceededError'})),/容量が不足/);
+ assert.match(c.fileFailureReason(new RangeError('Out of bounds access')),/特定できません/);assert.match(c.fileFailureReason(new RangeError('Out of bounds access')),/Out of bounds access/);
 });

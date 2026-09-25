@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.5";
+const APP_VER = "16.41.6";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -4388,16 +4388,29 @@ function renderSheet() {
   if (typingNow() && overlay && overlay.contains(document.activeElement)) { pendingRender = true; return; }
   if (overlay) { overlay.remove(); overlay = null; }
 
+  if (U.menu?.kind === "file-result" && U.fileReport && !VIEW()) {
+    const r = U.fileReport;
+    overlay = document.createElement("div"); overlay.className = "mask";
+    overlay.innerHTML = `<button class="sp" data-act="closemenu" aria-label="閉じる"></button><div class="sheet organize-sheet" role="dialog" aria-modal="true" aria-label="ファイル処理結果">
+      <div class="row"><b class="grow">${h(r.title)}</b><button class="chip" data-act="closemenu">閉じる</button></div>
+      <p>成功 ${r.succeeded.length}件　失敗 ${r.failed.length}件${r.warnings.length ? `　要確認 ${r.warnings.length}件` : ""}</p>
+      ${r.failed.map(x=>`<p role="alert" class="note" style="white-space:pre-wrap;overflow-wrap:anywhere;color:var(--bad)">${h(x)}</p>`).join("")}
+      ${r.warnings.map(x=>`<p class="note" style="white-space:pre-wrap;overflow-wrap:anywhere">${h(x)}</p>`).join("")}
+      ${r.succeeded.length ? `<details><summary>処理できたファイル</summary>${r.succeeded.map(x=>`<p class="note" style="overflow-wrap:anywhere">${h(x)}</p>`).join("")}</details>` : ""}
+    </div>`;
+    document.body.appendChild(overlay); return;
+  }
+
   if (U.menu?.kind === "excel-export" && U.excelExport && !VIEW()) {
     const item = U.excelExport;
     overlay = document.createElement("div"); overlay.className = "mask";
     overlay.innerHTML = `<button class="sp" data-act="excel-export-close" aria-label="閉じる"></button><div class="sheet organize-sheet" role="dialog" aria-modal="true" aria-label="Excelの保存">
       <div class="row"><b class="grow">${item.count}曲のExcelを作成しました</b><button class="chip" data-act="excel-export-close">閉じる</button></div>
-      <p class="note" style="overflow-wrap:anywhere">${h(item.name)}</p>
+      <p>成功 ${item.count}曲　失敗 ${item.failures.length}曲</p><p class="note" style="overflow-wrap:anywhere">${h(item.name)}</p>
       <button class="primary" data-act="excel-export-share">保存・共有</button>
       <a class="organize-action" href="${h(item.url)}" download="${h(item.name)}">ダウンロードして保存</a>
       ${item.name.endsWith(".zip") ? '<p class="note">曲ごとのExcelをZIPにまとめています。iPhoneでは「ファイルに保存」後、ZIPをタップすると開けます。</p>' : ""}
-      ${item.failures.length ? `<p role="alert" class="note" style="color:var(--bad)">作成できなかった曲（${item.failures.length}曲）</p>${item.failures.map(x=>`<p class="note">${h(x)}</p>`).join("")}` : ""}
+      ${item.failures.length ? `<p role="alert" class="note" style="color:var(--bad)">作成できなかった曲（${item.failures.length}曲）</p>${item.failures.map(x=>`<p class="note" style="white-space:pre-wrap;overflow-wrap:anywhere">${h(x)}</p>`).join("")}` : ""}
     </div>`;
     document.body.appendChild(overlay); return;
   }
@@ -5378,26 +5391,31 @@ async function runAbsentExport(songs, bundle) {
   if (U.exportingExcel) return;
   if (!absentIds().length) { alert("欠席者が設定されていません。"); return; }
   const tab = absentTab(), title = showName() || "公演";
-  const targets = songs.map(so => ({so, edits:absentEdits(so)})).filter(x => Object.keys(x.edits).length);
-  if (!targets.length) { alert("変更された行がありません。"); return; }
+  const targets = songs.slice();
   U.exportingExcel = true;
   closeExcelExport();
   const files = Object.create(null), failures = [];
   try {
     for (let i = 0; i < targets.length; i++) {
-      const {so, edits} = targets[i];
+      const so = targets[i];
       U.busy = `Excel作成 ${i + 1}/${targets.length} ${so.title}`; render();
       await new Promise(resolve => setTimeout(resolve, 0));
       try {
+        const edits = absentEdits(so);
+        if (!Object.keys(edits).length) continue;
         const data = await buildAbsentWorkbook(so, tab, edits);
         const base = absentExportFilename(so.title, tab);
         let name = base, suffix = 2;
         while (files[name]) name = base.replace(/\.xlsx$/, ` (${suffix++}).xlsx`);
         files[name] = data;
-      } catch (e) { failures.push(`${so.title}：${e.message || "作成できませんでした"}`); }
+      } catch (e) { failures.push(`${so.title}（Excel出力）\n${fileFailureReason(e)}`); }
     }
     const names = Object.keys(files);
-    if (!names.length) { alert("Excelを作成できませんでした。\n" + failures.join("\n")); return; }
+    if (!names.length) {
+      if (failures.length) showFileReport("Excel出力結果", [], failures);
+      else alert("変更された行がありません。");
+      return;
+    }
     const data = bundle ? await zip(files, null, false) : files[names[0]];
     const name = bundle ? absentExportFilename(title,tab).replace(/\.xlsx$/, ".zip") : names[0];
     U.busy = ""; render();
@@ -9210,6 +9228,21 @@ async function importSelection(input) {
   }
 }
 
+function fileFailureReason(error) {
+  const raw = String(error?.message || error || "原因を取得できませんでした");
+  let reason = "";
+  if (/password|encrypt|パスワード|暗号化/i.test(raw)) reason = "パスワード保護・暗号化されたファイルです。保護を解除したコピーを選んでください。";
+  else if (error?.name === "QuotaExceededError") reason = "端末の保存容量が不足しています。空き容量を確保して再実行してください。";
+  else if (/out of bounds|outside.*bounds|DataView|invalid.*(?:zip|signature)|unsupported.*(?:zip|file)|CFB|Bad compressed/i.test(raw)) reason = "ファイルの内部構造を読み取れませんでした。Excelで開いて .xlsx で保存し直してください。破損か形式の違いかは、このエラーだけでは特定できません。";
+  else if (/failed to fetch|network|NotReadableError|download failed/i.test(raw) || error?.name === "NotReadableError") reason = "ファイルを取得できませんでした。通信・保存先へのアクセスを確認し、端末にダウンロードしてから再選択してください。";
+  else if (/Cannot read|undefined|null|TypeError|ReferenceError/i.test(raw)) reason = "アプリがこのファイルのデータを処理できませんでした。原因の特定には元ファイルの確認が必要です。";
+  return reason ? reason + "（詳細：" + raw + "）" : raw;
+}
+function showFileReport(title, succeeded, failed, warnings = []) {
+  U.fileReport = {title, succeeded, failed, warnings};
+  U.menu = {kind:"file-result"}; render();
+}
+
 function importTimeout(promise, ms, message) {
   let timer;
   return Promise.race([promise, new Promise((_, reject) => {
@@ -9245,7 +9278,7 @@ function recFileInput() {
 
 async function loadRecDocs(picked) {
   let last = null;
-  const list = captureImportFiles(picked), failed = [];
+  const list = captureImportFiles(picked), failed = [], succeeded = [];
   for (let i = 0; i < list.length; i++) {
     const item = list[i];
     U.busy = `${i + 1}/${list.length} ${item.name}`; render();
@@ -9262,8 +9295,8 @@ async function loadRecDocs(picked) {
         : await parseDocx(f);
       const near = recSong();
       if (near && near.folder) so.folder = near.folder;
-      S.rsongs.push(so); S.rsongId = so.id; last = so; save();
-    } catch (e) { failed.push(item.name + "：" + (e.message || e)); }
+      S.rsongs.push(so); S.rsongId = so.id; last = so; save(); succeeded.push(item.name);
+    } catch (e) { failed.push(item.name + "（取り込み）\n" + fileFailureReason(e)); }
   }
   U.busy = "";
   if (last) {
@@ -9272,11 +9305,11 @@ async function loadRecDocs(picked) {
     U.view = "live"; U.picker = false; U.overview = false;
   }
   save(); U.menu = null; render();
-  if (failed.length) alert("読み込めなかったファイル：\n" + failed.join("\n"));
+  if (list.length > 1 || failed.length) showFileReport("取り込み結果", succeeded, failed);
 }
 
 async function handleFiles(files) {
-  const list = captureImportFiles(files), failed = [], archiveFailed = [], archives = [], copies = [];
+  const list = captureImportFiles(files), failed = [], archiveFailed = [], archives = [], copies = [], succeeded = [];
   const groupId = S.groupId, showId = S.showId;
   let imported = null, count = 0;
   try {
@@ -9313,11 +9346,11 @@ async function handleFiles(files) {
           archives.push(importTimeout(putClip("xls:" + so.id, new Blob([buf])), 5000,
             "元Excelを保存できませんでした")
             .then(() => { so.xls = 1; so.xlsAt = Date.now(); })
-            .catch(() => archiveFailed.push(f.name)));
+            .catch(error => archiveFailed.push(f.name + "（元Excelの保存）\n歌詞は読み込み済みです。Excel書き出しには再取り込みが必要です。\n" + fileFailureReason(error))));
         } else throw new Error("対応していないファイル形式です。");
-        save();
+        save(); succeeded.push(item.name);
       } catch (err) {
-        failed.push(item.name + "：" + (err.message || "読み取りに失敗しました"));
+        failed.push(item.name + "（取り込み）\n" + fileFailureReason(err));
       }
     }
     await Promise.all(archives);
@@ -9338,9 +9371,8 @@ async function handleFiles(files) {
   } finally {
     U.busy = ""; render();
   }
-  if (failed.length || archiveFailed.length) {
-    alert(`${count}曲を読み込みました。` + (failed.length ? "\n\n読み込めなかったファイル：\n" + failed.join("\n") : "")
-      + (archiveFailed.length ? "\n\n歌詞は読み込み済みですが、元Excelを保存できませんでした（Excel書き出しには再取り込みが必要です）：\n" + archiveFailed.join("\n") : ""));
+  if (list.length > 1 || failed.length || archiveFailed.length) {
+    showFileReport(`${count}曲の取り込み結果`, succeeded, failed, archiveFailed);
   }
 }
 
