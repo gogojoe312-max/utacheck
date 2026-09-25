@@ -8,14 +8,14 @@ function setup(overrides={}){
  let id=0;const alerts=[],captures=[];
  const c=vm.createContext({XLSX,Uint8Array,TextDecoder,Blob,Date,Promise,clearTimeout,
   setTimeout:(f,ms)=>setTimeout(f,ms>=5000?25:ms),
-  S:{songs:[],notes:[],groups:[],rosters:{},groupId:'group',showId:'show'},U:{view:'setup'},
+  uid:()=>String(++id),recSong:()=>null,S:{rsongs:[],songs:[],notes:[],groups:[],rosters:{},groupId:'group',showId:'show'},U:{view:'setup'},
   render(){},save(){},autoSubs(){},alert:m=>alerts.push(m),confirm:()=>false,
   sigOf:s=>s.title,songName:s=>s.title,copyRecords:()=>({lost:0}),
   addMember:n=>({name:n,id:n}),buildSong:p=>({...p,id:String(++id)}),
   putClip:async(key,blob)=>captures.push({key,blob}),...overrides});
  vm.runInContext(source.match(/^const NAMESEP = .+$/m)[0]+source.match(/^const HAMO_RE = .+$/m)[0]+source.match(/^const cleanName = .+$/m)[0],c);
- vm.runInContext('const looksName = v => nameScore(v) >= 0.6; const SONGS=()=>S.songs.filter(s=>s.showId===S.showId);',c);
- for(const n of ['cleanText','softText','stripParens','splitNames','nameScore','pickSheet','readBubbles','trimExcelRange','parseXLSX','finalize','sortSongsByTitle','importTimeout','captureImportFiles','handleFiles','importSelection']) vm.runInContext(fn(n),c);
+ vm.runInContext('const looksName = v => nameScore(v) >= 0.6; const SONGS=()=>S.recMode ? S.rsongs : S.songs.filter(s=>s.showId===S.showId);',c);
+ for(const n of ['cleanText','softText','stripParens','splitNames','nameScore','pickSheet','readBubbles','trimExcelRange','parseXLSX','finalize','sortSongsByTitle','importTimeout','captureImportFiles','handleFiles','loadRecDocs','importSelection']) vm.runInContext(fn(n),c);
  return {c,alerts,captures};
 }
 function workbook(n,type='xlsx'){
@@ -74,4 +74,11 @@ test('formatting to the end of a worksheet does not expand the import grid',asyn
 test('blank first sheet and macro or binary Excel formats still find the lyric sheet',async()=>{
  for(const type of ['xlsx','xlsm','xlsb']){const {c}=setup();const w=XLSX.utils.book_new();XLSX.utils.book_append_sheet(w,XLSX.utils.aoa_to_sheet([]),'Sheet1');XLSX.utils.book_append_sheet(w,XLSX.utils.aoa_to_sheet([['佐藤','最初の歌詞です'],['鈴木','最後の歌詞です']]),'歌割');
  const result=await c.parseXLSX(file('歌割.'+type,XLSX.write(w,{type:'buffer',bookType:type,compression:true})));assert.equal(result.sheetName,'歌割');assert.equal(result.lines.filter(r=>r[1]).length,2);}
+});
+
+test('recording mode accepts multiple Excel files and keeps lyric text',async()=>{
+ const {c,alerts}=setup();c.S.recMode=true;await c.loadRecDocs([file('M1.xlsx',workbook(1)),file('M2.xls',workbook(2,'biff8'))]);assert.equal(c.S.rsongs.length,2);assert.equal(c.S.rsongs[1].lines[0].t,'曲2の最初の歌詞です');assert.equal(c.S.rsongId,c.S.rsongs[1].id);assert.equal(c.U.songIdx,1);assert.equal(c.U.busy,'');assert.equal(alerts.length,0);
+});
+test('single-column short lyrics do not disappear as name labels',async()=>{
+ const {c}=setup(),w=XLSX.utils.book_new();XLSX.utils.book_append_sheet(w,XLSX.utils.aoa_to_sheet([['夢'],['希望'],['空']]),'歌詞');const r=await c.parseXLSX(file('歌詞.xlsx',XLSX.write(w,{type:'buffer'})));assert.deepEqual(Array.from(r.lines,r=>[r[0],r[1]]),[['','夢'],['','希望'],['','空']]);
 });

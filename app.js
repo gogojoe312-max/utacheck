@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.1";
+const APP_VER = "16.41.2";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1968,6 +1968,7 @@ async function parseXLSX(file, buf) {
     if (nc < 0 || kind[nc] !== ".") continue;
     blocks.push([nc, c]); usedL.add(c);
   }
+  if (!blocks.length && colVals.filter(v => v.length).length === 1) blocks.push([-1, colVals.findIndex(v => v.length)]);
   blocks.sort((a, b) => a[0] - b[0]);
   const orphan = new Set();
   blocks.forEach(([nc, lc], bi) => { if (nc < 0 || kind[nc] === ".") orphan.add(bi); });
@@ -4357,6 +4358,8 @@ function organizeSheetHTML(m) {
     }
     if (m.mode === "show" && !item) body += `<label class="organize-field">配信先グループ<select class="field" id="org-group"><option value="">自動（公演名・フォルダから判定）</option>${S.groups.map(g => `<option value="${h(g.id)}">${h(g.name)}</option>`).join("")}</select></label><p class="note">判定できない場合は ${h(group().name)} に設定します。</p>`;
     body += `<p id="org-error" role="alert" class="organize-error" hidden></p><button class="primary" type="submit">${m.mode === "move" ? "ここに移動" : m.mode === "show" && !item ? "公演を作成" : m.mode === "folder" && !m.id ? "フォルダを作成" : "保存"}</button></form>`;
+    if (m.mode === "folder" && m.id && !(rec ? S.rsongs : S.shows).some(x => folderOf(x) === m.id))
+      body += `<button class="organize-action" style="color:var(--bad);margin-top:12px" data-act="empty-folder-delete">空のフォルダを削除</button>`;
   }
   return `<button class="sp" data-act="org-close" aria-label="閉じる"></button><div class="sheet organize-sheet" role="dialog" aria-modal="true" aria-label="${h(title)}"><div class="row"><b class="grow">${h(title)}</b><button class="chip" data-act="org-close">閉じる</button></div>${body}</div>`;
 }
@@ -4526,7 +4529,7 @@ function renderSheet() {
           <button class="grow trunc" style="text-align:left" data-act="ruse" data-id="${x.id}">${h(x.title)}</button>
           <button data-act="rdel" data-id="${x.id}" style="padding:4px 6px;color:var(--bad)">✕</button>
         </div>`).join("") || `<p class="note">曲がありません</p>`}
-        <button class="primary" data-act="rpick">歌詞のWord / PDFを読み込む（複数可）</button>
+        <button class="primary" data-act="rpick">歌詞のWord / PDF / Excelを読み込む（複数可）</button>
       </div></div>`;
     document.body.appendChild(overlay);
     return;
@@ -5544,7 +5547,7 @@ function viewSetupRec() {
     <h4 class="head">曲</h4>
     <div class="organize-create"><button class="chip" data-act="newfolder" data-rec="1">＋ フォルダを作成</button></div>
     ${list || `<p class="note">曲がありません</p>`}
-    <div class="card"><button class="primary" data-act="rpick">歌詞のWord / PDFを読み込む（複数可）</button></div>
+    <div class="card"><button class="primary" data-act="rpick">歌詞のWord / PDF / Excelを読み込む（複数可）</button></div>
 
     <h4 class="head">操作パネル</h4>
     <div class="card"><button class="primary" data-act="pt-settings">Pro Tools操作・表示設定</button></div>
@@ -8316,6 +8319,15 @@ document.addEventListener("click", (e) => {
     case "newfolder": U.menu = {kind:"organize",mode:"folder",rec:b.dataset.rec === "1"}; renderSheet(); break;
     case "show-actions": U.menu = {kind:"organize",mode:"actions",id}; renderSheet(); break;
     case "editshow": U.menu = {kind:"organize",mode:"show",id}; renderSheet(); break;
+    case "empty-folder-delete": {
+      const m = U.menu;
+      if (!m || m.kind !== "organize" || m.mode !== "folder" || !m.id || VIEW()) break;
+      if ((m.rec ? S.rsongs : S.shows).some(x => folderOf(x) === m.id)) break;
+      pushUndo();
+      const key = m.rec ? "rfolderOrder" : "folderOrder", state = m.rec ? "rfolders" : "folders";
+      S[key] = S[key].filter(x => x !== m.id); delete S[state][m.id];
+      document.activeElement?.blur(); U.menu = null; save(); render(); break;
+    }
     case "org-close": document.activeElement?.blur(); U.menu = null; renderSheet(); break;
     case "useshow": selectShow(id); U.view = "live"; render(); break;
     case "copyshow": { U.menu = null; dupShow(id); renderSheet(); break; }
@@ -9193,7 +9205,7 @@ function recFileInput() {
   el.type = "file";
   el.id = "recfile";
   el.multiple = true;
-  el.accept = ".doc,.docx,.docm,.pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf";
+  el.accept = ".doc,.docx,.docm,.pdf,.xlsx,.xlsm,.xlsb,.xls,.csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf";
   el.style.display = "none";
   document.body.appendChild(el);
   return el;
@@ -9201,28 +9213,34 @@ function recFileInput() {
 
 async function loadRecDocs(picked) {
   let last = null;
-  for (const f of picked) {
-    U.busy = `${f.name} を読んでいます…`; render();
+  const list = captureImportFiles(picked), failed = [];
+  for (let i = 0; i < list.length; i++) {
+    const item = list[i];
+    U.busy = `${i + 1}/${list.length} ${item.name}`; render();
+    await new Promise(resolve => setTimeout(resolve, 0));
     try {
-      const parsed = /\.pdf$/i.test(f.name) ? await parsePDF(f) : null;
+      const result = await item.ready; item.ready = null;
+      if (result.error) throw result.error;
+      if (!result.buffer.byteLength) throw new Error("ファイルが空です。");
+      const f = {name:item.name,arrayBuffer:async () => result.buffer};
+      const ext = f.name.split(".").pop().toLowerCase();
+      const parsed = ext === "pdf" ? await parsePDF(f) : ["xlsx","xlsm","xlsb","xls","csv"].includes(ext) ? await parseXLSX(f,result.buffer) : null;
       const so = parsed ? {id:uid(),title:parsed.title,credit:parsed.credit,intro:8,
         lines:parsed.lines.map(r => r[1] ? {t:r[1],bars:4} : {gap:true,t:""}),cols:1,colBreaks:[],at:Date.now()}
         : await parseDocx(f);
-      // 今開いている曲と同じフォルダに入れる（続けて読み込む時に散らばらない）
       const near = recSong();
       if (near && near.folder) so.folder = near.folder;
-      S.rsongs.push(so);
-      S.rsongId = so.id;
-      last = so;
-    } catch (e) { alert(f.name + " を読めませんでした。\n" + ((e && e.message) || e)); }
+      S.rsongs.push(so); S.rsongId = so.id; last = so; save();
+    } catch (e) { failed.push(item.name + "：" + (e.message || e)); }
   }
   U.busy = "";
   if (last) {
-    const k = SONGS().findIndex((x) => x.id === last.id);
+    const k = SONGS().findIndex(x => x.id === last.id);
     if (k >= 0) U.songIdx = k;
     U.view = "live"; U.picker = false; U.overview = false;
   }
   save(); U.menu = null; render();
+  if (failed.length) alert("読み込めなかったファイル：\n" + failed.join("\n"));
 }
 
 async function handleFiles(files) {
