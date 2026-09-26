@@ -7,6 +7,7 @@ function setup(){
  shows:[{id:'o',name:'OCHA 公演',ts:2},{id:'r',name:'ロージークロニクル 公演',ts:1}],songs:[{id:'a',title:'曲A',showId:'o',groupId:'ocha',lines:[],blocks:{}},{id:'b',title:'曲B',showId:'r',groupId:'rose',lines:[],blocks:{}}],notes:[{songId:'a',showId:'o',memberIds:[],tags:['fast'],lineIdx:0,memo:'指摘A'}],memos:{'o|a':'総括A'},gsubs:{},subs:{}},U:{},VIEW:()=>false,save(){},render(){},schedulePush(){pushes++;},member:()=>null});
  c.group=id=>c.S.groups.find(g=>g.id===id);c.showsNewestFirst=()=>c.S.shows;
  vm.runInContext(block('function autoShowGroupId(', 'function showsFor()'),c);
+ vm.runInContext(block('function showsFor()', 'const showsNewestFirst ='),c);
  vm.runInContext(block('function publicationData(', 'async function gh('),c);
  return {c,run:s=>vm.runInContext(s,c),pushes:()=>pushes};
 }
@@ -46,10 +47,9 @@ test('selecting the group changes both the current show destination and subseque
  assert.equal(run("publicationData('ocha').songs.length"),0);assert.equal(run("publicationData('rose').notes.length"),1);assert.equal(pushes(),1);
  run("selectShow('r');selectShow('o')");assert.equal(c.S.groupId,'rose');
 });
-test('legacy saved group selection is not replaced by the stale show default; explicit routes are preserved',()=>{
+test('loading a saved import selection does not silently rewrite an existing performance destination',()=>{
  const {c,run}=setup();c.S.showId='o';c.S.shows[0].groupId='ocha';c.S.groupId='rose';
- run('repairShowGroupSelection();syncShowGroup()');assert.equal(c.S.groupId,'rose');assert.equal(run("publicationData('ocha').songs.length"),0);
- c.S.deliveryRoutingVersion=undefined;c.S.shows[0].deliveryGroupId='ocha';run('repairShowGroupSelection();syncShowGroup()');assert.equal(c.S.groupId,'ocha');
+ run('syncShowGroup()');assert.equal(c.S.groupId,'ocha');assert.equal(c.S.shows[0].groupId,'ocha');assert.equal(run("publicationData('ocha').songs.length"),1);
 });
 test('a mixed Hello concert is visible to both groups and each gets only their songs, notes and summaries',()=>{
  const {c,run}=setup();c.S.shows[0].name='ハロコン';c.S.shows[0].groupId='ocha';c.S.showId='o';c.S.songs[1].showId='o';
@@ -79,4 +79,18 @@ test('staff memos never enter either group publication, even when attached to pu
    const payload=run(`publicationData('${id}')`);
    assert.equal(payload.staffMemos,undefined);assert(!JSON.stringify(payload).includes('PRIVATE_STAFF'));
  }
+});
+test('a release event remains discoverable under its original group after delivery is changed',()=>{
+ const {c,run}=setup();c.S.shows[1].name='リリイベ';c.S.shows[1].groupId='rose';c.S.shows[1].deliveryGroupId='ocha';c.S.showId='o';
+ run("setShowFilter('rose')");assert(run('showsFor()').some(sw=>sw.name==='リリイベ'));
+ run("setShowFilter('ocha')");assert(run('showsFor()').some(sw=>sw.name==='リリイベ'));
+});
+test('show filters never change the current performance or publish; all reveals every folder and ignores stale saved filters',()=>{
+ const {c,run,pushes}=setup();c.S.showFilter='ocha';c.S.folders={ロージー:false};c.S.shows[1].folder='ロージー';
+ assert.equal(run('showsFor().length'),2);
+ for(let i=0;i<20;i++)c.S.shows.push({id:'old'+i,name:'古い公演'+i});
+ const before=JSON.stringify([c.S.shows,c.S.songs,c.S.notes,c.S.memos]),current=c.S.showId,group=c.S.groupId;
+ run("setShowFilter('ocha');setShowFilter('')");assert.equal(run('showsFor().length'),22);assert.equal(c.S.folders.ロージー,true);
+ assert.equal(c.S.showId,current);assert.equal(c.S.groupId,group);assert.equal(pushes(),0);assert.equal(JSON.stringify([c.S.shows,c.S.songs,c.S.notes,c.S.memos]),before);
+ assert(!src.includes('allShows.slice(0, 12)'));
 });
