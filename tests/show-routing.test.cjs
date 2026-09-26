@@ -26,7 +26,7 @@ test('explicit override reroutes the whole show without changing source song own
 test('legacy single-group shows infer correctly; ambiguous data requires an explicit group before publishing',()=>{
  const {c,run}=setup();c.S.shows[0].name='9/23';assert.equal(run('autoShowGroupId(S.shows[0])'),'ocha');
  c.S.songs.push({id:'mix',showId:'o',groupId:'rose',title:'混合',lines:[],blocks:{}});assert.equal(run('autoShowGroupId(S.shows[0])'),'');
- assert.throws(()=>run("publicationData('ocha')"),/配信先が未設定/);assert.throws(()=>run("publicationData('rose')"),/配信先が未設定/);
+ assert.equal(run("publicationData('ocha').songs.length"),0);assert.equal(run("publicationData('rose').songs.length"),1);
  run("setShowDelivery('o','__songs__')");assert.equal(run("publicationData('ocha').songs.length"),1);assert.equal(run("publicationData('rose').songs.length"),2);
 });
 test('hidden/non-public shows stay excluded, invalid targets do not change routing, viewers never publish',()=>{
@@ -112,4 +112,38 @@ test('mixed concert lists only actual song destinations, plus its organizing gro
  run("setShowFilter('rose')");assert(run('showsFor()').some(x=>x.id==='o'));
  run("setShowFilter('hello')");assert.deepEqual(Array.from(run('showsFor()'),x=>x.id),['o']);
  run("setShowFilter('off')");assert.equal(run('showsFor().length'),0);
+});
+
+test('an ambiguous old show preserves its published version while new shows and corrections continue',()=>{
+ const {c,run}=setup();const old=run("publicationData('ocha')");
+ c.S.groups[0].gistId='existing';c.S.groups[0].lastKey=JSON.stringify(old);
+ c.S.shows[0].name='9/23';c.S.songs.push({id:'mix',showId:'o',groupId:'rose',title:'混合',lines:[],blocks:{}});
+ c.S.shows.push({id:'new',name:'今日',groupId:'ocha',ts:3});
+ c.S.songs.push({id:'new-song',title:'新曲',showId:'new',groupId:'ocha',lines:[],blocks:{}});
+ c.S.notes.push({songId:'new-song',showId:'new',memberIds:[],tags:['fast'],lineIdx:0,memo:'今日の指摘'});
+ const before=JSON.stringify(c.S);const d=run("publicationData('ocha')");
+ assert.deepEqual(Array.from(d.shows,x=>x.id),['new','o']);assert.equal(d.notes.find(n=>n.memo==='今日の指摘').songIdx,0);
+ assert.equal(d.notes.find(n=>n.memo==='指摘A').songIdx,1);assert.equal(d.memos[0].songIdx,1);
+ assert.equal(d.lib[d.songs[1].libIdx].title,'曲A');assert.equal(JSON.stringify(c.S),before);
+ assert(!JSON.stringify(d).includes('混合'));
+ // Explicitly assigning the show releases the held update and removes it from the old group.
+ run("setShowDelivery('o','rose')");assert.deepEqual(Array.from(run("publicationData('ocha').shows"),x=>x.id),['new']);
+});
+test('missing previous payload requests a read instead of erasing unresolved published shows',()=>{
+ const {c,run}=setup();c.S.groups[0].gistId='existing';c.S.shows[0].name='9/23';
+ c.S.songs.push({id:'mix',showId:'o',groupId:'rose',title:'混合',lines:[],blocks:{}});
+ assert.throws(()=>run("publicationData('ocha')"),e=>e.code==='NEED_PREVIOUS_PUBLICATION');
+ c.S.groups[0].lastKey=JSON.stringify({groupName:'別のグループ',shows:[],songs:[],lib:[]});
+ assert.throws(()=>run("publicationData('ocha')"),/既存データを保持/);
+});
+test('automatic sending fetches missing previous publication and then patches the resolved shows',async()=>{
+ const {c,run}=setup();const old=run("publicationData('ocha')");c.S.groups[0].gistId='existing';c.S.ghToken='test';
+ c.S.shows[0].name='9/23';c.S.songs.push({id:'mix',showId:'o',groupId:'rose',title:'混合',lines:[],blocks:{}});
+ c.S.shows.push({id:'new',name:'今日',groupId:'ocha'});c.S.songs.push({id:'new-song',title:'新曲',showId:'new',groupId:'ocha',lines:[],blocks:{}});
+ const calls=[];c.gh=async(path,opts)=>{calls.push({path,opts});return {files:{'utacheck.json':{content:JSON.stringify(old)}}};};c.wrap=async d=>d;
+ vm.runInContext(block('function payloadKey(', '// 送りすぎるとGitHub'),c);
+ assert.equal(await run("gistPush('ocha')"),'sent');assert.equal(calls.length,2);
+ const d=JSON.parse(JSON.parse(calls[1].opts.body).files['utacheck.json'].content);
+ assert.deepEqual(d.shows.map(x=>x.id),['new','o']);assert.match(c.S.groups[0].publishWarning,/9\/23/);
+ assert.equal(await run("gistPush('ocha')"),'same');assert.equal(calls.length,2);
 });

@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.9";
+const APP_VER = "16.41.10";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1060,7 +1060,7 @@ function staffMemoCard(so) {
   </div>`;
 }
 const shownNotes = () => (U.allShows ? NOTES() : NOTES().filter((n) => n.showId === S.showId));
-let pushTimer = null, pushState = "";
+let pushTimer = null, pushState = "", publishIssues = [];
 let undoStack = [];
 let readTimer = null;
 function pushUndo(songId, notesOnly = false) {
@@ -4170,7 +4170,7 @@ function viewLive() {
       <div class="t2">${s && s.mark ? `<b style="color:var(--accent)">★</b> ` : ""}${s && !S.recMode && takeLabel(s) ? `<b class="tkmk">${h(takeLabel(s))}</b>` : ""}${h(s ? s.title : "曲がありません")}</div>
       <div class="t1">${S.recMode
         ? `録音${s ? " ・ " + h((S.groups.find((x) => x.id === s.groupId) || {}).name || s.folder || "") : ""}`
-        : `${s ? h((S.groups.find((x) => x.id === (VIEW() ? s.groupId : songDeliveryGroupId(s))) || {}).name || "") + " ・ " : ""}${h(showName() || "公演名未設定")}${SONGS().length ? ` ・ ${U.songIdx + 1}/${SONGS().length}` : ""}${showNoPub() ? ` ・ <span style="color:var(--dim)">配信しない</span>` : `<span data-push-state style="color:${pushState === "未送信" ? "var(--bad)" : "var(--dim)"}">${pushState ? " ・ " + h(pushState) : ""}</span>`}`}${recWho()}${S.recMode ? `<span id="pcd2" style="margin-left:8px;font-variant-numeric:tabular-nums"></span>` : ""}</div>
+        : `${s ? h((S.groups.find((x) => x.id === (VIEW() ? s.groupId : songDeliveryGroupId(s))) || {}).name || "") + " ・ " : ""}${h(showName() || "公演名未設定")}${SONGS().length ? ` ・ ${U.songIdx + 1}/${SONGS().length}` : ""}${showNoPub() ? ` ・ <span style="color:var(--dim)">配信しない</span>` : `<span data-push-state style="color:${/未送信|保留|一部送信/.test(pushState) ? "var(--bad)" : "var(--dim)"}">${pushState ? " ・ " + h(pushState) : ""}</span>`}`}${recWho()}${S.recMode ? `<span id="pcd2" style="margin-left:8px;font-variant-numeric:tabular-nums"></span>` : ""}</div>
       ${VIEW() && S.pubAt ? `<div class="song-freshness">${freshLine()}</div>` : ""}
     </button>
     ${s ? `<button class="ic" data-act="overview" style="font-size:12px">全体</button>` : ""}
@@ -7058,6 +7058,7 @@ function viewSetup() {
           <span class="grow" style="font-size:13px">トークン設定済み　<span style="color:var(--dim)">${h(pushState || "待機中")}</span></span>
           <button class="chip sm" data-act="autopub" style="${S.autoPub ? "background:var(--accent);color:#0A0A0A" : ""}">自動${S.autoPub ? "オン" : "オフ"}</button>
         </div>
+        ${publishIssues.length ? `<div role="status" style="color:var(--bad);font-size:13px;white-space:pre-wrap;margin-bottom:12px">${publishIssues.map(h).join("<br>")}</div><button class="ghost" data-act="showfilter" data-id="__unassigned__">グループ未設定の公演を確認</button>` : ""}
         <button class="ghost" data-act="ghpush" style="margin-bottom:8px">今すぐ送信</button>
         <button class="ghost" data-act="ghverify" style="margin-bottom:8px">トークンを確認する</button>
         <button class="ghost" data-act="ghclear" style="color:var(--bad)">トークンを入れ直す</button>
@@ -9505,11 +9506,15 @@ async function wrap(obj, g) {
 }
 
 /* ---- GitHub Gist：グループごとに配信する ---- */
-function publicationData(gid) {
+function publicationData(gid, previous) {
   const g = group(gid);
-  const unresolved = S.shows.find(sw => !sw.hidden && !sw.nopub && sw.deliveryMode !== "song" && !showDeliveryGroupId(sw)
-    && S.songs.some(so => so.showId === sw.id && (so.groupId === g.id || so.deliveryGroupId === g.id)));
-  if (unresolved) throw new Error(`「${unresolved.name}」の配信先が未設定です。公演のグループを選択してください。既存の配信データは変更していません。`);
+  const unresolved = unresolvedPublicationShows(gid);
+  if (unresolved.length && previous === undefined) {
+    try { previous = JSON.parse(g.lastKey || "null"); } catch (_) { previous = null; }
+  }
+  if (unresolved.length && !previous && g.gistId) {
+    const e = new Error("配信済みの公演を確認しています。"); e.code = "NEED_PREVIOUS_PUBLICATION"; throw e;
+  }
   const destination = songDeliveryGroupId;
   // 同じ歌詞を公演の数だけ送ると際限なく膨らむので、歌詞は1曲ぶんだけ持ち、
   // 各公演はそれを指す形にする。これで全公演をずっと残せる。
@@ -9621,7 +9626,41 @@ function publicationData(gid) {
   // 古い公演を複製して作り直した時などに意図と違うものが出る。
   // こちらで今開いている公演をそのまま指定する。
   d.focusShow = ids.includes(S.showId) ? S.showId : (ids[0] || "");
-  return d;
+  return unresolved.length && previous ? retainUnresolvedPublication(d, previous, unresolved, g) : d;
+}
+
+function unresolvedPublicationShows(gid) {
+  return S.shows.filter(sw => !sw.hidden && !sw.nopub && sw.deliveryMode !== "song" && !showDeliveryGroupId(sw)
+    && S.songs.some(so => so.showId === sw.id && (so.groupId === gid || so.deliveryGroupId === gid)));
+}
+
+// Keep only the previously published version of ambiguous shows, on the same destination.
+// Remap every index so new shows can be published without erasing or rerouting old records.
+function retainUnresolvedPublication(current, previous, unresolved, g) {
+  if (!previous || previous.groupName !== g.name || !Array.isArray(previous.lib)
+      || !Array.isArray(previous.shows) || !Array.isArray(previous.songs)) {
+    throw new Error("配信済みデータのグループまたは形式を確認できません。既存データを保持して送信を止めました。");
+  }
+  const ids = new Set(unresolved.map(sw => sw.id));
+  const kept = previous.shows.filter(sw => ids.has(sw.id));
+  const keptIds = new Set(kept.map(sw => sw.id));
+  const map = new Map(), oldSongs = [];
+  previous.songs.forEach((so, i) => { if (keptIds.has(so.showId)) { map.set(i, current.songs.length + oldSongs.length); oldSongs.push([so, i]); } });
+  for (const [so] of oldSongs) {
+    const lyric = previous.lib[so.libIdx];
+    if (!lyric || !Array.isArray(lyric.lines)) throw new Error("配信済みの歌詞が読み取れないため、既存データを保持して送信を止めました。");
+    const libIdx = current.lib.length; current.lib.push(lyric);
+    current.songs.push({...so, libIdx, fromIdx:map.has(so.fromIdx) ? map.get(so.fromIdx) : null});
+  }
+  current.shows.push(...kept);
+  for (const field of ["notes", "memos", "subs", "gsubs"]) {
+    current[field].push(...(previous[field] || []).filter(x => map.has(x.songIdx))
+      .map(x => ({...x, songIdx:map.get(x.songIdx)})));
+  }
+  const names = new Set(current.members.map(m => m.name));
+  if (kept.length) for (const m of previous.members || []) if (!names.has(m.name)) { current.members.push(m); names.add(m.name); }
+  if (!current.focusShow && kept.length) current.focusShow = keptIds.has(previous.focusShow) ? previous.focusShow : kept[0].id;
+  return current;
 }
 
 async function gh(path, opts) {
@@ -9704,7 +9743,27 @@ function payloadKey(d) {
 async function gistPush(gid, force) {
   const g = group(gid);
   if (!g.gistId || !S.ghToken) return "skip";
-  const d = publicationData(g.id);
+  let d;
+  try { d = publicationData(g.id); }
+  catch (e) {
+    if (e.code !== "NEED_PREVIOUS_PUBLICATION") throw e;
+    const previousGist = await gh("/gists/" + g.gistId);
+    const file = previousGist.files && previousGist.files["utacheck.json"];
+    if (!file) throw new Error("配信済みデータを取得できません。既存データは変更していません。");
+    let content = file.content;
+    if (file.truncated) {
+      const url = new URL(file.raw_url);
+      if (url.protocol !== "https:" || url.hostname !== "gist.githubusercontent.com") throw new Error("配信済みデータの取得先を確認できません。");
+      const response = await fetch(url.href);
+      if (!response.ok) throw new Error("配信済みデータを取得できません（" + response.status + "）。既存データは変更していません。");
+      content = await response.text();
+    }
+    let previous = JSON.parse(content);
+    if (previous.enc) previous = await openJSON(previous, g.key || S.key);
+    d = publicationData(g.id, previous);
+  }
+  const held = unresolvedPublicationShows(g.id);
+  g.publishWarning = held.length ? held.map(sw => `「${sw.name}」`).join("、") + "：グループ未設定のため、この公演の更新のみ保留。設定で公演のグループを選択してください。" : "";
   const key = payloadKey(d);
   if (!force && g.lastKey === key) return "same";
   await gh("/gists/" + g.gistId, {
@@ -9712,6 +9771,7 @@ async function gistPush(gid, force) {
     body: JSON.stringify({ files: { "utacheck.json": { content: JSON.stringify(await wrap(d, g)) } } }),
   });
   g.lastKey = key;
+  save();
   return "sent";
 }
 
@@ -9734,19 +9794,22 @@ function renderPublishStatus() {
   const status = app.querySelector("[data-push-state]");
   if (status) {
     status.textContent = pushState ? " ・ " + pushState : "";
-    status.style.color = pushState === "未送信" ? "var(--bad)" : "var(--dim)";
+    status.style.color = /未送信|保留|一部送信/.test(pushState) ? "var(--bad)" : "var(--dim)";
   }
 }
 
 async function pushOne(gid) {
   const g = group(gid);
   if (!S.ghToken || !g || !g.gistId || g.nopub) { pushState = "未送信"; return; }
+  publishIssues = [];
   pushState = "送信中"; renderPublishStatus();
   lastPushAt = Date.now();
   try {
     await gistPush(g.id, true);
+    publishIssues = g.publishWarning ? [g.name + "：" + g.publishWarning] : [];
     const d = new Date();
     pushState = `公開済 ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+    if (publishIssues.length) pushState = "送信済・一部公演は保留";
   } catch (e) {
     if (e.status === 429) {
       const wait = e.after ? Math.min(Math.max(e.after * 1000 + 2000, 5000), 300000) : 45000;
@@ -9755,7 +9818,7 @@ async function pushOne(gid) {
       pushState = "順番待ち" + (limitedAt ? " " + limitedAt + "頃" : "");
       clearTimeout(pushTimer);
       pushTimer = setTimeout(() => { pushTimer = null; pushOne(gid); }, wait);
-    } else pushState = "未送信";
+    } else { pushState = "未送信（設定で原因を確認）"; publishIssues = [g.name + "：" + e.message]; }
   }
   renderPublishStatus();
 }
@@ -9773,6 +9836,7 @@ async function publishGroups(silent) {
   pushState = "送信中"; renderPublishStatus();
   lastPushAt = Date.now();
   const failed = [];
+  publishIssues = [];
   const gone = [];
   let sent = 0, limited = 0;
   for (const g of live) {
@@ -9797,28 +9861,29 @@ async function publishGroups(silent) {
     renderPublishStatus();
     return;
   }
-  // 配信先が消えていたら、その場で作り直す
+  // 404でも既存のリンクを保持し、明示的に選んだ場合だけ作り直す
   for (const g of gone) {
-    g.gistId = ""; g.src = "";
-    save();
+    // A 404 can also mean missing access. Keep the existing member link.
     if (silent !== true && confirm(`${g.name} の配信先が見つかりません。削除された可能性があります。\n作り直しますか？\n（作り直すと接続リンクが変わるので、メンバーに配り直しが必要です）`)) {
       await gistStart(g.id);
     } else {
       failed.push(g.name + "：配信先が消えています。設定から「自動公開を始める」をやり直してください。");
     }
   }
+  publishIssues = failed.concat(live.filter(g => g.publishWarning).map(g => g.name + "：" + g.publishWarning));
   if (failed.length) {
-    pushState = "未送信";
+    pushState = sent ? "一部送信済（設定で原因を確認）" : "未送信（設定で原因を確認）";
     if (silent !== true) alert("送信できませんでした。\n\n" + failed.join("\n"));
   } else {
     const d = new Date();
     pushState = `公開済 ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-    if (silent === "force" && !sent) pushState += "（変更なし）";
+    if (publishIssues.length) pushState = "送信済・一部公演は保留";
+    else if (silent === "force" && !sent) pushState += "（変更なし）";
   }
   renderPublishStatus();
 }
 
-window.addEventListener("online", () => { if (pushState === "未送信") doPush(true); });
+window.addEventListener("online", () => { if (/未送信|一部送信/.test(pushState)) doPush(true); });
 
 // 変わっていない相手には送らない
 let pendingCheck = null;
@@ -9827,7 +9892,7 @@ function hasPending() {
   if (pendingCheck && pendingCheck.revision === stateRevision && pendingCheck.keys === keys) return pendingCheck.result;
   const result = S.groups.some((g) => {
     if (!g.gistId || g.nopub) return false;
-    try { return payloadKey(publicationData(g.id)) !== g.lastKey; } catch (e) { return false; }
+    try { return payloadKey(publicationData(g.id)) !== g.lastKey; } catch (e) { return true; }
   });
   pendingCheck = { revision:stateRevision, keys, result };
   return result;
