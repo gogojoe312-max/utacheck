@@ -6,9 +6,9 @@ const source=fs.readFileSync(require('node:path').join(__dirname,'../app.js'),'u
 function fn(name){const i=source.indexOf('function '+name+'(');assert(i>=0,name);return source.slice(source.lastIndexOf('\n',i)+1,source.indexOf('\n}',i)+2);}
 function setup(extra={}){
  const c=vm.createContext({XLSX,Uint8Array,Uint32Array,DataView,TextEncoder,TextDecoder,Blob,File,Response,setTimeout,clearTimeout,console,
- U:{},S:{songs:[]},render(){},renderSheet(){},URL:{createObjectURL:()=> 'blob:test',revokeObjectURL(){}},...extra});
+ U:{},S:{songs:[]},save(){},render(){},renderSheet(){},URL:{createObjectURL:()=> 'blob:test',revokeObjectURL(){}},...extra});
  vm.runInContext(source.slice(source.indexOf('const CRCT ='),source.indexOf('\n\n',source.indexOf('  return { data: await zip(files, names), changed };'))),c);
- for(const n of ['fileFailureReason','showFileReport','importTimeout','closeExcelExport','presentExcelExport','savedAbsentWorkbook','hasAbsentExportChanges','buildAbsentWorkbook','absentExportFilename','runAbsentExport','shareExcelExport'])vm.runInContext(fn(n),c);
+ for(const n of ['fileFailureReason','showFileReport','importTimeout','closeExcelExport','presentExcelExport','excelSourceCandidates','getOriginalExcel','savedAbsentWorkbook','hasAbsentExportChanges','buildAbsentWorkbook','absentExportFilename','runAbsentExport','shareExcelExport'])vm.runInContext(fn(n),c);
  return c;
 }
 function fixture(type='xlsx'){
@@ -81,4 +81,32 @@ test('fourteen songs with no original files produce fourteen Excel files rather 
  await c.runAbsentExport(songs,true);assert.equal(c.U.excelExport.count,14);assert.equal(c.U.excelExport.failures.length,0);assert.equal(c.U.excelExport.warnings.length,14);
  const z=await c.unzip(await c.U.excelExport.blob.arrayBuffer());assert.equal(z.order.length,14);
  for(const name of z.order){const w=XLSX.read(z.files[name],{type:'array'});assert.equal(w.Sheets['相馬欠席ver'].A4.v,'橋田');}
+});
+
+test('previously duplicated shows locate the original workbook and preserve its original sheets',async()=>{
+ const original={id:'original',title:'曲',showId:'first',sheetName:'歌割',xls:1,lines:[{t:'歌詞です',cell:'A1',lcell:'B1',raw:'相馬'}]};
+ const copy={...original,id:'copy',showId:'second',xls:undefined};
+ const c=setup({S:{songs:[original,copy],shows:[{id:'first'},{id:'second',from:'first'}]},getClip:async key=>key==='xls:original'?new Blob([fixture()]):null});
+ const warnings=[];const data=await c.buildAbsentWorkbook(copy,'欠席ver',{A1:'橋田'},warnings);
+ const wb=XLSX.read(data,{type:'array'});assert.equal(wb.Sheets['欠席ver'].A1.v,'橋田');assert.equal(wb.Sheets['歌割'].A1.v,'相馬');assert.equal(wb.Sheets['表紙'].A1.v,'表紙');
+ assert.equal(warnings.length,0);assert.equal(copy.xlsSourceId,'original');
+});
+test('original references survive multiple duplicates and do not select a different arrangement by title',async()=>{
+ const original={id:'original',title:'曲',showId:'first',sheetName:'歌割',xls:1,lines:[{t:'別の歌詞',cell:'A1',lcell:'B1'}]};
+ const copy={id:'copy',title:'曲',showId:'second',sheetName:'歌割',lines:[{t:'今回の歌詞',cell:'A1',lcell:'B1'}]};
+ const c=setup({S:{songs:[original,copy],shows:[{id:'first'},{id:'second',from:'first'}]},getClip:async key=>key==='xls:original'?new Blob([fixture()]):null});
+ assert.equal(await c.getOriginalExcel(copy),null);
+ copy.xlsSourceId='original';assert(await c.getOriginalExcel(copy));
+});
+
+test('new show duplicates keep the original-file reference and worksheet metadata',()=>{
+ let seq=0;const song={id:'original',showId:'show',title:'曲',groupId:'g',xls:1,sheetName:'歌割',micSheet:'マイク',lines:[{t:'歌詞',parts:[]}],blocks:{}};
+ const c=setup({S:{songs:[song],shows:[{id:'show',name:'公演',groupId:'g'}]},VIEW:()=>false,prompt:()=> '次の公演',uid:()=> 'new'+(++seq),folderOf:()=>'',autoShowGroupId:()=> 'g',impOf:()=>1,selectShow(){},autoSubs(){},schedulePush(){}});
+ vm.runInContext(fn('dupShow'),c);c.dupShow('show');assert.equal(c.S.songs[1].xlsSourceId,'original');assert.equal(c.S.songs[1].sheetName,'歌割');assert.equal(c.S.songs[1].micSheet,'マイク');
+ c.dupShow(c.S.shows[1].id);assert.equal(c.S.songs[2].xlsSourceId,'original');
+});
+test('deleting an original cannot delete a workbook referenced by another show',()=>{
+ let removed=0;const c=setup({S:{songs:[{id:'copy',xlsSourceId:'original'}]},db:()=>{removed++;return Promise.resolve({transaction:()=>({objectStore:()=>({delete(){}})})});}});
+ vm.runInContext(fn('delClip'),c);c.delClip('xls:original');assert.equal(removed,0);
+ c.S.songs=[];c.delClip('xls:original');assert.equal(removed,1);
 });

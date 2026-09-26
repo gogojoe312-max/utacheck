@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.11";
+const APP_VER = "16.41.12";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1255,7 +1255,10 @@ function dupSong(id) {
   const take = Math.max(...same.map((x) => x.take || 1)) + 1;
   const copy = {
     id: uid(), showId: src.showId, groupId: src.groupId, title: src.title, credit: src.credit,
-    take, from: src.id,
+    take, from: src.id, xls: src.xls, xlsAt: src.xlsAt, xlsSourceId: src.xlsSourceId || src.id,
+    sheetName: src.sheetName, blockCells: src.blockCells, blockRows: src.blockRows,
+    blocks: JSON.parse(JSON.stringify(src.blocks || {})), roster: (src.roster || []).slice(),
+    micSheet: src.micSheet, micMap: src.micMap, cols: src.cols, impAt: impOf(src),
     lines: src.lines.map((l) => Object.assign({}, l, { parts: (l.parts || []).slice() })),
   };
   // 新しいテイクを、その曲のかたまりの先頭に置く（最新から順に見えるように）
@@ -2458,12 +2461,12 @@ function xlCharStyles(runs, base, want) {
 // 読んだ見た目は曲ごとに覚えておく（null＝元のExcelが無い）
 const XLOOK = {};
 async function ensureLooks(songs) {
-  const todo = songs.filter((so) => so.xls && XLOOK[so.id] === undefined);
+  const todo = songs.filter((so) => (so.xls || so.xlsSourceId || so.sheetName) && XLOOK[so.id] === undefined);
   if (!todo.length) return false;
   for (const so of todo) {
     XLOOK[so.id] = null;
     try {
-      const blob = await getClip("xls:" + so.id);
+      const blob = await getOriginalExcel(so);
       if (!blob) continue;
       XLOOK[so.id] = await parseXlsxLook(new Uint8Array(await blob.arrayBuffer()), so.sheetName || "");
     } catch (e) { XLOOK[so.id] = null; }
@@ -3696,7 +3699,50 @@ async function getClip(id) {
     q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error);
   });
 }
-function delClip(id) { db().then((d) => d.transaction("clips", "readwrite").objectStore("clips").delete(id)).catch(() => {}); }
+// The original workbook belongs to its imported song, even after show/take duplication.
+function excelSourceCandidates(so) {
+  const songs = [...(S.songs || []), ...(S.rsongs || []), ...(S.trash || []).flatMap(t => t.songs || [])];
+  const shows = [...(S.shows || []), ...(S.trash || []).flatMap(t => t.shows || [])];
+  const out = [], seen = new Set([so.id]);
+  const add = id => { if (id && !seen.has(id)) { seen.add(id); out.push(id); } };
+  add(so.xlsSourceId);
+  let parent = so.from;
+  while (parent && !seen.has(parent)) {
+    add(parent); const prev = songs.find(x => x.id === parent);
+    add(prev?.xlsSourceId); parent = prev?.from;
+  }
+  const layout = x => JSON.stringify([x.title, x.sheetName || "", (x.lines || []).map(l =>
+    [l.t || "", l.cell || "", l.lcell || "", l.raw || l.labelRaw || l.label || "", l.extraCell || "", l.extraRaw || ""])]);
+  const signature = layout(so);
+  const matches = songs.filter(x => x.id !== so.id && layout(x) === signature);
+  const visitedShows = new Set();
+  let show = shows.find(x => x.id === so.showId);
+  while (show?.from && !visitedShows.has(show.from)) {
+    visitedShows.add(show.from);
+    const source = matches.filter(x => x.showId === show.from);
+    if (source.length === 1) { add(source[0].xlsSourceId); add(source[0].id); }
+    show = shows.find(x => x.id === show.from);
+  }
+  // Never choose by title alone: two arrangements can have the same title.
+  const originals = matches.filter(x => x.xls && !x.xlsSourceId);
+  if (originals.length === 1) add(originals[0].id);
+  return out;
+}
+async function getOriginalExcel(so) {
+  const own = await getClip("xls:" + so.id);
+  if (own) return own;
+  for (const id of excelSourceCandidates(so)) {
+    const blob = await getClip("xls:" + id);
+    if (!blob) continue;
+    so.xlsSourceId = id; so.xls = 1; save();
+    return blob;
+  }
+  return null;
+}
+function delClip(id) {
+  if (id.startsWith("xls:") && [...(S.songs || []), ...(S.rsongs || []), ...(S.trash || []).flatMap(t => t.songs || [])]
+    .some(so => so.xlsSourceId && "xls:" + so.xlsSourceId === id)) return;
+  db().then((d) => d.transaction("clips", "readwrite").objectStore("clips").delete(id)).catch(() => {}); }
 
 // 本体のデータの置き場所。localStorageは端末の上限（数MB）が小さすぎるので、
 // IndexedDBに置く。こちらは桁違いに入る。
@@ -5338,7 +5384,7 @@ const CHKCOL = { "音程": "FFFFD5CC", "タイミング": "FFFDEBC7", "出音": 
 async function exportCheckXlsx(songId) {
   const so = S.songs.find((x) => x.id === songId);
   if (!so) return;
-  const blob = await getClip("xls:" + so.id).catch(() => null);
+  const blob = await getOriginalExcel(so).catch(() => null);
   if (!blob) { alert("この曲の元のExcelが見つかりません。\nExcelから読み込み直してください。"); return; }
   const ns0 = NOTES().filter((n) => n.songId === so.id && n.showId === S.showId);
   if (!ns0.length) { alert("この曲に記録がありません。"); return; }
@@ -5482,7 +5528,7 @@ function hasAbsentExportChanges(so) {
   });
 }
 async function buildAbsentWorkbook(so, tab, edits, warnings = []) {
-  const blob = await importTimeout(getClip("xls:" + so.id), 10000, "元のExcelを取得できませんでした。");
+  const blob = await importTimeout(getOriginalExcel(so), 10000, "元のExcelを取得できませんでした。");
   if (!blob) {
     const data = savedAbsentWorkbook(so, tab);
     warnings.push(`${so.title}：元のExcelがこの端末にないため、保存済みの歌詞・歌割と欠席変更から作成しました。元の書式${so.micSheet ? "・マイク表" : ""}は再現していません。`);
@@ -5626,7 +5672,7 @@ function viewAbsent() {
           <b class="grow trunc">${h(songName(so))}</b>
           ${need ? `<span style="font-size:11px;color:var(--bad)">未決 ${need}</span>`
                  : `<span style="font-size:11px;color:var(--good)">完了</span>`}
-          ${so.xls && !VIEW() ? `<button class="chip sm" data-act="xlsout" data-id="${so.id}">Excel</button>` : ""}
+          ${(so.xls || so.xlsSourceId || so.sheetName) && !VIEW() ? `<button class="chip sm" data-act="xlsout" data-id="${so.id}">Excel</button>` : ""}
         </div>${brows}${rows}</div>`;
     }).join("");
 
@@ -6647,7 +6693,7 @@ function viewPrint() {
   let needWide = false;
   let landVotes = 0, portVotes = 0;
   // 元のExcelの見た目を、まだ読んでいなければ読む（読めたら組み直す）
-  if (prLook() !== "plain" && picked.some((so) => so.xls && XLOOK[so.id] === undefined)) {
+  if (prLook() !== "plain" && picked.some((so) => (so.xls || so.xlsSourceId || so.sheetName) && XLOOK[so.id] === undefined)) {
     U.lookWait = ensureLooks(picked).then(() => { U.lookWait = null; if (U.view === "print") render(); });
   }
   const body = picked.map((so) => {
@@ -6838,7 +6884,7 @@ function viewPrint() {
   return `
   <div class="hd noprint"><button class="ic" data-act="go-live">‹</button><b>PDF・印刷</b>
     <span class="grow"></span>
-    ${picked.some((so) => so.xls) ? `<button class="chip sm" data-act="prlook">${prLook() === "plain" ? "Excelの見た目" : "見やすい並び"}</button>` : ""}
+    ${picked.some((so) => so.xls || so.xlsSourceId || so.sheetName) ? `<button class="chip sm" data-act="prlook">${prLook() === "plain" ? "Excelの見た目" : "見やすい並び"}</button>` : ""}
     <button class="chip sm" data-act="doprint" style="background:var(--accent);color:#0A0A0A">PDFで保存</button></div>
   ${U.lookWait ? `<div class="noprint" style="padding:8px 14px;font-size:11px;color:var(--dim)">元のExcelの見た目を読んでいます…</div>` : ""}
   ${noGrid.length ? `<div class="noprint" style="padding:8px 14px;font-size:11px;color:var(--bad)">
@@ -8658,6 +8704,7 @@ function dupShow(fromId) {
       roster: (x.roster || []).slice(), blocks,
       blockCells: x.blockCells, blockRows: x.blockRows, sheetName: x.sheetName,
       micSheet: x.micSheet, micMap: x.micMap,
+      xls: x.xls, xlsAt: x.xlsAt, xlsSourceId: x.xlsSourceId || x.id,
       take: 1, sig: x.sig, cols: x.cols,
       impAt: impOf(x),
     });
