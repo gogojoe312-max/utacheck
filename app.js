@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.6";
+const APP_VER = "16.41.7";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -189,7 +189,7 @@ let S = {
   ghToken: "", autoPub: true,
   groups: [], groupId: "",
   src: "", key: "", keyInLink: true,
-  memos: {}, recs: {}, kbps: 128, preroll: 5, viewer: false, srcGroup: "",
+  memos: {}, staffMemos: {}, recs: {}, kbps: 128, preroll: 5, viewer: false, srcGroup: "",
   draws: {}, showFilter: "", folders: {}, folderOrder: [], rfolders: {}, rfolderOrder: [], subs: {}, subsMan: {}, subLib: {}, gsubs: {},
   recMode: false, recOvSize: 14, rsongs: [], rsongId: "", recBars: true, liveShow: "", recEdit: false, linkSrc: "", groupOrder: [], pubAt: 0, syncAt: 0, seen: {}, planMin: 90, planPrep: 10, rosters: {}, secWords: [], trash: [], secAll: false, secHide: [], tagHide: [],
   plan: { start: "10:00", slots: [] },
@@ -264,6 +264,7 @@ function migrate() {
   if (!S.shows.some((x) => x.id === S.showId)) S.showId = S.shows[0].id;
   if (!S.deviceId) S.deviceId = uid() + uid();
   if (!S.memos) S.memos = {};
+  if (!S.staffMemos) S.staffMemos = {};
   // 差し替えの時に一時的にメモへ書き足していた ［元：〜］ を片付ける。
   // 元の歌詞が残っているので、合う行があればそこへ戻してから消す。
   // メンバー側の指摘は S.pubNotes に入る。両方を見る。
@@ -356,6 +357,7 @@ function migrate() {
   S.songs.forEach((x) => { if (!x.groupId) x.groupId = S.groupId; });
   // 曲は公演ごとに持つ。旧データは今の公演に入れる。
   S.songs.forEach((x) => { if (!x.showId) x.showId = S.showId; });
+  if (repairShowGroupSelection()) save();
   syncShowGroup();
   // 「全（データ）」等が人名として登録されてしまった分を掃除し、全員扱いに直す
   const zen = S.members.filter((m) => /^全/.test(m.name));
@@ -472,15 +474,53 @@ function autoShowGroupId(sw) {
   return ids.length === 1 ? ids[0] : "";
 }
 function showDeliveryGroupId(sw) {
-  if (!sw) return "";
+  if (!sw || sw.deliveryMode === "song") return "";
   return S.groups.some(g => g.id === sw.deliveryGroupId) ? sw.deliveryGroupId : autoShowGroupId(sw);
 }
 function songDeliveryGroupId(so) {
+  // A deliberate song-level choice (including no publication) is authoritative.
+  if (so.deliveryGroupId === "") return "";
+  if (S.groups.some(g => g.id === so.deliveryGroupId)) return so.deliveryGroupId;
+  if (S.groups.some(g => g.id === so.groupId && g.nopub)) return so.groupId;
   return showDeliveryGroupId(S.shows.find(sw => sw.id === so.showId)) || so.groupId;
+}
+function repairShowGroupSelection() {
+  if (VIEW() || S.recMode || S.deliveryRoutingVersion === 1) return false;
+  const sw = S.shows.find(x => x.id === S.showId);
+  // Old group buttons only saved groupId. Preserve that explicit selection before sync overwrites it.
+  if (sw && sw.deliveryMode !== "song" && !sw.deliveryGroupId && S.groups.some(g => g.id === S.groupId)
+      && showDeliveryGroupId(sw) !== S.groupId) sw.groupId = S.groupId;
+  S.deliveryRoutingVersion = 1;
+  return true;
+}
+function setCurrentShowGroup(groupId) {
+  if (VIEW() || !S.groups.some(g => g.id === groupId)) return;
+  S.groupId = groupId;
+  if (!S.recMode) {
+    const sw = S.shows.find(x => x.id === S.showId);
+    if (sw && sw.deliveryMode !== "song") {
+      sw.groupId = groupId; delete sw.deliveryGroupId; delete sw.deliveryMode;
+      S.songs.filter(so => so.showId === sw.id).forEach(so => {
+        if (so.deliveryGroupId !== "" && !S.groups.some(g => g.id === so.deliveryGroupId && g.nopub)) delete so.deliveryGroupId;
+      });
+    }
+  }
+  save(); schedulePush(); render();
+}
+function setSongDelivery(ids, groupId) {
+  if (VIEW() || (groupId && !S.groups.some(g => g.id === groupId))) return;
+  ids.forEach(id => {
+    const so = S.songs.find(x => x.id === id);
+    if (so) { so.groupId = groupId; so.deliveryGroupId = groupId; }
+  });
+  save(); schedulePush();
 }
 function showDeliveryLabel(sw) {
   if (sw.nopub) return "配信しない";
-  const id = showDeliveryGroupId(sw), g = S.groups.find(g => g.id === id);
+  if (sw.deliveryMode === "song") return "曲ごとのグループ";
+  const targets = new Set(S.songs.filter(so => so.showId === sw.id).map(songDeliveryGroupId).filter(Boolean));
+  if (targets.size > 1) return `曲ごと（${targets.size}グループ）`;
+  const id = targets.size === 1 ? [...targets][0] : showDeliveryGroupId(sw), g = S.groups.find(g => g.id === id);
   return g ? (g.nopub ? "配信しない" : g.name) : "曲ごとのグループ";
 }
 function syncShowGroup() {
@@ -495,10 +535,18 @@ function selectShow(id) {
   if (!VIEW()) schedulePush();
 }
 function setShowDelivery(id, groupId) {
-  if (VIEW() || (groupId && !S.groups.some(g => g.id === groupId))) return;
+  if (VIEW() || (groupId && groupId !== "__songs__" && !S.groups.some(g => g.id === groupId))) return;
   const sw = S.shows.find(sw => sw.id === id); if (!sw) return;
-  if (groupId) sw.deliveryGroupId = groupId;
-  else delete sw.deliveryGroupId;
+  if (groupId === "__songs__") {
+    sw.deliveryMode = "song"; delete sw.deliveryGroupId;
+  } else {
+    delete sw.deliveryMode;
+    if (groupId) sw.deliveryGroupId = groupId;
+    else delete sw.deliveryGroupId;
+    S.songs.filter(so => so.showId === id).forEach(so => {
+      if (so.deliveryGroupId !== "" && !S.groups.some(g => g.id === so.deliveryGroupId && g.nopub)) delete so.deliveryGroupId;
+    });
+  }
   syncShowGroup(); U.menu = null; save(); schedulePush(); render();
 }
 
@@ -903,7 +951,7 @@ function toTrash(kind, label, songs, shows) {
     songs: JSON.parse(JSON.stringify(songs)),
     shows: JSON.parse(JSON.stringify(shows || [])),
     notes: JSON.parse(JSON.stringify(S.notes.filter((n) => sids.includes(n.songId) || shids.includes(n.showId)))),
-    memos: pick(S.memos), draws: pick(S.draws), subs: pick(S.subs),
+    memos: pick(S.memos), staffMemos: pick(S.staffMemos), draws: pick(S.draws), subs: pick(S.subs),
     subsMan: pick(S.subsMan), gsubs: pick(S.gsubs), recs,
     clips,
   });
@@ -918,7 +966,7 @@ function fromTrash(tid) {
     else if (!S.songs.some((x) => x.id === so.id)) S.songs.push(so);
   });
   (t.notes || []).forEach((n) => { if (!S.notes.some((x) => x.id === n.id)) S.notes.push(n); });
-  ["memos", "draws", "subs", "subsMan", "gsubs", "recs"].forEach((k) => {
+  ["memos", "staffMemos", "draws", "subs", "subsMan", "gsubs", "recs"].forEach((k) => {
     Object.keys(t[k] || {}).forEach((kk) => { S[k][kk] = t[k][kk]; });
   });
   S.trash = S.trash.filter((x) => x.id !== tid);
@@ -959,7 +1007,7 @@ function sweep() {
     const p = String(k).split("|");
     return showIds.includes(p[0]) && (p.length < 2 || songIds.includes(p[1]));
   };
-  ["subs", "subsMan", "gsubs", "memos", "draws"].forEach((name) => {
+  ["subs", "subsMan", "gsubs", "memos", "staffMemos", "draws"].forEach((name) => {
     Object.keys(S[name] || {}).forEach((k) => { if (!alive(k)) delete S[name][k]; });
   });
   const keepClips = trashClips();
@@ -984,6 +1032,16 @@ function pastHits(songId, lineIdx) {
 }
 const memoKey = (songId) => S.showId + "|" + songId;
 const songMemo = (songId, showId = S.showId) => (S.memos || {})[showId + "|" + songId] || "";
+// Staff notes live outside songs and public notes so delivery/export cannot include them.
+function staffMemoCard(so) {
+  if (!so || VIEW() || S.recMode) return "";
+  const value = (S.staffMemos || {})[memoKey(so.id)] || "";
+  return `<div class="card" style="margin:12px 12px 0">
+    <label for="staffmemo" style="display:block;font-size:12px;font-weight:600;margin-bottom:6px">スタッフ用メモ</label>
+    <p id="staffmemo-help" class="note" style="margin-bottom:8px">メンバーには配信されません。</p>
+    <textarea class="field" id="staffmemo" aria-describedby="staffmemo-help" rows="3" placeholder="スタッフへの連絡・確認事項" style="resize:vertical">${h(value)}</textarea>
+  </div>`;
+}
 const shownNotes = () => (U.allShows ? NOTES() : NOTES().filter((n) => n.showId === S.showId));
 let pushTimer = null, pushState = "";
 let undoStack = [];
@@ -4112,6 +4170,7 @@ function viewLive() {
         ? `<div style="font-size:13px;white-space:pre-wrap">${h(songMemo(s.id)) || "—"}</div>`
         : `<textarea class="field" id="songmemo" rows="4" style="resize:none">${h(songMemo(s.id))}</textarea>`}
     </div>` : ""}
+    ${staffMemoCard(s)}
     ${s && !VIEW() && !S.recMode ? `<div class="pull" id="pull">
       <div class="pullbar"><i id="pullfill"></i></div>
       <div class="pulltx" id="pulltx">引き上げて テイク${nextTake(s)} を作る</div>
@@ -4307,6 +4366,7 @@ function viewOverview(s) {
     ${songMemo(s.id) && !S.recMode ? `<div class="card" style="margin-top:12px">
       <h4 style="font-size:11px;color:var(--dim);margin-bottom:6px">総括</h4>
       <div style="font-size:13px;white-space:pre-wrap">${h(songMemo(s.id))}</div></div>` : ""}
+    ${staffMemoCard(s)}
     <div style="height:30px"></div></div>
   <div class="bottom">
     <button data-act="prev" class="${U.songIdx <= 0 ? "off" : ""}">‹</button>
@@ -4344,7 +4404,7 @@ function organizeSheetHTML(m) {
       body += `<label class="organize-field">保存先フォルダ<select class="field" id="org-folder"><option value="">フォルダなし</option>${folderNames(rec).map(n => `<option value="${h(n)}" ${folder === n ? "selected" : ""}>${h(n)}</option>`).join("")}<option value="__new_folder__">＋ 新しいフォルダ</option></select></label>
         <label class="organize-field" id="org-new-folder-row" hidden>新しいフォルダ名<input class="field" id="org-new-folder" autocomplete="off" placeholder="例：秋ツアー"></label>`;
     }
-    if (m.mode === "show" && !item) body += `<label class="organize-field">配信先グループ<select class="field" id="org-group"><option value="">自動（公演名・フォルダから判定）</option>${S.groups.map(g => `<option value="${h(g.id)}">${h(g.name)}</option>`).join("")}</select></label><p class="note">判定できない場合は ${h(group().name)} に設定します。</p>`;
+    if (m.mode === "show" && !item) body += `<label class="organize-field">配信先グループ<select class="field" id="org-group"><option value="">自動（公演名・フォルダから判定）</option><option value="__songs__">曲ごと（ハロコンなど）</option>${S.groups.map(g => `<option value="${h(g.id)}">${h(g.name)}</option>`).join("")}</select></label><p class="note">判定できない場合は ${h(group().name)} に設定します。</p>`;
     body += `<p id="org-error" role="alert" class="organize-error" hidden></p><button class="primary" type="submit">${m.mode === "move" ? "ここに移動" : m.mode === "show" && !item ? "公演を作成" : m.mode === "folder" && !m.id ? "フォルダを作成" : "保存"}</button></form>`;
     if (m.mode === "folder" && m.id && !(rec ? S.rsongs : S.shows).some(x => folderOf(x) === m.id))
       body += `<button class="organize-action" style="color:var(--bad);margin-top:12px" data-act="empty-folder-delete">空のフォルダを削除</button>`;
@@ -4375,6 +4435,7 @@ function saveOrganization(m, values) {
     else {
       const sw = {id:uid(),name,folder,ts:Date.now()};
       sw.groupId = S.groups.some(g => g.id === values.groupId) ? values.groupId : autoShowGroupId(sw) || S.groupId;
+      if (values.groupId === "__songs__") sw.deliveryMode = "song";
       S.shows.push(sw); S.showFilter = ""; selectShow(sw.id);
     }
   }
@@ -4425,12 +4486,13 @@ function renderSheet() {
     const sw = S.shows.find(sw => sw.id === U.menu.id);
     if (!sw) { U.menu = null; return; }
     const auto = S.groups.find(g => g.id === autoShowGroupId(sw));
-    const option = (id, label) => `<button class="show-delivery-option" data-act="set-show-delivery" data-id="${h(sw.id)}" data-group="${h(id)}" aria-pressed="${(sw.deliveryGroupId || "") === id}">${h(label)}${(sw.deliveryGroupId || "") === id ? ' <span aria-hidden="true">✓</span>' : ""}</button>`;
+    const option = (id, label) => `<button class="show-delivery-option" data-act="set-show-delivery" data-id="${h(sw.id)}" data-group="${h(id)}" aria-pressed="${(sw.deliveryMode === "song" ? "__songs__" : sw.deliveryGroupId || "") === id}">${h(label)}${(sw.deliveryMode === "song" ? "__songs__" : sw.deliveryGroupId || "") === id ? ' <span aria-hidden="true">✓</span>' : ""}</button>`;
     overlay = document.createElement("div"); overlay.className = "mask";
     overlay.innerHTML = `<button class="sp" data-act="closemenu" aria-label="閉じる"></button><div class="sheet" role="dialog" aria-modal="true" aria-label="公演の配信先">
       <div class="row"><b class="grow">配信先</b><button class="chip" data-act="closemenu">閉じる</button></div>
       <p class="note">${h(sw.name)}</p>
       ${option("", "自動（" + (auto ? auto.name : "曲ごとのグループ") + "）")}
+      ${option("__songs__", "曲ごとに配信先を分ける（ハロコンなど）")}
       ${S.groups.map(g => option(g.id, g.name)).join("")}
     </div>`;
     document.body.appendChild(overlay); return;
@@ -4697,8 +4759,8 @@ function renderSheet() {
     const inner = U.menu.kind === "group"
       ? `<div class="sec"><h4>どのグループにしますか</h4>
           ${S.groups.map((g) => `<button class="ghost" data-act="m-setgroup" data-id="${g.id}"
-            style="text-align:left;margin-bottom:8px;${!many && x && x.groupId === g.id ? "background:var(--accent);color:#0A0A0A" : ""}">${h(g.name)}</button>`).join("")}
-          <button class="ghost" data-act="m-setgroup" data-id="" style="text-align:left;color:var(--dim);${!many && x && !x.groupId ? "background:var(--accent);color:#0A0A0A" : ""}">なし（配信しない）</button></div>`
+            style="text-align:left;margin-bottom:8px;${!many && x && songDeliveryGroupId(x) === g.id ? "background:var(--accent);color:#0A0A0A" : ""}">${h(g.name)}</button>`).join("")}
+          <button class="ghost" data-act="m-setgroup" data-id="" style="text-align:left;color:var(--dim);${!many && x && !songDeliveryGroupId(x) ? "background:var(--accent);color:#0A0A0A" : ""}">なし（配信しない）</button></div>`
       : `<div class="sec">
           ${B("m-mark", (many ? "印を付ける／外す" : ((S.songs.find((y) => y.id === U.menu.id) || {}).mark ? "★ 印を外す" : "★ 印を付ける")))}
           ${B("m-rename", "曲名を変える")}
@@ -6825,7 +6887,7 @@ function viewSetup() {
       <button data-act="picksong" data-id="${x.id}" style="width:26px;flex:0 0 26px;font-size:15px;color:${on ? "var(--accent)" : "var(--dim)"}">${on ? "☑" : "☐"}</button>
       <button class="grow" style="text-align:left;min-width:0" data-act="opensong" data-i="${i}">
         <div class="clamp2">${x.mark ? `<b style="color:var(--accent)">★</b> ` : ""}${h(songName(x))}</div>
-        <div class="trunc" style="font-size:11px;color:var(--dim)">${x.groupId ? h((S.groups.find((g) => g.id === songDeliveryGroupId(x)) || {}).name || "—") : "配信しない"}${
+        <div class="trunc" style="font-size:11px;color:var(--dim)">${songDeliveryGroupId(x) ? h((S.groups.find((g) => g.id === songDeliveryGroupId(x)) || {}).name || "—") : "配信しない"}${
         impOf(x) ? ` ・ 取り込み ${impLabel(impOf(x))}` : ""}${
         staleBy(x) ? `<span style="color:#F0B23C"> ・ 古い（別の公演に ${impLabel(staleBy(x))} 版）</span>` : ""}</div>
       </button>
@@ -6881,7 +6943,7 @@ function viewSetup() {
       return `<div class="row card" style="padding:9px 12px;margin-bottom:6px;${cur ? "outline:1px solid var(--accent)" : ""}">
         <button class="grow" style="text-align:left;min-width:0" data-act="usegroup" data-id="${g.id}">
           <div class="trunc" style="font-size:14px;${cur ? "color:var(--accent)" : ""}">${h(g.name)}</div>
-          <div style="font-size:11px;color:var(--dim)">${n}曲 ・ ${g.nopub ? "配信しない" : g.gistId ? (g.key ? "配信中・合言葉あり" : "配信中") : "未接続"}${cur ? " ・ 取り込み先" : ""}</div>
+          <div style="font-size:11px;color:var(--dim)">${n}曲 ・ ${g.nopub ? "配信しない" : g.gistId ? (g.key ? "配信中・合言葉あり" : "配信中") : "未接続"}${cur ? (S.shows.find(sw => sw.id === S.showId)?.deliveryMode === "song" ? " ・ 取り込み先（曲ごとに配信）" : " ・ この公演の配信先・取り込み先") : ""}</div>
         </button>
         <button data-act="gmenu" data-id="${g.id}" style="padding:6px 10px;color:var(--dim);font-size:17px">⋯</button>
       </div>`;
@@ -7072,6 +7134,16 @@ function commitFields() {
     if ((S.memos[k] || "") !== sm.value) {
       S.memos[k] = sm.value;
       save(); schedulePush();
+    }
+  }
+  const staff = document.getElementById("staffmemo");
+  if (staff && so && !VIEW()) {
+    const k = memoKey(so.id);
+    S.staffMemos ||= {};
+    if ((S.staffMemos[k] || "") !== staff.value) {
+      if (staff.value) S.staffMemos[k] = staff.value;
+      else delete S.staffMemos[k];
+      save();
     }
   }
 }
@@ -7297,9 +7369,9 @@ document.addEventListener("click", (e) => {
     }
     case "m-setgroup": {
       const ids = U.menu.ids || [U.menu.id];
-      ids.forEach((sid) => { const x = S.songs.find((y) => y.id === sid); if (x) x.groupId = id; });
+      setSongDelivery(ids, id);
       if (U.menu.ids) U.pick = [];
-      U.menu = null; save(); schedulePush(); render(); break;
+      U.menu = null; render(); break;
     }
     case "m-clear": {
       const q = U.menu.id; U.menu = null;
@@ -7560,6 +7632,7 @@ document.addEventListener("click", (e) => {
       // その曲にぶら下がっていたものも片付ける（残すと保存領域を食う）
       ids.forEach((sid) => {
         Object.keys(S.memos || {}).forEach((k) => { if (k.split("|")[1] === sid) delete S.memos[k]; });
+        Object.keys(S.staffMemos || {}).forEach((k) => { if (k.split("|")[1] === sid) delete S.staffMemos[k]; });
         Object.keys(S.draws || {}).forEach((k) => { if (k.split("|")[1] === sid) delete S.draws[k]; });
         Object.keys(S.recs || {}).forEach((k) => { if (k.split("|")[1] === sid) { delClip("rec:" + k); delete S.recs[k]; } });
         Object.keys(S.subs || {}).forEach((k) => { if (k.split("|")[1] === sid) delete S.subs[k]; });
@@ -8239,7 +8312,7 @@ document.addEventListener("click", (e) => {
         const ids = S.songs.filter((x) => x.showId === sw.id).map((x) => x.id);
         S.songs = S.songs.filter((x) => x.showId !== sw.id);
         S.notes = S.notes.filter((n) => n.showId !== sw.id && !ids.includes(n.songId));
-        [S.memos, S.draws, S.recs, S.subs, S.subsMan, S.gsubs].forEach((m) => {
+        [S.memos, S.staffMemos, S.draws, S.recs, S.subs, S.subsMan, S.gsubs].forEach((m) => {
           Object.keys(m || {}).forEach((k) => { if (k.split("|")[0] === sw.id) delete m[k]; });
         });
         ids.forEach((sid) => { delClip("xls:" + sid); });
@@ -8326,7 +8399,7 @@ document.addEventListener("click", (e) => {
       // 絞り込みの対象外の公演を開いていたら、対象の中で一番新しいものに移る
       if (id) {
         const ok = (sw) => !S.songs.some((x) => x.showId === sw.id)
-          || S.songs.some((x) => x.showId === sw.id && x.groupId === id);
+          || S.songs.some((x) => x.showId === sw.id && songDeliveryGroupId(x) === id);
         const cur2 = S.shows.find((x) => x.id === S.showId);
         if (cur2 && !ok(cur2)) {
           const next = showsNewestFirst().find(ok);
@@ -8343,7 +8416,7 @@ document.addEventListener("click", (e) => {
       if (nm) {
         const ngid = uid();
         S.groups.push({ id: ngid, name: nm, gistId: "", src: "", key: "", keyInLink: true });
-        S.groupId = ngid; save(); render();
+        save(); render();
       }
       break;
     }
@@ -8351,10 +8424,10 @@ document.addEventListener("click", (e) => {
       if (S.groups.some((g) => g.nopub)) break;
       const ngid = uid();
       S.groups.push({ id: ngid, name: "配信しない", gistId: "", src: "", key: "", keyInLink: true, nopub: true });
-      S.groupId = ngid; save(); render();
+      save(); render();
       break;
     }
-    case "usegroup": S.groupId = id; save(); render(); break;
+    case "usegroup": setCurrentShowGroup(id); break;
     case "show-delivery": if (!VIEW()) { U.menu = {kind:"show-delivery", id}; renderSheet(); } break;
     case "set-show-delivery": setShowDelivery(id, b.dataset.group || ""); break;
     case "renamegroup": {
@@ -8451,14 +8524,14 @@ document.addEventListener("change", (e) => {
     importSelection(e.target);
     return;
   }
-  if (e.target.id === "songmemo") commitFields();
+  if (["songmemo", "staffmemo"].includes(e.target.id)) commitFields();
 });
 
 // 総括は打ちながら確定する。入力欄から離れるまで送られないと、
 // メンバー側に出るまでが遅くなるため。
 let memoTimer = null;
 document.addEventListener("input", (e) => {
-  if (e.target.id !== "songmemo") return;
+  if (!["songmemo", "staffmemo"].includes(e.target.id)) return;
   clearTimeout(memoTimer);
   memoTimer = setTimeout(() => commitFields(), 600);
 });
@@ -8514,7 +8587,7 @@ function dupShow(fromId) {
   if (nm == null || !nm.trim()) return;
   const nid = uid();
   S.shows.push({ id: nid, name: nm.trim(), ts: Date.now(), from: fromId, folder: folderOf(sw),
-    groupId: autoShowGroupId(sw), deliveryGroupId: sw && sw.deliveryGroupId || undefined,
+    groupId: autoShowGroupId(sw), deliveryGroupId: sw && sw.deliveryGroupId || undefined, deliveryMode: sw && sw.deliveryMode || undefined,
     nopub: sw && sw.nopub ? 1 : undefined });
   // テイクは引き継がない。リハでテイクが増えていても、本番は曲ごとに1本から始める。
   // 同じ曲に複数テイクがあれば、いちばん新しいテイク（歌割の直しが入っている方）を元にする。
@@ -8528,7 +8601,7 @@ function dupShow(fromId) {
     const blocks = {};
     Object.keys(x.blocks || {}).forEach((b) => { blocks[b] = (x.blocks[b] || []).slice(); });
     S.songs.push({
-      id: uid(), showId: nid, groupId: x.groupId, title: x.title, credit: x.credit,
+      id: uid(), showId: nid, groupId: x.groupId, deliveryGroupId: x.deliveryGroupId, title: x.title, credit: x.credit,
       lines: x.lines.map((l) => Object.assign({}, l, { parts: (l.parts || []).slice() })),
       roster: (x.roster || []).slice(), blocks,
       blockCells: x.blockCells, blockRows: x.blockRows, sheetName: x.sheetName,
@@ -9310,7 +9383,8 @@ async function loadRecDocs(picked) {
 
 async function handleFiles(files) {
   const list = captureImportFiles(files), failed = [], archiveFailed = [], archives = [], copies = [], succeeded = [];
-  const groupId = S.groupId, showId = S.showId;
+  const showId = S.showId;
+  const groupId = showDeliveryGroupId(S.shows.find(sw => sw.id === showId)) || S.groupId;
   let imported = null, count = 0;
   try {
     for (let k = 0; k < list.length; k++) {
@@ -9408,8 +9482,7 @@ async function wrap(obj, g) {
 /* ---- GitHub Gist：グループごとに配信する ---- */
 function publicationData(gid) {
   const g = group(gid);
-  const routes = new Map(S.shows.map(sw => [sw.id, showDeliveryGroupId(sw)]));
-  const destination = so => routes.get(so.showId) || so.groupId;
+  const destination = songDeliveryGroupId;
   // 同じ歌詞を公演の数だけ送ると際限なく膨らむので、歌詞は1曲ぶんだけ持ち、
   // 各公演はそれを指す形にする。これで全公演をずっと残せる。
   const build = (showIds) => {
@@ -9459,7 +9532,7 @@ function publicationData(gid) {
         fromIdx: x.from != null && idx.has(x.from) ? idx.get(x.from) : null,
       })),
       shows: S.shows.filter((x) => showIds.includes(x.id)).map((x) => Object.assign({}, x, {
-        groupId: undefined, deliveryGroupId: undefined,
+        groupId: undefined, deliveryGroupId: undefined, deliveryMode: undefined,
         absent: (x.absent || []).map((mid) => (member(mid) || {}).name).filter(Boolean),
       })),
       gsubs: (() => {

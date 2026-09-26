@@ -39,3 +39,44 @@ test('previous correction is automatically fixed if no correction is recorded th
  Object.assign(c,{h:String,names:()=>'',tagName:x=>x,handHTML:()=>'',songName:so=>so.title,showName:()=>''});
  vm.runInContext(block('function viewDiff()', '// 古い曲から'),c);const html=run('viewDiff()');assert(html.includes('直った 1'));assert(!html.includes('未確認'));assert(!html.includes('続いている 1'));
 });
+test('selecting the group changes both the current show destination and subsequent import group',()=>{
+ const {c,run,pushes}=setup();c.S.showId='o';c.S.groupId='ocha';
+ run("setCurrentShowGroup('rose')");assert.equal(c.S.groupId,'rose');assert.equal(c.S.shows[0].groupId,'rose');
+ assert.equal(run("songDeliveryGroupId(S.songs[0])"),'rose');
+ assert.equal(run("publicationData('ocha').songs.length"),0);assert.equal(run("publicationData('rose').notes.length"),1);assert.equal(pushes(),1);
+ run("selectShow('r');selectShow('o')");assert.equal(c.S.groupId,'rose');
+});
+test('legacy saved group selection is not replaced by the stale show default; explicit routes are preserved',()=>{
+ const {c,run}=setup();c.S.showId='o';c.S.shows[0].groupId='ocha';c.S.groupId='rose';
+ run('repairShowGroupSelection();syncShowGroup()');assert.equal(c.S.groupId,'rose');assert.equal(run("publicationData('ocha').songs.length"),0);
+ c.S.deliveryRoutingVersion=undefined;c.S.shows[0].deliveryGroupId='ocha';run('repairShowGroupSelection();syncShowGroup()');assert.equal(c.S.groupId,'ocha');
+});
+test('a mixed Hello concert is visible to both groups and each gets only their songs, notes and summaries',()=>{
+ const {c,run}=setup();c.S.shows[0].name='ハロコン';c.S.shows[0].groupId='ocha';c.S.showId='o';c.S.songs[1].showId='o';
+ c.S.notes.push({songId:'b',showId:'o',memberIds:[],tags:['fast'],lineIdx:0,memo:'指摘B'});c.S.memos['o|b']='総括B';
+ run("setShowDelivery('o','__songs__')");
+ const a=run("publicationData('ocha')"),b=run("publicationData('rose')");
+ assert.equal(a.shows[0].name,'ハロコン');assert.equal(b.shows[0].name,'ハロコン');
+ assert.equal(a.songs.length,1);assert.equal(b.songs.length,1);assert.equal(a.notes[0].memo,'指摘A');assert.equal(b.notes[0].memo,'指摘B');
+ assert.equal(a.memos[0].text,'総括A');assert.equal(b.memos[0].text,'総括B');
+ assert.equal(a.focusShow,'o');assert.equal(b.focusShow,'o');
+});
+test('explicit song selection beats the show default and no-publication songs remain private',()=>{
+ const {c,run}=setup();c.S.showId='o';c.S.shows[0].groupId='ocha';c.S.songs[1].showId='o';
+ run("setSongDelivery(['b'],'rose')");assert.equal(run("publicationData('rose').songs.length"),1);assert.equal(run("publicationData('ocha').songs.length"),1);
+ run("setSongDelivery(['b'],'')");assert.equal(run("publicationData('rose').songs.length"),0);assert.equal(run("publicationData('ocha').songs.length"),1);
+ run("setCurrentShowGroup('rose')");assert.equal(run("songDeliveryGroupId(S.songs[1])"),'');assert.equal(run("publicationData('rose').songs.length"),1);
+});
+test('changing import group in a mixed concert preserves existing per-song destinations',()=>{
+ const {c,run}=setup();c.S.showId='o';c.S.shows[0].name='ハロコン';c.S.songs[1].showId='o';
+ run("setShowDelivery('o','__songs__');setCurrentShowGroup('rose')");
+ assert.equal(c.S.groupId,'rose');assert.equal(c.S.shows[0].deliveryMode,'song');
+ assert.equal(run("publicationData('ocha').songs.length"),1);assert.equal(run("publicationData('rose').songs.length"),1);
+});
+test('staff memos never enter either group publication, even when attached to published songs',()=>{
+ const {c,run}=setup();c.S.staffMemos={'o|a':'PRIVATE_STAFF_OCHA','r|b':'PRIVATE_STAFF_ROSE'};
+ for(const id of ['ocha','rose']) {
+   const payload=run(`publicationData('${id}')`);
+   assert.equal(payload.staffMemos,undefined);assert(!JSON.stringify(payload).includes('PRIVATE_STAFF'));
+ }
+});
