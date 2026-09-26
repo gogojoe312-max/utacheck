@@ -23,10 +23,11 @@ test('explicit override reroutes the whole show without changing source song own
  run("selectShow('r');selectShow('o')");assert.equal(c.S.groupId,'rose');
  run("setShowDelivery('o','')");assert.equal(c.S.groupId,'ocha');assert.equal(run("publicationData('ocha').notes.length"),1);
 });
-test('legacy single-group shows infer correctly, while ambiguous mixed shows retain per-song delivery',()=>{
+test('legacy single-group shows infer correctly; ambiguous data requires an explicit group before publishing',()=>{
  const {c,run}=setup();c.S.shows[0].name='9/23';assert.equal(run('autoShowGroupId(S.shows[0])'),'ocha');
  c.S.songs.push({id:'mix',showId:'o',groupId:'rose',title:'混合',lines:[],blocks:{}});assert.equal(run('autoShowGroupId(S.shows[0])'),'');
- assert.equal(run("publicationData('ocha').songs.length"),1);assert.equal(run("publicationData('rose').songs.length"),2);
+ assert.throws(()=>run("publicationData('ocha')"),/配信先が未設定/);assert.throws(()=>run("publicationData('rose')"),/配信先が未設定/);
+ run("setShowDelivery('o','__songs__')");assert.equal(run("publicationData('ocha').songs.length"),1);assert.equal(run("publicationData('rose').songs.length"),2);
 });
 test('hidden/non-public shows stay excluded, invalid targets do not change routing, viewers never publish',()=>{
  const {c,run,pushes}=setup();run("setShowDelivery('o','missing')");assert.equal(c.S.shows[0].deliveryGroupId,undefined);
@@ -65,7 +66,7 @@ test('explicit song selection beats the show default and no-publication songs re
  const {c,run}=setup();c.S.showId='o';c.S.shows[0].groupId='ocha';c.S.songs[1].showId='o';
  run("setSongDelivery(['b'],'rose')");assert.equal(run("publicationData('rose').songs.length"),1);assert.equal(run("publicationData('ocha').songs.length"),1);
  run("setSongDelivery(['b'],'')");assert.equal(run("publicationData('rose').songs.length"),0);assert.equal(run("publicationData('ocha').songs.length"),1);
- run("setCurrentShowGroup('rose')");assert.equal(run("songDeliveryGroupId(S.songs[1])"),'');assert.equal(run("publicationData('rose').songs.length"),1);
+ run("setShowDelivery('o','rose')");assert.equal(run("songDeliveryGroupId(S.songs[1])"),'');assert.equal(run("publicationData('rose').songs.length"),1);
 });
 test('changing import group in a mixed concert preserves existing per-song destinations',()=>{
  const {c,run}=setup();c.S.showId='o';c.S.shows[0].name='ハロコン';c.S.songs[1].showId='o';
@@ -80,9 +81,9 @@ test('staff memos never enter either group publication, even when attached to pu
    assert.equal(payload.staffMemos,undefined);assert(!JSON.stringify(payload).includes('PRIVATE_STAFF'));
  }
 });
-test('a release event remains discoverable under its original group after delivery is changed',()=>{
+test('a release event follows its actual destination and never the stale import group',()=>{
  const {c,run}=setup();c.S.shows[1].name='リリイベ';c.S.shows[1].groupId='rose';c.S.shows[1].deliveryGroupId='ocha';c.S.showId='o';
- run("setShowFilter('rose')");assert(run('showsFor()').some(sw=>sw.name==='リリイベ'));
+ run("setShowFilter('rose')");assert(!run('showsFor()').some(sw=>sw.name==='リリイベ'));
  run("setShowFilter('ocha')");assert(run('showsFor()').some(sw=>sw.name==='リリイベ'));
 });
 test('show filters never change the current performance or publish; all reveals every folder and ignores stale saved filters',()=>{
@@ -93,4 +94,22 @@ test('show filters never change the current performance or publish; all reveals 
  run("setShowFilter('ocha');setShowFilter('')");assert.equal(run('showsFor().length'),22);assert.equal(c.S.folders.ロージー,true);
  assert.equal(c.S.showId,current);assert.equal(c.S.groupId,group);assert.equal(pushes(),0);assert.equal(JSON.stringify([c.S.shows,c.S.songs,c.S.notes,c.S.memos]),before);
  assert(!src.includes('allShows.slice(0, 12)'));
+});
+
+test('OCHA excludes the current Rosy show, stale OCHA song overrides, unrelated empty shows and hidden recording shows',()=>{
+ const {c,run}=setup();c.S.showId='r';c.S.shows[1].groupId='rose';c.S.shows[1].name='Bookmark9/6 東京';
+ c.S.songs[1].groupId='ocha';c.S.songs[1].deliveryGroupId='ocha';
+ c.S.shows.push({id:'empty-rose',name:'リリイベ',groupId:'rose'},{id:'unknown',name:'グループ未設定'},{id:'rec',hidden:true,groupId:'ocha'});
+ c.S.folders={};const before=JSON.stringify(c.S);
+ run("setShowFilter('ocha')");assert.deepEqual(Array.from(run('showsFor()'),x=>x.id),['o']);
+ const pub=run("publicationData('ocha')");assert.equal(pub.songs.length,1);assert.equal(pub.shows[0].id,'o');
+ run("setShowFilter('rose')");assert.deepEqual(Array.from(run('showsFor()'),x=>x.id),['r','empty-rose']);
+ assert.equal(run("publicationData('rose').songs.length"),1);assert.equal(JSON.stringify(c.S),before);
+});
+test('mixed concert lists only actual song destinations, plus its organizing group',()=>{
+ const {c,run}=setup();c.S.groups.push({id:'hello',name:'ハロコン'});c.S.shows[0].groupId='hello';c.S.shows[0].deliveryMode='song';c.S.songs[1].showId='o';
+ run("setShowFilter('ocha')");assert.deepEqual(Array.from(run('showsFor()'),x=>x.id),['o']);
+ run("setShowFilter('rose')");assert(run('showsFor()').some(x=>x.id==='o'));
+ run("setShowFilter('hello')");assert.deepEqual(Array.from(run('showsFor()'),x=>x.id),['o']);
+ run("setShowFilter('off')");assert.equal(run('showsFor().length'),0);
 });

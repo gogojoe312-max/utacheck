@@ -120,7 +120,7 @@ test('unchanged publications reuse their check, but new notes and completed send
 
 test('unchanged or failed automatic receive polls leave the live DOM alone',async()=>{
  let renders=0,applied=0;const payload={version:7,songs:[{}]};
- const c=vm.createContext({S:{songs:[{}],setlistVer:7},fetchSetlist:async()=>payload,render(){renders++;},applySetlist(){applied++;},syncErr:''});
+ const c=vm.createContext({VIEW:()=>true,S:{songs:[{}],setlistVer:7},fetchSetlist:async()=>payload,render(){renders++;},applySetlist(){applied++;},syncErr:''});
  vm.runInContext(block('async function syncSetlist(manual)', '/* ---- 共有リンク'),c);
  await vm.runInContext('syncSetlist(false)',c);assert.equal(renders,0);assert.equal(applied,0);
  c.fetchSetlist=async()=>null;await vm.runInContext('syncSetlist(false)',c);assert.equal(renders,0);

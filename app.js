@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.8";
+const APP_VER = "16.41.9";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -383,7 +383,7 @@ const VIEW = () => !!S.viewer && !S.groups.some((g) => g.gistId);
 const group = (id) => S.groups.find((g) => g.id === (id || S.groupId)) || S.groups[0] || {};
 // いま開いている公演が「配信しない」か
 const showNoPub = () => !!((S.shows.find((x) => x.id === S.showId) || {}).nopub);
-// 選んだグループの曲がある公演だけを出す（曲がまだ無い公演と、今開いている公演は常に出す）
+// グループごとの公演表示は showGroupIds で判定する。
 // 歌詞と担当の並びから、その曲の指紋を作る。曲名は見ない。
 function songSig(so) {
   if (!so) return 0;
@@ -443,7 +443,7 @@ function groupShows(list) {
     if (!map.has(k)) map.set(k, []);
     map.get(k).push(sw);
   });
-  if (!VIEW()) (S.folderOrder || []).forEach(k => { if (k && !S.shows.some(x => folderOf(x) === k)) map.set(k, []); });
+  if (!VIEW() && !U.showFilter) (S.folderOrder || []).forEach(k => { if (k && !S.shows.some(x => folderOf(x) === k)) map.set(k, []); });
   const keys = [...map.keys()].filter(Boolean);
   const newest = (k) => Math.max(0, ...map.get(k).map(x => Number(x.ts || 0)));
   const ord = S.folderOrder || [];
@@ -477,14 +477,24 @@ function showDeliveryGroupId(sw) {
   return S.groups.some(g => g.id === sw.deliveryGroupId) ? sw.deliveryGroupId : autoShowGroupId(sw);
 }
 function songDeliveryGroupId(so) {
-  // A deliberate song-level choice (including no publication) is authoritative.
   if (so.deliveryGroupId === "") return "";
-  if (S.groups.some(g => g.id === so.deliveryGroupId)) return so.deliveryGroupId;
   if (S.groups.some(g => g.id === so.groupId && g.nopub)) return so.groupId;
-  return showDeliveryGroupId(S.shows.find(sw => sw.id === so.showId)) || so.groupId;
+  const sw = S.shows.find(sw => sw.id === so.showId);
+  // A normal show has one destination. Old song import groups cannot override it.
+  const showGroup = showDeliveryGroupId(sw);
+  if (showGroup) return showGroup;
+  if (sw && sw.deliveryMode !== "song") return "";
+  if (S.groups.some(g => g.id === so.deliveryGroupId)) return so.deliveryGroupId;
+  return S.groups.some(g => g.id === so.groupId) ? so.groupId : "";
+}
+function showGroupIds(sw) {
+  const id = showDeliveryGroupId(sw);
+  if (id) return [id];
+  return [...new Set(S.songs.filter(so => so.showId === sw.id).map(songDeliveryGroupId).filter(Boolean))];
 }
 function setCurrentShowGroup(groupId) {
   if (VIEW() || !S.groups.some(g => g.id === groupId)) return;
+  if (U.showFilter && !showsFor().some(sw => sw.id === S.showId)) return;
   S.groupId = groupId;
   if (!S.recMode) {
     const sw = S.shows.find(x => x.id === S.showId);
@@ -501,7 +511,18 @@ function setSongDelivery(ids, groupId) {
   if (VIEW() || (groupId && !S.groups.some(g => g.id === groupId))) return;
   ids.forEach(id => {
     const so = S.songs.find(x => x.id === id);
-    if (so) { so.groupId = groupId; so.deliveryGroupId = groupId; }
+    if (so) {
+      const sw = S.shows.find(x => x.id === so.showId);
+      // Choosing a different song destination is an explicit opt-in to mixed delivery.
+      if (sw && groupId && groupId !== showDeliveryGroupId(sw)) {
+        const previous = showDeliveryGroupId(sw);
+        if (previous) S.songs.filter(x => x.showId === sw.id).forEach(x => {
+          if (x.deliveryGroupId !== "" && !S.groups.some(g => g.id === x.groupId && g.nopub)) x.deliveryGroupId = previous;
+        });
+        sw.deliveryMode = "song";
+      }
+      so.groupId = groupId; so.deliveryGroupId = groupId;
+    }
   });
   save(); schedulePush();
 }
@@ -511,7 +532,7 @@ function showDeliveryLabel(sw) {
   const targets = new Set(S.songs.filter(so => so.showId === sw.id).map(songDeliveryGroupId).filter(Boolean));
   if (targets.size > 1) return `曲ごと（${targets.size}グループ）`;
   const id = targets.size === 1 ? [...targets][0] : showDeliveryGroupId(sw), g = S.groups.find(g => g.id === id);
-  return g ? (g.nopub ? "配信しない" : g.name) : "曲ごとのグループ";
+  return g ? (g.nopub ? "配信しない" : g.name) : "グループ未設定";
 }
 function syncShowGroup() {
   if (VIEW() || S.recMode) return;
@@ -543,15 +564,13 @@ function setShowDelivery(id, groupId) {
 function showsFor() {
   const gid = U.showFilter;
   const all = showsNewestFirst().filter((x) => !x.hidden);
+  if (gid === "__unassigned__") return all.filter(sw => sw.deliveryMode !== "song" && !showDeliveryGroupId(sw));
   if (!gid || !S.groups.some((g) => g.id === gid)) return all;
-  return all.filter((sw) => sw.id === S.showId
-    || !S.songs.some((x) => x.showId === sw.id)
-    || sw.groupId === gid
-    || showDeliveryGroupId(sw) === gid
-    || S.songs.some((x) => x.showId === sw.id && (x.groupId === gid || songDeliveryGroupId(x) === gid)));
+  return all.filter(sw => showGroupIds(sw).includes(gid)
+    || (sw.deliveryMode === "song" && sw.groupId === gid));
 }
 function setShowFilter(id) {
-  U.showFilter = S.groups.some(g => g.id === id) ? id : "";
+  U.showFilter = id === "__unassigned__" || S.groups.some(g => g.id === id) ? id : "";
   // Browsing never changes the current performance or its publication destination.
   // "All" also opens folders so a saved performance can always be found.
   if (!U.showFilter) S.shows.forEach(sw => { if (sw.folder) S.folders[sw.folder] = true; });
@@ -4391,7 +4410,7 @@ function organizeSheetHTML(m) {
   const btn = (act,label,extra="") => `<button class="organize-action" data-act="${act}" data-id="${h(m.id || "")}" ${extra}>${label}</button>`;
   let body = "";
   if (m.mode === "actions" && item) {
-    body = btn("editshow","公演名・フォルダを編集") + btn("show-delivery","配信先を変更")
+    body = btn("editshow","公演名・グループ・フォルダを編集") + btn("show-delivery","配信先を変更")
       + btn("showpub", item.nopub ? "配信を有効にする" : "配信を止める")
       + btn("copyshow","公演を複製") + btn("delshow","公演を削除",'style="color:var(--bad)"');
   } else {
@@ -4402,7 +4421,11 @@ function organizeSheetHTML(m) {
       body += `<label class="organize-field">保存先フォルダ<select class="field" id="org-folder"><option value="">フォルダなし</option>${folderNames(rec).map(n => `<option value="${h(n)}" ${folder === n ? "selected" : ""}>${h(n)}</option>`).join("")}<option value="__new_folder__">＋ 新しいフォルダ</option></select></label>
         <label class="organize-field" id="org-new-folder-row" hidden>新しいフォルダ名<input class="field" id="org-new-folder" autocomplete="off" placeholder="例：秋ツアー"></label>`;
     }
-    if (m.mode === "show" && !item) body += `<label class="organize-field">配信先グループ<select class="field" id="org-group"><option value="">自動（公演名・フォルダから判定）</option><option value="__songs__">曲ごと（ハロコンなど）</option>${S.groups.map(g => `<option value="${h(g.id)}">${h(g.name)}</option>`).join("")}</select></label><p class="note">判定できない場合は ${h(group().name)} に設定します。</p>`;
+    if (m.mode === "show") {
+      const selected = item ? showDeliveryGroupId(item) || autoShowGroupId(item) : S.groups.some(g => g.id === U.showFilter) ? U.showFilter : autoShowGroupId({name:"",folder}) || S.groupId;
+      body += `<label class="organize-field">公演のグループ<select class="field" id="org-group"><option value="">未設定</option>${S.groups.map(g => `<option value="${h(g.id)}" ${selected === g.id ? "selected" : ""}>${h(g.name)}</option>`).join("")}</select></label>
+        <label class="organize-field">配信方法<select class="field" id="org-delivery"><option value="show">公演のグループに配信</option><option value="song" ${item?.deliveryMode === "song" ? "selected" : ""}>曲ごとに配信先を分ける（ハロコンなど）</option></select></label>`;
+    }
     body += `<p id="org-error" role="alert" class="organize-error" hidden></p><button class="primary" type="submit">${m.mode === "move" ? "ここに移動" : m.mode === "show" && !item ? "公演を作成" : m.mode === "folder" && !m.id ? "フォルダを作成" : "保存"}</button></form>`;
     if (m.mode === "folder" && m.id && !(rec ? S.rsongs : S.shows).some(x => folderOf(x) === m.id))
       body += `<button class="organize-action" style="color:var(--bad);margin-top:12px" data-act="empty-folder-delete">空のフォルダを削除</button>`;
@@ -4429,15 +4452,24 @@ function saveOrganization(m, values) {
     pushUndo(); item.folder = folder; rememberFolder(folder, rec);
   } else {
     pushUndo(); rememberFolder(folder);
-    if (item) { item.name = name; item.folder = folder; }
+    if (item) {
+      item.name = name; item.folder = folder;
+      if (Object.prototype.hasOwnProperty.call(values, "groupId")) {
+        item.groupId = S.groups.some(g => g.id === values.groupId) ? values.groupId : "";
+        delete item.deliveryGroupId;
+      }
+      if (values.deliveryMode === "song") item.deliveryMode = "song";
+      else if (values.deliveryMode === "show") delete item.deliveryMode;
+      if (item.id === S.showId) syncShowGroup();
+    }
     else {
       const sw = {id:uid(),name,folder,ts:Date.now()};
-      sw.groupId = S.groups.some(g => g.id === values.groupId) ? values.groupId : autoShowGroupId(sw) || S.groupId;
-      if (values.groupId === "__songs__") sw.deliveryMode = "song";
+      sw.groupId = S.groups.some(g => g.id === values.groupId) ? values.groupId : S.groups.some(g => g.id === U.showFilter) ? U.showFilter : autoShowGroupId(sw) || S.groupId;
+      if (values.deliveryMode === "song" || values.groupId === "__songs__") sw.deliveryMode = "song";
       S.shows.push(sw); U.showFilter = ""; selectShow(sw.id);
     }
   }
-  save(); return "";
+  save(); if (m.mode === "show") schedulePush(); return "";
 }
 
 function renderSheet() {
@@ -4446,6 +4478,11 @@ function renderSheet() {
   // 記録シートの中で打っている最中も、組み直すと文字が飛ぶ
   if (typingNow() && overlay && overlay.contains(document.activeElement)) { pendingRender = true; return; }
   if (overlay) { overlay.remove(); overlay = null; }
+
+  if (U.menu?.kind === "show-recovery" && U.showRecovery && !VIEW()) {
+    overlay = document.createElement("div"); overlay.className = "mask";
+    overlay.innerHTML = ShowRecovery.html(); document.body.appendChild(overlay); return;
+  }
 
   if (U.menu?.kind === "file-result" && U.fileReport && !VIEW()) {
     const r = U.fileReport;
@@ -6874,7 +6911,8 @@ function viewSetup() {
       ${open ? `<div style="margin-left:14px">${list.map(showRow).join("")}</div>` : ""}`;
   }).join("");
 
-  const all2 = SONGS();
+  const activeShow = allShows.find(sw => sw.id === S.showId);
+  const all2 = activeShow ? SONGS() : [];
   const cur = U.markOnly ? all2.filter((x) => x.mark) : all2;
   const songs = cur.map((x0, i0) => {
     const x = x0, i = all2.indexOf(x0);
@@ -6915,6 +6953,8 @@ function viewSetup() {
     <h4 class="head">指摘</h4><div class="card"><button class="primary" data-act="go-summary">指摘の集計を見る</button></div>
     <h4 class="head">公演</h4>
     <div class="organize-create"><button class="primary" data-act="newshow">＋ 公演を追加</button><button class="chip" data-act="newfolder">＋ フォルダ</button></div>
+    <button class="ghost" data-act="show-recovery" style="margin-bottom:12px">公演を探す・復元</button>
+    ${S.shows.some(sw => !sw.hidden && sw.deliveryMode !== "song" && !showDeliveryGroupId(sw)) ? `<button class="ghost" data-act="showfilter" data-id="__unassigned__" style="color:var(--bad);margin-bottom:12px">グループ未設定の公演を確認</button>` : ""}
     ${S.groups.length > 1 ? `<div class="chips" style="margin-bottom:10px">
       <button class="chip sm" data-act="showfilter" data-id="" style="${!U.showFilter ? "background:var(--accent);color:#0A0A0A" : ""}">全公演を表示</button>
       ${S.groups.map((g) => `<button class="chip sm" data-act="showfilter" data-id="${g.id}"
@@ -6926,10 +6966,10 @@ function viewSetup() {
     <h4 class="head">セットリスト</h4>
     ${cur.length ? bar : ""}
     ${songs}
-    <div class="card">
+    ${!activeShow ? `<p class="note">このグループの公演を選択するか、新しい公演を追加してください。</p>` : `<div class="card">
       <button class="primary" data-act="pickfile" style="margin-bottom:8px">歌詞・歌割のWord / PDF / Excel を選ぶ（複数可）</button>
-      <div style="font-size:11px;color:var(--dim);margin-top:6px">→ ${h(group().name || "")}</div>
-    </div>
+      <div style="font-size:11px;color:var(--dim);margin-top:6px">取り込み先：${h(activeShow.name)} ・ ${h(group().name || "")}</div>
+    </div>`}
 
     <h4 class="head">配信設定</h4>
     <details class="card"><summary>接続・グループを管理</summary>
@@ -6937,7 +6977,7 @@ function viewSetup() {
       const n = SONGS().filter((x) => songDeliveryGroupId(x) === g.id).length;
       const cur = g.id === S.groupId;
       return `<div class="row card" style="padding:9px 12px;margin-bottom:6px;${cur ? "outline:1px solid var(--accent)" : ""}">
-        <button class="grow" style="text-align:left;min-width:0" data-act="usegroup" data-id="${g.id}">
+        <button class="grow" style="text-align:left;min-width:0" data-act="usegroup" data-id="${g.id}" ${!activeShow ? "disabled" : ""}>
           <div class="trunc" style="font-size:14px;${cur ? "color:var(--accent)" : ""}">${h(g.name)}</div>
           <div style="font-size:11px;color:var(--dim)">${n}曲 ・ ${g.nopub ? "配信しない" : g.gistId ? (g.key ? "配信中・合言葉あり" : "配信中") : "未接続"}${cur ? (S.shows.find(sw => sw.id === S.showId)?.deliveryMode === "song" ? " ・ 取り込み先（曲ごとに配信）" : " ・ この公演の配信先・取り込み先") : ""}</div>
         </button>
@@ -8485,7 +8525,8 @@ document.addEventListener("submit", e => {
   const fresh = selected === "__new_folder__";
   const values = {name:document.getElementById("org-name")?.value || "",
     folder:fresh ? document.getElementById("org-new-folder").value : selected,
-    groupId:document.getElementById("org-group")?.value || ""};
+    groupId:document.getElementById("org-group")?.value || "",
+    deliveryMode:document.getElementById("org-delivery")?.value || "show"};
   const error = fresh && !values.folder.trim() ? "新しいフォルダ名を入力してください。" : saveOrganization(m,values);
   const out = document.getElementById("org-error"); out.textContent = error; out.hidden = !error;
   if (error) return;
@@ -9363,6 +9404,9 @@ async function loadRecDocs(picked) {
 }
 
 async function handleFiles(files) {
+  if (U.showFilter && !showsFor().some(sw => sw.id === S.showId)) {
+    alert("取り込み先の公演を選択してからファイルを選んでください。"); return;
+  }
   const list = captureImportFiles(files), failed = [], archiveFailed = [], archives = [], copies = [], succeeded = [];
   const showId = S.showId;
   const groupId = showDeliveryGroupId(S.shows.find(sw => sw.id === showId)) || S.groupId;
@@ -9463,6 +9507,9 @@ async function wrap(obj, g) {
 /* ---- GitHub Gist：グループごとに配信する ---- */
 function publicationData(gid) {
   const g = group(gid);
+  const unresolved = S.shows.find(sw => !sw.hidden && !sw.nopub && sw.deliveryMode !== "song" && !showDeliveryGroupId(sw)
+    && S.songs.some(so => so.showId === sw.id && (so.groupId === g.id || so.deliveryGroupId === g.id)));
+  if (unresolved) throw new Error(`「${unresolved.name}」の配信先が未設定です。公演のグループを選択してください。既存の配信データは変更していません。`);
   const destination = songDeliveryGroupId;
   // 同じ歌詞を公演の数だけ送ると際限なく膨らむので、歌詞は1曲ぶんだけ持ち、
   // 各公演はそれを指す形にする。これで全公演をずっと残せる。
@@ -10299,7 +10346,7 @@ function renderBackupStatus() {
   if (U.view === "setup" || U.view === "recsetup") render(true);
 }
 async function doBackup(silent) {
-  if (backupInFlight || preview || VIEW()) return false;
+  if (backupInFlight || preview || VIEW() || U.showRecovery) return false;
   if (!S.ghToken) { if (!silent) return backupToFile(); return false; }
   backupInFlight = true;
   S.bkError = ""; renderBackupStatus();
@@ -10452,6 +10499,7 @@ function resetForNewSource() {
 }
 
 function applySetlist(d) {
+  if (!VIEW()) return;
   const summaryContext = VIEW() && U.view === "summary" && S.songs.length
     && (!d.groupName || !S.srcGroup || d.groupName === S.srcGroup)
     ? {showId:S.showId, memberName:(member(U.sumOpen) || {}).name} : null;
@@ -10562,6 +10610,7 @@ function applySetlist(d) {
 }
 
 async function syncSetlist(manual) {
+  if (!VIEW()) return;
   const d = await fetchSetlist();
   if (d === "nokey" || d === "badkey") {
     if (d === "badkey") S.key = "";
@@ -10693,17 +10742,22 @@ async function syncNow() {
 }
 
 async function checkOther() {
-  if (syncing || backupInFlight || preview) return;
+  if (syncing || backupInFlight || preview || U.showRecovery) return;
   if (!S.ghToken || !S.bkGistId) return;
   syncing = true;
   try {
     const g = await gh("/gists/" + S.bkGistId);
     if (!backupIndexFile(g.files)) return;
     const obj = await unpackBackup(await readCloudBackup(g.files));
+    if (U.showRecovery) return;
     const at = Number(obj.at || 0);
     if (at <= (S.bkSeen || 0)) { otherAt = 0; return; }
     const dirty = bkSignature() !== S.bkHash;
-    if (!dirty) {
+    const removesSavedWork = ["shows", "songs", "notes"].some(key => {
+      const incoming = new Set((obj.state[key] || []).map(x => x.id));
+      return (S[key] || []).some(x => !x.hidden && !incoming.has(x.id));
+    });
+    if (!dirty && !removesSavedWork) {
       const tk = S.ghToken, bk = S.bkGistId, bkk = S.bkKey, ep = S.editPass;
       Object.keys(S).forEach((k) => { delete S[k]; });
       Object.assign(S, fromBackup(obj.state));
