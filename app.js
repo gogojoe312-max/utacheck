@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.10";
+const APP_VER = "16.41.11";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -4506,6 +4506,7 @@ function renderSheet() {
       <button class="primary" data-act="excel-export-share">保存・共有</button>
       <a class="organize-action" href="${h(item.url)}" download="${h(item.name)}">ダウンロードして保存</a>
       ${item.name.endsWith(".zip") ? '<p class="note">曲ごとのExcelをZIPにまとめています。iPhoneでは「ファイルに保存」後、ZIPをタップすると開けます。</p>' : ""}
+      ${(item.warnings || []).length ? `<details><summary>保存データから作成：${item.warnings.length}曲（元の書式は再現されません）</summary>${item.warnings.map(x=>`<p class="note" style="overflow-wrap:anywhere">${h(x)}</p>`).join("")}</details>` : ""}
       ${item.failures.length ? `<p role="alert" class="note" style="color:var(--bad)">作成できなかった曲（${item.failures.length}曲）</p>${item.failures.map(x=>`<p class="note" style="white-space:pre-wrap;overflow-wrap:anywhere">${h(x)}</p>`).join("")}` : ""}
     </div>`;
     document.body.appendChild(overlay); return;
@@ -5439,9 +5440,9 @@ function closeExcelExport() {
   U.excelExport = null;
   if (U.menu?.kind === "excel-export") U.menu = null;
 }
-function presentExcelExport(name, blob, count, failures) {
+function presentExcelExport(name, blob, count, failures, warnings = []) {
   closeExcelExport();
-  U.excelExport = {name, blob, count, failures, url:URL.createObjectURL(blob)};
+  U.excelExport = {name, blob, count, failures, warnings, url:URL.createObjectURL(blob)};
   U.menu = {kind:"excel-export"}; renderSheet();
 }
 async function shareExcelExport() {
@@ -5456,9 +5457,37 @@ async function shareExcelExport() {
     if (e.name !== "AbortError") alert("共有を開けませんでした。「ダウンロードして保存」をお使いください。");
   } finally { U.sharingExcel = false; }
 }
-async function buildAbsentWorkbook(so, tab, edits) {
+function savedAbsentWorkbook(so, tab) {
+  if (!Array.isArray(so.lines) || !so.lines.some(l => l.t)) throw new Error("保存済みの歌詞がないため、Excelを作成できません。");
+  const names = ids => (ids || []).map(id => (member(id) || {}).name).filter(Boolean).join("・");
+  const rows = changed => [[so.title || "歌割"], [changed ? tab : "元の歌割（保存データ）"], ["歌唱", "歌詞", "ハモ"]].concat(so.lines.map((l, i) => {
+    if (l.gap) return ["", "", ""];
+    const assign = changed ? splitAssign(so, i) : {main:l.main || l.parts || [], extra:l.extra || []};
+    const explicit = changed && (subOf(so.id, i) !== null || blockOf(so, i));
+    const main = names(assign.main) || (explicit ? "" : l.labelRaw || l.label || l.raw || "");
+    return [main, l.t || "", names(assign.extra)];
+  }));
+  const wb = XLSX.utils.book_new();
+  for (const [name, changed] of [[tab.replace(/[\\/?:*\[\]]/g, "_").slice(0,31) || "欠席ver", true], ["元の歌割（保存データ）", false]]) {
+    const sheet = XLSX.utils.aoa_to_sheet(rows(changed));
+    sheet['!cols'] = [{wch:26},{wch:72},{wch:24}];
+    XLSX.utils.book_append_sheet(wb, sheet, name);
+  }
+  return new Uint8Array(XLSX.write(wb, {type:"array", bookType:"xlsx", compression:true}));
+}
+function hasAbsentExportChanges(so) {
+  return Array.isArray(so.lines) && so.lines.some((l, i) => {
+    const before = (l.parts || []).slice().sort().join("|");
+    return partsOf(so, i).slice().sort().join("|") !== before;
+  });
+}
+async function buildAbsentWorkbook(so, tab, edits, warnings = []) {
   const blob = await importTimeout(getClip("xls:" + so.id), 10000, "元のExcelを取得できませんでした。");
-  if (!blob) throw new Error("元のExcelがありません。Excelを読み込み直してください。");
+  if (!blob) {
+    const data = savedAbsentWorkbook(so, tab);
+    warnings.push(`${so.title}：元のExcelがこの端末にないため、保存済みの歌詞・歌割と欠席変更から作成しました。元の書式${so.micSheet ? "・マイク表" : ""}は再現していません。`);
+    return data;
+  }
   let data = new Uint8Array(await importTimeout(blob.arrayBuffer(), 10000, "元のExcelを読み込めませんでした。"));
   // XLS / XLSB / CSV also need an XML workbook before adding a version tab.
   if (!(data[0] === 0x50 && data[1] === 0x4b) || !XLSX.CFB.read(data, {type:"array"}).FullPaths.some(p => p.endsWith('/xl/workbook.xml'))) {
@@ -5491,7 +5520,7 @@ async function runAbsentExport(songs, bundle) {
   const targets = songs.slice();
   U.exportingExcel = true;
   closeExcelExport();
-  const files = Object.create(null), failures = [];
+  const files = Object.create(null), failures = [], warnings = [];
   try {
     for (let i = 0; i < targets.length; i++) {
       const so = targets[i];
@@ -5499,8 +5528,8 @@ async function runAbsentExport(songs, bundle) {
       await new Promise(resolve => setTimeout(resolve, 0));
       try {
         const edits = absentEdits(so);
-        if (!Object.keys(edits).length) continue;
-        const data = await buildAbsentWorkbook(so, tab, edits);
+        if (!Object.keys(edits).length && !hasAbsentExportChanges(so)) continue;
+        const data = await buildAbsentWorkbook(so, tab, edits, warnings);
         const base = absentExportFilename(so.title, tab);
         let name = base, suffix = 2;
         while (files[name]) name = base.replace(/\.xlsx$/, ` (${suffix++}).xlsx`);
@@ -5516,7 +5545,7 @@ async function runAbsentExport(songs, bundle) {
     const data = bundle ? await zip(files, null, false) : files[names[0]];
     const name = bundle ? absentExportFilename(title,tab).replace(/\.xlsx$/, ".zip") : names[0];
     U.busy = ""; render();
-    presentExcelExport(name, new Blob([data], {type:bundle ? "application/zip" : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}), names.length, failures);
+    presentExcelExport(name, new Blob([data], {type:bundle ? "application/zip" : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}), names.length, failures, warnings);
   } catch (e) { alert("Excelを作れませんでした。\n" + e.message); }
   finally { U.busy = ""; U.exportingExcel = false; render(); }
 }
