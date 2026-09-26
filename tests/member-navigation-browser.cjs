@@ -60,7 +60,8 @@ function seed() {
       assert(!(await page.locator('.member-song').innerText()).includes('別メンバー限定'));
       assert(!(await page.locator('#summary-show').innerText()).includes('別グループ公演'));
       assert((await page.locator('[data-note="selected"] .member-note-location').innerText()).includes('2番・サビ'));
-      assert((await page.locator('[data-note="selected"] .member-note-location').innerText()).includes('同じ歌詞の2回目'));
+      assert.equal(await page.locator('[data-note="selected"] .member-note-location').innerText(),'2番・サビ');
+      assert(!(await page.locator('.member-note-location').allTextContents()).some(text=>/回目|行目/.test(text)));
       assert.equal(await page.locator('[data-note="selected"] .member-lyric-context').count(),2);
       assert((await page.locator('[data-note="shared"] .member-lyric-context').last().innerText()).includes('20行目'));
       assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));

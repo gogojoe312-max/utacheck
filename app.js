@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.15";
+const APP_VER = "16.41.16";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -5112,14 +5112,6 @@ function memberNoteLocation(n) {
   const lyricRows = lines.map((_,i) => i).filter(isLyric);
   const previous = lyricRows.filter(i => i < start).at(-1);
   const next = lyricRows.find(i => i > end);
-  const firstNo = lyricRows.filter(i => i < start).length + (isLyric(start) ? 1 : 0);
-  const lastNo = lyricRows.filter(i => i <= end).length;
-  const position = isLyric(start) ? `歌詞${firstNo}${lastNo > firstNo ? "〜" + lastNo : ""}行目`
-    : firstNo ? `歌詞${firstNo}行目の後` : "歌い出しの前";
-  // Matching repeated text identifies an occurrence, never a verse or chorus.
-  const key = text(start).normalize("NFKC").replace(/\s+/g, "");
-  const repeats = key && isLyric(start) ? lyricRows.filter(i => text(i).normalize("NFKC").replace(/\s+/g, "") === key) : [];
-  const occurrence = repeats.length > 1 ? `同じ歌詞の${repeats.indexOf(start) + 1}回目` : "";
   let section = "";
   for (let i = start; i >= 0; i--) {
     if (typeof lines[i].sec === "string" && lines[i].sec.trim()) { section = lines[i].sec.trim(); break; }
@@ -5130,7 +5122,7 @@ function memberNoteLocation(n) {
     const part = named[2].replace(/^[a-d]/, c => c.toUpperCase());
     section = `${Number(named[1])}番・${/^[AB]$/.test(part) ? part + "メロ" : part}`;
   }
-  return { label: section || occurrence || position, detail: section ? occurrence || position : occurrence ? position : "",
+  return { label: section,
     previous: previous == null ? "" : text(previous), next: next == null ? "" : text(next) };
 }
 function memberLyricHTML(n) {
@@ -5152,8 +5144,8 @@ function memberLyricHTML(n) {
 function memberNoteBody(n, showMembers = true) {
   const tags = (n.tags || []).map(tag => `<span class="member-note-tag">${h(tagName(tag))}</span>`).join("");
   const at = memberNoteLocation(n);
-  return `<div class="member-note-top">${at ? `<div class="member-note-location"><span>${h(at.label)}</span>${at.detail ? `<small>${h(at.detail)}</small>` : ""}</div>` : ""}
-    ${tags || n.pitch ? `<div class="member-note-tags" style="color:${noteColor(n)}">${tags}${n.pitch ? `<span class="member-note-pitch">正しい音 ${h(pitchLabel(n.pitch))}</span>` : ""}</div>` : ""}</div>
+  return `${at?.label || tags || n.pitch ? `<div class="member-note-top">${at?.label ? `<div class="member-note-location">${h(at.label)}</div>` : ""}
+    ${tags || n.pitch ? `<div class="member-note-tags" style="color:${noteColor(n)}">${tags}${n.pitch ? `<span class="member-note-pitch">正しい音 ${h(pitchLabel(n.pitch))}</span>` : ""}</div>` : ""}</div>` : ""}
     ${at?.previous ? `<div class="member-lyric-context"><span>前</span>${h(at.previous)}</div>` : ""}
     <div class="member-lyric">${memberLyricHTML(n)}</div>
     ${at?.next ? `<div class="member-lyric-context"><span>次</span>${h(at.next)}</div>` : ""}

@@ -283,7 +283,6 @@ select.field{appearance:auto}textarea.field{resize:vertical}
 .member-target{background:#293e58;color:#f0f6ff;border-bottom:2px solid var(--accent);border-radius:3px;padding:1px 2px;font-weight:650;box-decoration-break:clone;-webkit-box-decoration-break:clone}
 .member-note-top{display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:6px 12px;margin-bottom:8px}
 .member-note-location{min-width:0;color:var(--accent);font-size:13px;font-weight:600;line-height:1.6}
-.member-note-location small{display:block;color:var(--dim);font-size:11px;font-weight:400}
 .member-lyric-context{color:#969da8;font-size:12px;line-height:1.7;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .member-lyric-context>span{display:inline-block;margin-right:7px;font-size:10px;color:var(--dim)}
 .member-note-tags{display:flex;align-items:center;flex-wrap:wrap;gap:6px;font-size:12px;margin:0;line-height:1.5}

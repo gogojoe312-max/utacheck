@@ -132,13 +132,15 @@ test('invalid offsets and mismatched feedback never highlight a different phrase
  const rows=lyricDOM(c);run("openSummarySong('s1',0,'broken');applyMemberNavigation()");assert.equal(rows[0].marks.size,0);
  run("openSummarySong('s1',0,'other-song');applyMemberNavigation()");assert.equal(c.U.lyricTarget.noteId,undefined);assert.equal(rows[0].marks.size,0);
 });
-test('repeated lyrics identify their occurrence and surrounding lines without inventing a verse',()=>{
+test('repeated lyrics show surrounding lines without occurrence or row-number labels',()=>{
  const {c,run}=fixture();c.S.songs[0].lines=[{t:'最初の歌詞'},{t:'ラ'},{gap:true,t:''},{t:'二度目の前'},{t:'ラ'},{t:'続く歌詞'}];
  const at=run("memberNoteLocation({songId:'s1',lineIdx:4})");
- assert.equal(at.label,'同じ歌詞の2回目');assert.equal(at.detail,'歌詞4行目');
+ assert.equal(at.label,'');assert.equal(at.detail,undefined);
  assert.equal(at.previous,'二度目の前');assert.equal(at.next,'続く歌詞');
  assert(!JSON.stringify(at).includes('2番'));
- const first=run("memberNoteLocation({songId:'s1',lineIdx:0})");assert.equal(first.label,'歌詞1行目');assert.equal(first.previous,'');
+ const first=run("memberNoteLocation({songId:'s1',lineIdx:0})");assert.equal(first.label,'');assert.equal(first.previous,'');
+ const html=run("memberNoteBody({songId:'s1',lineIdx:4,tags:[]},false)");
+ assert(!html.includes('member-note-location'));assert(!html.includes('member-note-top'));assert(!html.includes('回目'));assert(!html.includes('行目'));
 });
 test('explicit verse sections remain accurate and C is not assumed to mean chorus',()=>{
  const {c,run}=fixture();c.S.songs[0].lines=[{t:'始まり',sec:'１Ａ'},{t:'次の歌詞'},{t:'二番',sec:'2サビ'},{t:'終わり',sec:'2C'}];
@@ -149,8 +151,8 @@ test('explicit verse sections remain accurate and C is not assumed to mean choru
 test('context skips blanks and section-only headings, and brackets the entire selected range',()=>{
  const {c,run}=fixture();c.S.songs[0].lines=[{sec:'2B',t:'2B'},{t:'直前'},{gap:true,t:''},{t:'対象の頭'},{t:'対象の終わり'},{t:'直後'}];
  const at=run("memberNoteLocation({songId:'s1',lineIdx:3,lineEnd:4})");
- assert.equal(at.label,'2番・Bメロ');assert.equal(at.detail,'歌詞2〜3行目');assert.equal(at.previous,'直前');assert.equal(at.next,'直後');
- assert.equal(run("memberNoteLocation({songId:'s1',lineIdx:2}).detail"),'歌詞1行目の後');
+ assert.equal(at.label,'2番・Bメロ');assert.equal(at.detail,undefined);assert.equal(at.previous,'直前');assert.equal(at.next,'直後');
+ assert.equal(run("memberNoteLocation({songId:'s1',lineIdx:2}).detail"),undefined);
  assert.equal(run("memberNoteLocation({songId:'s1',lineIdx:99})"),null);
 });
 test('source section metadata restores on import and older publications remain readable',()=>{
