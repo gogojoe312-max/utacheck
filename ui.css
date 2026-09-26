@@ -279,7 +279,15 @@ select.field{appearance:auto}textarea.field{resize:vertical}
 .member-note{padding:12px 0;border-top:1px solid var(--line);margin-top:8px;font-size:14px;line-height:1.7}
 .member-note:last-child{padding-bottom:0}
 .member-lyric,.member-note-memo{white-space:pre-wrap}
-.member-note-tags{font-size:13px;margin-top:4px}
+.member-lyric{font-size:16px;line-height:1.9;color:#c6cad3;overflow-wrap:anywhere}
+.member-target{background:#293e58;color:#f0f6ff;border-bottom:2px solid var(--accent);border-radius:3px;padding:1px 2px;font-weight:650;box-decoration-break:clone;-webkit-box-decoration-break:clone}
+.member-target-help{font-size:12px;line-height:1.8;color:var(--dim);margin:8px 0 16px}
+.member-note-tags{display:flex;align-items:center;flex-wrap:wrap;gap:6px;font-size:12px;margin:0 0 8px;line-height:1.5}
+.member-note-tag{display:inline-block;border:1px solid currentColor;border-radius:5px;padding:2px 7px;font-weight:600}
+.member-note-pitch{color:var(--text)}
+.member-note-members{display:flex;flex-wrap:wrap;gap:2px 8px;margin-top:8px;font-size:12px;line-height:1.7;color:var(--text)}
+.member-note-members>span:first-child{color:var(--dim);flex:none}
+.member-note-members>span:last-child{flex:1 1 140px;min-width:0}
 .member-note-memo{margin-top:4px}
 .member-empty{padding:32px 12px;color:var(--dim);text-align:center;line-height:1.8}
 .practice-tools{padding:12px 16px}
@@ -292,6 +300,7 @@ select.field{appearance:auto}textarea.field{resize:vertical}
 #app[data-viewer="1"] .summary-tabs>button{min-width:0;min-height:44px;padding:8px 5px;font-size:12px;white-space:nowrap}
 .member-note-link{display:block;position:relative;width:100%;min-height:44px;text-align:left;padding-right:24px;font:inherit;color:inherit;line-height:1.7;border-radius:6px}
 .member-note-link:active{background:var(--panel2)}
+.member-note-link .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}
 .member-note-arrow{position:absolute;right:5px;top:12px;color:var(--dim);font-size:22px;line-height:1}
 .member-back{flex:none;min-height:44px;padding:8px 12px;border-radius:10px;background:var(--panel2);color:var(--accent);font-size:14px;font-weight:600;white-space:nowrap}
 .member-back span{font-size:22px;line-height:1;vertical-align:-1px}

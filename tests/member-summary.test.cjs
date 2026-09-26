@@ -66,3 +66,27 @@ test('remembered member opens on another performance after relaunch and a roster
  const {c,run}=fixture();run("selectViewerMember('b')");c.S.showId='day2';c.S.members=[{id:'new-b',name:'田中'},{id:'new-a',name:'山田'}];c.U={view:'summary',mode:'member',allShows:false};
  const html=run('viewerSummaryBody()');assert(html.includes('田中さんへの指摘と'));assert(html.includes('二日目の総括'));assert.equal(c.U.sumOpen,'new-b');
 });
+test('the exact selected substring is highlighted in context without a duplicate target line',()=>{
+ const {c,run}=fixture();c.S.songs[0].lines=[{t:'大空目掛けて羽ばたくけれど (Yeah)'}];
+ c.notes=[{songId:'s1',showId:'day1',memberIds:['a','b'],lineIdx:0,from:11,to:12,tags:['音程']}];
+ const html=run('viewerSummaryBody()');
+ assert(html.includes('大空目掛けて羽ばたくけ<mark class="member-target">れど</mark> (Yeah)'));
+ assert(!html.includes('対象：'));assert.equal((html.match(/大空目掛けて/g)||[]).length,1);
+ assert(html.includes('対象メンバー'));assert(html.includes('member-note-tag">音程'));
+ run("selectViewerMember('a')");assert(!run('viewerSummaryBody()').includes('対象メンバー'));
+});
+test('selection uses Unicode characters and escapes imported lyric markup',()=>{
+ const {c,run}=fixture();c.S.songs[0].lines=[{t:'A🎵<歌詞>終'}];
+ // Use the application escape helper as well as the production renderer.
+ vm.runInContext(src.slice(src.indexOf('const h ='),src.indexOf('\n\n',src.indexOf('const h ='))),c);
+ assert.equal(run("memberLyricHTML({songId:'s1',lineIdx:0,from:1,to:5})"),'A<mark class="member-target">🎵&lt;歌詞&gt;</mark>終');
+});
+test('whole-line and multi-line notes show the complete marked range',()=>{
+ const {c,run}=fixture();c.S.songs[0].lines=[{t:'最初の行'},{t:'次の行'},{t:'範囲外'}];
+ assert.equal(run("memberLyricHTML({songId:'s1',lineIdx:0})"),'<mark class="member-target">最初の行</mark>');
+ assert.equal(run("memberLyricHTML({songId:'s1',lineIdx:0,lineEnd:1})"),'<mark class="member-target">最初の行\n次の行</mark>');
+});
+test('invalid old offsets never highlight a different phrase or stop the other notes',()=>{
+ const {c,run}=fixture();c.S.songs[0].lines=[{t:'短い歌詞'}];
+ for(const [from,to] of [[-1,2],[9,12],[2,1],[1,null]])assert.equal(run(`memberLyricHTML({songId:'s1',lineIdx:0,from:${from},to:${to}})`),'短い歌詞');
+});

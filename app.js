@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.12";
+const APP_VER = "16.41.13";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -4552,7 +4552,6 @@ function renderSheet() {
       <button class="primary" data-act="excel-export-share">保存・共有</button>
       <a class="organize-action" href="${h(item.url)}" download="${h(item.name)}">ダウンロードして保存</a>
       ${item.name.endsWith(".zip") ? '<p class="note">曲ごとのExcelをZIPにまとめています。iPhoneでは「ファイルに保存」後、ZIPをタップすると開けます。</p>' : ""}
-      ${(item.warnings || []).length ? `<details><summary>保存データから作成：${item.warnings.length}曲（元の書式は再現されません）</summary>${item.warnings.map(x=>`<p class="note" style="overflow-wrap:anywhere">${h(x)}</p>`).join("")}</details>` : ""}
       ${item.failures.length ? `<p role="alert" class="note" style="color:var(--bad)">作成できなかった曲（${item.failures.length}曲）</p>${item.failures.map(x=>`<p class="note" style="white-space:pre-wrap;overflow-wrap:anywhere">${h(x)}</p>`).join("")}` : ""}
     </div>`;
     document.body.appendChild(overlay); return;
@@ -5097,6 +5096,29 @@ function summarySongs() {
     && (!S.groupId || !so.groupId || so.groupId === S.groupId));
 }
 function summaryMemo(so) { return String(songMemo(so.id, so.showId)).trim(); }
+function memberLyricHTML(n) {
+  const so = S.songs.find(so => so.id === n.songId);
+  const lines = so?.lines || [];
+  const first = String(lines[n.lineIdx]?.t ?? lyricOf(n));
+  const chars = Array.from(first);
+  const highlight = text => `<mark class="member-target">${h(text)}</mark>`;
+  if (n.from != null) {
+    // Offsets are Unicode character positions, as in the lyric selection screen.
+    if (!Number.isInteger(n.from) || !Number.isInteger(n.to) || n.from < 0 || n.to < n.from || n.from >= chars.length) return h(first);
+    const end = Math.min(n.to + 1, chars.length);
+    return h(chars.slice(0, n.from).join("")) + highlight(chars.slice(n.from, end).join("")) + h(chars.slice(end).join(""));
+  }
+  const end = Number.isInteger(n.lineEnd) ? Math.min(n.lineEnd, lines.length - 1) : n.lineIdx;
+  const text = [first, ...lines.slice(n.lineIdx + 1, Math.max(n.lineIdx, end) + 1).map(line => line.t || "")].join("\n");
+  return text.trim() ? highlight(text) : '<span class="member-caption">歌詞のない箇所</span>';
+}
+function memberNoteBody(n, showMembers = true) {
+  const tags = (n.tags || []).map(tag => `<span class="member-note-tag">${h(tagName(tag))}</span>`).join("");
+  return `${tags || n.pitch ? `<div class="member-note-tags" style="color:${noteColor(n)}">${tags}${n.pitch ? `<span class="member-note-pitch">正しい音 ${h(pitchLabel(n.pitch))}</span>` : ""}</div>` : ""}
+    <div class="member-lyric">${memberLyricHTML(n)}</div>
+    ${showMembers ? `<div class="member-note-members"><span>対象メンバー</span><span>${h(names(n.memberIds) || "全員")}</span></div>` : ""}
+    ${n.memo ? `<div class="member-note-memo">${h(n.memo)}</div>` : ""}${handHTML(n)}`;
+}
 function viewerSummaryBody() {
   const selected = restoreViewerMember();
   const byMember = U.mode === "member";
@@ -5105,7 +5127,7 @@ function viewerSummaryBody() {
   const picker = byMember ? `<label class="summary-show-picker member-picker"><span>メンバー</span>
     <select id="summary-member" aria-label="メンバー"><option value="">全員</option>
     ${viewerMembers().map(m => `<option value="${h(m.id)}" ${selected && selected.id === m.id ? "selected" : ""}>${h(m.name)}</option>`).join("")}</select></label>
-    <p class="member-hint">${selected ? h(selected.name) + "さんへの指摘と、全員共通の総括を表示しています。" : "名前を選ぶと、自分への指摘を表示します。公演が変わっても、次回は選んだ名前で開きます。"}</p>` : "";
+    <p class="member-hint">${selected ? h(selected.name) + "さんへの指摘と、全員共通の総括を表示しています。" : "名前を選ぶと、自分への指摘を表示します。"}</p>` : "";
   const cards = summarySongs().map(so => {
     const notes = ns.filter(n => n.songId === so.id && n.showId === so.showId).sort((a,b) => a.lineIdx - b.lineIdx);
     const memo = summaryMemo(so);
@@ -5114,15 +5136,11 @@ function viewerSummaryBody() {
       <div class="member-song-head"><div class="grow">${U.allShows ? `<div class="member-caption">${h(showName(so.showId))}</div>` : ""}<h3>${h(songName(so))}</h3></div></div>
       ${memo ? `<div class="song-summary"><h4>総括 <span>全員共通</span></h4><div>${h(memo)}</div></div>` : ""}
       ${notes.length ? `<h4 class="member-notes-title">${byMember && selected ? h(selected.name) + "さんへの指摘" : "指摘"}<span>${notes.length}件</span></h4>
-        ${notes.map(n => `<button class="member-note member-note-link" data-act="summary-note" data-id="${h(so.id)}" data-i="${n.lineIdx}" aria-label="${h(songName(so))}：${h(lyricOf(n))}の指摘箇所を歌詞で見る"><span class="member-note-arrow" aria-hidden="true">›</span><div class="member-lyric">${h(lyricOf(n))}</div>
-          ${partOf(n) ? `<div class="member-caption">対象：${h(partOf(n))}</div>` : ""}
-          ${!byMember || !selected ? `<div class="member-caption">${h(names(n.memberIds) || "全員")}</div>` : ""}
-          <div class="member-note-tags" style="color:${noteColor(n)}">${h(n.tags.map(tagName).join("・"))}${n.pitch ? "（正しい音 " + h(pitchLabel(n.pitch)) + "）" : ""}</div>
-          ${n.memo ? `<div class="member-note-memo">${h(n.memo)}</div>` : ""}${handHTML(n)}</button>`).join("")}`
+        ${notes.map(n => `<button class="member-note member-note-link" data-act="summary-note" data-id="${h(so.id)}" data-i="${n.lineIdx}"><span class="member-note-arrow" aria-hidden="true">›</span>${memberNoteBody(n, !byMember || !selected)}<span class="sr-only">歌詞で見る</span></button>`).join("")}`
         : `<p class="member-hint">${byMember && selected ? h(selected.name) + "さんへの個別の指摘はありません。" : "個別の指摘はありません。"}</p>`}
     </section>`;
   }).join("");
-  return picker + (cards || `<p class="member-empty">${byMember && selected ? h(selected.name) + "さんへの指摘・曲の総括は" : "指摘・曲の総括は"}${U.allShows ? "まだ" : "この公演には"}ありません。</p>`);
+  return picker + (ns.length ? '<p class="member-target-help"><mark class="member-target">背景と下線</mark>が指摘箇所です。タップで歌詞を開きます。</p>' : "") + (cards || `<p class="member-empty">${byMember && selected ? h(selected.name) + "さんへの指摘・曲の総括は" : "指摘・曲の総括は"}${U.allShows ? "まだ" : "この公演には"}ありません。</p>`);
 }
 function viewerBackButton() {
   return VIEW() ? '<button class="member-back" data-act="summary-back" aria-label="指摘に戻る"><span aria-hidden="true">‹</span> 戻る</button>' : "";
@@ -5310,8 +5328,7 @@ function viewDiff() {
       const t = (sg2.lines[n.lineIdx] || {}).t || "";
       return `<${VIEW() ? `button class="member-note-link" data-act="summary-note" data-id="${h(sg2.id)}" data-i="${n.lineIdx}" aria-label="${h(songName(sg2))}：${h(t)}の指摘箇所を歌詞で見る"` : "div"} style="margin-top:6px;padding-top:6px;border-top:1px solid var(--line);font-size:13px">
         ${VIEW() ? '<span class="member-note-arrow" aria-hidden="true">›</span>' : ""}
-        <div>${h(t)}</div>
-        <div style="font-size:11px;color:${col};margin-top:2px">${h(names(n.memberIds) || "—")} / ${h(n.tags.map(tagName).join("・"))}${n.memo ? " — " + h(n.memo) : ""}</div>${handHTML(n)}
+        ${VIEW() ? memberNoteBody(n) : `<div>${h(t)}</div><div style="font-size:11px;color:${col};margin-top:2px">${h(names(n.memberIds) || "—")} / ${h(n.tags.map(tagName).join("・"))}${n.memo ? " — " + h(n.memo) : ""}</div>${handHTML(n)}`}
       </${VIEW() ? "button" : "div"}>`;
     };
     const sec = (title, arr, col, src) => arr.length
@@ -5486,9 +5503,9 @@ function closeExcelExport() {
   U.excelExport = null;
   if (U.menu?.kind === "excel-export") U.menu = null;
 }
-function presentExcelExport(name, blob, count, failures, warnings = []) {
+function presentExcelExport(name, blob, count, failures) {
   closeExcelExport();
-  U.excelExport = {name, blob, count, failures, warnings, url:URL.createObjectURL(blob)};
+  U.excelExport = {name, blob, count, failures, url:URL.createObjectURL(blob)};
   U.menu = {kind:"excel-export"}; renderSheet();
 }
 async function shareExcelExport() {
@@ -5503,37 +5520,15 @@ async function shareExcelExport() {
     if (e.name !== "AbortError") alert("共有を開けませんでした。「ダウンロードして保存」をお使いください。");
   } finally { U.sharingExcel = false; }
 }
-function savedAbsentWorkbook(so, tab) {
-  if (!Array.isArray(so.lines) || !so.lines.some(l => l.t)) throw new Error("保存済みの歌詞がないため、Excelを作成できません。");
-  const names = ids => (ids || []).map(id => (member(id) || {}).name).filter(Boolean).join("・");
-  const rows = changed => [[so.title || "歌割"], [changed ? tab : "元の歌割（保存データ）"], ["歌唱", "歌詞", "ハモ"]].concat(so.lines.map((l, i) => {
-    if (l.gap) return ["", "", ""];
-    const assign = changed ? splitAssign(so, i) : {main:l.main || l.parts || [], extra:l.extra || []};
-    const explicit = changed && (subOf(so.id, i) !== null || blockOf(so, i));
-    const main = names(assign.main) || (explicit ? "" : l.labelRaw || l.label || l.raw || "");
-    return [main, l.t || "", names(assign.extra)];
-  }));
-  const wb = XLSX.utils.book_new();
-  for (const [name, changed] of [[tab.replace(/[\\/?:*\[\]]/g, "_").slice(0,31) || "欠席ver", true], ["元の歌割（保存データ）", false]]) {
-    const sheet = XLSX.utils.aoa_to_sheet(rows(changed));
-    sheet['!cols'] = [{wch:26},{wch:72},{wch:24}];
-    XLSX.utils.book_append_sheet(wb, sheet, name);
-  }
-  return new Uint8Array(XLSX.write(wb, {type:"array", bookType:"xlsx", compression:true}));
-}
 function hasAbsentExportChanges(so) {
   return Array.isArray(so.lines) && so.lines.some((l, i) => {
     const before = (l.parts || []).slice().sort().join("|");
     return partsOf(so, i).slice().sort().join("|") !== before;
   });
 }
-async function buildAbsentWorkbook(so, tab, edits, warnings = []) {
+async function buildAbsentWorkbook(so, tab, edits) {
   const blob = await importTimeout(getOriginalExcel(so), 10000, "元のExcelを取得できませんでした。");
-  if (!blob) {
-    const data = savedAbsentWorkbook(so, tab);
-    warnings.push(`${so.title}：元のExcelがこの端末にないため、保存済みの歌詞・歌割と欠席変更から作成しました。元の書式${so.micSheet ? "・マイク表" : ""}は再現していません。`);
-    return data;
-  }
+  if (!blob) throw new Error("元Excelとの紐付けを復元できませんでした。元の書式を保つため、この曲は出力していません。取り込み前の元Excelが必要です。");
   let data = new Uint8Array(await importTimeout(blob.arrayBuffer(), 10000, "元のExcelを読み込めませんでした。"));
   // XLS / XLSB / CSV also need an XML workbook before adding a version tab.
   if (!(data[0] === 0x50 && data[1] === 0x4b) || !XLSX.CFB.read(data, {type:"array"}).FullPaths.some(p => p.endsWith('/xl/workbook.xml'))) {
@@ -5566,7 +5561,7 @@ async function runAbsentExport(songs, bundle) {
   const targets = songs.slice();
   U.exportingExcel = true;
   closeExcelExport();
-  const files = Object.create(null), failures = [], warnings = [];
+  const files = Object.create(null), failures = [];
   try {
     for (let i = 0; i < targets.length; i++) {
       const so = targets[i];
@@ -5575,7 +5570,7 @@ async function runAbsentExport(songs, bundle) {
       try {
         const edits = absentEdits(so);
         if (!Object.keys(edits).length && !hasAbsentExportChanges(so)) continue;
-        const data = await buildAbsentWorkbook(so, tab, edits, warnings);
+        const data = await buildAbsentWorkbook(so, tab, edits);
         const base = absentExportFilename(so.title, tab);
         let name = base, suffix = 2;
         while (files[name]) name = base.replace(/\.xlsx$/, ` (${suffix++}).xlsx`);
@@ -5591,7 +5586,7 @@ async function runAbsentExport(songs, bundle) {
     const data = bundle ? await zip(files, null, false) : files[names[0]];
     const name = bundle ? absentExportFilename(title,tab).replace(/\.xlsx$/, ".zip") : names[0];
     U.busy = ""; render();
-    presentExcelExport(name, new Blob([data], {type:bundle ? "application/zip" : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}), names.length, failures, warnings);
+    presentExcelExport(name, new Blob([data], {type:bundle ? "application/zip" : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}), names.length, failures);
   } catch (e) { alert("Excelを作れませんでした。\n" + e.message); }
   finally { U.busy = ""; U.exportingExcel = false; render(); }
 }
