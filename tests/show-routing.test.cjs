@@ -81,6 +81,14 @@ test('staff memos never enter either group publication, even when attached to pu
    assert.equal(payload.staffMemos,undefined);assert(!JSON.stringify(payload).includes('PRIVATE_STAFF'));
  }
 });
+test('publication keeps explicit section positions and deduplicates different section maps separately',()=>{
+ const {c,run}=setup();c.S.songs[0].lines=[{t:'同じ歌詞',sec:'1A'},{gap:true,t:'',sec:'2サビ'},{t:'続き'}];
+ c.S.songs.push({...c.S.songs[0],id:'copy',lines:[{t:'同じ歌詞',sec:'2A'},{gap:true,t:'',sec:'大サビ'},{t:'続き'}]});
+ const p=run("publicationData('ocha')");assert.equal(p.lib.length,2);
+ assert.equal(p.lib[0].sections[1].lineIdx,1);assert.equal(p.lib[0].sections[1].name,'2サビ');
+ assert.equal(p.lib[1].sections[0].name,'2A');assert.equal(p.lib[1].sections[1].name,'大サビ');
+ assert(!JSON.stringify(run("publicationData('rose')")).includes('大サビ'));
+});
 test('a release event follows its actual destination and never the stale import group',()=>{
  const {c,run}=setup();c.S.shows[1].name='リリイベ';c.S.shows[1].groupId='rose';c.S.shows[1].deliveryGroupId='ocha';c.S.showId='o';
  run("setShowFilter('rose')");assert(!run('showsFor()').some(sw=>sw.name==='リリイベ'));

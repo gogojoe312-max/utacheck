@@ -281,8 +281,12 @@ select.field{appearance:auto}textarea.field{resize:vertical}
 .member-lyric,.member-note-memo{white-space:pre-wrap}
 .member-lyric{font-size:16px;line-height:1.9;color:#c6cad3;overflow-wrap:anywhere}
 .member-target{background:#293e58;color:#f0f6ff;border-bottom:2px solid var(--accent);border-radius:3px;padding:1px 2px;font-weight:650;box-decoration-break:clone;-webkit-box-decoration-break:clone}
-.member-target-help{font-size:12px;line-height:1.8;color:var(--dim);margin:8px 0 16px}
-.member-note-tags{display:flex;align-items:center;flex-wrap:wrap;gap:6px;font-size:12px;margin:0 0 8px;line-height:1.5}
+.member-note-top{display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:6px 12px;margin-bottom:8px}
+.member-note-location{min-width:0;color:var(--accent);font-size:13px;font-weight:600;line-height:1.6}
+.member-note-location small{display:block;color:var(--dim);font-size:11px;font-weight:400}
+.member-lyric-context{color:#969da8;font-size:12px;line-height:1.7;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.member-lyric-context>span{display:inline-block;margin-right:7px;font-size:10px;color:var(--dim)}
+.member-note-tags{display:flex;align-items:center;flex-wrap:wrap;gap:6px;font-size:12px;margin:0;line-height:1.5}
 .member-note-tag{display:inline-block;border:1px solid currentColor;border-radius:5px;padding:2px 7px;font-weight:600}
 .member-note-pitch{color:var(--text)}
 .member-note-members{display:flex;flex-wrap:wrap;gap:2px 8px;margin-top:8px;font-size:12px;line-height:1.7;color:var(--text)}
@@ -305,6 +309,7 @@ select.field{appearance:auto}textarea.field{resize:vertical}
 .member-back{flex:none;min-height:44px;padding:8px 12px;border-radius:10px;background:var(--panel2);color:var(--accent);font-size:14px;font-weight:600;white-space:nowrap}
 .member-back span{font-size:22px;line-height:1;vertical-align:-1px}
 #app[data-viewer="1"] .member-lyric-target{outline:2px solid var(--accent);outline-offset:-3px;border-radius:10px;scroll-margin:16px}
+#app[data-viewer="1"] .txt .member-char-target{background:#F0B23C!important;color:#101217!important;border-bottom-color:#fff!important;font-weight:700}
 }
 
 .show-delivery-option{display:block;width:100%;min-height:48px;text-align:left;padding:12px;border-radius:10px;margin-top:6px;font-size:14px}

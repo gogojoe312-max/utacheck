@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.13";
+const APP_VER = "16.41.15";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1339,6 +1339,12 @@ function buildSong(parsed) {
   const so = { id: uid(), title: parsed.title || "無題", credit: parsed.credit || "", lines,
     roster, blocks: groups, blockCells: parsed.groupCells || {}, blockRows: parsed.groupRows || [], sheetName: parsed.sheetName || "",
     micSheet: parsed.micSheet || "", micMap: parsed.micMap || null };
+  // Section markers are optional in older publications. Preserve explicit names only.
+  (Array.isArray(parsed.sections) ? parsed.sections : []).forEach(section => {
+    if (Number.isInteger(section.lineIdx) && lines[section.lineIdx] && typeof section.name === "string" && section.name.trim()) {
+      lines[section.lineIdx].sec = section.name.trim();
+    }
+  });
   so.sig = songSig(so);
   return so;
 }
@@ -5096,6 +5102,37 @@ function summarySongs() {
     && (!S.groupId || !so.groupId || so.groupId === S.groupId));
 }
 function summaryMemo(so) { return String(songMemo(so.id, so.showId)).trim(); }
+function memberNoteLocation(n) {
+  const lines = S.songs.find(so => so.id === n.songId)?.lines || [];
+  const start = n.lineIdx;
+  if (!Number.isInteger(start) || start < 0 || start >= lines.length) return null;
+  const end = n.from == null && Number.isInteger(n.lineEnd) ? Math.max(start, Math.min(n.lineEnd, lines.length - 1)) : start;
+  const text = i => String(lines[i]?.t || "").trim();
+  const isLyric = i => !lines[i].gap && !!text(i) && !(lines[i].sec && text(i) === String(lines[i].sec).trim());
+  const lyricRows = lines.map((_,i) => i).filter(isLyric);
+  const previous = lyricRows.filter(i => i < start).at(-1);
+  const next = lyricRows.find(i => i > end);
+  const firstNo = lyricRows.filter(i => i < start).length + (isLyric(start) ? 1 : 0);
+  const lastNo = lyricRows.filter(i => i <= end).length;
+  const position = isLyric(start) ? `歌詞${firstNo}${lastNo > firstNo ? "〜" + lastNo : ""}行目`
+    : firstNo ? `歌詞${firstNo}行目の後` : "歌い出しの前";
+  // Matching repeated text identifies an occurrence, never a verse or chorus.
+  const key = text(start).normalize("NFKC").replace(/\s+/g, "");
+  const repeats = key && isLyric(start) ? lyricRows.filter(i => text(i).normalize("NFKC").replace(/\s+/g, "") === key) : [];
+  const occurrence = repeats.length > 1 ? `同じ歌詞の${repeats.indexOf(start) + 1}回目` : "";
+  let section = "";
+  for (let i = start; i >= 0; i--) {
+    if (typeof lines[i].sec === "string" && lines[i].sec.trim()) { section = lines[i].sec.trim(); break; }
+  }
+  const normalized = section.normalize("NFKC");
+  const named = /^(\d+)\s*(?:番\s*)?([A-D](?:メロ)?|サビ)$/i.exec(normalized);
+  if (named) {
+    const part = named[2].replace(/^[a-d]/, c => c.toUpperCase());
+    section = `${Number(named[1])}番・${/^[AB]$/.test(part) ? part + "メロ" : part}`;
+  }
+  return { label: section || occurrence || position, detail: section ? occurrence || position : occurrence ? position : "",
+    previous: previous == null ? "" : text(previous), next: next == null ? "" : text(next) };
+}
 function memberLyricHTML(n) {
   const so = S.songs.find(so => so.id === n.songId);
   const lines = so?.lines || [];
@@ -5114,8 +5151,12 @@ function memberLyricHTML(n) {
 }
 function memberNoteBody(n, showMembers = true) {
   const tags = (n.tags || []).map(tag => `<span class="member-note-tag">${h(tagName(tag))}</span>`).join("");
-  return `${tags || n.pitch ? `<div class="member-note-tags" style="color:${noteColor(n)}">${tags}${n.pitch ? `<span class="member-note-pitch">正しい音 ${h(pitchLabel(n.pitch))}</span>` : ""}</div>` : ""}
+  const at = memberNoteLocation(n);
+  return `<div class="member-note-top">${at ? `<div class="member-note-location"><span>${h(at.label)}</span>${at.detail ? `<small>${h(at.detail)}</small>` : ""}</div>` : ""}
+    ${tags || n.pitch ? `<div class="member-note-tags" style="color:${noteColor(n)}">${tags}${n.pitch ? `<span class="member-note-pitch">正しい音 ${h(pitchLabel(n.pitch))}</span>` : ""}</div>` : ""}</div>
+    ${at?.previous ? `<div class="member-lyric-context"><span>前</span>${h(at.previous)}</div>` : ""}
     <div class="member-lyric">${memberLyricHTML(n)}</div>
+    ${at?.next ? `<div class="member-lyric-context"><span>次</span>${h(at.next)}</div>` : ""}
     ${showMembers ? `<div class="member-note-members"><span>対象メンバー</span><span>${h(names(n.memberIds) || "全員")}</span></div>` : ""}
     ${n.memo ? `<div class="member-note-memo">${h(n.memo)}</div>` : ""}${handHTML(n)}`;
 }
@@ -5123,11 +5164,11 @@ function viewerSummaryBody() {
   const selected = restoreViewerMember();
   const byMember = U.mode === "member";
   const all = shownNotes();
-  const ns = byMember && selected ? all.filter(n => n.memberIds.includes(selected.id)) : all;
+  const ns = byMember && selected ? all.filter(n => !(n.memberIds || []).length || n.memberIds.includes(selected.id)) : all;
   const picker = byMember ? `<label class="summary-show-picker member-picker"><span>メンバー</span>
     <select id="summary-member" aria-label="メンバー"><option value="">全員</option>
     ${viewerMembers().map(m => `<option value="${h(m.id)}" ${selected && selected.id === m.id ? "selected" : ""}>${h(m.name)}</option>`).join("")}</select></label>
-    <p class="member-hint">${selected ? h(selected.name) + "さんへの指摘と、全員共通の総括を表示しています。" : "名前を選ぶと、自分への指摘を表示します。"}</p>` : "";
+    <p class="member-hint">${selected ? h(selected.name) + "さんへの指摘と、全員共通の指摘・総括を表示しています。" : "名前を選ぶと、自分への指摘を表示します。"}</p>` : "";
   const cards = summarySongs().map(so => {
     const notes = ns.filter(n => n.songId === so.id && n.showId === so.showId).sort((a,b) => a.lineIdx - b.lineIdx);
     const memo = summaryMemo(so);
@@ -5136,16 +5177,16 @@ function viewerSummaryBody() {
       <div class="member-song-head"><div class="grow">${U.allShows ? `<div class="member-caption">${h(showName(so.showId))}</div>` : ""}<h3>${h(songName(so))}</h3></div></div>
       ${memo ? `<div class="song-summary"><h4>総括 <span>全員共通</span></h4><div>${h(memo)}</div></div>` : ""}
       ${notes.length ? `<h4 class="member-notes-title">${byMember && selected ? h(selected.name) + "さんへの指摘" : "指摘"}<span>${notes.length}件</span></h4>
-        ${notes.map(n => `<button class="member-note member-note-link" data-act="summary-note" data-id="${h(so.id)}" data-i="${n.lineIdx}"><span class="member-note-arrow" aria-hidden="true">›</span>${memberNoteBody(n, !byMember || !selected)}<span class="sr-only">歌詞で見る</span></button>`).join("")}`
+        ${notes.map(n => `<button class="member-note member-note-link" data-act="summary-note" data-id="${h(so.id)}" data-i="${n.lineIdx}" data-note="${h(n.id || "")}"><span class="member-note-arrow" aria-hidden="true">›</span>${memberNoteBody(n, !byMember || !selected || !(n.memberIds || []).length)}<span class="sr-only">歌詞で見る</span></button>`).join("")}`
         : `<p class="member-hint">${byMember && selected ? h(selected.name) + "さんへの個別の指摘はありません。" : "個別の指摘はありません。"}</p>`}
     </section>`;
   }).join("");
-  return picker + (ns.length ? '<p class="member-target-help"><mark class="member-target">背景と下線</mark>が指摘箇所です。タップで歌詞を開きます。</p>' : "") + (cards || `<p class="member-empty">${byMember && selected ? h(selected.name) + "さんへの指摘・曲の総括は" : "指摘・曲の総括は"}${U.allShows ? "まだ" : "この公演には"}ありません。</p>`);
+  return picker + (cards || `<p class="member-empty">${byMember && selected ? h(selected.name) + "さんへの指摘・曲の総括は" : "指摘・曲の総括は"}${U.allShows ? "まだ" : "この公演には"}ありません。</p>`);
 }
 function viewerBackButton() {
   return VIEW() ? '<button class="member-back" data-act="summary-back" aria-label="指摘に戻る"><span aria-hidden="true">‹</span> 戻る</button>' : "";
 }
-function openSummarySong(id, lineIdx = null) {
+function openSummarySong(id, lineIdx = null, noteId = "") {
   if (!VIEW()) return;
   const allowed = new Set(summaryShows().map(sw => sw.id));
   const so = id ? S.songs.find(so => so.id === id && allowed.has(so.showId)
@@ -5160,6 +5201,11 @@ function openSummarySong(id, lineIdx = null) {
   U.overview = false; U.picker = false;
   U.lyricTarget = Number.isInteger(lineIdx) && lineIdx >= 0 && lineIdx < (so.lines || []).length
     ? { songId: so.id, lineIdx, pending: true } : null;
+  const note = noteId && NOTES().find(n => n.id === noteId && n.songId === so.id && n.showId === so.showId && n.lineIdx === lineIdx);
+  if (U.lyricTarget && note) {
+    Object.assign(U.lyricTarget, { noteId: note.id, from: note.from, to: note.to,
+      lineEnd: note.from == null && Number.isInteger(note.lineEnd) ? Math.max(lineIdx, Math.min(note.lineEnd, so.lines.length - 1)) : lineIdx });
+  }
   U.view = "live"; save(); render();
 }
 function backToSummary() {
@@ -5185,7 +5231,20 @@ function applyMemberNavigation() {
   if (U.view !== "live" || U.overview || !target || song()?.id !== target.songId) return;
   const row = app.querySelector(`[data-lyric-line="${target.lineIdx}"]`);
   if (!row) return;
-  row.classList.add("member-lyric-target");
+  const last = target.lineEnd ?? target.lineIdx;
+  for (let i = target.lineIdx; i <= last; i++) {
+    const line = app.querySelector(`[data-lyric-line="${i}"]`);
+    if (!line) continue;
+    line.classList.add("member-lyric-target");
+    if (!target.noteId) continue;
+    const chars = line.querySelectorAll(".txt [data-c]");
+    const validRange = Number.isInteger(target.from) && Number.isInteger(target.to)
+      && target.from >= 0 && target.to >= target.from && target.from < chars.length;
+    chars.forEach(ch => {
+      const pos = Number(ch.dataset.c);
+      if (target.from == null || (validRange && pos >= target.from && pos <= target.to)) ch.classList.add("member-char-target");
+    });
+  }
   if (target.pending) {
     row.scrollIntoView({ block: "center", behavior: "instant" });
     target.pending = false;
@@ -5326,7 +5385,7 @@ function viewDiff() {
     const row = (n, src, col) => {
       const sg2 = src === "now" ? so : prevSong;
       const t = (sg2.lines[n.lineIdx] || {}).t || "";
-      return `<${VIEW() ? `button class="member-note-link" data-act="summary-note" data-id="${h(sg2.id)}" data-i="${n.lineIdx}" aria-label="${h(songName(sg2))}：${h(t)}の指摘箇所を歌詞で見る"` : "div"} style="margin-top:6px;padding-top:6px;border-top:1px solid var(--line);font-size:13px">
+      return `<${VIEW() ? `button class="member-note-link" data-act="summary-note" data-id="${h(sg2.id)}" data-i="${n.lineIdx}" data-note="${h(n.id || "")}" aria-label="${h(songName(sg2))}：${h(t)}の指摘箇所を歌詞で見る"` : "div"} style="margin-top:6px;padding-top:6px;border-top:1px solid var(--line);font-size:13px">
         ${VIEW() ? '<span class="member-note-arrow" aria-hidden="true">›</span>' : ""}
         ${VIEW() ? memberNoteBody(n) : `<div>${h(t)}</div><div style="font-size:11px;color:${col};margin-top:2px">${h(names(n.memberIds) || "—")} / ${h(n.tags.map(tagName).join("・"))}${n.memo ? " — " + h(n.memo) : ""}</div>${handHTML(n)}`}
       </${VIEW() ? "button" : "div"}>`;
@@ -7299,7 +7358,7 @@ document.addEventListener("click", (e) => {
     case "prev": if (U.songIdx > 0) { commitFields(); markRead(song()); U.songIdx--; if (S.recMode) { S.rsongId = SONGS()[U.songIdx].id; U.secView = ""; save(); } render(); } break;
     case "next": if (U.songIdx < SONGS().length - 1) { commitFields(); markRead(song()); U.songIdx++; if (S.recMode) { S.rsongId = SONGS()[U.songIdx].id; U.secView = ""; save(); } render(); } break;
     case "summary-lyrics": openSummarySong(); break;
-    case "summary-note": openSummarySong(id, i); break;
+    case "summary-note": openSummarySong(id, i, b.dataset.note); break;
     case "summary-back": backToSummary(); break;
     case "go-summary": commitFields(); U.view = "summary"; render(); break;
     case "pt-settings": if (window.PTLink) window.PTLink.open(); break;
@@ -9611,13 +9670,15 @@ function publicationData(gid, previous) {
         : [l.cont ? "→" : (l.raw != null ? l.raw : l.label), l.t, l.cell || "", l.lcell || "",
            (l.extra || []).length ? "ハモ " + (l.extra || []).map((m) => (member(m) || {}).name).filter(Boolean).join("・") : "",
            l.extraCell || "", l.labelRaw || l.raw || "", l.extraRaw || ""]));
-      const key = x.title + "\u0001" + JSON.stringify(lines);
+      const sections = x.lines.flatMap((l, lineIdx) => typeof l.sec === "string" && l.sec.trim() ? [{lineIdx, name:l.sec.trim()}] : []);
+      const key = x.title + "\u0001" + JSON.stringify(lines) + "\u0001" + JSON.stringify(sections);
       if (libKey.has(key)) return libKey.get(key);
       const gs = {};
       Object.keys(x.blocks || {}).forEach((b) => {
         gs[b] = (x.blocks[b] || []).map((mid) => (member(mid) || {}).name).filter(Boolean);
       });
       lib.push({ title: x.title, credit: x.credit, groups: gs, order: orderOf(x), lines,
+        ...(sections.length ? {sections} : {}),
         groupRows: (x.blockRows || []).map((br) => ({ b: br.b, ncell: br.ncell || "", lcell: br.lcell || "" })) });
       libKey.set(key, lib.length - 1);
       return lib.length - 1;
