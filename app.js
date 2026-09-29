@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.16";
+const APP_VER = "16.41.17";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1236,12 +1236,21 @@ const nextTake = (so) => {
   return Math.max.apply(null, same.map((x) => Number(x.take || 1))) + 1;
 };
 
-// この公演の曲を曲名順に並べ替える（数字は数として扱う）
+// EN1、EN2…は本編の後。全角・小文字・番号前の空白も同じ表記として扱う。
+function compareSongTitles(a, b) {
+  const key = title => String(title || "").normalize("NFKC").trim()
+    .replace(/^(M|EN)\s*(\d+)/i, (_, prefix, number) => prefix.toUpperCase() + number);
+  const ak = key(a), bk = key(b);
+  return Number(/^EN\d/.test(ak)) - Number(/^EN\d/.test(bk))
+    || ak.localeCompare(bk, "ja", { numeric: true });
+}
+
+// この公演の曲を曲名順に並べ替える（数字は数として扱い、アンコールは最後）
 function sortSongsByTitle() {
   const cur = SONGS();
   if (cur.length < 2) return;
   const sorted = cur.slice().sort((a, b) =>
-    a.title.localeCompare(b.title, "ja", { numeric: true }) || ((a.take || 1) - (b.take || 1)));
+    compareSongTitles(a.title, b.title) || ((a.take || 1) - (b.take || 1)));
   const idxs = cur.map((x) => S.songs.indexOf(x)).sort((a, b) => a - b);
   idxs.forEach((pos, i) => { S.songs[pos] = sorted[i]; });
   save();
@@ -9470,7 +9479,7 @@ function importTimeout(promise, ms, message) {
 
 // クラウド上の選択ファイルも、前の曲の解析・保存を待たずに読み取りを開始する。
 function captureImportFiles(files) {
-  return Array.from(files).sort((a,b) => a.name.localeCompare(b.name,"ja",{numeric:true})).map(file => ({
+  return Array.from(files).sort((a,b) => compareSongTitles(a.name, b.name)).map(file => ({
     name:file.name,
     ready:importTimeout(Promise.resolve().then(() => file.arrayBuffer()), 60000,
       "ファイルの取得が完了しませんでした。ファイルアプリでダウンロードしてから再選択してください。")
