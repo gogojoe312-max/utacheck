@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.17";
+const APP_VER = "16.41.18";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -505,7 +505,7 @@ function setCurrentShowGroup(groupId) {
       });
     }
   }
-  save(); schedulePush(); render();
+  rememberViewSelection(); save(); schedulePush(); render();
 }
 function setSongDelivery(ids, groupId) {
   if (VIEW() || (groupId && !S.groups.some(g => g.id === groupId))) return;
@@ -539,10 +539,58 @@ function syncShowGroup() {
   const id = showDeliveryGroupId(S.shows.find(sw => sw.id === S.showId));
   if (id) S.groupId = id;
 }
+// Navigation belongs to this device, not to a cloud backup or publication.
+// Write this small record immediately so closing before the IndexedDB debounce
+// finishes still remembers the last deliberate selection. Never store secrets.
+const viewSelections = new Map();
+function viewSelectionKey() {
+  return "utacheck.selection:" + (VIEW() ? "viewer:" + (S.linkSrc || S.src || S.groupId || "default") : "editor");
+}
+function readViewSelection() {
+  const key = viewSelectionKey();
+  if (viewSelections.has(key)) return viewSelections.get(key);
+  let saved;
+  try { saved = JSON.parse(localStorage.getItem(key) || "null"); } catch (_) { return null; }
+  if (!saved || saved.version !== 1 || ![saved.showId, saved.groupId, saved.showFilter].every(x => typeof x === "string")) return null;
+  viewSelections.set(key, saved);
+  return saved;
+}
+function rememberViewSelection() {
+  if (preview || S.recMode) return;
+  const saved = {version: 1, showId: S.showId || "", groupId: S.groupId || "", showFilter: U.showFilter || ""};
+  viewSelections.set(viewSelectionKey(), saved);
+  try {
+    localStorage.setItem(viewSelectionKey(), JSON.stringify(saved));
+  } catch (_) { /* The normal state save remains available when storage is blocked. */ }
+}
+function restoreViewSelection(previousShowId = S.showId) {
+  if (preview || S.recMode) return false;
+  const saved = readViewSelection();
+  if (!saved) return false;
+  const validGroup = id => S.groups.some(g => g.id === id);
+  U.showFilter = saved.showFilter === "__unassigned__" || validGroup(saved.showFilter) ? saved.showFilter : "";
+  // A viewer can only reopen a performance included in this source's data.
+  const available = S.shows.filter(sw => !sw.hidden && (!VIEW() || S.songs.some(so =>
+    so.showId === sw.id && (!so.groupId || so.groupId === S.groupId))));
+  const selected = available.find(sw => sw.id === saved.showId);
+  const fallback = available.find(sw => sw.id === S.showId) || available[0];
+  S.showId = (selected || fallback || {}).id || "";
+  if (!VIEW()) {
+    if (selected && validGroup(saved.groupId)) S.groupId = saved.groupId;
+    else if (!validGroup(S.groupId)) S.groupId = (S.groups[0] || {}).id || "";
+    // Resolve the actual destination without modifying show/song ownership.
+    syncShowGroup();
+  }
+  if (S.showId !== previousShowId) U.songIdx = 0;
+  // Keep a missing preference: its show may arrive with the next cloud read.
+  // Only a new deliberate selection replaces it.
+  return !!selected;
+}
+
 function selectShow(id) {
   if (!S.shows.some(sw => sw.id === id)) return;
   S.showId = id; U.songIdx = 0;
-  syncShowGroup(); save();
+  syncShowGroup(); rememberViewSelection(); save();
   if (!VIEW()) schedulePush();
 }
 function setShowDelivery(id, groupId) {
@@ -558,7 +606,7 @@ function setShowDelivery(id, groupId) {
       if (so.deliveryGroupId !== "" && !S.groups.some(g => g.id === so.deliveryGroupId && g.nopub)) delete so.deliveryGroupId;
     });
   }
-  syncShowGroup(); U.menu = null; save(); schedulePush(); render();
+  syncShowGroup(); rememberViewSelection(); U.menu = null; save(); schedulePush(); render();
 }
 
 function showsFor() {
@@ -574,6 +622,7 @@ function setShowFilter(id) {
   // Browsing never changes the current performance or its publication destination.
   // "All" also opens folders so a saved performance can always be found.
   if (!U.showFilter) S.shows.forEach(sw => { if (sw.folder) S.folders[sw.folder] = true; });
+  rememberViewSelection();
   render(); if (U.picker) renderSheet();
 }
 const showsNewestFirst = () => S.shows.slice().sort((a, b) => (b.ts || 0) - (a.ts || 0));
@@ -5074,7 +5123,7 @@ function summaryShowPicker() {
 function selectSummaryShow(id) {
   if (S.recMode || (id && !summaryShows().some(sw => sw.id === id))) return;
   U.allShows = !id;
-  if (id) { S.showId = id; if (!VIEW()) syncShowGroup(); }
+  if (id) { S.showId = id; if (!VIEW()) syncShowGroup(); rememberViewSelection(); }
   U.songIdx = 0;
   save(); render();
 }
@@ -7810,6 +7859,7 @@ document.addEventListener("click", (e) => {
       S.groups = S.groups.filter((x) => x.id !== id);
       if (S.groupId === id) S.groupId = S.groups[0].id;
       if (U.showFilter === id) U.showFilter = "";
+      syncShowGroup(); rememberViewSelection();
       U.menu = null;
       save(); schedulePush(); renderSheet(); render();
       break;
@@ -8627,6 +8677,7 @@ document.addEventListener("click", (e) => {
         S.shows = S.shows.filter((x) => x.id !== id);
         sweep();
         if (S.showId === id) S.showId = S.shows[0].id;
+        syncShowGroup(); rememberViewSelection();
         save(); render();
       }
       break;
@@ -9594,6 +9645,7 @@ async function handleFiles(files) {
     autoSubs();
     if (imported) {
       S.showId = showId; S.recMode = false;
+      rememberViewSelection();
       sortSongsByTitle();
       U.songIdx = Math.max(0, SONGS().findIndex(s => s.id === imported.id));
       U.view = "live"; U.picker = false; U.overview = false;
@@ -10694,6 +10746,7 @@ function resetForNewSource() {
   const nid = uid();
   S.shows = [{ id: nid, name: todayLabel(), ts: Date.now() }];
   S.showId = nid; S.setlistVer = 0; U.songIdx = 0;
+  U.summaryReturn = null; U.lyricTarget = null; U.summaryScroll = null;
 }
 
 function applySetlist(d) {
@@ -10804,6 +10857,7 @@ function applySetlist(d) {
     U.picker = false;
   }
   U.songIdx = 0;
+  if (!U.summaryReturn) restoreViewSelection();
   save(); render();
 }
 
@@ -10956,10 +11010,11 @@ async function checkOther() {
       return (S[key] || []).some(x => !x.hidden && !incoming.has(x.id));
     });
     if (!dirty && !removesSavedWork) {
-      const tk = S.ghToken, bk = S.bkGistId, bkk = S.bkKey, ep = S.editPass;
+      const tk = S.ghToken, bk = S.bkGistId, bkk = S.bkKey, ep = S.editPass, currentShowId = S.showId;
       Object.keys(S).forEach((k) => { delete S[k]; });
       Object.assign(S, fromBackup(obj.state));
       S.ghToken = tk; S.bkGistId = bk; S.bkKey = bkk; S.editPass = ep;
+      restoreViewSelection(currentShowId);
       S.bkSeen = at; S.bkAt = at; S.bkHash = bkSignature();
       save(); otherAt = 0;
       render();
@@ -11063,6 +11118,8 @@ function copyText(t, msg) {
 (async () => {
   await load();
   booted = true;
+  restoreViewSelection();
+  if (!readViewSelection()) rememberViewSelection();
   if (VIEW() || /^#g=/.test(location.hash)) { U.view = "summary"; U.mode = "member"; }
   if (VIEW()) restoreViewerMember();
   // 前まで localStorage に置いていた分は、IndexedDB へ引っ越す。

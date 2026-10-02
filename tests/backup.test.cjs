@@ -11,7 +11,7 @@ function setup(gh) {
  const copy=()=>JSON.parse(JSON.stringify({id:'target',files:server.files}));
  const c=vm.createContext({S:{ghToken:'secret',bkGistId:'target',bkAt:10,bkHash:0,notes:[{memo:'original'}],draws:{line:[1,2]}},U:{view:'live'},preview:null,VIEW:()=>false,
   APP_VER:"test",crypto:require("node:crypto").webcrypto,URL,Date,AbortSignal,TextEncoder,TextDecoder,Response,Uint8Array,CompressionStream,JSON,Promise,
-  packState:x=>x,unpackState:x=>x,save(){},render(){},commitFields(){},alert:x=>alerts.push(x),
+  restoreViewSelection(){},packState:x=>x,unpackState:x=>x,save(){},render(){},commitFields(){},alert:x=>alerts.push(x),
   gh:async(path,opts={})=>{
     if (!opts.method) return copy();
     uploads.push([path,opts]);

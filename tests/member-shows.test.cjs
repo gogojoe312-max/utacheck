@@ -4,7 +4,7 @@ const fs=require('node:fs'),vm=require('node:vm');
 const src=fs.readFileSync(require('node:path').join(__dirname,'..','app.js'),'utf8');
 const block=(a,b)=>src.slice(src.indexOf(a),src.indexOf(b,src.indexOf(a)));
 test('summary changes day while keeping member open and excludes other groups',()=>{
- const c=vm.createContext({S:{groupId:'g',showId:'today',shows:[{id:'today',name:'今日'},{id:'yesterday',name:'昨日'},{id:'other',name:'別グループ'}],songs:[{showId:'today',groupId:'g'},{showId:'yesterday',groupId:'g'},{showId:'other',groupId:'other'}]},U:{view:'summary',mode:'member',sumOpen:'member1'},VIEW:()=>true,save(){},render(){},h:x=>x});
+ const c=vm.createContext({rememberViewSelection(){},restoreViewSelection(){},S:{groupId:'g',showId:'today',shows:[{id:'today',name:'今日'},{id:'yesterday',name:'昨日'},{id:'other',name:'別グループ'}],songs:[{showId:'today',groupId:'g'},{showId:'yesterday',groupId:'g'},{showId:'other',groupId:'other'}]},U:{view:'summary',mode:'member',sumOpen:'member1'},VIEW:()=>true,save(){},render(){},h:x=>x});
  c.showsNewestFirst=()=>c.S.shows;
  vm.runInContext(block('function summaryShows()', 'function viewSummary()'),c);
  vm.runInContext("selectSummaryShow('yesterday')",c);
@@ -15,7 +15,7 @@ test('summary changes day while keeping member open and excludes other groups',(
 });
 test('new received notes preserve the selected summary day and member',()=>{
  let next=0;
- const c=vm.createContext({S:{groups:[],groupId:'g',showId:'yesterday',srcGroup:'group',members:[{id:'m',name:'山田'}],songs:[{id:'old',showId:'yesterday'}],notes:[],shows:[]},U:{view:'summary',mode:'member',sumOpen:'m'},VIEW:()=>true,Date,
+ const c=vm.createContext({rememberViewSelection(){},restoreViewSelection(){},S:{groups:[],groupId:'g',showId:'yesterday',srcGroup:'group',members:[{id:'m',name:'山田'}],songs:[{id:'old',showId:'yesterday'}],notes:[],shows:[]},U:{view:'summary',mode:'member',sumOpen:'m'},VIEW:()=>true,Date,
   member:id=>c.S.members.find(m=>m.id===id),addMember:name=>c.S.members.find(m=>m.name===name),group:()=>({id:'g'}),uid:()=>String(++next),
   buildSong:sg=>({...sg,id:String(++next),lines:[],blocks:{},roster:[]}),songSig:()=>'',save(){},render(){},NOTES:()=>c.S.pubNotes||[],showsNewestFirst:()=>c.S.shows});
  vm.runInContext(block('function applySetlist(d)', 'async function syncSetlist'),c);

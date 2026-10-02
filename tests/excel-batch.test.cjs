@@ -9,7 +9,7 @@ function setup(overrides={}){
  const c=vm.createContext({XLSX,Uint8Array,TextDecoder,Blob,Date,Promise,clearTimeout,
   setTimeout:(f,ms)=>setTimeout(f,ms>=5000?25:ms),
   uid:()=>String(++id),recSong:()=>null,S:{rsongs:[],songs:[],notes:[],groups:[],rosters:{},groupId:'group',showId:'show',shows:[]},U:{view:'setup'},
-  render(){},save(){},autoSubs(){},showDeliveryGroupId:()=>'',alert:m=>alerts.push(m),confirm:()=>false,
+  rememberViewSelection(){},render(){},save(){},autoSubs(){},showDeliveryGroupId:()=>'',alert:m=>alerts.push(m),confirm:()=>false,
   sigOf:s=>s.title,songName:s=>s.title,copyRecords:()=>({lost:0}),
   addMember:n=>({name:n,id:n}),buildSong:p=>({...p,id:String(++id)}),
   putClip:async(key,blob)=>captures.push({key,blob}),...overrides});

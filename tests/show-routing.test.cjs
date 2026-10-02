@@ -3,7 +3,7 @@ const src=fs.readFileSync(require('node:path').join(__dirname,'..','app.js'),'ut
 const block=(a,b)=>src.slice(src.indexOf(a),src.indexOf(b,src.indexOf(a)));
 function setup(){
  let pushes=0;
- const c=vm.createContext({S:{groupId:'rose',showId:'r',groups:[{id:'ocha',name:'OCHA NORMA'},{id:'rose',name:'ロージークロニクル'},{id:'off',name:'配信しない',nopub:true}],
+ const c=vm.createContext({preview:null,S:{groupId:'rose',showId:'r',groups:[{id:'ocha',name:'OCHA NORMA'},{id:'rose',name:'ロージークロニクル'},{id:'off',name:'配信しない',nopub:true}],
  shows:[{id:'o',name:'OCHA 公演',ts:2},{id:'r',name:'ロージークロニクル 公演',ts:1}],songs:[{id:'a',title:'曲A',showId:'o',groupId:'ocha',lines:[],blocks:{}},{id:'b',title:'曲B',showId:'r',groupId:'rose',lines:[],blocks:{}}],notes:[{songId:'a',showId:'o',memberIds:[],tags:['fast'],lineIdx:0,memo:'指摘A'}],memos:{'o|a':'総括A'},gsubs:{},subs:{}},U:{},VIEW:()=>false,save(){},render(){},schedulePush(){pushes++;},member:()=>null});
  c.group=id=>c.S.groups.find(g=>g.id===id);c.showsNewestFirst=()=>c.S.shows;
  vm.runInContext(block('function autoShowGroupId(', 'function showsFor()'),c);
