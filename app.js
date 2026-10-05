@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.19";
+const APP_VER = "16.41.20";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -5812,7 +5812,7 @@ function backupSettingsHTML() {
     <p class="note" role="status" ${S.bkError ? 'style="color:var(--bad)"' : ""}>${h(status)}</p>
     ${S.bkFileAt ? `<p class="note">ファイル作成：${new Date(S.bkFileAt).toLocaleString("ja-JP")}</p>` : ""}
     <button class="primary" data-act="bknow" ${backupInFlight ? "disabled" : ""}>${backupInFlight ? "保存中…" : S.ghToken ? "バックアップする" : "ファイルに保存"}</button>
-    ${S.ghToken && S.bkError ? '<button class="ghost" data-act="bkfile">ファイルに保存</button>' : ""}
+    ${S.ghToken ? '<button class="ghost" data-act="bkfile">ファイルに保存</button>' : ""}
     ${S.ghToken ? '<button class="ghost" data-act="backup-restore">クラウドから復元</button>' : ""}
     <button class="ghost" data-act="backup-file-restore">ファイルから復元</button>
     <p class="note">歌割・指摘・手書き・設定を保存します。録音音声は含みません。</p>
