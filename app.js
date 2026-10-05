@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.18";
+const APP_VER = "16.41.19";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -781,7 +781,10 @@ function labelOf(so, i) {
   const l = so.lines[i] || {};
   if (S.recMode) {
     const b = barsOf(so)[i];
-    return (l.sec ? l.sec + " " : "") + (S.recBars && b != null ? b : "");
+    const position = (l.sec ? l.sec + " " : "") + (S.recBars && b != null ? b : "");
+    const assignment = l.labelRaw || l.label || "";
+    const extra = l.extraRaw && !assignment.includes(l.extraRaw) ? " " + l.extraRaw : "";
+    return position + (assignment ? " " + assignment : "") + extra;
   }
   // 続きの行（結合セルの2行目以降）は、元と同じで名前を出さない。
   // ここで名前を出すと、ひとまとまりの歌割が行ごとに分かれて見える。
@@ -4225,7 +4228,7 @@ function viewLive() {
         </span>`).join("");
       const st2 = lineStatus(s, i);
       const newSec = S.recMode && l.sec && l.sec !== (s.lines[i - 1] || {}).sec;
-      const foc = U.focus && partsOf(s, i).includes(U.focus);
+      const foc = S.recMode ? recLineFocus(s, i) === "rec-focus-own" : U.focus && partsOf(s, i).includes(U.focus);
       const tint = st2 === "need" ? "var(--bad)" : st2 === "changed" ? "#F0B23C"
         : foc ? "#4C9BFF" : (ns.length ? noteColor(ns[0]) : "");
       const strength = (st2 || foc) ? 18 : 9;
@@ -4233,7 +4236,7 @@ function viewLive() {
       const vh = vm.info[i];
       return `${newSec ? `<div class="secdiv" id="sec-${h(l.sec)}"><span>${h(l.sec)}</span></div>` : ""}
       ${vh ? `<div class="vtdiv" style="color:${vh.c}"><span>${h(vh.vt)}</span></div>` : ""}
-      <div data-lyric-line="${i}" class="ln${S.recMode && l.add ? " lnadd" : ""}${S.recMode && l.skip ? " lnskip" : ""}${l.cut ? " lncut" : ""}${isAgeri(l) ? " lnage" : ""}"${
+      <div data-lyric-line="${i}" class="ln ${S.recMode ? recLineFocus(s, i) : ""}${S.recMode && l.add ? " lnadd" : ""}${S.recMode && l.skip ? " lnskip" : ""}${l.cut ? " lncut" : ""}${isAgeri(l) ? " lnage" : ""}"${
         l.tag && tanc[l.tag] === i ? ` id="sec-${h(l.tag)}"` : ""} style="${tint ? `background:color-mix(in srgb,${tint} ${strength}%,transparent);` : ""}${vtc ? `box-shadow:inset 3px 0 0 ${vtc}` : ""}">
         <button class="lbl" data-act="${S.recMode ? "rbar" : "noteblock"}" data-i="${i}"${S.recMode || VIEW() ? "" : ` data-hold="assignline"`}
           style="${st2 ? `color:${st2 === "need" ? "var(--bad)" : "#F0B23C"}` : ""}">${S.recMode && l.tag ? `<b class="tagmk">${h(l.tag)}</b>` : ""}${l.cut ? `<b class="cutmk">カット</b>` : ""}${labelHTML(s, i)}</button>
@@ -4390,7 +4393,7 @@ function viewOverview(s) {
       const vh2 = vm2.info[i];
       return `${newSec ? `<div class="secdiv" id="sec-${h(l.sec)}"><span>${h(l.sec)}</span></div>` : ""}
         ${vh2 ? `<div class="vtdiv vtdivov" style="color:${vh2.c}"><span>${h(vh2.vt)}</span></div>` : ""}
-        <button class="ovw${l.add ? " lnadd" : ""}${S.recMode && l.skip ? " lnskip" : ""}${l.cut ? " lncut" : ""}" data-act="jumpline" data-i="${i}"
+        <button class="ovw ${recLineFocus(s, i)}${l.add ? " lnadd" : ""}${S.recMode && l.skip ? " lnskip" : ""}${l.cut ? " lncut" : ""}" data-act="jumpline" data-i="${i}"
           style="${vtColor(vtOf(l)) ? `box-shadow:inset 3px 0 0 ${vtColor(vtOf(l))}` : ""}">
           <span class="ovwn">${l.tag ? `<b class="tagmk">${h(l.tag)}</b>` : ""}${S.recBars && bars[i] != null ? bars[i] : ""}</span>
           <span>${h(l.add ? "（" + l.t + "）" : l.t)}</span></button>`;
@@ -4489,6 +4492,7 @@ function viewOverview(s) {
     <button class="ic" data-act="ovsize">${S.recMode ? S.recOvSize : U.ovSize}px</button>
   </div>
   ${blockBar(s)}
+  ${S.recMode ? recMemberSelector() : ""}
   <div class="scroll" style="padding:8px 10px">${bodyHTML}
     ${songMemo(s.id) && !S.recMode ? `<div class="card" style="margin-top:12px">
       <h4 style="font-size:11px;color:var(--dim);margin-bottom:6px">総括</h4>
@@ -5979,6 +5983,38 @@ function focusRow() {
   return foc || rows.find((r) => r.live);
 }
 
+// 録音枠の人を歌割のメンバーへ結び付ける。曖昧な姓は選ばない。
+function recFocusMember() {
+  if (!S.recMode) return null;
+  const candidates = focusList();
+  if (U.recFocusId) return candidates.find(m => m.id === U.recFocusId) || null;
+  const row = focusRow();
+  if (!row || row.s.kind === "break") return null;
+  const normalize = value => String(value || "").normalize("NFKC").replace(/﨑/g, "崎").replace(/[\s　]/g, "");
+  const name = normalize(row.s.name);
+  if (!name) return null;
+  const exact = candidates.filter(m => normalize(m.name) === name);
+  if (exact.length === 1) return exact[0];
+  const surname = candidates.filter(m => normalize(m.name).startsWith(name));
+  return surname.length === 1 ? surname[0] : null;
+}
+function recLineFocus(so, i) {
+  const selected = recFocusMember();
+  if (!selected || !(so.lines || []).some(l => (l.parts || []).length)) return "";
+  if (!partsOf(so, i).length) return ""; // 未確定の担当を「他の人」と扱わない。
+  return partsOf(so, i).includes(selected.id) ? "rec-focus-own" : "rec-focus-other";
+}
+function recMemberSelector() {
+  const selected = recFocusMember();
+  const candidates = focusList();
+  const assigned = recSong() && recSong().lines.some(l => (l.parts || []).length);
+  const missing = recSong() ? recSong().lines.filter(l => !l.gap && !l.cut && !(l.parts || []).length).length : 0;
+  return `<div class="rec-member-focus"><span>歌割を確認する人</span><div class="chips">
+    <button class="chip sm" data-act="recfocus" data-id="" aria-pressed="${!U.recFocusId}">進行表の人</button>
+    ${candidates.map(m => `<button class="chip sm" data-act="recfocus" data-id="${h(m.id)}" aria-pressed="${selected && selected.id === m.id}">${h(m.name)}</button>`).join("")}
+    </div><p class="note">${!assigned ? "この曲の歌割が未登録です。資料の担当を確認してから登録してください。" : (selected ? h(selected.name) + "の担当を強調しています。" : "進行表の人を選ぶか、メンバーを選んでください。") + (missing ? " 担当未登録が" + missing + "行あります。" : "")}</p></div>`;
+}
+
 function recBar() {
   const live = focusRow();
   if (live && live.s.kind === "break") return `<div class="rec-break-bar">
@@ -6016,7 +6052,7 @@ function recBar() {
     }
   }
 
-  return `${tabs ? `<div class="sectabs">${tabs}</div>` : ""}${subTabs}
+  return `${recMemberSelector()}${tabs ? `<div class="sectabs">${tabs}</div>` : ""}${subTabs}
   <div class="aubar rec-tools">
     <div class="rec-tools-meta">
       <button class="chip sm" data-act="goplan">進行表</button>
@@ -6070,6 +6106,7 @@ function startSlot(s2, auto) {
     if (sl !== s2 && sl.a0 != null && sl.a1 == null) finishSlot(sl);
   }
   S.planFocus = s2.id;
+  U.recFocusId = "";
   s2.a0 = nowMin(); delete s2.a1;
   s2.startAt = Date.now(); s2.secStart = Date.now();
   s2.secLog = {}; s2.takes = {};
@@ -7616,6 +7653,7 @@ document.addEventListener("click", (e) => {
     case "bpm": metSet(metBpm() + Number(id)); break;
     case "metsub": S.sub = Number(id); save(); render(); break;
     case "focus": U.focus = id; U.picker = false; render(); break;
+    case "recfocus": U.recFocusId = id; render(); break;
     case "jumpshow": selectShow(id); renderSheet(); render(); break;
 
     case "key": {
@@ -8147,7 +8185,7 @@ document.addEventListener("click", (e) => {
     case "psecgo": {
       // 人名を押したら、その人の歌詞画面へ行く。テイクは自分で選ぶ。
       const sl = (S.plan.slots || []).find((x) => x.id === id);
-      if (sl) { S.planFocus = sl.id; U.view = "live"; save(); render(); }
+      if (sl) { S.planFocus = sl.id; U.recFocusId = ""; U.view = "live"; save(); render(); }
       break;
     }
     case "psecopen": {
