@@ -49,7 +49,8 @@ test('editor receive paths do not fetch or replace saved performances with membe
 });
 test('automatic cross-device sync cannot remove a saved show even when the local backup is clean',async()=>{
  const c=vm.createContext({syncing:false,backupInFlight:false,preview:null,otherAt:0,U:{},S:{ghToken:'token',bkGistId:'backup',bkSeen:1,bkHash:'clean',shows:[{id:'release',name:'リリイベ'}],songs:[]},
-   gh:async()=>({files:{}}),backupIndexFile:()=>true,readCloudBackup:async()=>({}),unpackBackup:async()=>({at:2,state:{shows:[],songs:[]}}),bkSignature:()=> 'clean',render(){},save(){throw Error('must not overwrite');}});
- vm.runInContext(block('async function checkOther()', 'async function takeOther()'),c);const before=JSON.stringify(c.S);
+   gh:async()=>({files:{}}),backupIndexFile:()=>true,readCloudBackup:async()=>({}),unpackBackup:async()=>({app:"utacheck",at:2,state:{shows:[],songs:[]}}),bkSignature:()=> 'clean',render(){},save(){throw Error('must not overwrite');}});
+ vm.runInContext(block('async function readSyncBackup(target)', '// その場で両方向に揃える'),c);
+ vm.runInContext(block('async function checkOther(strict = false)', 'async function takeOther()'),c);const before=JSON.stringify(c.S);
  await vm.runInContext('checkOther()',c);assert.equal(JSON.stringify(c.S),before);assert.equal(c.otherAt,2);
 });

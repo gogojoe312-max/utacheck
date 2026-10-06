@@ -9,7 +9,7 @@ function setup(gh) {
  let revision=0;
  const rawFiles=new Map();
  const copy=()=>JSON.parse(JSON.stringify({id:'target',files:server.files}));
- const c=vm.createContext({S:{ghToken:'secret',bkGistId:'target',bkAt:10,bkHash:0,notes:[{memo:'original'}],draws:{line:[1,2]}},U:{view:'live'},preview:null,VIEW:()=>false,
+ const c=vm.createContext({S:{ghToken:'secret',bkGistId:'target',bkAt:10,bkSeen:10,bkHash:0,shows:[{id:'show'}],songs:[{id:'song'}],notes:[{memo:'original'}],draws:{line:[1,2]}},U:{view:'live'},preview:null,VIEW:()=>false,
   APP_VER:"test",crypto:require("node:crypto").webcrypto,URL,Date,AbortSignal,TextEncoder,TextDecoder,Response,Uint8Array,CompressionStream,JSON,Promise,
   restoreViewSelection(){},packState:x=>x,unpackState:x=>x,save(){},render(){},commitFields(){},alert:x=>alerts.push(x),
   gh:async(path,opts={})=>{
@@ -28,9 +28,14 @@ function setup(gh) {
   backupToFile:async()=>{c.fileSaved=true;return true;}});
  vm.runInContext(block('const hash32 =','async function unpackBackup'),c);
  vm.runInContext(block('const BACKUP_FILE =','async function restoreBackup'),c);
+ vm.runInContext(block('let otherAt =','/* ---- 自分用リンク'),c);
+ // These transport fixtures deliberately use opaque, non-decodable content.
+ // Sync guard decoding is exercised separately in sync-safety.test.cjs.
+ const realReadSyncBackup=c.readSyncBackup;
+ c.readSyncBackup=async()=>({app:'utacheck',at:c.S.bkSeen || 10,state:JSON.parse(JSON.stringify(c.S))});
  // Observe the immutable payload without real network credentials.
  c.packBackup=async state=>({state});
- return {c,alerts,uploads,server,rawFiles,read:vm.runInContext("readCloudBackup",c),run:code=>vm.runInContext(code,c)};
+ return {c,alerts,uploads,server,rawFiles,realReadSyncBackup,read:vm.runInContext("readCloudBackup",c),run:code=>vm.runInContext(code,c)};
 }
 test('backup snapshots exclude token, preserve edits during upload and prevent duplicate sends',async()=>{
  let release;const s=setup(()=>new Promise(r=>release=r));
@@ -144,7 +149,7 @@ test('encrypted large backup restores through both cloud restore and automatic d
  vm.runInContext(block('async function deriveKey(', 'async function wrap('),c);
  vm.runInContext(block('async function packBackup(', '// バックアップの置き場所'),c);
  vm.runInContext(block('async function restoreBackup(silent)', 'function download(name'),c);
- vm.runInContext(block('async function checkOther()', 'async function takeOther()'),c);
+ // checkOther is loaded by setup together with its helpers.
  c.unpackWithPass=raw=>c.unpackBackup(raw);
  c.squeeze=async()=>null; // Safari fallback is the largest encoded case.
  c.S.bkKey='test-pass';c.S.notes=[{memo:'確認用の指摘'.repeat(80000)}];c.S.songs=[{id:'song',lines:[{t:'歌詞'}]}];c.S.shows=[{id:'show'}];
@@ -153,6 +158,7 @@ test('encrypted large backup restores through both cloud restore and automatic d
  assert(s.uploads.length>2);assert(!JSON.stringify(s.server.files).includes('確認用の指摘'));
  c.S.notes=[];c.S.draws={};await s.run('restoreBackup(true)');
  assert(reloaded);assert.equal(JSON.stringify(c.S.notes),expected);assert.equal(c.S.draws.line.length,2);
+ c.readSyncBackup=s.realReadSyncBackup;
  c.S.notes=[];c.S.bkHash=s.run('bkSignature()');c.S.bkSeen=0;
  await s.run('checkOther()');assert.equal(JSON.stringify(c.S.notes),expected);
 });

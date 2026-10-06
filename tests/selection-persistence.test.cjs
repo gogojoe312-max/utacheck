@@ -84,10 +84,11 @@ test('blocked or malformed storage cannot stop the app or rewrite content',()=>{
 test('automatic cloud refresh keeps local navigation and establishes a clean backup signature',async()=>{
   const a=setup();a.run("selectShow('o');setShowFilter('ocha')");const remote=JSON.parse(JSON.stringify(a.c.S));remote.showId='r';remote.groupId='rose';remote.notes=[{id:'new',memo:'new synthetic note'}];
   Object.assign(a.c,{syncing:false,backupInFlight:false,otherAt:0,
-    gh:async()=>({files:{}}),backupIndexFile:()=>true,readCloudBackup:async()=>({}),unpackBackup:async()=>({at:20,state:remote}),fromBackup:x=>structuredClone(x),
+    gh:async()=>({files:{}}),backupIndexFile:()=>true,readCloudBackup:async()=>({}),unpackBackup:async()=>({app:"utacheck",at:20,state:remote}),fromBackup:x=>structuredClone(x),
     bkSignature:()=>JSON.stringify([a.c.S.showId,a.c.S.groupId,a.c.S.notes])});
   a.c.S.ghToken='synthetic';a.c.S.bkGistId='synthetic';a.c.S.bkSeen=0;a.c.S.bkHash=a.c.bkSignature();a.c.U.songIdx=4;
-  vm.runInContext(block('async function checkOther()', 'async function takeOther()'),a.c);await a.run('checkOther()');
+  vm.runInContext(block('async function readSyncBackup(target)', '// その場で両方向に揃える'),a.c);
+ vm.runInContext(block('async function checkOther(strict = false)', 'async function takeOther()'),a.c);await a.run('checkOther()');
   assert.equal(a.c.S.showId,'o');assert.equal(a.c.S.groupId,'ocha');assert.equal(a.c.U.showFilter,'ocha');assert.equal(a.c.S.notes[0].id,'new');
   assert.equal(a.c.U.songIdx,4);assert.equal(a.c.S.bkHash,a.c.bkSignature());assert.equal(a.c.otherAt,0);assert.equal(a.c.syncing,false);
 });

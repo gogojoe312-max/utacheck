@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.20";
+const APP_VER = "16.41.21";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -10634,14 +10634,27 @@ function renderBackupStatus() {
   if (U.view === "setup" || U.view === "recsetup") render(true);
 }
 async function doBackup(silent) {
-  if (backupInFlight || preview || VIEW() || U.showRecovery) return false;
+  if (backupInFlight || syncing || preview || VIEW() || U.showRecovery) return false;
   if (!S.ghToken) { if (!silent) return backupToFile(); return false; }
   backupInFlight = true;
   S.bkError = ""; renderBackupStatus();
   try {
     commitFields();
+    const target = S.bkGistId || "", token = S.ghToken;
+    if (target) {
+      const cloud = await readSyncBackup(target);
+      if (S.bkGistId !== target || S.ghToken !== token) throw new Error("つなぎ先が変わりました。保存せずに中止しました。");
+      if (!(Number(S.bkSeen) > 0) || Number(cloud.at) > Number(S.bkSeen)) {
+        otherAt = Number(cloud.at);
+        throw new Error("クラウドの内容を先に確認してください。手元からは送信していません。");
+      }
+      if (!hasBackupWork(backupState()) && hasBackupWork(cloud.state)) throw new Error("手元のデータが空に近いため、クラウドへの上書きを止めました。");
+    } else if (!hasBackupWork(backupState())) {
+      throw new Error("保存するデータがありません。既存のバックアップを先に確認してください。");
+    }
     const snapshot = backupState(), at = Date.now(), signature = backupSignature(snapshot);
     const content = JSON.stringify(await packBackup(snapshot, at));
+    if ((S.bkGistId || "") !== target || S.ghToken !== token) throw new Error("つなぎ先が変わりました。保存せずに中止しました。");
     await uploadCloudBackup(content);
     S.bkAt = at; S.bkSeen = at; S.bkHash = signature; S.bkError = "";
     backupRetryAt = 0;
@@ -11012,15 +11025,45 @@ function endPreview() {
 
 // 別の端末で更新されていないか見に行く。
 // 手元に変更が無ければそのまま取り込み、両方変わっていれば選んでもらう。
-let otherAt = 0, syncing = false;
+let otherAt = 0, syncing = false, manualSync = false;
+function hasBackupWork(state) {
+  const st = fromBackup({...state});
+  return ["songs", "notes", "rsongs", "trash"].some(k => Array.isArray(st[k]) && st[k].length)
+    || (Array.isArray(st.shows) && st.shows.length > 1)
+    || (st.shows || []).some(sw => sw.name && !/^\d{1,2}\/\d{1,2} 公演$/.test(sw.name));
+}
+function recordingPreservedInTrash(state, song) {
+  return (Array.isArray(state.trash) ? state.trash : []).some(t =>
+    t.kind === "rec" && Number(t.at) >= Date.now() - TRASH_DAYS * 86400000
+      && Array.isArray(t.songs) && t.songs.some(x => x.id === song.id && JSON.stringify(x) === JSON.stringify(song)));
+}
+async function readSyncBackup(target) {
+  const g = await gh("/gists/" + target);
+  if (!backupIndexFile(g.files)) throw new Error("クラウドのバックアップを確認できません。送信せずに中止しました。");
+  const obj = await unpackBackup(await readCloudBackup(g.files));
+  if (!obj || obj.app !== "utacheck" || !obj.state || !Number.isFinite(Number(obj.at)) || Number(obj.at) <= 0
+      || !Array.isArray(obj.state.shows) || !Array.isArray(obj.state.songs)
+      || ["notes", "rsongs"].some(k => obj.state[k] != null && !Array.isArray(obj.state[k]))) {
+    throw new Error("クラウドのバックアップが不正です。送信せずに中止しました。");
+  }
+  return obj;
+}
 // その場で両方向に揃える
 async function syncNow() {
+  if (manualSync || syncing || backupInFlight || preview || VIEW() || U.showRecovery) return;
   if (!S.ghToken) { alert("GitHubのトークンを入れてください。"); return; }
   if (!S.bkGistId) { alert("つなぎ先がありません。\n「つなぎ先を探す」を押すか、Macで「自分用リンクを作る」を使ってください。"); return; }
+  manualSync = true;
   U.busy = "揃えています…"; render();
   try {
+    commitFields();
+    const result = await checkOther(true);
+    if (result === "busy" || result === "unlinked") throw new Error("接続状態を確認できません。送信せずに中止しました。");
+    if (result === "conflict") {
+      alert("クラウドと手元の内容が違います。どちらを採るか確認してください。手元からは送信していません。");
+      return;
+    }
     if (bkSignature() !== S.bkHash && !await doBackup(true)) throw new Error(S.bkError || "バックアップを完了できませんでした。");
-    await checkOther();                                      // 向こうが新しければ受け取る
     U.busy = ""; render();
     alert(otherAt
       ? "両方の端末に変更があります。\n上に出る案内から、どちらを採るか選んでください。"
@@ -11028,24 +11071,26 @@ async function syncNow() {
   } catch (e) {
     U.busy = ""; render();
     alert("揃えられませんでした。\n" + ((e && e.message) || e));
+  } finally {
+    manualSync = false; U.busy = ""; render();
   }
 }
 
-async function checkOther() {
-  if (syncing || backupInFlight || preview || U.showRecovery) return;
-  if (!S.ghToken || !S.bkGistId) return;
+async function checkOther(strict = false) {
+  if (syncing || backupInFlight || preview || U.showRecovery) return "busy";
+  if (!S.ghToken || !S.bkGistId) return "unlinked";
+  const target = S.bkGistId, token = S.ghToken;
   syncing = true;
   try {
-    const g = await gh("/gists/" + S.bkGistId);
-    if (!backupIndexFile(g.files)) return;
-    const obj = await unpackBackup(await readCloudBackup(g.files));
-    if (U.showRecovery) return;
+    const obj = await readSyncBackup(target);
+    if (U.showRecovery || S.bkGistId !== target || S.ghToken !== token) throw new Error("つなぎ先が変わりました。取り込み・送信せずに中止しました。");
     const at = Number(obj.at || 0);
-    if (at <= (S.bkSeen || 0)) { otherAt = 0; return; }
+    if (at <= (S.bkSeen || 0)) { otherAt = 0; return "current"; }
     const dirty = bkSignature() !== S.bkHash;
-    const removesSavedWork = ["shows", "songs", "notes"].some(key => {
+    const removesSavedWork = ["shows", "songs", "notes", "rsongs"].some(key => {
       const incoming = new Set((obj.state[key] || []).map(x => x.id));
-      return (S[key] || []).some(x => !x.hidden && !incoming.has(x.id));
+      return (S[key] || []).some(x => !x.hidden && !incoming.has(x.id)
+        && !(key === "rsongs" && recordingPreservedInTrash(obj.state, x)));
     });
     if (!dirty && !removesSavedWork) {
       const tk = S.ghToken, bk = S.bkGistId, bkk = S.bkKey, ep = S.editPass, currentShowId = S.showId;
@@ -11056,11 +11101,12 @@ async function checkOther() {
       S.bkSeen = at; S.bkAt = at; S.bkHash = bkSignature();
       save(); otherAt = 0;
       render();
-      return;
+      return "received";
     }
     otherAt = at;
     render();
-  } catch (e) { /* 取れない時は次の機会に */ }
+    return "conflict";
+  } catch (e) { if (strict) throw e; return "failed"; }
   finally { syncing = false; }
 }
 async function takeOther() {
