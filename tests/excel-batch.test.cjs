@@ -1,3 +1,4 @@
+const testContext = require('./inbox-test-context.cjs');
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const fs=require('node:fs'),vm=require('node:vm'),path=require('node:path');
@@ -6,7 +7,7 @@ const source=fs.readFileSync(path.join(__dirname,'../app.js'),'utf8');
 function fn(name){const i=source.indexOf('function '+name+'(');assert(i>=0,name);return source.slice(source.lastIndexOf('\n',i)+1,source.indexOf('\n}',i)+2);}
 function setup(overrides={}){
  let id=0;const alerts=[],captures=[];
- const c=vm.createContext({XLSX,Uint8Array,TextDecoder,Blob,Date,Promise,clearTimeout,
+ const c=testContext({XLSX,Uint8Array,TextDecoder,Blob,Date,Promise,clearTimeout,
   setTimeout:(f,ms)=>setTimeout(f,ms>=5000?25:ms),
   uid:()=>String(++id),recSong:()=>null,S:{rsongs:[],songs:[],notes:[],groups:[],rosters:{},groupId:'group',showId:'show',shows:[]},U:{view:'setup'},
   rememberViewSelection(){},render(){},save(){},autoSubs(){},showDeliveryGroupId:()=>'',alert:m=>alerts.push(m),confirm:()=>false,
@@ -58,7 +59,7 @@ test('empty workbook fails clearly while the following song still imports',async
  const {c,alerts}=setup();await c.handleFiles([file('M1.xlsx',XLSX.write(w,{type:'buffer'})),file('M2.xlsx',workbook(2))]);assert.equal(c.S.songs.length,1);assert.match(c.U.fileReport.failed[0],/読み取れる歌詞/);
 });
 test('IndexedDB abort rejects original-file storage instead of leaving the batch pending',async()=>{
- let transaction;const c=vm.createContext({db:async()=>({transaction:()=>{transaction={objectStore:()=>({put(){}})};return transaction;}})});vm.runInContext(fn('putClip'),c);
+ let transaction;const c=testContext({db:async()=>({transaction:()=>{transaction={objectStore:()=>({put(){}})};return transaction;}})});vm.runInContext(fn('putClip'),c);
  const p=c.putClip('id',{});await new Promise(r=>setImmediate(r));transaction.onabort();await assert.rejects(p,/中断/);
 });
 test('text box lyrics use the workbook files without native decompression',()=>{

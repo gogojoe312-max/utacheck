@@ -1,7 +1,7 @@
 const {test}=require('node:test');
 const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),path=require('node:path');
 const src=fs.readFileSync(path.join(__dirname,'..','app.js'),'utf8');
-const c=vm.createContext({});vm.runInContext(src.slice(0,src.indexOf('function renderQuickMenu')),c);
+const c=vm.createContext({});vm.runInContext(src.slice(src.indexOf('const KEY ='),src.indexOf('function renderQuickMenu')),c);
 const parse=value=>{c.value=value;return JSON.parse(vm.runInContext('JSON.stringify(parseNoteInput(value))',c));};
 test('requested abbreviations register existing tags, not memo-only substitutes',()=>{
  for(const [word,id,label] of [['はや','fast','リズム速い'],['まい','mic','マイク'],['たか','pHi','音程高い'],['なが','long','長い']]){
@@ -26,7 +26,7 @@ function commit(value,tags=[]){
  let saves=0,pushes=0,undos=0,renders=0;const ctx=vm.createContext({document:{getElementById:()=>({value})},
   U:{sheet:{lineIdx:2,range:[1,4],sel:['singer'],tags,memo:'',seq:[]}},S:{notes:[],showId:'show'},
   song:()=>({id:'song'}),clearTimeout(){},sheetTimer:null,renderSheet(){},pushUndo(){undos++;},save(){saves++;},schedulePush(){pushes++;},render(){renders++;},recAt:()=>12,takeCtx:()=>3});
- vm.runInContext(src.slice(0,src.indexOf('function renderQuickMenu')),ctx);
+ vm.runInContext(src.slice(src.indexOf('const KEY ='),src.indexOf('function renderQuickMenu')),ctx);
  vm.runInContext(src.slice(src.indexOf('function commitNote()'),src.indexOf('// 今のセットリストをそのまま新しい公演')),ctx);
  vm.runInContext('commitNote();commitNote()',ctx);
  return {note:JSON.parse(JSON.stringify(ctx.S.notes[0])),count:ctx.S.notes.length,saves,pushes,undos,renders,sheet:ctx.U.sheet};

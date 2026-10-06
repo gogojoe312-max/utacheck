@@ -22,7 +22,7 @@ function setup() {
   commitFields(){},typingNow:()=>!!c.document.activeElement,
   scheduleCommit(){commits.push(JSON.parse(JSON.stringify(c.U.sheet)));c.U.sheet=null;},
  });
- vm.runInContext(appSrc.slice(0,appSrc.indexOf('/* ---------------- state')),c);
+ vm.runInContext(appSrc.slice(appSrc.indexOf('const KEY ='),appSrc.indexOf('/* ---------------- state')),c);
  // Use the real application click handler first: on iPhone it must blur fields before saving.
  const start=appSrc.indexOf('document.addEventListener("click", (e) => {');
  vm.runInContext(appSrc.slice(start,appSrc.indexOf('\n});',start)+4),c);

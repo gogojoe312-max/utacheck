@@ -1,8 +1,72 @@
 /* 歌チェック — ライブ本番用 歌割チェックアプリ (offline PWA) */
 "use strict";
+/* Must precede app state initialization and boot. Unenrolled profiles keep legacy behavior. */
+const recordingInboxEnrollmentKey = 'utacheck:recording-inbox:device-v1';
+const recordingInboxWriterKey = 'utacheck:recording-inbox:writer-required-v1';
+let recordingInboxProfileRequired = false, recordingInboxStale = false, recordingInboxOwner = null;
+try {
+  recordingInboxProfileRequired = localStorage.getItem(recordingInboxEnrollmentKey) !== null || localStorage.getItem(recordingInboxWriterKey) !== null;
+} catch (_) { recordingInboxProfileRequired = true; recordingInboxStale = true; }
+let recordingInboxWriters = 0, recordingInboxDrainWaiters = [], recordingInboxInvalidated = () => {};
+let recordingInboxResolveBoot;
+const recordingInboxBootReady = new Promise(resolve => { recordingInboxResolveBoot = resolve; });
+function recordingInboxCanWrite() {
+  return !recordingInboxStale && (!recordingInboxProfileRequired || !!recordingInboxOwner?.canWrite);
+}
+function recordingInboxAssertWriter() {
+  if (!recordingInboxCanWrite()) { const error = new Error('この画面は読み取り専用です。編集用の画面を確認してください。'); error.code = 'EDITOR_READ_ONLY'; throw error; }
+}
+function recordingInboxAdmitWriter() {
+  recordingInboxAssertWriter();
+  recordingInboxWriters++;
+  let done = false;
+  return () => {
+    if (done) return; done = true;
+    recordingInboxWriters--;
+    if (!recordingInboxWriters) { const ready = recordingInboxDrainWaiters; recordingInboxDrainWaiters = []; ready.forEach(resolve => resolve()); }
+  };
+}
+function recordingInboxStorageSet(key, value) { recordingInboxAssertWriter(); return localStorage.setItem(key, value); }
+function recordingInboxStorageRemove(key) { recordingInboxAssertWriter(); return localStorage.removeItem(key); }
+function recordingInboxBeforeBoot() { return recordingInboxProfileRequired ? recordingInboxBootReady : Promise.resolve(true); }
+function recordingInboxOwnerUI() {
+  const denied = !recordingInboxCanWrite(), appElement = document.getElementById('app');
+  if (appElement) appElement.inert = denied;
+  let notice = document.getElementById('recording-inbox-readonly');
+  if (!denied) { if (notice) notice.remove(); return; }
+  if (notice || !document.body) return;
+  notice = document.createElement('div'); notice.id = 'recording-inbox-readonly';
+  notice.setAttribute('role', 'alert');
+  notice.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:#fff;color:#222;padding:32px;overflow:auto';
+  const message = document.createElement('p');
+  message.textContent = 'この画面は読み取り専用です。ほかの歌チェックのタブを閉じてから、この画面を再読み込みしてください。自動受信には対応ブラウザが必要です。';
+  const reload = document.createElement('button'); reload.dataset.inboxOwnerReload = '1'; reload.textContent = '再読み込み'; reload.onclick = () => location.reload();
+  notice.append(message, reload); document.body.appendChild(notice);
+}
+async function recordingInboxDenyAndDrain() {
+  recordingInboxStale = true;
+  recordingInboxInvalidated();
+  recordingInboxOwnerUI();
+  if (recordingInboxWriters) await new Promise(resolve => recordingInboxDrainWaiters.push(resolve));
+  if (recordingInboxOwner) recordingInboxOwner.release();
+}
+// No pagehide release: the app's existing handler starts an asynchronous save.
+// Browser context destruction releases its lifetime lock only after this context ends.
+window.addEventListener('storage', event => {
+  if (event.key === null || [recordingInboxEnrollmentKey, recordingInboxWriterKey].includes(event.key)) {
+    recordingInboxProfileRequired = true;
+    void recordingInboxDenyAndDrain();
+  }
+});
+for (const type of ['click','input','change','keydown','submit','pointerdown','drop']) document.addEventListener(type, event => {
+  if (recordingInboxCanWrite() || event.target.closest?.('[data-inbox-owner-reload]')) return;
+  event.preventDefault(); event.stopImmediatePropagation();
+}, true);
+recordingInboxOwnerUI();
+
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.29";
+const APP_VER = "16.41.30";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -226,8 +290,8 @@ async function load() {
   } catch (e) {
     // 古いデータの変換でつまずいた場合。消さずに横に退避して、まっさらで開く。
     try {
-      if (raw) localStorage.setItem(KEY + ":broken:" + Date.now(), raw);
-      localStorage.removeItem(KEY);
+      if (raw) recordingInboxStorageSet(KEY + ":broken:" + Date.now(), raw);
+      recordingInboxStorageRemove(KEY);
     } catch (e2) { /* 保存できない場合は諦める */ }
     S = JSON.parse(JSON.stringify(S0));
     bootErr = "前のデータを読めなかったため、まっさらで開きました。\n古いデータは端末内に残してあります。";
@@ -560,7 +624,7 @@ function rememberViewSelection() {
   const saved = {version: 1, showId: S.showId || "", groupId: S.groupId || "", showFilter: U.showFilter || ""};
   viewSelections.set(viewSelectionKey(), saved);
   try {
-    localStorage.setItem(viewSelectionKey(), JSON.stringify(saved));
+    recordingInboxStorageSet(viewSelectionKey(), JSON.stringify(saved));
   } catch (_) { /* The normal state save remains available when storage is blocked. */ }
 }
 function restoreViewSelection(previousShowId = S.showId) {
@@ -1182,7 +1246,7 @@ function freeSpace() {
       } catch (e) { empty = true; }      // 読めないものは残しても使えない
       if (empty) junk.push(k);
     }
-    junk.forEach((k) => { localStorage.removeItem(k); freed++; });
+    junk.forEach((k) => { recordingInboxStorageRemove(k); freed++; });
   } catch (e) { /* 数えられない端末もある */ }
   return freed;
 }
@@ -1191,6 +1255,7 @@ function freeSpace() {
 let idbOK = false;                 // IndexedDBが使えるか（起動時に判定）
 let saveTimer = null, saveSeq = 0, saving = false, savePend = null, saveDirty = false, stateRevision = 0;
 async function flushSave() {
+  if (!recordingInboxCanWrite()) { saveErr = true; return false; }
   if (saving) return;
   if (saveDirty) {
     // 連続操作をまとめてから直列化する。閲覧プレビュー中は元の編集データを保存する。
@@ -1206,9 +1271,9 @@ async function flushSave() {
     saveErr = false;
   } catch (e) {
     // IndexedDBが使えない端末では、今まで通りlocalStorageに置く
-    try { localStorage.setItem(KEY, txt); saveErr = false; }
+    try { recordingInboxStorageSet(KEY, txt); saveErr = false; }
     catch (e2) {
-      if (freeSpace()) { try { localStorage.setItem(KEY, txt); saveErr = false; } catch (e3) { saveErr = true; } }
+      if (freeSpace()) { try { recordingInboxStorageSet(KEY, txt); saveErr = false; } catch (e3) { saveErr = true; } }
       else saveErr = true;
     }
   }
@@ -1216,15 +1281,16 @@ async function flushSave() {
   if (saveDirty || savePend != null) await flushSave();
 }
 function save() {
+  if (!recordingInboxCanWrite()) { saveErr = true; return false; }
   if (preview) return;
   stateRevision++;
   if (!booted) touched = true;      // 起動の読み込みより先に触った
   if (!idbOK) {                    // IndexedDBが使えない時だけ、今まで通り
     const txt = JSON.stringify(packState(S));
-    try { localStorage.setItem(KEY, txt); saveErr = false; return; }
+    try { recordingInboxStorageSet(KEY, txt); saveErr = false; return; }
     catch (e) { /* 空きを作って もう一度 */ }
     if (freeSpace()) {
-      try { localStorage.setItem(KEY, txt); saveErr = false; return; }
+      try { recordingInboxStorageSet(KEY, txt); saveErr = false; return; }
       catch (e) { /* それでも足りない */ }
     }
     saveErr = true;
@@ -2770,7 +2836,7 @@ function showFatal(msg) {
       <div style="font-size:17px;font-weight:700;margin-bottom:12px">うまく開けませんでした</div>
       <div style="color:#9A9A9A;font-size:13px;white-space:pre-wrap;margin-bottom:20px">${String(msg || "").slice(0, 300)}</div>
       <button onclick="location.reload()" style="width:100%;padding:14px;border-radius:12px;background:#D97757;color:#0A0A0A;font-weight:700;border:0;margin-bottom:10px">開き直す</button>
-      <button onclick="try{var k='utacheck.v1';localStorage.setItem(k+':broken:'+Date.now(),localStorage.getItem(k)||'');localStorage.removeItem(k);}catch(e){};location.reload()"
+      <button onclick="try{var k='utacheck.v1';recordingInboxStorageSet(k+':broken:'+Date.now(),localStorage.getItem(k)||'');recordingInboxStorageRemove(k);}catch(e){};location.reload()"
         style="width:100%;padding:14px;border-radius:12px;background:#1C1C1C;color:#9A9A9A;border:0">データを退避してまっさらで開く</button>
     </div>`;
   } catch (e) { /* これ以上は打つ手なし */ }
@@ -3751,12 +3817,15 @@ function db() {
   });
 }
 async function putClip(id, blob) {
+  const recordingInboxDone = recordingInboxAdmitWriter();
+  try {
   const d = await db();
-  return new Promise((res, rej) => {
+  return await new Promise((res, rej) => {
     const t = d.transaction("clips", "readwrite");
     t.objectStore("clips").put(blob, id);
     t.oncomplete = res; t.onerror = t.onabort = () => rej(t.error || new Error("保存が中断されました"));
   });
+  } finally { recordingInboxDone(); }
 }
 async function getClip(id) {
   const d = await db();
@@ -3809,17 +3878,26 @@ async function getOriginalExcel(so) {
 function delClip(id) {
   if (id.startsWith("xls:") && [...(S.songs || []), ...(S.rsongs || []), ...(S.trash || []).flatMap(t => t.songs || [])]
     .some(so => so.xlsSourceId && "xls:" + so.xlsSourceId === id)) return;
-  db().then((d) => d.transaction("clips", "readwrite").objectStore("clips").delete(id)).catch(() => {}); }
+  let done;
+  try { done = recordingInboxAdmitWriter(); } catch (_) { return; }
+  db().then(d => new Promise((resolve, reject) => {
+    const tx = d.transaction("clips", "readwrite");
+    tx.objectStore("clips").delete(id);
+    tx.oncomplete = resolve; tx.onerror = tx.onabort = () => reject(tx.error);
+  })).catch(() => {}).finally(done); }
 
 // 本体のデータの置き場所。localStorageは端末の上限（数MB）が小さすぎるので、
 // IndexedDBに置く。こちらは桁違いに入る。
 async function idbPut(key, val) {
+  const recordingInboxDone = recordingInboxAdmitWriter();
+  try {
   const d = await db();
-  return new Promise((res, rej) => {
+  return await new Promise((res, rej) => {
     const t = d.transaction("state", "readwrite");
     t.objectStore("state").put(val, key);
-    t.oncomplete = res; t.onerror = () => rej(t.error);
+    t.oncomplete = res; t.onerror = t.onabort = () => rej(t.error || new Error("保存が中断されました"));
   });
+  } finally { recordingInboxDone(); }
 }
 async function idbGet(key) {
   const d = await db();
@@ -5155,7 +5233,7 @@ function selectViewerMember(id) {
   const m = viewerMembers().find(m => m.id === id);
   U.memberName = m ? m.name : "";
   U.sumOpen = m ? m.id : "";
-  if (!preview) { try { localStorage.setItem(viewerMemberKey(), U.memberName); } catch (_) {} }
+  if (!preview) { try { recordingInboxStorageSet(viewerMemberKey(), U.memberName); } catch (_) {} }
   render();
 }
 function summarySongs() {
@@ -5818,6 +5896,7 @@ function backupSettingsHTML() {
     ${S.ghToken && S.bkGistId ? '<button class="ghost" data-act="backup-inspect">クラウドを確認（送信・復元しない）</button>' : ''}
     ${syncReadReport ? `<p class="note" role="status" style="white-space:pre-wrap">${h(syncReadReport)}</p>` : ''}
     <button class="ghost" data-act="recording-addition">録音曲・時間割を追加用ファイルから追加</button>
+    ${recordingInboxSettingsHTML()}
     <p class="note">歌割・指摘・手書き・設定を保存します。録音音声は含みません。</p>
     ${otherAt ? `<div role="status" class="card"><b>クラウドとこの端末に違いがあります</b><p class="note">クラウドへの送信は止めています。両方のファイルを保管し、残す内容を確認してください。</p>
       ${syncComparison ? `<p class="note">この端末の公演：${syncComparison.localShows.map(h).join('、')}<br>クラウドの公演：${syncComparison.cloudShows.map(h).join('、')}</p>` : ''}
@@ -6762,7 +6841,7 @@ function viewRecPrint() {
 
 // 紙の組み方。"xl"＝元のExcelの見た目（既定）、"plain"＝見やすい並び。端末ごとに覚える。
 function prLook() { try { return localStorage.getItem("uc_prLook") || "xl"; } catch (e) { return "xl"; } }
-function setPrLook(v) { try { localStorage.setItem("uc_prLook", v); } catch (e) { /* 覚えられなくても動く */ } }
+function setPrLook(v) { try { recordingInboxStorageSet("uc_prLook", v); } catch (e) { /* 覚えられなくても動く */ } }
 
 const PR_BASE = 15;   // 画面の基準の文字の大きさ
 // 1曲は必ず1枚に収める。紙の幅の中で折り返し、高さに収まるまで文字を小さくする。
@@ -8611,7 +8690,7 @@ document.addEventListener("click", (e) => {
     }
     case "straydel": {
       if (!confirm("この取り残しを消します。元に戻せません。よろしいですか？")) break;
-      try { localStorage.removeItem(id); } catch (e) { /* 消せなくても続ける */ }
+      try { recordingInboxStorageRemove(id); } catch (e) { /* 消せなくても続ける */ }
       save(); render();
       break;
     }
@@ -9443,6 +9522,9 @@ function lineMap(oldLines, newLines) {
 }
 
 async function swapSong(songId, file) {
+  const recordingInboxRelease = enterRecordingInboxEditor();
+  if (!recordingInboxRelease) return false;
+  try {
   const so = S.songs.find((x) => x.id === songId);
   if (!so || VIEW()) return;
   const ext = (file.name.split(".").pop() || "").toLowerCase();
@@ -9522,6 +9604,7 @@ async function swapSong(songId, file) {
   alert(lost
     ? `差し替えました。\n${kept}件はそのまま、${lost}件は近くの行に移しました。\n取り消すには「取消」を押してください。`
     : `差し替えました。\n指摘 ${kept}件はそのまま残っています。`);
+  } finally { recordingInboxRelease(); }
 }
 
 async function parseWordSong(file) {
@@ -9543,6 +9626,9 @@ function songFileInput(swap = false) {
 }
 
 async function importSelection(input) {
+  const recordingInboxRelease = enterRecordingInboxEditor();
+  if (!recordingInboxRelease) return false;
+  try {
   if (U.importing) return;
   const picked = Array.from(input.files || []);
   if (!picked.length) return;
@@ -9557,6 +9643,7 @@ async function importSelection(input) {
   } finally {
     input.value = ""; U.importing = false; U.busy = ""; render();
   }
+  } finally { recordingInboxRelease(); }
 }
 
 function fileFailureReason(error) {
@@ -9608,6 +9695,9 @@ function recFileInput() {
 }
 
 async function loadRecDocs(picked) {
+  const recordingInboxRelease = enterRecordingInboxEditor();
+  if (!recordingInboxRelease) return false;
+  try {
   let last = null;
   const list = captureImportFiles(picked), failed = [], succeeded = [];
   for (let i = 0; i < list.length; i++) {
@@ -9637,9 +9727,13 @@ async function loadRecDocs(picked) {
   }
   save(); U.menu = null; render();
   if (list.length > 1 || failed.length) showFileReport("取り込み結果", succeeded, failed);
+  } finally { recordingInboxRelease(); }
 }
 
 async function handleFiles(files) {
+  const recordingInboxRelease = enterRecordingInboxEditor();
+  if (!recordingInboxRelease) return false;
+  try {
   if (U.showFilter && !showsFor().some(sw => sw.id === S.showId)) {
     alert("取り込み先の公演を選択してからファイルを選んでください。"); return;
   }
@@ -9710,6 +9804,7 @@ async function handleFiles(files) {
   if (list.length > 1 || failed.length || archiveFailed.length) {
     showFileReport(`${count}曲の取り込み結果`, succeeded, failed, archiveFailed);
   }
+  } finally { recordingInboxRelease(); }
 }
 
 
@@ -9898,7 +9993,9 @@ function retainUnresolvedPublication(current, previous, unresolved, g) {
 }
 
 async function gh(path, opts) {
-  return boundedPublicationRequest("https://api.github.com" + path, Object.assign({
+  const recordingInboxDone = /^(GET|HEAD)$/i.test((opts && opts.method) || "GET") ? () => {} : recordingInboxAdmitWriter();
+  try {
+  return await boundedPublicationRequest("https://api.github.com" + path, Object.assign({
     headers: {
       "Accept": "application/vnd.github+json",
       "Authorization": "Bearer " + S.ghToken,
@@ -9932,6 +10029,7 @@ async function gh(path, opts) {
   }
   return r.json();
   });
+  } finally { recordingInboxDone(); }
 }
 
 // Limit the complete request, including body reads, and preserve caller cancellation.
@@ -9993,6 +10091,9 @@ async function verifyToken() {
 }
 
 async function gistStart(gid) {
+  const recordingInboxRelease = enterRecordingInboxEditor();
+  if (!recordingInboxRelease) return false;
+  try {
   const g = group(gid);
   if (!S.ghToken) { alert("先にアクセストークンを入れてください。"); return; }
   U.busy = `${g.name} のGistを作成中…`; render();
@@ -10010,6 +10111,7 @@ async function gistStart(gid) {
     U.busy = ""; render();
     alert("失敗しました。\n" + e.message);
   }
+  } finally { recordingInboxRelease(); }
 }
 
 // version は毎回変わるので、それ以外が同じなら送る必要はない
@@ -10351,10 +10453,17 @@ async function unpackWithPass(raw, pw, alsoKnown) {
 // 端末のデータが消えた時に、配信データ（メンバーに見えている方）から自分のデータとして取り戻す。
 // 手書きと録音は配信に含まれないので戻らない。それ以外（公演・曲・歌割・指摘・総括）は戻る。
 async function recoverFromDelivery() {
+  const recordingInboxRelease = enterRecordingInboxEditor();
+  if (!recordingInboxRelease) return false;
+  try {
   try { await recoverInner(); }
   catch (e) { alert("取り込めませんでした。\n" + ((e && e.message) || e)); }
+  } finally { recordingInboxRelease(); }
 }
 async function recoverInner() {
+  const recordingInboxRelease = enterRecordingInboxEditor();
+  if (!recordingInboxRelease) return false;
+  try {
   if (!S.ghToken) { alert("先に自動公開のトークンを入れてください。"); return; }
   alert("配信データを探します。\n少し時間がかかります。");
   const list = await gh("/gists?per_page=100");
@@ -10394,6 +10503,7 @@ async function recoverInner() {
   save();
   alert(`取り込みました。\n公演${S.shows.length}件・曲${S.songs.length}件・記録${S.notes.length}件\n\n※手書きと録音は配信に含まれないため戻りません。`);
   location.reload();
+  } finally { recordingInboxRelease(); }
 }
 
 // 配信データ1つぶんを、自分のデータとして足す（すでにある分は消さない）
@@ -10461,6 +10571,9 @@ function mergeDelivery(d, gist, label) {
 }
 
 async function restoreFromId() {
+  const recordingInboxRelease = enterRecordingInboxEditor();
+  if (!recordingInboxRelease) return false;
+  try {
   const inp = prompt("戻したいバックアップのGistを指定します。\nURL か ID を貼ってください。\n例 https://gist.github.com/xxxx/abc123...", "");
   if (inp == null) return;
   const id = (String(inp).trim().split(/[/?#]/).filter(Boolean).pop() || "").trim();
@@ -10504,10 +10617,14 @@ async function restoreFromId() {
     }
     alert("このGistから使える版が見つかりませんでした。");
   } catch (e) { alert("開けませんでした。\n" + ((e && e.message) || e)); }
+  } finally { recordingInboxRelease(); }
 }
 
 // つなぎ先を選び直す。中身を入れ替えるか、こちらの内容を送るかを選べる。
 async function pickTarget() {
+  const recordingInboxRelease = enterRecordingInboxEditor();
+  if (!recordingInboxRelease) return false;
+  try {
   if (!S.ghToken) { alert("先にGitHubのトークンを入れてください。"); return; }
   let list;
   U.busy = "つなぎ先を探しています…"; render();
@@ -10549,13 +10666,21 @@ async function pickTarget() {
     return;
   }
   alert("ほかに候補はありませんでした。");
+  } finally { recordingInboxRelease(); }
 }
 
 async function findBackup() {
+  const recordingInboxRelease = enterRecordingInboxEditor();
+  if (!recordingInboxRelease) return false;
+  try {
   try { await findBackupInner(); }
   catch (e) { alert("探せませんでした。\n" + ((e && e.message) || e)); }
+  } finally { recordingInboxRelease(); }
 }
 async function findBackupInner() {
+  const recordingInboxRelease = enterRecordingInboxEditor();
+  if (!recordingInboxRelease) return false;
+  try {
   alert("GitHubのバックアップを探します。\n少し時間がかかります。");
   if (!S.ghToken) { alert("先に自動公開のトークンを入れてください。"); return; }
   let list;
@@ -10635,6 +10760,7 @@ async function findBackupInner() {
   alert(`中身のある版は ${seen}件 見つかりました。\n`
     + (fails.length ? `\n開けなかったもの:\n${fails.slice(0, 6).join("\n")}` : "")
     + `\n\nGist ${cands.length}件を調べました。`);
+  } finally { recordingInboxRelease(); }
 }
 
 // 大容量でも1リクエストを小さく保つ。索引は全断片の保存後に切り替える。
@@ -10750,6 +10876,9 @@ function renderBackupStatus() {
   if (U.view === "setup" || U.view === "recsetup") render(true);
 }
 async function inspectCloudBackup() {
+  const recordingInboxRelease = enterRecordingInboxEditor();
+  if (!recordingInboxRelease) return false;
+  try {
   if (backupInFlight || syncing || manualSync || preview || VIEW() || U.showRecovery) return;
   if (!S.ghToken || !S.bkGistId) { alert('クラウドのつなぎ先がありません。設定は変更していません。'); return; }
   syncing = true;
@@ -10767,16 +10896,24 @@ async function inspectCloudBackup() {
     syncReadReport = 'クラウドを確認できませんでした（送信・復元はしていません）。\n' + e.message;
     render(); alert(syncReadReport);
   } finally { syncing = false; }
+  } finally { recordingInboxRelease(); }
 }
 async function backupWithCloudCheck() {
+  const recordingInboxRelease = enterRecordingInboxEditor();
+  if (!recordingInboxRelease) return false;
+  try {
   if (backupInFlight || syncing || manualSync || preview || VIEW() || U.showRecovery) return;
   // 読取や競合解決の前に、この端末を独立したファイルで保全する。
   if (!await backupToFile()) return;
   if (!S.ghToken) return;
   if (!S.bkGistId) { await doBackup(false); return; }
   await syncNow();
+  } finally { recordingInboxRelease(); }
 }
 async function doBackup(silent) {
+  const recordingInboxRelease = enterRecordingInboxEditor();
+  if (!recordingInboxRelease) return false;
+  try {
   if (backupInFlight || syncing || preview || VIEW() || U.showRecovery) return false;
   if (!S.ghToken) { if (!silent) return backupToFile(); return false; }
   backupInFlight = true;
@@ -10813,9 +10950,13 @@ async function doBackup(silent) {
   } finally {
     backupInFlight = false; renderBackupStatus();
   }
+  } finally { recordingInboxRelease(); }
 }
 
 async function restoreBackup(silent) {
+  const recordingInboxRelease = enterRecordingInboxEditor();
+  if (!recordingInboxRelease) return false;
+  try {
   if (!S.ghToken || !S.bkGistId) { alert("バックアップがありません。"); return; }
   try {
     const g = await gh("/gists/" + S.bkGistId);
@@ -10849,6 +10990,7 @@ async function restoreBackup(silent) {
   } catch (e) {
     alert("戻せませんでした。\n" + e.message);
   }
+  } finally { recordingInboxRelease(); }
 }
 
 function download(name, text, type) {
@@ -10957,7 +11099,7 @@ function mergeRecordingAddition(current, packet) {
 }
 function chooseRecordingAddition() {
   const input = document.createElement('input'); input.type = 'file'; input.accept = '.json,application/json';
-  input.onchange = async () => {
+  input.onchange = withRecordingInboxEditor(async () => {
     if (!input.files[0]) return;
     try {
       commitFields();
@@ -10971,7 +11113,7 @@ function chooseRecordingAddition() {
       if (saveErr) { for (const k of ['groups','members','rsongs','rosters','plan']) S[k] = before[k]; save(); render(); throw new Error('端末への保存に失敗しました。追加前の状態へ戻しました。'); }
       render(); alert(`追加しました。${result.songs}曲・${result.slots}枠。\n既存の内容は保持しています。`);
     } catch (e) { alert('追加できませんでした。\n' + e.message); }
-  };
+  });
   input.click();
 }
 
@@ -10982,6 +11124,9 @@ function chooseBackupFile() {
   input.click();
 }
 async function restoreBackupFile(file) {
+  const recordingInboxRelease = enterRecordingInboxEditor();
+  if (!recordingInboxRelease) return false;
+  try {
   try {
     const raw = JSON.parse(await file.text());
     let obj;
@@ -11005,6 +11150,7 @@ async function restoreBackupFile(file) {
     if (saveErr) throw new Error("端末に保存できません。空き容量を確認してください。");
     render(); alert("ファイルから復元しました。");
   } catch (e) { alert("復元できませんでした。\n" + e.message); }
+  } finally { recordingInboxRelease(); }
 }
 
 /* ---- 受け取り：配信されたものを取り込む ---- */
@@ -11166,6 +11312,9 @@ function applySetlist(d) {
 }
 
 async function syncSetlist(manual) {
+  const recordingInboxRelease = enterRecordingInboxEditor();
+  if (!recordingInboxRelease) return false;
+  try {
   if (!VIEW()) return;
   const d = await fetchSetlist();
   if (d === "nokey" || d === "badkey") {
@@ -11198,6 +11347,7 @@ async function syncSetlist(manual) {
   }
   // 受け取り側では確認を出さず、そのまま最新に入れ替える
   if (manual || (d.version && d.version !== S.setlistVer)) applySetlist(d);
+  } finally { recordingInboxRelease(); }
 }
 
 /* ---- 共有リンク：セットリストをURLに入れて渡す ---- */
@@ -11241,6 +11391,9 @@ function keepLinkInURL() {
 
 // メンバーの見え方を確かめる。手元のデータには一切触らない。
 async function startPreview(src, key) {
+  const recordingInboxRelease = enterRecordingInboxEditor();
+  if (!recordingInboxRelease) return false;
+  try {
   if (preview) return;
   preview = JSON.stringify(S);
   const keep = { src: S.src, key: S.key };
@@ -11264,6 +11417,7 @@ async function startPreview(src, key) {
   U.memberScope = null;
   U.view = "summary"; U.mode = "member"; U.allShows = false; U.sumOpen = ""; U.songIdx = 0;
   render();
+  } finally { recordingInboxRelease(); }
 }
 function endPreview() {
   if (!preview) return;
@@ -11324,6 +11478,9 @@ async function readSyncBackup(target) {
 }
 // その場で両方向に揃える
 async function syncNow() {
+  const recordingInboxRelease = enterRecordingInboxEditor();
+  if (!recordingInboxRelease) return false;
+  try {
   if (manualSync || syncing || backupInFlight || preview || VIEW() || U.showRecovery) return;
   if (!S.ghToken) { alert("GitHubのトークンを入れてください。"); return; }
   if (!S.bkGistId) { alert("つなぎ先がありません。\n「つなぎ先を探す」を押すか、Macで「自分用リンクを作る」を使ってください。"); return; }
@@ -11348,9 +11505,13 @@ async function syncNow() {
   } finally {
     manualSync = false; U.busy = ""; render();
   }
+  } finally { recordingInboxRelease(); }
 }
 
 async function checkOther(strict = false) {
+  const recordingInboxRelease = enterRecordingInboxEditor();
+  if (!recordingInboxRelease) return false;
+  try {
   if (syncing || backupInFlight || preview || U.showRecovery) return "busy";
   if (!S.ghToken || !S.bkGistId) return "unlinked";
   const target = S.bkGistId, token = S.ghToken;
@@ -11382,12 +11543,17 @@ async function checkOther(strict = false) {
     return "conflict";
   } catch (e) { if (strict) throw e; return "failed"; }
   finally { syncing = false; }
+  } finally { recordingInboxRelease(); }
 }
 async function takeOther() {
+  const recordingInboxRelease = enterRecordingInboxEditor();
+  if (!recordingInboxRelease) return false;
+  try {
   S.bkHash = bkSignature();
   S.bkSeen = 0;
   otherAt = 0;
   await checkOther();
+  } finally { recordingInboxRelease(); }
 }
 
 /* ---- 自分用リンク：合言葉を入れれば、どの端末でも編集できる ---- */
@@ -11405,6 +11571,9 @@ async function editLink() {
 }
 
 async function openEditLink(raw) {
+  const recordingInboxRelease = enterRecordingInboxEditor();
+  if (!recordingInboxRelease) return false;
+  try {
   let sealed;
   try { sealed = JSON.parse(new TextDecoder().decode(b64d(raw))); } catch (e) { alert("リンクを読めませんでした。"); return; }
   for (let i = 0; i < 3; i++) {
@@ -11419,10 +11588,14 @@ async function openEditLink(raw) {
       return;
     } catch (e) { /* もう一度 */ }
   }
+  } finally { recordingInboxRelease(); }
 }
 
 
 async function importFromLink() {
+  const recordingInboxRelease = enterRecordingInboxEditor();
+  if (!recordingInboxRelease) return false;
+  try {
   const e = location.hash.match(/^#e=(.+)$/);
   if (e) { await openEditLink(e[1]); return; }
   const g = location.hash.match(/^#g=(.+)$/);
@@ -11465,6 +11638,7 @@ async function importFromLink() {
     await syncSetlist(true);
     if (VIEW()) { U.view = "summary"; U.mode = "member"; U.allShows = false; render(); }
   } catch (e) { alert("接続リンクを読み取れませんでした。"); }
+  } finally { recordingInboxRelease(); }
 }
 
 function copyText(t, msg) {
@@ -11476,6 +11650,7 @@ function copyText(t, msg) {
 
 /* ---------------- boot ---------------- */
 (async () => {
+  if (!await recordingInboxBeforeBoot()) return;
   await load();
   booted = true;
   restoreViewSelection();
@@ -11490,7 +11665,7 @@ function copyText(t, msg) {
       if (old) {
         await saveNow();
         const back = await idbGet("state:" + (saveSeq % 2));
-        if (back && back.txt) localStorage.removeItem(KEY);
+        if (back && back.txt) recordingInboxStorageRemove(KEY);
       }
     } catch (e) { /* 引っ越せなくても、IndexedDB側で動く */ }
   }
@@ -11506,3 +11681,169 @@ if ("serviceWorker" in navigator) {
   // 更新の到着だけでリハ中の画面や録音を中断しない。次の起動・再読み込みで反映する。
   navigator.serviceWorker.register("sw.js?v=" + APP_VER).then((r) => r.update()).catch(() => {});
 }
+
+/* App integration helpers. Optional module failure leaves existing app behavior intact. */
+let recordingInboxIntegration = null;
+function enterRecordingInboxEditor() {
+  return recordingInboxIntegration ? recordingInboxIntegration.gate.acquireEditor() : () => {};
+}
+function withRecordingInboxEditor(work) {
+  return async function (...args) {
+    const release = enterRecordingInboxEditor();
+    if (!release) return false;
+    try { return await work.apply(this, args); } finally { release(); }
+  };
+}
+function recordingInboxSettingsHTML() {
+  return recordingInboxIntegration ? recordingInboxIntegration.settingsHTML() : '';
+}
+function setupRecordingInboxIntegration() {
+  if (typeof RecordingInbox === 'undefined') return null;
+/* APPEND TO app.js only after review; load recording-inbox.js BEFORE app.js. */
+let recordingInboxStatus = {status:'not-enrolled'};
+const recordingInboxGate = RecordingInbox.createGate(() =>
+  recordingInboxCanWrite() && booted && !bootErr && !VIEW() && !preview && !document.hidden && !saving
+  && !syncing && !manualSync && !backupInFlight && !publishInFlight
+  && !REC && !U.busy && !U.importing && !U.sheet && !U.menu && !U.showRecovery
+  && !typingNow() && !renderPointers.size && Date.now() >= scrollingUntil);
+const recordingInboxLocal = RecordingInbox.createLocalAdapter({
+  acquire:() => recordingInboxGate.acquire(),
+  getState:() => S,
+  commitFields:() => { flushSheet(); commitFields(); },
+  merge:mergeRecordingAddition,
+  save, saveNow,
+  hasSaveError:() => saveErr,
+  verifySaved:async operation => {
+    const stored = JSON.parse(await loadRaw() || 'null');
+    return stored?.cloudAdditions?.[operation.operationId]?.hash === operation.hash;
+  },
+  render:() => { if (!typingNow()) render(true); },
+});
+const recordingInbox = RecordingInbox.create({
+  storage:localStorage,
+  local:recordingInboxLocal,
+  canPoll:() => recordingInboxCanWrite() && booted && !bootErr && !VIEW() && !preview && !document.hidden && !recordingInboxGate.activeEditors,
+  onStatus:value => {
+    recordingInboxStatus = value;
+    const el = document.querySelector('[data-recording-inbox-status]');
+    if (el) el.textContent = recordingInboxStatusText();
+  },
+});
+// Synchronous full-state reset and recovery UI cannot begin in a save window.
+document.addEventListener('click', event => {
+  if (!recordingInboxGate.applying) return;
+  const action = event.target.closest('[data-act]')?.dataset.act;
+  if (['strayuse','show-recovery','recovery-use','pvnow','endpv'].includes(action)) {
+    event.preventDefault(); event.stopImmediatePropagation();
+  }
+}, true);
+function recordingInboxStatusText() {
+  const status = recordingInboxStatus.status;
+  if (!recordingInbox.enrolled) return '録音資料の自動受信は未接続です。';
+  if (['applied-local','already-applied-local'].includes(status)) return 'この端末へ追加・保存済み。クラウド保存・メンバー配信は未確認です。';
+  if (status === 'local-saved-ack-pending') return 'この端末へ保存済み。受信確認を再試行します。';
+  if (status === 'local-save-unconfirmed') return '端末への保存を確認できません。空き容量を確認してください。';
+  if (status === 'addition-conflict') return '既存資料との重複・担当者・予定を確認できないため、追加を止めています。';
+  if (status === 'device-auth-required') return '受信の接続情報を確認してください。';
+  if (['invalid-operation','invalid-receipts','operation-id-reused'].includes(status)) return '追加資料を確認できないため、取り込んでいません。';
+  if (status === 'inbox-unavailable') return '受信サービスに接続できません。後でもう一度試します。';
+  return '接続済み。このアプリを開いている間、録音資料を受信します。';
+}
+function settingsHTML() {
+  return `<p class="note" data-recording-inbox-status role="status">${h(recordingInboxStatusText())}</p>
+    <button class="ghost" data-act="recording-inbox-enroll">録音資料の自動受信を設定</button>
+    ${recordingInbox.enrolled ? '<button class="ghost" data-act="recording-inbox-receive">追加資料を今確認</button><button class="ghost" data-act="recording-inbox-disconnect">自動受信を解除</button>' : ''}`;
+}
+function enrollRecordingInbox() {
+  if (VIEW() || preview || recordingInboxGate.applying) return;
+  const dialog = document.createElement('dialog');
+  dialog.innerHTML = `<form><h3>録音資料の自動受信</h3>
+    <p>この端末の現在のデータへ、承認された録音資料を追加します。クラウド保存とメンバー配信は別に確認します。</p>
+    <label>受信サービスのURL<input name="endpoint" type="url" required autocomplete="off"></label>
+    <label>この端末専用の受信トークン<input name="token" type="password" required autocomplete="off"></label>
+    <label><input name="authoritative" type="checkbox" required>この端末が最新の編集端末です。同じデータを別のタブで編集していません。</label>
+    <p data-error role="alert"></p><button type="submit">接続する</button><button type="button" data-cancel>やめる</button></form>`;
+  dialog.querySelector('[name="endpoint"]').value = recordingInbox.endpoint;
+  dialog.querySelector('[data-cancel]').onclick = () => dialog.close();
+  dialog.addEventListener('close', () => { dialog.querySelector('[name="token"]').value = ''; dialog.remove(); });
+  dialog.querySelector('form').onsubmit = async event => {
+    event.preventDefault();
+    let release;
+    try {
+      const next = RecordingInbox.configuration({endpoint:dialog.querySelector('[name="endpoint"]').value.trim(),token:dialog.querySelector('[name="token"]').value.trim()});
+      if (!navigator.locks || typeof navigator.locks.request !== 'function') throw new Error('Ownership unsupported');
+      document.activeElement?.blur();
+      release = recordingInboxGate.acquire();
+      if (!release) throw new Error('Editor busy');
+      flushSheet(); commitFields(); save(); await saveNow();
+      const expected = JSON.stringify(packState(S));
+      if (saveErr || await loadRaw() !== expected || JSON.stringify(packState(S)) !== expected) throw new Error('Local save unconfirmed');
+      // Preserve current unsent edits before requiring ownership on a fresh boot.
+      localStorage.setItem(recordingInboxWriterKey, '1');
+      recordingInboxProfileRequired = true;
+      recordingInboxStale = true;
+      recordingInboxInvalidated(); recordingInboxOwnerUI();
+      recordingInbox.enroll(next);
+      dialog.querySelector('[name="token"]').value = '';
+      await recordingInboxDenyAndDrain();
+      location.reload();
+    } catch (_) {
+      dialog.querySelector('[data-error]').textContent = '接続情報・対応ブラウザ・端末への保存を確認してください。ほかの処理が終わってから再試行してください。';
+      if (recordingInboxStale) await recordingInboxDenyAndDrain();
+    }
+    finally { if (release) release(); }
+  };
+  document.body.appendChild(dialog); dialog.showModal();
+}
+document.addEventListener('click', event => {
+  const action = event.target.closest('[data-act]')?.dataset.act;
+  if (action === 'recording-inbox-enroll') enrollRecordingInbox();
+  if (action === 'recording-inbox-receive') void recordingInbox.receive();
+  if (action === 'recording-inbox-disconnect') void (async () => {
+    const release = recordingInboxGate.acquire();
+    if (!release) return;
+    try {
+      flushSheet(); commitFields(); save(); await saveNow();
+      const expected = JSON.stringify(packState(S));
+      if (saveErr || await loadRaw() !== expected || JSON.stringify(packState(S)) !== expected) return;
+      await recordingInboxDenyAndDrain();
+      recordingInbox.disconnect();
+      // The writer marker remains: removing inbox access never unlocks stale tabs.
+      location.reload();
+    } finally { release(); }
+  })();
+});
+recordingInboxInvalidated = () => recordingInbox.stop();
+recordingInbox.start();
+
+return {gate:recordingInboxGate, settingsHTML};
+}
+try { recordingInboxIntegration = setupRecordingInboxIntegration(); } catch (_) { /* optional inbox stays unavailable */ }
+
+async function initializeRecordingInboxOwner() {
+  if (!recordingInboxProfileRequired) { recordingInboxResolveBoot(true); return; }
+  try {
+    if (recordingInboxStale || typeof RecordingInbox === 'undefined' || typeof RecordingInboxOwnership === 'undefined' || !recordingInboxIntegration) throw new Error('Unavailable');
+    const configured = localStorage.getItem(recordingInboxEnrollmentKey);
+    if (configured !== null) RecordingInbox.configuration(JSON.parse(configured));
+    recordingInboxOwner = RecordingInboxOwnership.create({
+      locks:navigator.locks,
+      reloadLatest:async ({isCurrent}) => {
+        const raw = await loadRaw();
+        if (!raw || !isCurrent() || saving || recordingInboxWriters) return false;
+        const latest = unpackState(JSON.parse(raw));
+        if (!latest || !Array.isArray(latest.groups) || !Array.isArray(latest.songs)) return false;
+        // Ownership is granted only on this fresh boot; stale work cannot resume.
+        clearTimeout(saveTimer); saveTimer = null; savePend = null; saveDirty = false;
+        Object.keys(S).forEach(key => delete S[key]); Object.assign(S, JSON.parse(JSON.stringify(S0)), latest);
+        touched = false;
+        return isCurrent();
+      },
+      onChange:() => recordingInboxOwnerUI(),
+    });
+    const owned = await recordingInboxOwner.acquire();
+    recordingInboxOwnerUI();
+    recordingInboxResolveBoot(owned);
+  } catch (_) { recordingInboxStale = true; recordingInboxOwnerUI(); recordingInboxResolveBoot(false); }
+}
+void initializeRecordingInboxOwner();

@@ -2,7 +2,7 @@ const {test}=require('node:test');
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
 const src=fs.readFileSync(path.join(__dirname,'..','app.js'),'utf8');
 const c=vm.createContext({});
-vm.runInContext(src.slice(0,src.indexOf('function renderQuickMenu')),c);
+vm.runInContext(src.slice(src.indexOf('const KEY ='),src.indexOf('function renderQuickMenu')),c);
 const expand=value=>{c.value=value;return vm.runInContext('expandNoteMemo(value)',c);};
 test('flick input, IME kanji and katakana produce the same correction',()=>{
  for(const word of ['たかい','高い','タカイ','ﾀｶｲ',' たかい '])assert.equal(expand(word),'音程高い');

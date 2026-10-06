@@ -1,3 +1,4 @@
+const testContext = require('./inbox-test-context.cjs');
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 const src=fs.readFileSync(__dirname+'/../app.js','utf8');
 const block=(a,b)=>src.slice(src.indexOf(a),src.indexOf(b,src.indexOf(a)));
@@ -6,7 +7,7 @@ const work=()=>({shows:[{id:'show',name:'公演'}],songs:[{id:'song',lyric:'kept
 const initial=()=>({shows:[{id:'new',name:'10/6 公演'}],songs:[],notes:[],rsongs:[],groups:[]});
 function setup({local=work(),remote=work(),seen=100,at=100,dirty=true,fail='',legacy=false}={}){
  const events=[],alerts=[];let readGate,uploadGate;
- const c=vm.createContext({S:{...clone(local),ghToken:'synthetic',bkGistId:'target',bkSeen:seen,bkHash:0,bkAt:seen},U:{view:'setup'},preview:null,VIEW:()=>false,
+ const c=testContext({S:{...clone(local),ghToken:'synthetic',bkGistId:'target',bkSeen:seen,bkHash:0,bkAt:seen},U:{view:'setup'},preview:null,VIEW:()=>false,
  Date,Number,Array,JSON,Error,Promise,TRASH_DAYS:30,save(){events.push('save');},render(){},commitFields(){},restoreViewSelection(){},alert:x=>alerts.push(x),
  fromBackup:clone,backupState(){const s=clone(c.S);delete s.ghToken;return s;},backupSignature(s){const a=clone(s);for(const k of ['bkAt','bkHash','bkSeen','bkGistId','bkError','bkFileAt','editPass'])delete a[k];return JSON.stringify(a);},
  bkSignature(){return c.backupSignature(c.backupState());},

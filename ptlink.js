@@ -9,6 +9,16 @@
 (function () {
   "use strict";
 
+  function inboxWritable() { return typeof recordingInboxCanWrite !== "function" || recordingInboxCanWrite(); }
+  function inboxTransport(work) {
+    var done;
+    try { done = typeof recordingInboxAdmitWriter === "function" ? recordingInboxAdmitWriter() : function () {}; }
+    catch (error) { return Promise.reject(error); }
+    try { return Promise.resolve(work()).finally(done); }
+    catch (error) { done(); return Promise.reject(error); }
+  }
+
+
   var PT_VER = 2;
   var PT_APPVER = "6.9";
 
@@ -50,7 +60,7 @@
     return p;
   }
   function copy(o) { return JSON.parse(JSON.stringify(o)); }
-  function store() { try { if (typeof save === "function") save(); } catch (e) { /* 保存できなくても操作は続ける */ } }
+  function store() { if (!inboxWritable()) return; try { if (typeof save === "function") save(); } catch (e) { /* 保存できなくても操作は続ける */ } }
 
   /* ---------------- いま録っているところ ---------------- */
   function liveSlot() {
@@ -156,16 +166,19 @@
       || list[0];
   }
   function midiSend(num, take) {
+    return inboxTransport(function () {
     var p = cfg(), out = midiPort();
     if (!out) return Promise.reject(new Error("MIDIポートがありません"));
     var ch = (p.ch - 1) & 0x0F;
     out.send([0xB0 | ch, p.ccSec, Math.max(0, Math.min(127, num))]);
     out.send([0xB0 | ch, p.ccTake, Math.max(0, Math.min(127, take))]);
     return Promise.resolve();
+    });
   }
 
   /* ---------------- 送り口：ブリッジ ---------------- */
   function bridgeSend(payload) {
+    return inboxTransport(function () {
     var p = cfg();
     var url = String(p.url || "").replace(/\/+$/, "");
     if (!url) return Promise.reject(new Error("ブリッジのアドレスが空です"));
@@ -187,6 +200,7 @@
       if (e instanceof TypeError) throw new Error("繋がりません。アドレスが https か、Macと同じ経路にいるか確認してください。");
       throw e;
     }).finally(function () { clearTimeout(timer); });
+    });
   }
 
   /* ---------------- 送り口：直結（WebRTC） ----------------
@@ -197,9 +211,11 @@
   function rtcReady() { return chan && chan.readyState === "open"; }
 
   function rtcSend(obj) {
+    return inboxTransport(function () {
     if (!rtcReady()) return Promise.reject(new Error("Mac と繋がっていません"));
     chan.send(JSON.stringify(obj));
     return Promise.resolve();
+    });
   }
 
   function rtcStop() {
@@ -209,6 +225,7 @@
   }
 
   function rtcConnect() {
+    return inboxTransport(function () {
     var p = cfg();
     if (!p.gistId) return Promise.reject(new Error("先に Gist を作ってください"));
     if (!S.ghToken) return Promise.reject(new Error("先に自動公開のトークンを入れてください"));
@@ -245,6 +262,7 @@
       })
       .then(function () { return gistWrite({ offer: rtc.localDescription.sdp, answer: null }); })
       .then(function () { return waitAnswer(0); });
+    });
   }
 
   function waitAnswer(tries) {
@@ -270,6 +288,7 @@
   }
 
   function rtcPing() {
+    if (!inboxWritable()) return;
     if (!rtcReady()) return;
     pingAt = Date.now();
     try { chan.send(JSON.stringify({ t: "ping", at: pingAt })); } catch (e) { /* 測れなくても支障なし */ }
@@ -281,6 +300,7 @@
   var GFILE = "utacheck-pt.json";
 
   function gistWrite(extra) {
+    return inboxTransport(function () {
     var p = cfg();
     if (!p.gistId) return Promise.reject(new Error("Gist がまだありません。設定画面で作ってください。"));
     if (!S.ghToken) return Promise.reject(new Error("先に自動公開のトークンを入れてください。"));
@@ -317,9 +337,11 @@
       if (e.name === "AbortError") throw new Error("Gist が重いです。電波を確認してください。");
       throw e;
     }).finally(function () { clearTimeout(timer); });
+    });
   }
 
   function gistCreate() {
+    return inboxTransport(function () {
     if (!S.ghToken) return Promise.reject(new Error("先に自動公開のトークンを入れてください。"));
     var files = {};
     files[GFILE] = { content: JSON.stringify({ seq: 0, at: Date.now() }) };
@@ -336,6 +358,7 @@
       cfg().gistId = j.id; store();
       return j.id;
     });
+    });
   }
 
   /* ---------------- 送る ---------------- */
@@ -351,6 +374,7 @@
   function ng(e) { lastErr = String(e.message || e); flash(lastErr); paint(); }
 
   function sendLocate(force, loud) {
+    if (!inboxWritable()) return;
     var p = cfg();
     if (!p) return Promise.resolve();
     if (!recMode()) return Promise.resolve();
@@ -406,6 +430,7 @@
      接続の有無に関係なく必ず走らせたいので、送信処理とは切り離して save() 側で行う。 */
   var seenSec = null;
   function resetTakeOnSecChange() {
+    if (!inboxWritable()) return;
     var ls = liveSlot();
     if (!ls || !ls.secCur) return;
     if (seenSec === ls.secCur) return;   /* 同じ区切りに留まっている間は触らない */
@@ -424,7 +449,9 @@
     if (typeof save !== "function" || save.__pt) return;
     var orig = save;
     var w = function () {
+      if (!inboxWritable()) return false;
       var r = orig.apply(this, arguments);
+      if (r === false) return r;
       try { resetTakeOnSecChange(); } catch (e) { /* 失敗で保存を壊さない */ }
       try { paint(); } catch (e) { /* 描画の失敗で保存を壊さない */ }
       /* 区切りが変わった時だけ送る。テイクを押しただけで送ると無駄に飛ぶ。 */
@@ -826,6 +853,7 @@
 
   /* ---------------- 起動 ---------------- */
   function boot() {
+    if (!inboxWritable() || (typeof booted !== "undefined" && !booted)) { setTimeout(boot, 1000); return; }
     if (typeof S === "undefined") { setTimeout(boot, 400); return; }
     injectCSS(); alignSecdef(); hookSave();
     var p = cfg();

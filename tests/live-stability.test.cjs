@@ -1,3 +1,4 @@
+const testContext = require('./inbox-test-context.cjs');
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
@@ -9,7 +10,7 @@ function events(){const handlers={};return {handlers,addEventListener(name,fn){(
 
 test('background publishing changes only its status, without replacing the open note dialog',()=>{
  const status={style:{}},sheet={memo:'入力中'};let renders=0;
- const c=vm.createContext({U:{view:'live',sheet},pushState:'送信中',app:{querySelector:()=>status},render(){renders++;}});
+ const c=testContext({U:{view:'live',sheet},pushState:'送信中',app:{querySelector:()=>status},render(){renders++;}});
  vm.runInContext(block('function renderPublishStatus()', 'async function pushOne'),c);
  vm.runInContext('renderPublishStatus()',c);assert.equal(status.textContent,' ・ 送信中');assert.equal(c.U.sheet,sheet);assert.equal(renders,0);
  c.pushState='未送信';vm.runInContext('renderPublishStatus()',c);assert.equal(status.style.color,'var(--bad)');assert.equal(renders,0);
@@ -18,7 +19,7 @@ test('background publishing changes only its status, without replacing the open 
 test('touching, scrolling and open dialogs defer background renders until interaction ends',()=>{
  const time=clock(),doc=events(),win=events();doc.activeElement=null;let writes=0;
  const app={dataset:{},querySelector:()=>null,set innerHTML(v){writes++;}};
- const c=vm.createContext({...time,document:doc,window:win,Set,S:{recMode:false},U:{view:'live'},app,
+ const c=testContext({...time,document:doc,window:win,Set,S:{recMode:false},U:{view:'live'},app,
   song:()=>({id:'song'}),takeCtx:()=>'',alertPending:()=>null,viewLive:()=>'<div>歌詞</div>',saveErr:false,VIEW:()=>false,queueInkPaint(){},renderSheet(){}});
  vm.runInContext(block('let pendingRender = false;', '// 今日の日付'),c);
  const run=s=>vm.runInContext(s,c);
@@ -35,7 +36,7 @@ test('drawing allocates no full-song bitmap, preserves stroke positions and coal
  const calls=[];let contexts=0,raf;
  const cv={width:300,height:150,style:{},getContext(){contexts++;return {clearRect(){},save(){},restore(){},translate(x,y){calls.push(['offset',x,y]);},beginPath(){},moveTo(x,y){calls.push(['point',x,y]);},lineTo(){},stroke(){}};}};
  const sc={clientWidth:390,clientHeight:560,scrollHeight:40000,scrollTop:3000};
- const c=vm.createContext({document:{getElementById:()=>cv},app:{querySelector:()=>sc},S:{draws:{}},U:{draw:false},drawKey:()=> 'song',inkPath:null,requestAnimationFrame(fn){raf=fn;return 1;}});
+ const c=testContext({document:{getElementById:()=>cv},app:{querySelector:()=>sc},S:{draws:{}},U:{draw:false},drawKey:()=> 'song',inkPath:null,requestAnimationFrame(fn){raf=fn;return 1;}});
  vm.runInContext(block('function paintInk()', 'function inkPos'),c);
  vm.runInContext('paintInk()',c);assert.equal(cv.width,0);assert.equal(cv.height,0);assert.equal(contexts,0);
  c.S.draws.song=[{c:'red',w:3,p:[.5,3100,.6,3120]}];
@@ -46,7 +47,7 @@ test('drawing allocates no full-song bitmap, preserves stroke positions and coal
 
 test('rapid saves serialize once and a preview cannot overwrite the editor data',async()=>{
  const time=clock(),writes=[];let packed=0;
- const c=vm.createContext({...time,S:{notes:[]},preview:null,booted:true,saveErr:false,KEY:'state',packState(s){packed++;return s;},idbPut:async(k,v)=>writes.push(JSON.parse(v.txt))});
+ const c=testContext({...time,S:{notes:[]},preview:null,booted:true,saveErr:false,KEY:'state',packState(s){packed++;return s;},idbPut:async(k,v)=>writes.push(JSON.parse(v.txt))});
  vm.runInContext('let idbOK = true;'+block('let saveTimer = null','const REC_SHOW'),c);
  for(let i=0;i<30;i++){c.S.notes.push(i);vm.runInContext('save()',c);}
  assert.equal(packed,0);await vm.runInContext('saveNow()',c);assert.equal(packed,1);assert.equal(writes[0].notes.length,30);
@@ -56,7 +57,7 @@ test('rapid saves serialize once and a preview cannot overwrite the editor data'
 
 test('saving during an outstanding database write persists the final edit too',async()=>{
  const time=clock(),writes=[];let finishFirst;
- const c=vm.createContext({...time,S:{n:1},preview:null,booted:true,saveErr:false,packState:s=>s,idbPut(k,v){writes.push(JSON.parse(v.txt));return writes.length===1?new Promise(r=>{finishFirst=r;}):Promise.resolve();}});
+ const c=testContext({...time,S:{n:1},preview:null,booted:true,saveErr:false,packState:s=>s,idbPut(k,v){writes.push(JSON.parse(v.txt));return writes.length===1?new Promise(r=>{finishFirst=r;}):Promise.resolve();}});
  vm.runInContext('let idbOK = true;'+block('let saveTimer = null','const REC_SHOW'),c);
  vm.runInContext('save()',c);const flush=vm.runInContext('saveNow()',c);c.S.n=2;vm.runInContext('save()',c);finishFirst();await flush;
  assert.deepEqual(writes,[{n:1},{n:2}]);
@@ -64,7 +65,7 @@ test('saving during an outstanding database write persists the final edit too',a
 
 test('restoration save waits for an existing database write before reload can proceed',async()=>{
  const time=clock(),writes=[];let finishFirst,done=false;
- const c=vm.createContext({...time,S:{n:1},preview:null,booted:true,saveErr:false,packState:s=>s,idbPut(k,v){writes.push(JSON.parse(v.txt));return writes.length===1?new Promise(r=>{finishFirst=r;}):Promise.resolve();}});
+ const c=testContext({...time,S:{n:1},preview:null,booted:true,saveErr:false,packState:s=>s,idbPut(k,v){writes.push(JSON.parse(v.txt));return writes.length===1?new Promise(r=>{finishFirst=r;}):Promise.resolve();}});
  vm.runInContext('let idbOK = true;'+block('let saveTimer = null','const REC_SHOW'),c);
  vm.runInContext('save()',c);const first=vm.runInContext('saveNow()',c);
  c.S.n=2;vm.runInContext('save()',c);const restored=vm.runInContext('saveNow()',c).then(()=>done=true);
@@ -75,7 +76,7 @@ test('restoration save waits for an existing database write before reload can pr
 
 test('note undo does not copy recording lyrics or erase recording state when restored',()=>{
  const songs=[{id:'recording',lines:Array(1000).fill('long lyric')}],plan={slots:[{id:'running'}]};
- const c=vm.createContext({S:{notes:[{id:'before'}],rsongs:songs,plan},undoStack:[],U:{},song:()=>({}),clearTimeout(){},save(){},schedulePush(){},render(){},document:{addEventListener(name,fn){c.click=fn;}}});
+ const c=testContext({S:{notes:[{id:'before'}],rsongs:songs,plan},undoStack:[],U:{},song:()=>({}),clearTimeout(){},save(){},schedulePush(){},render(){},document:{addEventListener(name,fn){c.click=fn;}}});
  vm.runInContext(block('function pushUndo(', 'let saveErr'),c);vm.runInContext('pushUndo(null,true)',c);
  assert(!c.undoStack[0].includes('recording'));c.S.notes.push({id:'after'});
  const start=src.indexOf('document.addEventListener("click", (e) => {');vm.runInContext(src.slice(start,src.indexOf('\n});',start)+4),c);
@@ -88,7 +89,7 @@ test('cancelled lyric gestures and second fingers cannot open notes; highlights 
  const chars=Array.from({length:3},(_,i)=>({dataset:{c:String(i)},style:{background:i===1?'red':''},getBoundingClientRect:()=>({left:i*20,right:i*20+20,top:0,bottom:30})}));
  const row={dataset:{l:'0'},isConnected:true,querySelectorAll:()=>chars};
  const target={closest:sel=>sel==='.txt'?row:null};
- const c=vm.createContext({...time,document:doc,window:win,U:{},S:{recMode:false},VIEW:()=>false,song:()=>({id:'a'}),openSheet:(...a)=>{notes.push(a);c.U.sheet={};},app:{querySelector:()=>row}});
+ const c=testContext({...time,document:doc,window:win,U:{},S:{recMode:false},VIEW:()=>false,song:()=>({id:'a'}),openSheet:(...a)=>{notes.push(a);c.U.sheet={};},app:{querySelector:()=>row}});
  vm.runInContext(block('let org = null, dragOn = false;', '/* ---------------- files'),c);
  const fire=(name,more={})=>doc.fire(name,{target,clientX:5,clientY:10,preventDefault(){},...more});
  fire('pointerdown');fire('pointercancel');fire('pointerup');assert.equal(notes.length,0);
@@ -104,14 +105,14 @@ test('cancelled lyric gestures and second fingers cannot open notes; highlights 
 
 test('slow background publication does not start overlapping sends',async()=>{
  let finish,calls=0;
- const c=vm.createContext({publishGroups(){calls++;return new Promise(r=>{finish=r;});}});
+ const c=testContext({publishGroups(){calls++;return new Promise(r=>{finish=r;});}});
  vm.runInContext(block('let publishInFlight = false;', 'async function publishGroups'),c);
  const first=vm.runInContext('doPush(true)',c);await vm.runInContext('doPush(true)',c);assert.equal(calls,1);finish();await first;
  const next=vm.runInContext('doPush(true)',c);await Promise.resolve();assert.equal(calls,2);finish();await next;
 });
 
 test('unchanged publications reuse their check, but new notes and completed sends invalidate it',()=>{
- let reads=0;const c=vm.createContext({stateRevision:1,S:{groups:[{id:'a',gistId:'g',lastKey:'same'}]},publicationData(){reads++;return 'same';},payloadKey:x=>x});
+ let reads=0;const c=testContext({stateRevision:1,S:{groups:[{id:'a',gistId:'g',lastKey:'same'}]},publicationData(){reads++;return 'same';},payloadKey:x=>x});
  vm.runInContext(block('let pendingCheck = null;', '// アプリを開いている間'),c);
  for(let i=0;i<100;i++)assert.equal(vm.runInContext('hasPending()',c),false);assert.equal(reads,1);
  c.stateRevision++;vm.runInContext('hasPending()',c);assert.equal(reads,2);
@@ -120,7 +121,7 @@ test('unchanged publications reuse their check, but new notes and completed send
 
 test('unchanged or failed automatic receive polls leave the live DOM alone',async()=>{
  let renders=0,applied=0;const payload={version:7,songs:[{}]};
- const c=vm.createContext({VIEW:()=>true,S:{songs:[{}],setlistVer:7},fetchSetlist:async()=>payload,render(){renders++;},applySetlist(){applied++;},syncErr:''});
+ const c=testContext({VIEW:()=>true,S:{songs:[{}],setlistVer:7},fetchSetlist:async()=>payload,render(){renders++;},applySetlist(){applied++;},syncErr:''});
  vm.runInContext(block('async function syncSetlist(manual)', '/* ---- 共有リンク'),c);
  await vm.runInContext('syncSetlist(false)',c);assert.equal(renders,0);assert.equal(applied,0);
  c.fetchSetlist=async()=>null;await vm.runInContext('syncSetlist(false)',c);assert.equal(renders,0);
@@ -130,7 +131,7 @@ test('unchanged or failed automatic receive polls leave the live DOM alone',asyn
 test('close remains usable when a mobile browser keeps focus in the memo input',()=>{
  const sheet={memo:''};let committed='',closed=false;
  const document={activeElement:{tagName:'TEXTAREA',value:'入力した指示',blur(){document.activeElement=null;}},addEventListener(name,fn){c.click=fn;}};
- const c=vm.createContext({U:{sheet},document,sheetTimer:null,clearTimeout(){},song:()=>({}),typingNow:()=>!!document.activeElement,
+ const c=testContext({U:{sheet},document,sheetTimer:null,clearTimeout(){},song:()=>({}),typingNow:()=>!!document.activeElement,
   commitFields(){sheet.memo=document.activeElement.value;},sheetHasInput:()=>!!sheet.memo,commitNote(){assert.equal(document.activeElement,null);committed=sheet.memo;c.U.sheet=null;closed=true;},renderSheet(){closed=true;}});
  const start=src.indexOf('document.addEventListener("click", (e) => {');vm.runInContext(src.slice(start,src.indexOf('\n});',start)+4),c);
  c.click({target:{closest:sel=>sel==='[data-act]'?{tagName:'BUTTON',dataset:{act:'cancel'}}:null}});
@@ -141,7 +142,7 @@ test('changing take at the same list index starts at the top, while edits keep p
  const time=clock(),doc=events(),win=events();doc.activeElement=null;
  let current={id:'take1'},take='',sc={scrollTop:0};
  const app={dataset:{},querySelector:()=>sc,set innerHTML(v){sc={scrollTop:0};}};
- const c=vm.createContext({...time,document:doc,window:win,Set,S:{recMode:false},U:{view:'live',songIdx:0},app,
+ const c=testContext({...time,document:doc,window:win,Set,S:{recMode:false},U:{view:'live',songIdx:0},app,
   song:()=>current,takeCtx:()=>take,alertPending:()=>null,viewLive:()=>'<div>歌詞</div>',saveErr:false,VIEW:()=>false,queueInkPaint(){},renderSheet(){}});
  vm.runInContext(block('let pendingRender = false;', '// 今日の日付'),c);
  const render=()=>vm.runInContext('render()',c);

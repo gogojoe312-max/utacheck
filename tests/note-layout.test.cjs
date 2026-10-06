@@ -10,7 +10,7 @@ function sheet(){
   document:{addEventListener(name,fn){click=fn;},getElementById:id=>id==='memo'&&c.U.sheet?.detail?{value:memo}:null,
    createElement(){return {innerHTML:'',remove(){},querySelector(){return this.innerHTML.includes('note-details-content')?{open:true,addEventListener(){},scrollIntoView(){},focus(){}}:null;}};},body:{appendChild(el){html=el.innerHTML;}}},
   commitFields(){if(c.U.sheet?.detail)c.U.sheet.memo=memo;}});
- vm.runInContext(src.slice(0,src.indexOf('/* ---------------- state')),c);
+ vm.runInContext(src.slice(src.indexOf('const KEY ='),src.indexOf('/* ---------------- state')),c);
  vm.runInContext(src.slice(src.indexOf('function renderSheet()'),src.indexOf('/* ---- summary ---- */')),c);
  const start=src.indexOf('document.addEventListener("click", (e) => {');vm.runInContext(src.slice(start,src.indexOf('\n});',start)+4),c);
  const render=()=>{vm.runInContext('renderSheet()',c);return html;};

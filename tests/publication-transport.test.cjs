@@ -1,3 +1,4 @@
+const testContext = require('./inbox-test-context.cjs');
 const {test}=require('node:test');
 const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 const src=fs.readFileSync(__dirname+'/../app.js','utf8');
@@ -6,7 +7,7 @@ const tick=()=>new Promise(r=>setImmediate(r));
 function setup(){
  const calls=[],alerts=[],timers=new Map();let timerId=0;
  const groups=['one','two'].map(id=>({id,name:id,gistId:'synthetic-'+id,key:'old'}));
- const c=vm.createContext({S:{groups,ghToken:'synthetic'},U:{},publishIssues:[],pushState:'',pushTimer:null,lastPushAt:0,limitedAt:'',
+ const c=testContext({S:{groups,ghToken:'synthetic'},U:{},publishIssues:[],pushState:'',pushTimer:null,lastPushAt:0,limitedAt:'',
   Date,URL,AbortController,Error,document:{getElementById:()=>({value:'new'})},id:'one',
   setTimeout(fn,ms){timers.set(++timerId,{fn,ms});return timerId;},clearTimeout(id){timers.delete(id);},
   publicationData:id=>({version:1,groupName:id,shows:[],songs:[]}),unresolvedPublicationShows:()=>[],group:id=>groups.find(g=>g.id===id)||groups[0],

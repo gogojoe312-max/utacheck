@@ -1,10 +1,11 @@
+const testContext = require('./inbox-test-context.cjs');
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 const path=require('node:path');
 const app=fs.readFileSync(path.join(__dirname,'../app.js'),'utf8');
 const recovery=fs.readFileSync(path.join(__dirname,'../show-recovery.js'),'utf8');
 const block=(a,b)=>app.slice(app.indexOf(a),app.indexOf(b,app.indexOf(a)));
 function fixture(){
- const c=vm.createContext({document:{addEventListener(){}},JSON,Map,Set});vm.runInContext(recovery,c);
+ const c=testContext({document:{addEventListener(){}},JSON,Map,Set});vm.runInContext(recovery,c);
  const old={shows:[{id:'release',name:'リリイベ',folder:'ロージー',groupId:'g',absent:['m']}],
    groups:[{id:'g',name:'ロージークロニクル',gistId:'old-private',key:'DO_NOT_COPY'}],members:[{id:'m',name:'橋田'}],
    songs:[{id:'same',title:'本気ボンバー',showId:'release',groupId:'g',roster:['m'],blocks:{A:['m']},lines:[{t:'歌詞',parts:['m'],main:['m'],extra:[]}]}],
@@ -42,13 +43,13 @@ test('duplicate restoration and broken member references cannot mutate existing 
  current.shows.pop();old.members=[];before=JSON.stringify(current);assert.throws(()=>run("ShowRecovery.restore(current,old,'release',makeId)"),/担当メンバー/);assert.equal(JSON.stringify(current),before);
 });
 test('editor receive paths do not fetch or replace saved performances with member publications',async()=>{
- let fetches=0;const c=vm.createContext({VIEW:()=>false,S:{shows:[{id:'release',name:'リリイベ'}],songs:[{id:'song',showId:'release'}]},fetchSetlist:async()=>{fetches++;return {songs:[]};}});
+ let fetches=0;const c=testContext({VIEW:()=>false,S:{shows:[{id:'release',name:'リリイベ'}],songs:[{id:'song',showId:'release'}]},fetchSetlist:async()=>{fetches++;return {songs:[]};}});
  vm.runInContext(block('function applySetlist(d)','/* ---- 共有リンク'),c);const before=JSON.stringify(c.S);
  await vm.runInContext('syncSetlist(false)',c);vm.runInContext('applySetlist({shows:[],songs:[]})',c);
  assert.equal(fetches,0);assert.equal(JSON.stringify(c.S),before);
 });
 test('automatic cross-device sync cannot remove a saved show even when the local backup is clean',async()=>{
- const c=vm.createContext({syncing:false,backupInFlight:false,preview:null,otherAt:0,U:{},S:{ghToken:'token',bkGistId:'backup',bkSeen:1,bkHash:'clean',shows:[{id:'release',name:'リリイベ'}],songs:[]},
+ const c=testContext({syncing:false,backupInFlight:false,preview:null,otherAt:0,U:{},S:{ghToken:'token',bkGistId:'backup',bkSeen:1,bkHash:'clean',shows:[{id:'release',name:'リリイベ'}],songs:[]},
    gh:async()=>({files:{}}),backupIndexFile:()=>true,readCloudBackup:async()=>({}),unpackBackup:async()=>({app:"utacheck",at:2,state:{shows:[],songs:[]}}),bkSignature:()=> 'clean',render(){},save(){throw Error('must not overwrite');}});
  vm.runInContext(block('async function readSyncBackup(target)', '// その場で両方向に揃える'),c);
  vm.runInContext(block('async function checkOther(strict = false)', 'async function takeOther()'),c);const before=JSON.stringify(c.S);

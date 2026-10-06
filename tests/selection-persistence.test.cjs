@@ -1,3 +1,4 @@
+const testContext = require('./inbox-test-context.cjs');
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs'), vm = require('node:vm'), path = require('node:path');
@@ -5,7 +6,7 @@ const source = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
 const block = (a,b) => source.slice(source.indexOf(a), source.indexOf(b, source.indexOf(a)));
 function setup(storage = new Map()) {
   let writes = 0, pushes = 0;
-  const c = vm.createContext({S:{viewer:false,groupId:'rose',showId:'r',groups:[{id:'ocha',name:'OCHA NORMA'},{id:'rose',name:'ロージー'}],
+  const c = testContext({S:{viewer:false,groupId:'rose',showId:'r',groups:[{id:'ocha',name:'OCHA NORMA'},{id:'rose',name:'ロージー'}],
     shows:[{id:'r',name:'ロージー公演',groupId:'rose',ts:2},{id:'o',name:'OCHA公演',groupId:'ocha',ts:1}],
     songs:[{id:'rs',showId:'r',groupId:'rose',title:'曲R',lines:[]},{id:'os',showId:'o',groupId:'ocha',title:'曲O',lines:[]}],
     notes:[],memos:{},staffMemos:{},folders:{},gsubs:{},subs:{}},U:{showFilter:'',songIdx:0},preview:null,

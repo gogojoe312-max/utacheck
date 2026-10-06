@@ -1,3 +1,4 @@
+const testContext = require('./inbox-test-context.cjs');
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 const src=fs.readFileSync(__dirname+'/../app.js','utf8');
 const block=(a,b)=>src.slice(src.indexOf(a),src.indexOf(b,src.indexOf(a)));
@@ -7,7 +8,7 @@ const pinned=raw(id).replace('/raw/','/raw/'+'c'.repeat(40)+'/');
 function setup(){
  let next=0;const calls=[];
  const S={groups:[{id:'g',name:'Group',gistId:id,src:pinned}],groupId:'g',ghToken:'synthetic',shows:[],songs:[],notes:[],members:[],gsubs:{},subs:{},memos:{},src:pinned};
- const c=vm.createContext({S,U:{},URL,Date,VIEW:()=>true,save(){},render(){},restoreViewSelection(){},h:String,todayLabel:()=> 'Today',
+ const c=testContext({S,U:{},URL,Date,VIEW:()=>true,save(){},render(){},restoreViewSelection(){},h:String,todayLabel:()=> 'Today',
   group:()=>S.groups[0],member:mid=>S.members.find(m=>m.id===mid),addMember:name=>{let m=S.members.find(m=>m.name===name);if(!m)S.members.push(m={id:String(++next),name});return m;},uid:()=>String(++next),
   buildSong:s=>({...s,id:String(++next),lines:[],blocks:{},roster:[]}),songSig:()=>'',NOTES:()=>S.pubNotes||[],showsNewestFirst:()=>S.shows,
   wrap:async d=>d,gh:async(path,opts)=>{calls.push({path,opts});return {};}});
