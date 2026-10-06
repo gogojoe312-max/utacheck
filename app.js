@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.24";
+const APP_VER = "16.41.25";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -5815,6 +5815,8 @@ function backupSettingsHTML() {
     ${S.ghToken ? '<button class="ghost" data-act="bkfile">ファイルに保存</button>' : ""}
     ${S.ghToken ? '<button class="ghost" data-act="backup-restore">クラウドから復元</button>' : ""}
     <button class="ghost" data-act="backup-file-restore">ファイルから復元</button>
+    ${S.ghToken && S.bkGistId ? '<button class="ghost" data-act="backup-inspect">クラウドを確認（送信・復元しない）</button>' : ''}
+    ${syncReadReport ? `<p class="note" role="status" style="white-space:pre-wrap">${h(syncReadReport)}</p>` : ''}
     <button class="ghost" data-act="recording-addition">録音曲・時間割を追加用ファイルから追加</button>
     <p class="note">歌割・指摘・手書き・設定を保存します。録音音声は含みません。</p>
     ${otherAt ? `<div role="status" class="card"><b>クラウドとこの端末に違いがあります</b><p class="note">クラウドへの送信は止めています。両方のファイルを保管し、残す内容を確認してください。</p>
@@ -8512,7 +8514,8 @@ document.addEventListener("click", (e) => {
     case "ghverify": verifyToken(); break;
     case "backup-restore": if (S.bkGistId) restoreBackup(); else findBackup(); break;
     case "bknow": backupWithCloudCheck(); break;
-    case "backup-check": backupWithCloudCheck(); break;
+    case "backup-check": inspectCloudBackup(); break;
+    case "backup-inspect": inspectCloudBackup(); break;
     case "bkfile": backupToFile(); break;
     case "backup-file-restore": chooseBackupFile(); break;
     case "recording-addition": chooseRecordingAddition(); break;
@@ -10543,15 +10546,25 @@ async function backupDigest(text) {
   const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
   return Array.from(new Uint8Array(bytes), b => b.toString(16).padStart(2,"0")).join("");
 }
-async function backupFileText(file) {
+function cloudReadStageError(stage, error) {
+  const kind = error?.name === 'TimeoutError' || error?.name === 'AbortError' ? '通信が時間切れになりました'
+    : error instanceof TypeError || /Load failed|Failed to fetch|NetworkError/i.test(String(error?.message || '')) ? '通信を完了できませんでした（Load failed / network）'
+    : Number.isInteger(error?.status) ? 'HTTP ' + error.status : '応答を取得・確認できませんでした';
+  const e = new Error(stage + '：' + kind + '。送信・復元はしていません。');
+  if (error?.status) e.status = error.status;
+  return e;
+}
+async function backupFileText(file, stage = 'バックアップファイル') {
   if (!file) throw new Error("バックアップの一部が見つかりません。");
   if (!file.truncated && typeof file.content === "string") return file.content;
   const url = new URL(file.raw_url || "");
   if (url.protocol !== "https:" || url.hostname !== "gist.githubusercontent.com") throw new Error("バックアップの取得先が不正です。");
   // GitHubが返した、その版のraw_urlを使う。トークンは送らない。
-  const response = await fetch(url.href, {credentials:"omit",referrerPolicy:"no-referrer",cache:"no-store",signal:AbortSignal.timeout(60000)});
-  if (!response.ok) throw new Error("バックアップの読み込みに失敗しました（" + response.status + "）。");
-  return response.text();
+  try {
+    const response = await fetch(url.href, {credentials:"omit",referrerPolicy:"no-referrer",cache:"no-store",signal:AbortSignal.timeout(60000)});
+    if (!response.ok) { const e = new Error('HTTP'); e.status = response.status; throw e; }
+    return await response.text();
+  } catch (e) { throw cloudReadStageError(stage + 'のraw取得', e); }
 }
 function backupIndexFile(files) {
   return files && (files[BACKUP_FILE] || files[Object.keys(files).find(name => /backup.*\.json$/i.test(name))]);
@@ -10565,14 +10578,14 @@ function validBackupParts(index) {
     && /^[a-f0-9]{64}$/.test(index.sha256 || "");
 }
 async function readCloudBackupContent(files) {
-  const content = await backupFileText(backupIndexFile(files));
+  const content = await backupFileText(backupIndexFile(files), "バックアップ索引");
   const index = JSON.parse(content);
   if (index.bk !== 2) return content; // 旧版の1ファイル・暗号化形式もそのまま読める
   if (!validBackupParts(index)) throw new Error("バックアップの構成情報が壊れています。");
   const parts = [];
   // 全部同時に取得せず、スマホのメモリと通信負荷を抑える。
   for (const part of index.parts) {
-    const text = await backupFileText(files[part.name] || {raw_url:part.raw_url});
+    const text = await backupFileText(files[part.name] || {raw_url:part.raw_url}, "分割ファイル " + (parts.length + 1) + "/" + index.parts.length);
     if (text.length > BACKUP_PART_SIZE) throw new Error("バックアップの一部が不正です。");
     parts.push(text);
   }
@@ -10635,6 +10648,23 @@ async function uploadCloudBackup(content) {
 let backupInFlight = false, backupRetryAt = 0;
 function renderBackupStatus() {
   if (U.view === "setup" || U.view === "recsetup") render(true);
+}
+async function inspectCloudBackup() {
+  if (backupInFlight || syncing || manualSync || preview || VIEW() || U.showRecovery) return;
+  if (!S.ghToken || !S.bkGistId) { alert('クラウドのつなぎ先がありません。設定は変更していません。'); return; }
+  syncing = true;
+  try {
+    if (!await backupToFile()) return;
+    // 手動送信・checkOther・復元・鍵入力を呼ばない読取専用経路。
+    const obj = await readSyncBackup(S.bkGistId);
+    const local = (S.shows || []).filter(x => !x.hidden).map(x => x.name || '').join('、');
+    const cloud = (obj.state.shows || []).filter(x => !x.hidden).map(x => x.name || '').join('、');
+    syncReadReport = 'クラウド確認（送信・復元なし）\nこの端末の公演：' + local + '\nクラウドの公演：' + cloud;
+    render(); alert(syncReadReport);
+  } catch (e) {
+    syncReadReport = 'クラウドを確認できませんでした。\n' + e.message;
+    render(); alert(syncReadReport);
+  } finally { syncing = false; }
 }
 async function backupWithCloudCheck() {
   if (backupInFlight || syncing || manualSync || preview || VIEW() || U.showRecovery) return;
@@ -11117,7 +11147,7 @@ function endPreview() {
 
 // 別の端末で更新されていないか見に行く。
 // 手元に変更が無ければそのまま取り込み、両方変わっていれば選んでもらう。
-let otherAt = 0, syncing = false, manualSync = false, syncComparison = null;
+let otherAt = 0, syncing = false, manualSync = false, syncComparison = null, syncReadReport = "";
 function hasBackupWork(state) {
   const st = fromBackup({...state});
   return ["songs", "notes", "rsongs", "trash"].some(k => Array.isArray(st[k]) && st[k].length)
@@ -11131,7 +11161,9 @@ function recordingPreservedInTrash(state, song) {
 }
 async function readSyncBackup(target) {
   const keyBefore = S.bkKey, tokenBefore = S.ghToken;
-  const g = await gh("/gists/" + target);
+  let g;
+  try { g = await gh("/gists/" + target); }
+  catch (e) { throw cloudReadStageError('GitHub APIのバックアップ一覧取得', e); }
   if (!backupIndexFile(g.files)) throw new Error("クラウドのバックアップを確認できません。送信せずに中止しました。");
   const raw = await readCloudBackup(g.files);
   let obj;
