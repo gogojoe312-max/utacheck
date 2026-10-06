@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.25";
+const APP_VER = "16.41.26";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -10550,7 +10550,7 @@ function cloudReadStageError(stage, error) {
   const kind = error?.name === 'TimeoutError' || error?.name === 'AbortError' ? '通信が時間切れになりました'
     : error instanceof TypeError || /Load failed|Failed to fetch|NetworkError/i.test(String(error?.message || '')) ? '通信を完了できませんでした（Load failed / network）'
     : Number.isInteger(error?.status) ? 'HTTP ' + error.status : '応答を取得・確認できませんでした';
-  const e = new Error(stage + '：' + kind + '。送信・復元はしていません。');
+  const e = new Error(stage + '：' + kind + '。');
   if (error?.status) e.status = error.status;
   return e;
 }
@@ -10662,7 +10662,7 @@ async function inspectCloudBackup() {
     syncReadReport = 'クラウド確認（送信・復元なし）\nこの端末の公演：' + local + '\nクラウドの公演：' + cloud;
     render(); alert(syncReadReport);
   } catch (e) {
-    syncReadReport = 'クラウドを確認できませんでした。\n' + e.message;
+    syncReadReport = 'クラウドを確認できませんでした（送信・復元はしていません）。\n' + e.message;
     render(); alert(syncReadReport);
   } finally { syncing = false; }
 }

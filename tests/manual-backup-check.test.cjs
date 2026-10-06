@@ -17,3 +17,4 @@ for(const stage of ['バックアップ索引','分割ファイル 2/3'])test('r
  const c=vm.createContext({URL,AbortSignal,TypeError,Error,fetch:async()=>{throw new TypeError('Load failed private diagnostic payload');}});vm.runInContext(block('function cloudReadStageError(', 'function backupIndexFile('),c);
  await assert.rejects(c.backupFileText({truncated:true,raw_url:'https://gist.githubusercontent.com/synthetic/raw/1'},stage),e=>e.message.includes(stage)&&e.message.includes('network')&&!e.message.includes('private diagnostic payload')&&!e.message.includes('https://'));
 });
+test('shared read failure diagnostic does not claim a prior cloud write never happened',()=>{const c=vm.createContext({TypeError});vm.runInContext(block('function cloudReadStageError(', 'async function backupFileText'),c);const err=c.cloudReadStageError('分割ファイル 2/3のraw取得',new TypeError('Load failed'));assert.match(err.message,/分割ファイル 2\/3/);assert(!/送信.*していません|復元.*していません/.test(err.message));});
