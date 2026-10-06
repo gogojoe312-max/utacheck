@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.22";
+const APP_VER = "16.41.23";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -10742,10 +10742,20 @@ function mergeRecordingAddition(current, packet) {
   const mapping = {}, newMembers = [];
   for (const m of p.members) {
     if (!m.id || !norm(m.name) || mapping[m.id]) fail('メンバー資料が不正です。');
-    const matches = s.members.filter(x => norm(x.name) === norm(m.name) || norm(x.name).startsWith(norm(m.name)));
-    if (matches.length > 1) fail('メンバー名が曖昧です。追加していません。');
-    if (matches.length) mapping[m.id] = matches[0].id;
-    else { if (s.members.some(x => x.id === m.id)) fail('メンバーIDが競合しています。'); mapping[m.id] = m.id; newMembers.push(m); }
+    const boundId = p.memberBindings?.[m.id];
+    if (boundId != null) {
+      // 正規メンバー画面で確認したID対応だけを使用。姓の推測一致をしない。
+      const matches = s.members.filter(x => x.id === boundId);
+      if (typeof boundId !== 'string' || matches.length !== 1 || norm(matches[0].name) !== norm(m.name)) fail('確認済みメンバーIDと現在の表示名が一致しません。追加していません。');
+      if (Object.values(mapping).includes(boundId)) fail('同じメンバーIDへ複数の対応があります。追加していません。');
+      mapping[m.id] = boundId;
+    } else {
+      if (p.memberBindings) fail('確認済みメンバーIDの対応が不足しています。追加していません。');
+      const matches = s.members.filter(x => norm(x.name) === norm(m.name) || norm(x.name).startsWith(norm(m.name)));
+      if (matches.length > 1) fail('メンバー名が曖昧です。追加していません。');
+      if (matches.length) mapping[m.id] = matches[0].id;
+      else { if (s.members.some(x => x.id === m.id)) fail('メンバーIDが競合しています。'); mapping[m.id] = m.id; newMembers.push(m); }
+    }
   }
   const remap = ids => { if (!Array.isArray(ids) || ids.some(id => !mapping[id])) fail('担当メンバーが不明です。'); return ids.map(id => mapping[id]); };
   const ids = new Set(), titles = new Set();
