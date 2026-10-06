@@ -1,6 +1,6 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 const source=fs.readFileSync(__dirname+'/../app.js','utf8');
-const c=vm.createContext({});vm.runInContext(source.slice(source.indexOf('function mergeRecordingAddition'),source.indexOf('function chooseRecordingAddition')),c);
+const c=vm.createContext({});vm.runInContext(source.slice(source.indexOf('function recordingAdditionScopedMembers'),source.indexOf('function chooseRecordingAddition')),c);
 const clone=x=>JSON.parse(JSON.stringify(x));
 const current=()=>({shows:[{id:'show'}],songs:[{id:'live',lines:[{t:'keep'}]}],notes:[{id:'note'}],draws:{a:[1]},ghToken:'synthetic',groups:[{id:'existing',src:'unchanged'}],members:[{id:'reused',name:'Test Member'}],rsongs:[{id:'old',title:'Old',lines:[{t:'keep'}]}],rosters:{Old:['Keep']},plan:{slots:[{id:'oldslot',day:'10/1',at:600,min:90,a0:610,secLog:{a:1}}]}});
 const packet=()=>({app:'utacheck-recording-addition',version:1,group:{id:'new',name:'Test',nopub:1},members:[{id:'m',name:'Test Member'}],roster:['Test Member'],songs:[{id:'newSong',title:'New',groupId:'new',roster:['m'],blocks:{A:['m']},lines:[{t:'Added',parts:['m'],main:['m'],extra:[]},{t:'Unassigned',parts:[],main:[],extra:[]}]}],plan:{year:2026,timezone:'Asia/Tokyo',slots:[{id:'newslot',day:'10/8',date:'2026-10-08',at:600,min:90}]}});

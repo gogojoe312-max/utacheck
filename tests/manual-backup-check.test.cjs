@@ -23,7 +23,7 @@ for (const networkFails of [false,true]) test('real API read path survives downl
  const requests=[],alerts=[];let navigating=false;
  const state={shows:[{id:'local',name:'Local Blueprint'}],songs:[],notes:[{memo:'kept'}],bkKey:'synthetic-key',ghToken:'synthetic-token',bkGistId:'synthetic-target',bkFileAt:123};
  const before=JSON.stringify(state),cloud={app:'utacheck',at:10,state:{shows:[{id:'remote',name:'Cloud show'}],songs:[],notes:[]}};
- const c=vm.createContext({S:state,U:{},syncing:false,backupInFlight:false,manualSync:false,preview:null,syncReadReport:'',VIEW:()=>false,TypeError,Error,
+ const c=vm.createContext({S:state,U:{},syncing:false,backupInFlight:false,manualSync:false,preview:null,syncReadReport:'',VIEW:()=>false,TypeError,Error,AbortController,setTimeout,clearTimeout,
   backupToFile:async()=>{navigating=true;return true;},
   fetch:async(url,opts)=>{requests.push({url,opts});assert.equal(c.syncing,true);if(navigating||networkFails)throw new TypeError('Load failed');return{ok:true,json:async()=>({files:{'utacheck-backup.json':{content:JSON.stringify(cloud)}}})};},
   backupIndexFile:files=>files['utacheck-backup.json'],readCloudBackup:async files=>JSON.parse(files['utacheck-backup.json'].content),unpackBackup:async raw=>raw,

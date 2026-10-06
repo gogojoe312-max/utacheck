@@ -107,7 +107,7 @@ test('slow background publication does not start overlapping sends',async()=>{
  const c=vm.createContext({publishGroups(){calls++;return new Promise(r=>{finish=r;});}});
  vm.runInContext(block('let publishInFlight = false;', 'async function publishGroups'),c);
  const first=vm.runInContext('doPush(true)',c);await vm.runInContext('doPush(true)',c);assert.equal(calls,1);finish();await first;
- const next=vm.runInContext('doPush(true)',c);assert.equal(calls,2);finish();await next;
+ const next=vm.runInContext('doPush(true)',c);await Promise.resolve();assert.equal(calls,2);finish();await next;
 });
 
 test('unchanged publications reuse their check, but new notes and completed sends invalidate it',()=>{

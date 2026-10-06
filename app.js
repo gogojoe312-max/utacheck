@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.27";
+const APP_VER = "16.41.28";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -8541,10 +8541,10 @@ document.addEventListener("click", (e) => {
       if (el4) el4.value = "";
       save(); render();
       // 送れたかどうかをその場で伝える（黙って失敗すると気づけない）
-      pushOne(gg.id).then(() => {
-        alert(/公開済/.test(pushState)
-          ? `${gg.name} に出しました。\n${pushState}\n\nアプリを開いているメンバーの画面に、数秒〜10秒ほどで出ます。`
-          : `出せていません。\n${pushState || "通信できませんでした"}\n\n設定の「今すぐ送信」を試してください。`);
+      pushOne(gg.id).then(result => {
+        alert(result.sent
+          ? `${gg.name} に出しました。\n${result.state}\n\nアプリを開いているメンバーの画面に、数秒〜10秒ほどで出ます。`
+          : `配信の完了を確認できません。\n${result.state}\n\n設定の「今すぐ送信」を試してください。`);
         render();
       });
       break;
@@ -8555,8 +8555,8 @@ document.addEventListener("click", (e) => {
       const gone2 = (S.alertMsg.to || [])[0];
       S.alertMsg = null;
       save(); render();
-      pushOne(gone2).then(() => {
-        alert(/公開済/.test(pushState) ? "取り下げました。" : `取り下げを送れていません。\n${pushState || "通信できませんでした"}`);
+      pushOne(gone2).then(result => {
+        alert(result.sent ? "取り下げました。" : `取り下げの完了を確認できません。\n${result.state}`);
         render();
       });
       break;
@@ -8635,14 +8635,19 @@ document.addEventListener("click", (e) => {
     case "setkey": {
       const g = group(id);
       const el = document.getElementById("key-" + id);
-      if (!el) break;
+      if (!el || !g) break;
       const v = el.value.trim();
       if (v === (g.key || "")) break;
       g.key = v;
+      g.publishKeyPending = true;
       save();
-      doPush(false);
-      alert(v ? `合言葉を「${v}」にしました。\nメンバーには、リンクとは別にこの合言葉を伝えてください。\n既に開いている人も、次に開いた時に入力を求められます。`
-              : "合言葉を外しました。リンクを知っていれば誰でも開けます。");
+      pushOne(g.id).then(result => {
+        alert(result.sent
+          ? (v ? "合言葉の変更を配信しました。\nメンバーには、リンクとは別に新しい合言葉を伝えてください。"
+               : "合言葉を外した配信を送信しました。リンクを知っていれば誰でも開けます。")
+          : `合言葉は端末に保存しました。配信の変更完了は確認できていません。\n${result.state}\n設定で原因を確認し、「今すぐ送信」を試してください。`);
+        render();
+      });
       render();
       break;
     }
@@ -9893,14 +9898,14 @@ function retainUnresolvedPublication(current, previous, unresolved, g) {
 }
 
 async function gh(path, opts) {
-  const r = await fetch("https://api.github.com" + path, Object.assign({
+  return boundedPublicationRequest("https://api.github.com" + path, Object.assign({
     headers: {
       "Accept": "application/vnd.github+json",
       "Authorization": "Bearer " + S.ghToken,
       "X-GitHub-Api-Version": "2022-11-28",
       "Content-Type": "application/json",
     },
-  }, opts || {}));
+  }, opts || {}), async r => {
   if (!r.ok) {
     const body = (await r.text()).slice(0, 200);
     let msg = "GitHub " + r.status + "：" + body;
@@ -9926,6 +9931,38 @@ async function gh(path, opts) {
     throw e;
   }
   return r.json();
+  });
+}
+
+// Limit the complete request, including body reads, and preserve caller cancellation.
+async function boundedPublicationRequest(url, opts, read) {
+  const controller = new AbortController();
+  const signal = opts && opts.signal;
+  let timer, cancel;
+  const stopped = new Promise((_, reject) => {
+    cancel = () => { controller.abort(); reject(signal.reason || new Error("通信を中止しました。")); };
+    if (signal) {
+      if (signal.aborted) cancel();
+      else signal.addEventListener("abort", cancel, {once:true});
+    }
+    timer = setTimeout(() => {
+      controller.abort();
+      const error = new Error("通信が60秒以内に完了しませんでした。時間をおいて再試行してください。");
+      error.name = "TimeoutError";
+      error.code = "REQUEST_TIMEOUT";
+      reject(error);
+    }, 60000);
+  });
+  try {
+    if (signal && signal.aborted) return await stopped;
+    return await Promise.race([stopped, (async () => {
+      const response = await fetch(url, Object.assign({}, opts || {}, {signal:controller.signal}));
+      return await read(response);
+    })()]);
+  } finally {
+    clearTimeout(timer);
+    if (signal) signal.removeEventListener("abort", cancel);
+  }
 }
 
 // raw_url は .../raw/<コミットID>/utacheck.json 形式。IDを外すと常に最新を指す。
@@ -9970,36 +10007,58 @@ function payloadKey(d) {
 }
 
 async function gistPush(gid, force) {
-  const g = group(gid);
-  if (!g.gistId || !S.ghToken) return "skip";
+  const g = S.groups.find(x => x.id === gid);
+  if (!g || !g.gistId || g.nopub || !S.ghToken) return "skip";
+  const destination = g.gistId, token = S.ghToken, encryptionKey = g.key;
+  const targetUnchanged = () => S.groups.find(x => x.id === gid) === g && !g.nopub
+    && g.gistId === destination && S.ghToken === token && g.key === encryptionKey;
+  const checkTarget = () => {
+    if (!targetUnchanged()) throw new Error("配信先または接続設定が変わったため送信を止めました。設定を確認して再送信してください。");
+  };
   let d;
   try { d = publicationData(g.id); }
   catch (e) {
     if (e.code !== "NEED_PREVIOUS_PUBLICATION") throw e;
-    const previousGist = await gh("/gists/" + g.gistId);
+    const previousGist = await gh("/gists/" + destination);
+    checkTarget();
     const file = previousGist.files && previousGist.files["utacheck.json"];
     if (!file) throw new Error("配信済みデータを取得できません。既存データは変更していません。");
     let content = file.content;
     if (file.truncated) {
       const url = new URL(file.raw_url);
       if (url.protocol !== "https:" || url.hostname !== "gist.githubusercontent.com") throw new Error("配信済みデータの取得先を確認できません。");
-      const response = await fetch(url.href);
-      if (!response.ok) throw new Error("配信済みデータを取得できません（" + response.status + "）。既存データは変更していません。");
-      content = await response.text();
+      content = await boundedPublicationRequest(url.href, {}, async response => {
+        if (!response.ok) throw new Error("配信済みデータを取得できません（" + response.status + "）。既存データは変更していません。");
+        return response.text();
+      });
     }
     let previous = JSON.parse(content);
     if (previous.enc) previous = await openJSON(previous, g.key || S.key);
+    checkTarget();
     d = publicationData(g.id, previous);
   }
   const held = unresolvedPublicationShows(g.id);
   g.publishWarning = held.length ? held.map(sw => `「${sw.name}」`).join("、") + "：グループ未設定のため、この公演の更新のみ保留。設定で公演のグループを選択してください。" : "";
   const key = payloadKey(d);
-  if (!force && g.lastKey === key) return "same";
-  await gh("/gists/" + g.gistId, {
-    method: "PATCH",
-    body: JSON.stringify({ files: { "utacheck.json": { content: JSON.stringify(await wrap(d, g)) } } }),
-  });
-  g.lastKey = key;
+  if (!force && !g.publishKeyPending && g.lastKey === key) return "same";
+  const body = JSON.stringify({ files: { "utacheck.json": { content: JSON.stringify(await wrap(d, g)) } } });
+  checkTarget();
+  try {
+    await gh("/gists/" + destination, {method:"PATCH", body});
+  } catch (e) {
+    // After a transport failure the server may already have accepted the PATCH.
+    if (!e.status || e.status >= 500) {
+      const unknown = new Error("配信結果を確認できません。反映済みの可能性があります。設定から再送信して確認してください。");
+      unknown.publicationUnknown = true;
+      throw unknown;
+    }
+    throw e;
+  }
+  // A destination changed during the PATCH must not inherit its confirmed cache.
+  if (targetUnchanged()) {
+    g.lastKey = key;
+    g.publishKeyPending = false;
+  }
   save();
   return "sent";
 }
@@ -10028,13 +10087,17 @@ function renderPublishStatus() {
 }
 
 async function pushOne(gid) {
-  const g = group(gid);
-  if (!S.ghToken || !g || !g.gistId || g.nopub) { pushState = "未送信"; return; }
+  return queuePublication(() => publishOne(gid));
+}
+async function publishOne(gid) {
+  const g = S.groups.find(x => x.id === gid);
+  if (!S.ghToken || !g || !g.gistId || g.nopub) { pushState = "未送信"; return {sent:false, state:pushState}; }
   publishIssues = [];
   pushState = "送信中"; renderPublishStatus();
   lastPushAt = Date.now();
+  let sent = false;
   try {
-    await gistPush(g.id, true);
+    sent = (await gistPush(g.id, true)) === "sent";
     publishIssues = g.publishWarning ? [g.name + "：" + g.publishWarning] : [];
     const d = new Date();
     pushState = `公開済 ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
@@ -10047,17 +10110,29 @@ async function pushOne(gid) {
       pushState = "順番待ち" + (limitedAt ? " " + limitedAt + "頃" : "");
       clearTimeout(pushTimer);
       pushTimer = setTimeout(() => { pushTimer = null; pushOne(gid); }, wait);
-    } else { pushState = "未送信（設定で原因を確認）"; publishIssues = [g.name + "：" + e.message]; }
+    } else { pushState = e.publicationUnknown ? "配信結果不明（設定で確認・再送信）" : "未送信（設定で原因を確認）"; publishIssues = [g.name + "：" + e.message]; }
   }
   renderPublishStatus();
+  return {sent, state:pushState};
 }
 
 let publishInFlight = false;
-async function doPush(silent) {
-  if (publishInFlight) return;
+let publicationQueue = Promise.resolve();
+let queuedPublications = 0;
+function queuePublication(work) {
+  queuedPublications++;
   publishInFlight = true;
-  try { await publishGroups(silent); }
-  finally { publishInFlight = false; }
+  const result = publicationQueue.then(work).finally(() => {
+    queuedPublications--;
+    publishInFlight = queuedPublications > 0;
+  });
+  publicationQueue = result.catch(() => {});
+  return result;
+}
+async function doPush(silent) {
+  // Timer requests coalesce; explicit sends wait their turn and build fresh data.
+  if (silent === true && publishInFlight) return;
+  return queuePublication(() => publishGroups(silent));
 }
 async function publishGroups(silent) {
   const live = S.groups.filter((g) => g.gistId && !g.nopub);
@@ -10067,7 +10142,7 @@ async function publishGroups(silent) {
   const failed = [];
   publishIssues = [];
   const gone = [];
-  let sent = 0, limited = 0;
+  let sent = 0, limited = 0, unknown = 0;
   for (const g of live) {
     try { if ((await gistPush(g.id, silent === "force")) === "sent") sent++; }
     catch (e) {
@@ -10081,11 +10156,12 @@ async function publishGroups(silent) {
         clearTimeout(pushTimer);
         pushTimer = setTimeout(() => { pushTimer = null; doPush(true); }, wait);
       }
-      else failed.push(g.name + "：" + e.message);
+      else { if (e.publicationUnknown) unknown++; failed.push(g.name + "：" + e.message); }
     }
   }
   if (limited) {
-    pushState = "順番待ち" + (limitedAt ? " " + limitedAt + "頃" : "");
+    publishIssues = failed;
+    pushState = unknown ? "配信結果不明・一部順番待ち（設定で確認）" : "順番待ち" + (limitedAt ? " " + limitedAt + "頃" : "");
     if (silent !== true) alert("GitHubへの送信が混み合っています。\n記録は端末に残っていて、少し待つと自動で送り直します。");
     renderPublishStatus();
     return;
@@ -10101,8 +10177,8 @@ async function publishGroups(silent) {
   }
   publishIssues = failed.concat(live.filter(g => g.publishWarning).map(g => g.name + "：" + g.publishWarning));
   if (failed.length) {
-    pushState = sent ? "一部送信済（設定で原因を確認）" : "未送信（設定で原因を確認）";
-    if (silent !== true) alert("送信できませんでした。\n\n" + failed.join("\n"));
+    pushState = unknown ? "配信結果不明（設定で確認・再送信）" : (sent ? "一部送信済（設定で原因を確認）" : "未送信（設定で原因を確認）");
+    if (silent !== true) alert((unknown ? "配信結果を確認できませんでした。" : "送信できませんでした。") + "\n\n" + failed.join("\n"));
   } else {
     const d = new Date();
     pushState = `公開済 ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
@@ -10117,11 +10193,11 @@ window.addEventListener("online", () => { if (/未送信|一部送信/.test(push
 // 変わっていない相手には送らない
 let pendingCheck = null;
 function hasPending() {
-  const keys = S.groups.map(g => [g.id, g.gistId, g.nopub, g.lastKey].join(":")).join("|");
+  const keys = S.groups.map(g => [g.id, g.gistId, g.nopub, g.lastKey, g.publishKeyPending].join(":")).join("|");
   if (pendingCheck && pendingCheck.revision === stateRevision && pendingCheck.keys === keys) return pendingCheck.result;
   const result = S.groups.some((g) => {
     if (!g.gistId || g.nopub) return false;
-    try { return payloadKey(publicationData(g.id)) !== g.lastKey; } catch (e) { return true; }
+    try { return g.publishKeyPending || payloadKey(publicationData(g.id)) !== g.lastKey; } catch (e) { return true; }
   });
   pendingCheck = { revision:stateRevision, keys, result };
   return result;
@@ -10768,6 +10844,25 @@ async function backupToFile() {
   } catch (e) { alert("ファイルを作成できませんでした。\n" + e.message); return false; }
 }
 /* ---- 追加専用ファイル：現在の内容を保持して録音資料だけを追記 ---- */
+function recordingAdditionScopedMembers(s, p, matches) {
+  const norm = x => String(x || '').replace(/﨑/g, '崎').replace(/\s/g, '');
+  const groupName = norm(p.group.name);
+  const groupIds = new Set((s.groups || []).filter(g => norm(g.name) === groupName).map(g => g.id));
+  if (!groupIds.size) return [];
+  const rosterKeys = Object.keys(s.rosters || {}).filter(name => norm(name) === groupName);
+  if (rosterKeys.length !== 1 || !Array.isArray(s.rosters[rosterKeys[0]])) return [];
+  const names = new Set(s.rosters[rosterKeys[0]].map(norm));
+  const referenced = new Set();
+  const add = ids => { if (Array.isArray(ids)) for (const id of ids) referenced.add(id); };
+  // 配信先の変更では所属を推測しない。既存の所属・名簿・曲内IDを併せて確認する。
+  for (const song of [...(s.songs || []), ...(s.rsongs || [])]) {
+    if (!groupIds.has(song.groupId)) continue;
+    add(song.roster);
+    for (const ids of Object.values(song.blocks || {})) add(ids);
+    for (const line of song.lines || []) for (const field of ['parts', 'main', 'extra']) add(line[field]);
+  }
+  return matches.filter(m => names.has(norm(m.name)) && referenced.has(m.id));
+}
 function mergeRecordingAddition(current, packet) {
   const fail = text => { throw new Error(text); };
   if (!packet || packet.app !== 'utacheck-recording-addition' || packet.version !== 1) fail('追加専用ファイルではありません。バックアップは選択しないでください。');
@@ -10785,18 +10880,26 @@ function mergeRecordingAddition(current, packet) {
     if (!m.id || !norm(m.name) || mapping[m.id]) fail('メンバー資料が不正です。');
     const boundId = p.memberBindings?.[m.id];
     if (boundId != null) {
-      // 正規メンバー画面で確認したID対応だけを使用。姓の推測一致をしない。
+      // 管理者の現在データで確認したID対応だけを使用。プレビューIDへ読み替えない。
       const matches = s.members.filter(x => x.id === boundId);
       if (typeof boundId !== 'string' || matches.length !== 1 || norm(matches[0].name) !== norm(m.name)) fail('確認済みメンバーIDと現在の表示名が一致しません。追加していません。');
       if (Object.values(mapping).includes(boundId)) fail('同じメンバーIDへ複数の対応があります。追加していません。');
       mapping[m.id] = boundId;
     } else {
       if (p.memberBindings) fail('確認済みメンバーIDの対応が不足しています。追加していません。');
-      const matches = s.members.filter(x => norm(x.name) === norm(m.name) || norm(x.name).startsWith(norm(m.name)));
-      if (matches.length > 1) fail('メンバー名が曖昧です。追加していません。');
-      if (matches.length) mapping[m.id] = matches[0].id;
+      let matches = s.members.filter(x => norm(x.name) === norm(m.name) || norm(x.name).startsWith(norm(m.name)));
+      if (matches.length > 1) {
+        matches = recordingAdditionScopedMembers(s, p, matches);
+        if (matches.length !== 1) fail('メンバー名が曖昧です。追加していません。');
+      }
+      if (matches.length) {
+        const targetId = matches[0].id;
+        if (typeof targetId !== 'string' || !targetId || s.members.filter(x => x.id === targetId).length !== 1) fail('メンバーIDが競合しています。追加していません。');
+        mapping[m.id] = targetId;
+      }
       else { if (s.members.some(x => x.id === m.id)) fail('メンバーIDが競合しています。'); mapping[m.id] = m.id; newMembers.push(m); }
     }
+    if (Object.keys(mapping).some(id => id !== m.id && mapping[id] === mapping[m.id])) fail('同じメンバーIDへ複数の対応があります。追加していません。');
   }
   const remap = ids => { if (!Array.isArray(ids) || ids.some(id => !mapping[id])) fail('担当メンバーが不明です。'); return ids.map(id => mapping[id]); };
   const ids = new Set(), titles = new Set();
