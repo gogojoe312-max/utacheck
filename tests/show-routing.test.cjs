@@ -155,3 +155,10 @@ test('automatic sending fetches missing previous publication and then patches th
  assert.deepEqual(d.shows.map(x=>x.id),['new','o']);assert.match(c.S.groups[0].publishWarning,/9\/23/);
  assert.equal(await run("gistPush('ocha')"),'same');assert.equal(calls.length,2);
 });
+test('large destination publication retains old permitted shows and their notes',()=>{
+ const {c,run}=setup();c.S.shows[0].name='最新公演';c.S.shows.push({id:'older-permitted',name:'保存済みの古い公演',groupId:'ocha',ts:0});
+ c.S.songs.push({id:'older-song',title:'古い曲',showId:'older-permitted',groupId:'ocha',lines:[],blocks:{}});
+ c.S.notes[0].memo='synthetic-size-fixture'.repeat(40000);c.S.notes.push({songId:'older-song',showId:'older-permitted',memberIds:[],tags:[],lineIdx:0,memo:'old correction'});
+ const before=JSON.stringify(c.S);const p=run("publicationData('ocha')");
+ assert(p.shows.some(sw=>sw.id==='older-permitted'));assert(p.notes.some(n=>n.memo==='old correction'));assert(!p.shows.some(sw=>sw.id==='r'));assert.equal(JSON.stringify(c.S),before);
+});

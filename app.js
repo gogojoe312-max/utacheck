@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.23";
+const APP_VER = "16.41.24";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -5817,6 +5817,10 @@ function backupSettingsHTML() {
     <button class="ghost" data-act="backup-file-restore">ファイルから復元</button>
     <button class="ghost" data-act="recording-addition">録音曲・時間割を追加用ファイルから追加</button>
     <p class="note">歌割・指摘・手書き・設定を保存します。録音音声は含みません。</p>
+    ${otherAt ? `<div role="status" class="card"><b>クラウドとこの端末に違いがあります</b><p class="note">クラウドへの送信は止めています。両方のファイルを保管し、残す内容を確認してください。</p>
+      ${syncComparison ? `<p class="note">この端末の公演：${syncComparison.localShows.map(h).join('、')}<br>クラウドの公演：${syncComparison.cloudShows.map(h).join('、')}</p>` : ''}
+      <button class="ghost" data-act="bkfile">この端末をファイルに保存</button>
+      <button class="ghost" data-act="backup-check">クラウドをもう一度確認</button></div>` : ''}
   </div>`;
 }
 
@@ -8507,7 +8511,8 @@ document.addEventListener("click", (e) => {
     case "ghpush": doPush("force"); break;
     case "ghverify": verifyToken(); break;
     case "backup-restore": if (S.bkGistId) restoreBackup(); else findBackup(); break;
-    case "bknow": doBackup(false); break;
+    case "bknow": backupWithCloudCheck(); break;
+    case "backup-check": backupWithCloudCheck(); break;
     case "bkfile": backupToFile(); break;
     case "backup-file-restore": chooseBackupFile(); break;
     case "recording-addition": chooseRecordingAddition(); break;
@@ -9836,16 +9841,12 @@ function publicationData(gid, previous) {
     };
   };
 
-  // このグループの曲がある公演を、新しい順に全部。大きすぎる時だけ古い方から落とす。
+  // この配信先へ許可された公演を全て保持する。サイズを理由に古い記録を捨てない。
   let ids = showsNewestFirst()
     .filter((sw) => !sw.hidden && !sw.nopub)          // 公演ごとに配信しない設定
     .filter((sw) => S.songs.some((x) => x.showId === sw.id && destination(x) === g.id))
     .map((x) => x.id);
   let d = build(ids);
-  while (ids.length > 1 && JSON.stringify(d).length > 700000) {
-    ids = ids.slice(0, -1);
-    d = build(ids);
-  }
   // メンバーが開いた時に最初に出す公演。
   // 公演の ts は「作った日時」なので、単に新しい順の先頭にすると
   // 古い公演を複製して作り直した時などに意図と違うものが出る。
@@ -10635,6 +10636,14 @@ let backupInFlight = false, backupRetryAt = 0;
 function renderBackupStatus() {
   if (U.view === "setup" || U.view === "recsetup") render(true);
 }
+async function backupWithCloudCheck() {
+  if (backupInFlight || syncing || manualSync || preview || VIEW() || U.showRecovery) return;
+  // 読取や競合解決の前に、この端末を独立したファイルで保全する。
+  if (!await backupToFile()) return;
+  if (!S.ghToken) return;
+  if (!S.bkGistId) { await doBackup(false); return; }
+  await syncNow();
+}
 async function doBackup(silent) {
   if (backupInFlight || syncing || preview || VIEW() || U.showRecovery) return false;
   if (!S.ghToken) { if (!silent) return backupToFile(); return false; }
@@ -11108,7 +11117,7 @@ function endPreview() {
 
 // 別の端末で更新されていないか見に行く。
 // 手元に変更が無ければそのまま取り込み、両方変わっていれば選んでもらう。
-let otherAt = 0, syncing = false, manualSync = false;
+let otherAt = 0, syncing = false, manualSync = false, syncComparison = null;
 function hasBackupWork(state) {
   const st = fromBackup({...state});
   return ["songs", "notes", "rsongs", "trash"].some(k => Array.isArray(st[k]) && st[k].length)
@@ -11121,13 +11130,32 @@ function recordingPreservedInTrash(state, song) {
       && Array.isArray(t.songs) && t.songs.some(x => x.id === song.id && JSON.stringify(x) === JSON.stringify(song)));
 }
 async function readSyncBackup(target) {
+  const keyBefore = S.bkKey, tokenBefore = S.ghToken;
   const g = await gh("/gists/" + target);
   if (!backupIndexFile(g.files)) throw new Error("クラウドのバックアップを確認できません。送信せずに中止しました。");
-  const obj = await unpackBackup(await readCloudBackup(g.files));
+  const raw = await readCloudBackup(g.files);
+  let obj;
+  try { obj = await unpackBackup(raw); }
+  catch (e) {
+    if (!arguments[1] || !e.badKey) throw e;
+    const pass = prompt('クラウドのバックアップを確認する合言葉を入れてください。\nこの端末の内容は置き換えず、クラウドへ送信もしません。', '');
+    if (pass == null) throw new Error('クラウド確認を中止しました。この端末の内容はファイルに保全されています。');
+    const keep = S.bkKey;
+    try { obj = await unpackWithPass(raw, pass, false); }
+    catch (error) { S.bkKey = keep; throw error; }
+    if (S.bkGistId !== target) { S.bkKey = keep; throw new Error('つなぎ先が変わりました。確認を中止しました。'); }
+  }
   if (!obj || obj.app !== "utacheck" || !obj.state || !Number.isFinite(Number(obj.at)) || Number(obj.at) <= 0
       || !Array.isArray(obj.state.shows) || !Array.isArray(obj.state.songs)
       || ["notes", "rsongs"].some(k => obj.state[k] != null && !Array.isArray(obj.state[k]))) {
+    S.bkKey = keyBefore;
     throw new Error("クラウドのバックアップが不正です。送信せずに中止しました。");
+  }
+  if (S.bkGistId !== target || S.ghToken !== tokenBefore) { S.bkKey = keyBefore; throw new Error('つなぎ先が変わりました。確認を中止しました。'); }
+  if (S.bkKey !== keyBefore) save();
+  if (arguments[1]) {
+    syncComparison = { target, at:Number(obj.at), localShows:(S.shows || []).filter(x => !x.hidden).map(x => x.name || ''), cloudShows:(obj.state.shows || []).filter(x => !x.hidden).map(x => x.name || '') };
+    if (typeof download === 'function') download('歌チェック_クラウド確認_' + Date.now() + '.json', JSON.stringify(raw), 'application/json');
   }
   return obj;
 }
@@ -11165,7 +11193,7 @@ async function checkOther(strict = false) {
   const target = S.bkGistId, token = S.ghToken;
   syncing = true;
   try {
-    const obj = await readSyncBackup(target);
+    const obj = await readSyncBackup(target, strict);
     if (U.showRecovery || S.bkGistId !== target || S.ghToken !== token) throw new Error("つなぎ先が変わりました。取り込み・送信せずに中止しました。");
     const at = Number(obj.at || 0);
     if (at <= (S.bkSeen || 0)) { otherAt = 0; return "current"; }
