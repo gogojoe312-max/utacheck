@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.28";
+const APP_VER = "16.41.29";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -9966,7 +9966,18 @@ async function boundedPublicationRequest(url, opts, read) {
 }
 
 // raw_url は .../raw/<コミットID>/utacheck.json 形式。IDを外すと常に最新を指す。
-const latestRaw = (u) => (u || "").replace(/\/raw\/[0-9a-f]{6,}\//, "/raw/");
+function gistRawSource(value) {
+  try {
+    const u = new URL(value);
+    if (u.protocol !== "https:" || u.hostname !== "gist.githubusercontent.com" || u.port || u.username || u.password) return null;
+    const match = u.pathname.match(/^\/([A-Za-z0-9_-]+)\/([0-9a-f]{5,40})\/raw\/(?:([0-9a-f]{6,40})\/)?(utacheck\.json)$/i);
+    if (!match) return null;
+    u.pathname = `/${match[1]}/${match[2]}/raw/${match[4]}`;
+    u.hash = "";
+    return {id:match[2].toLowerCase(), url:u.href};
+  } catch (_) { return null; }
+}
+const latestRaw = (u) => (gistRawSource(u) || {}).url || u || "";
 
 // 入れたトークンが本当にGistを扱えるか、その場で確かめる
 async function verifyToken() {
@@ -10010,8 +10021,19 @@ async function gistPush(gid, force) {
   const g = S.groups.find(x => x.id === gid);
   if (!g || !g.gistId || g.nopub || !S.ghToken) return "skip";
   const destination = g.gistId, token = S.ghToken, encryptionKey = g.key;
+  const source = gistRawSource(g.src);
+  let githubRawHost = false;
+  try { githubRawHost = new URL(g.src).hostname.toLowerCase() === "gist.githubusercontent.com"; } catch (_) {}
+  if (githubRawHost && !source) {
+    throw new Error("メンバー接続リンクの形式を確認できないため送信を止めました。配信先の設定と接続リンクを確認してください。");
+  }
+  if (source && source.id !== String(destination).toLowerCase()) {
+    throw new Error("配信先とメンバー接続リンクが一致しないため送信を止めました。配信先の設定と接続リンクを確認してください。");
+  }
+  if (source) g.src = source.url;
+  const selectedSource = g.src;
   const targetUnchanged = () => S.groups.find(x => x.id === gid) === g && !g.nopub
-    && g.gistId === destination && S.ghToken === token && g.key === encryptionKey;
+    && g.gistId === destination && S.ghToken === token && g.key === encryptionKey && g.src === selectedSource;
   const checkTarget = () => {
     if (!targetUnchanged()) throw new Error("配信先または接続設定が変わったため送信を止めました。設定を確認して再送信してください。");
   };
@@ -10376,6 +10398,8 @@ async function recoverInner() {
 
 // 配信データ1つぶんを、自分のデータとして足す（すでにある分は消さない）
 function mergeDelivery(d, gist, label) {
+  const source = gistRawSource(gist.files?.["utacheck.json"]?.raw_url);
+  if (!source || source.id !== String(gist.id).toLowerCase()) throw new Error("配信元の接続リンクを確認できないため、取り込みを止めました。");
   (d.members || []).forEach((x) => addMember(x.name));
   if (d.rosters && Object.keys(d.rosters).length) S.rosters = d.rosters;
   if (Array.isArray(d.folderOrder) && d.folderOrder.length) S.folderOrder = d.folderOrder.slice();
@@ -10384,7 +10408,7 @@ function mergeDelivery(d, gist, label) {
   let g = S.groups.find((x) => x.name === (d.groupName || label));
   if (!g) { g = { id: uid(), name: d.groupName || label, key: "" }; S.groups.push(g); }
   g.gistId = gist.id;
-  if (d.src) g.src = d.src;
+  g.src = source.url;
 
   // 公演（同じidがあれば残す）
   (d.shows || []).forEach((x) => {
@@ -10984,7 +11008,7 @@ async function restoreBackupFile(file) {
 }
 
 /* ---- 受け取り：配信されたものを取り込む ---- */
-const srcUrl = () => S.src || "./setlist.json";
+const srcUrl = () => latestRaw(S.src) || "./setlist.json";
 
 let syncErr = "", syncAt = 0, syncBackoff = 0, justUpdated = 0, askedKey = false;
 async function fetchSetlist() {
@@ -11068,7 +11092,9 @@ function applySetlist(d) {
   });
   (d.songs || []).forEach((sg, i) => { if (sg.fromIdx != null && added[sg.fromIdx]) added[i].from = added[sg.fromIdx].id; });
   S.setlistVer = d.version || Date.now();
-  if (d.src && d.src !== S.src) S.src = d.src;
+  // The connection chosen on this device is authoritative. Published metadata
+  // must never redirect a member to another Gist (including a stale backup URL).
+  if (S.src) S.src = latestRaw(S.src);
   if (d.groupName) { const g = group(); if (g && g.id) g.name = d.groupName; S.srcGroup = d.groupName; }
 
   const mine = d.authorId && d.authorId === S.deviceId;
@@ -11410,6 +11436,8 @@ async function importFromLink() {
     else src = txt; // 旧いリンク
     if (S.linkSrc === src && S.songs.length) {
       // 同じリンクで開き直しただけ。記録を消さないよう、取り込み直さない。
+      // Older received metadata could have redirected S.src away from this link.
+      if (VIEW() && !preview && S.src !== latestRaw(src)) { S.src = latestRaw(src); save(); }
       if (key && !S.key) { S.key = key; save(); }
       keepLinkInURL();
       await syncSetlist(false);

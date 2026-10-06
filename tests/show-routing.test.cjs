@@ -149,6 +149,7 @@ test('automatic sending fetches missing previous publication and then patches th
  c.S.shows[0].name='9/23';c.S.songs.push({id:'mix',showId:'o',groupId:'rose',title:'混合',lines:[],blocks:{}});
  c.S.shows.push({id:'new',name:'今日',groupId:'ocha'});c.S.songs.push({id:'new-song',title:'新曲',showId:'new',groupId:'ocha',lines:[],blocks:{}});
  const calls=[];c.gh=async(path,opts)=>{calls.push({path,opts});return {files:{'utacheck.json':{content:JSON.stringify(old)}}};};c.wrap=async d=>d;
+ vm.runInContext(block('function gistRawSource(', '// 入れたトークン'),c);
  vm.runInContext(block('function payloadKey(', '// 送りすぎるとGitHub'),c);
  assert.equal(await run("gistPush('ocha')"),'sent');assert.equal(calls.length,2);
  const d=JSON.parse(JSON.parse(calls[1].opts.body).files['utacheck.json'].content);

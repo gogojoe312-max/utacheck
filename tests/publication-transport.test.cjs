@@ -12,6 +12,7 @@ function setup(){
   publicationData:id=>({version:1,groupName:id,shows:[],songs:[]}),unresolvedPublicationShows:()=>[],group:id=>groups.find(g=>g.id===id)||groups[0],
   wrap:async(d,g)=>({key:g.key,data:d}),save(){},render(){},renderPublishStatus(){},alert:x=>alerts.push(x),confirm:()=>false,
   fetch:async(url,opts)=>{calls.push({url,opts});return{ok:true,json:async()=>({})};}});
+ vm.runInContext(block('function gistRawSource(', '// 入れたトークン'),c);
  for(const [a,b] of [['async function gh(path, opts)','// raw_url は'],['function payloadKey(', '// 送りすぎるとGitHub'],['async function pushOne(', 'window.addEventListener("online"']])vm.runInContext(block(a,b),c);
  return {c,calls,alerts,timers,groups,run:x=>vm.runInContext(x,c),expire(){for(const [id,t] of [...timers]){assert.equal(t.ms,60000);timers.delete(id);t.fn();}}};
 }

@@ -18,6 +18,7 @@ test('new received notes preserve the selected summary day and member',()=>{
  const c=vm.createContext({rememberViewSelection(){},restoreViewSelection(){},S:{groups:[],groupId:'g',showId:'yesterday',srcGroup:'group',members:[{id:'m',name:'山田'}],songs:[{id:'old',showId:'yesterday'}],notes:[],shows:[]},U:{view:'summary',mode:'member',sumOpen:'m'},VIEW:()=>true,Date,
   member:id=>c.S.members.find(m=>m.id===id),addMember:name=>c.S.members.find(m=>m.name===name),group:()=>({id:'g'}),uid:()=>String(++next),
   buildSong:sg=>({...sg,id:String(++next),lines:[],blocks:{},roster:[]}),songSig:()=>'',save(){},render(){},NOTES:()=>c.S.pubNotes||[],showsNewestFirst:()=>c.S.shows});
+ vm.runInContext(block('function gistRawSource(', '// 入れたトークン'),c);
  vm.runInContext(block('function applySetlist(d)', 'async function syncSetlist'),c);
  c.data={version:2,groupName:'group',members:[{name:'山田'}],songs:[{showId:'today'},{showId:'yesterday'}],shows:[{id:'today'},{id:'yesterday'}],notes:[],focusShow:'today'};
  vm.runInContext('applySetlist(data)',c);
