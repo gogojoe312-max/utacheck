@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.21";
+const APP_VER = "16.41.22";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -5815,6 +5815,7 @@ function backupSettingsHTML() {
     ${S.ghToken ? '<button class="ghost" data-act="bkfile">ファイルに保存</button>' : ""}
     ${S.ghToken ? '<button class="ghost" data-act="backup-restore">クラウドから復元</button>' : ""}
     <button class="ghost" data-act="backup-file-restore">ファイルから復元</button>
+    <button class="ghost" data-act="recording-addition">録音曲・時間割を追加用ファイルから追加</button>
     <p class="note">歌割・指摘・手書き・設定を保存します。録音音声は含みません。</p>
   </div>`;
 }
@@ -8509,6 +8510,7 @@ document.addEventListener("click", (e) => {
     case "bknow": doBackup(false); break;
     case "bkfile": backupToFile(); break;
     case "backup-file-restore": chooseBackupFile(); break;
+    case "recording-addition": chooseRecordingAddition(); break;
     case "bkrestore": restoreBackup(); break;
     case "bkfind": findBackup(); break;
     case "bkpick": pickTarget(); break;
@@ -10724,6 +10726,77 @@ async function backupToFile() {
     return true;
   } catch (e) { alert("ファイルを作成できませんでした。\n" + e.message); return false; }
 }
+/* ---- 追加専用ファイル：現在の内容を保持して録音資料だけを追記 ---- */
+function mergeRecordingAddition(current, packet) {
+  const fail = text => { throw new Error(text); };
+  if (!packet || packet.app !== 'utacheck-recording-addition' || packet.version !== 1) fail('追加専用ファイルではありません。バックアップは選択しないでください。');
+  const clone = x => JSON.parse(JSON.stringify(x));
+  const norm = x => String(x || '').replace(/﨑/g, '崎').replace(/\s/g, '');
+  const p = clone(packet), s = clone(current);
+  if (!p.group?.id || !Array.isArray(p.members) || !Array.isArray(p.songs) || !Array.isArray(p.plan?.slots) || !Array.isArray(p.roster)) fail('追加資料の形式が不正です。');
+  if (p.group.gistId || p.group.src || p.group.key || !p.group.nopub) fail('配信先を含む資料は追加できません。');
+  if (!p.songs.length || !p.plan.slots.length) fail('曲または予定が空です。');
+  for (const k of ['groups', 'members', 'rsongs']) s[k] = s[k] || [];
+  s.rosters = s.rosters || {}; s.plan = s.plan || {slots: []}; s.plan.slots = s.plan.slots || [];
+  if (s.groups.some(x => x.id === p.group.id)) fail('この追加資料のグループは既にあります。重複追加していません。');
+  const mapping = {}, newMembers = [];
+  for (const m of p.members) {
+    if (!m.id || !norm(m.name) || mapping[m.id]) fail('メンバー資料が不正です。');
+    const matches = s.members.filter(x => norm(x.name) === norm(m.name) || norm(x.name).startsWith(norm(m.name)));
+    if (matches.length > 1) fail('メンバー名が曖昧です。追加していません。');
+    if (matches.length) mapping[m.id] = matches[0].id;
+    else { if (s.members.some(x => x.id === m.id)) fail('メンバーIDが競合しています。'); mapping[m.id] = m.id; newMembers.push(m); }
+  }
+  const remap = ids => { if (!Array.isArray(ids) || ids.some(id => !mapping[id])) fail('担当メンバーが不明です。'); return ids.map(id => mapping[id]); };
+  const ids = new Set(), titles = new Set();
+  for (const so of p.songs) {
+    if (!so.id || !so.title || !Array.isArray(so.lines) || so.groupId !== p.group.id) fail('曲資料が不正です。');
+    if (ids.has(so.id) || titles.has(so.title) || s.rsongs.some(x => x.id === so.id || x.title === so.title)) fail('同名曲または曲IDが既にあります。重複追加していません。');
+    ids.add(so.id); titles.add(so.title); so.roster = remap(so.roster);
+    for (const k of Object.keys(so.blocks || {})) so.blocks[k] = remap(so.blocks[k]);
+    for (const l of so.lines) for (const k of ['parts','main','extra']) l[k] = remap(l[k]);
+  }
+  const slotIds = new Set();
+  for (const y of p.plan.slots) {
+    if (!y.id || slotIds.has(y.id) || !/^\d{4}-\d{2}-\d{2}$/.test(y.date || '') || !y.day || !Number.isFinite(y.at) || !(y.min > 0)) fail('予定の日付・時刻・IDが不正です。');
+    slotIds.add(y.id);
+    for (const x of s.plan.slots) {
+      if (x.id === y.id) fail('予定IDが既にあります。');
+      if (!x.date && !x.day) fail('既存予定の日付が不明です。既存実績は変更せず、追加を停止しました。');
+      if (!Number.isFinite(x.at) || !Number.isFinite(x.min)) fail('既存予定の開始時刻が不明です。追加を停止しました。');
+      const same = x.date ? x.date === y.date : x.day === y.day;
+      if (same && Math.max(x.at,y.at) < Math.min(x.at+x.min,y.at+y.min)) fail('既存予定と重なります。追加していません。');
+    }
+    for (const z of p.plan.slots) if (z !== y && z.date === y.date && Math.max(z.at,y.at) < Math.min(z.at+z.min,y.at+y.min)) fail('追加資料内の予定が重なります。');
+  }
+  if (s.plan.slots.length && ['year','timezone'].some(k => s.plan[k] != null && s.plan[k] !== p.plan[k])) fail('既存予定の年またはタイムゾーンが異なります。');
+  s.groups.push(p.group); s.members.push(...newMembers); s.rsongs.push(...p.songs);
+  if (!(p.group.name in s.rosters)) s.rosters[p.group.name] = p.roster;
+  const hadSlots = s.plan.slots.length; s.plan.slots.push(...p.plan.slots);
+  if (!hadSlots) for (const k of ['start','year','timezone','source']) s.plan[k] = p.plan[k];
+  s.plan.songIds = [...new Set([...(s.plan.songIds || []), ...p.songs.map(x => x.id)])];
+  return {state:s, songs:p.songs.length, slots:p.plan.slots.length};
+}
+function chooseRecordingAddition() {
+  const input = document.createElement('input'); input.type = 'file'; input.accept = '.json,application/json';
+  input.onchange = async () => {
+    if (!input.files[0]) return;
+    try {
+      commitFields();
+      const packet = JSON.parse(await input.files[0].text());
+      const checked = mergeRecordingAddition(S, packet);
+      if (!confirm(`${checked.songs}曲・${checked.slots}枠を追加します。\n既存の歌詞・指摘・手書き・配信先・録音実績は保持します。\n追加しますか？`)) return;
+      // 確認後にも最新版を検証。全体バックアップの復元は行わない。
+      const result = mergeRecordingAddition(S, packet), before = JSON.parse(JSON.stringify(S));
+      for (const k of ['groups','members','rsongs','rosters','plan']) S[k] = result.state[k];
+      save(); await saveNow();
+      if (saveErr) { for (const k of ['groups','members','rsongs','rosters','plan']) S[k] = before[k]; save(); render(); throw new Error('端末への保存に失敗しました。追加前の状態へ戻しました。'); }
+      render(); alert(`追加しました。${result.songs}曲・${result.slots}枠。\n既存の内容は保持しています。`);
+    } catch (e) { alert('追加できませんでした。\n' + e.message); }
+  };
+  input.click();
+}
+
 function chooseBackupFile() {
   const input = document.createElement("input");
   input.type = "file"; input.accept = ".json,application/json";
