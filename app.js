@@ -2,7 +2,7 @@
 "use strict";
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.26";
+const APP_VER = "16.41.27";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -10654,7 +10654,9 @@ async function inspectCloudBackup() {
   if (!S.ghToken || !S.bkGistId) { alert('クラウドのつなぎ先がありません。設定は変更していません。'); return; }
   syncing = true;
   try {
-    if (!await backupToFile()) return;
+    // 読取専用の確認ではダウンロードを始めない。iPhoneで画面遷移と
+    // 扱われると、直後のAPI通信が中断される可能性がある。
+    // ファイル保存は独立した操作とし、この操作では端末内容も置き換えない。
     // 手動送信・checkOther・復元・鍵入力を呼ばない読取専用経路。
     const obj = await readSyncBackup(S.bkGistId);
     const local = (S.shows || []).filter(x => !x.hidden).map(x => x.name || '').join('、');
