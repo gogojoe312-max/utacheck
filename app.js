@@ -62,13 +62,19 @@ window.addEventListener('storage', event => {
 });
 for (const type of ['click','input','change','keydown','submit','pointerdown','drop']) document.addEventListener(type, event => {
   if (recordingInboxCanWrite() || event.target.closest?.('[data-inbox-owner-reload]')) return;
+  // The protection panel contains only static text. Keep editor handlers blocked,
+  // while allowing the browser's own scrolling on this non-inert panel.
+  if (startupPhase === 'blocked' && type === 'pointerdown'
+      && event.target.closest?.('#startup-protection')) {
+    event.stopImmediatePropagation(); return;
+  }
   event.preventDefault(); event.stopImmediatePropagation();
 }, true);
 recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.32";
+const APP_VER = "16.41.33";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -266,15 +272,103 @@ let U = { view: "live", songIdx: 0, sheet: null, mode: "member", allShows: false
 const S0 = JSON.parse(JSON.stringify(S));
 
 // Read-only startup inspection. A failed read is never treated as an absent slot.
+// Diagnostics contain only fixed labels, safe error names and numeric counts.
+// No original text, credentials, personal names, URLs or error messages are retained here.
+let startupDiagnostic = {
+  stage:'initializing', failure:null,
+  slots:[{status:'not-read'},{status:'not-read'}], legacy:{status:'not-read'},
+  legacyRelation:'not-checked', brokenCount:null, preservation:'not-started'
+};
+function startupSafeError(error) {
+  const names = ['Error','TypeError','SyntaxError','RangeError','DOMException','AbortError','DataError',
+    'InvalidStateError','NotFoundError','NotReadableError','NotSupportedError','QuotaExceededError',
+    'SecurityError','TransactionInactiveError','UnknownError','VersionError','ConstraintError'];
+  const codes = ['storage-read','slot-format','state-format','lyric-reference','lyric-format',
+    'ambiguous-generations','ambiguous-storage','empty-saved-state','recovery-originals',
+    'preservation-failed','startup-stopped','startup-changed','unexpected-error'];
+  let name = 'Error', code = 'unexpected-error';
+  try {
+    if (names.includes(error?.name)) name = error.name;
+    if (codes.includes(error?.code)) code = error.code;
+    else if (codes.includes(error?.message)) code = error.message;
+  } catch (_) { /* Arbitrary error properties cannot become diagnostic text. */ }
+  return {name,code};
+}
+function startupRecordFailure(error, stage = startupDiagnostic.stage) {
+  if (!startupDiagnostic.failure) startupDiagnostic.failure = {stage,...startupSafeError(error)};
+}
+function startupSetStage(stage) { if (!startupDiagnostic.failure) startupDiagnostic.stage = stage; }
+function startupPreservationError(error) {
+  const failure = new Error('preservation-failed');
+  failure.name = startupSafeError(error).name;
+  return failure;
+}
+function startupReadSummary(value, envelope = false) {
+  const result = {status:'present',seq:null,at:null,validJSON:false,validState:false,counts:null};
+  if (envelope) {
+    result.seq = Number.isSafeInteger(value?.seq) && value.seq >= 0 ? value.seq : null;
+    result.at = Number.isSafeInteger(value?.at) && value.at >= 0 ? value.at : null;
+    result.seqStatus = value?.seq === undefined ? 'not-set' : result.seq === null ? 'invalid' : 'valid';
+    result.atStatus = value?.at === undefined ? 'not-set' : result.at === null ? 'invalid' : 'valid';
+  }
+  const txt = envelope ? value?.txt : value;
+  if (typeof txt !== 'string') return result;
+  try {
+    const decoded = JSON.parse(txt);
+    result.validJSON = true;
+    if (startupStateObject(decoded)) {
+      result.counts = Object.fromEntries(['shows','songs','rsongs','notes','pubNotes','trash'].map(key =>
+        [key,Array.isArray(decoded[key]) ? decoded[key].length : decoded[key] === undefined ? 0 : null]));
+    }
+    try { validateStartupState(decoded); result.validState = true; }
+    catch (error) { result.formatError = startupSafeError(error).code; }
+  } catch (_) { /* JSON contents and parse messages remain private. */ }
+  return result;
+}
+function startupComparableText(txt) {
+  const decoded = JSON.parse(txt);
+  validateStartupState(decoded);
+  const sorted = value => Array.isArray(value) ? value.map(sorted)
+    : startupStateObject(value) ? Object.fromEntries(Object.keys(value).sort().map(key => [key,sorted(value[key])])) : value;
+  return JSON.stringify(sorted(unpackState(decoded)));
+}
+function startupInspectLegacyRelation(snapshot) {
+  if (snapshot.legacy === null) return 'absent';
+  const candidates = snapshot.slots.filter(slot => slot.present).map(slot => slot.value);
+  if (!candidates.length) return 'legacy-only';
+  if (candidates.some(value => !startupStateObject(value) || typeof value.txt !== 'string'
+      || (value.seq !== undefined && (!Number.isSafeInteger(value.seq) || value.seq < 0)))) return 'unconfirmed';
+  candidates.sort((a,b) => (b.seq || 0) - (a.seq || 0));
+  if (candidates.length === 2 && (candidates[0].seq || 0) === (candidates[1].seq || 0)
+      && candidates[0].txt !== candidates[1].txt) return 'unconfirmed';
+  try { return startupComparableText(candidates[0].txt) === startupComparableText(snapshot.legacy) ? 'same' : 'different'; }
+  catch (_) { return 'unconfirmed'; }
+}
 async function readStartupStorage() {
-  const reads = await Promise.allSettled([idbGet('state:0'), idbGet('state:1')]);
-  let legacy, broken;
+  const reads = await Promise.allSettled(['state:0','state:1'].map(key => Promise.resolve().then(() => idbGet(key))));
+  startupDiagnostic.slots = reads.map((read,index) => {
+    if (read.status !== 'fulfilled') {
+      startupRecordFailure(read.reason,'read-state:' + index);
+      return {status:'failed',error:startupSafeError(read.reason)};
+    }
+    return read.value === undefined ? {status:'absent'} : startupReadSummary(read.value,true);
+  });
+  let legacy = null, broken = [], failed = reads.some(read => read.status !== 'fulfilled');
   try {
     legacy = localStorage.getItem(KEY);
+    startupDiagnostic.legacy = legacy === null ? {status:'absent'} : startupReadSummary(legacy);
+  } catch (error) {
+    failed = true; startupDiagnostic.legacy = {status:'failed',error:startupSafeError(error)};
+    startupRecordFailure(error,'read-legacy');
+  }
+  try {
     broken = Object.keys(localStorage).filter(key => key.startsWith(KEY + ':broken:'));
-  } catch (_) { throw new Error('storage-read'); }
-  if (reads.some(read => read.status !== 'fulfilled')) throw new Error('storage-read');
-  return {slots:reads.map(read => read.value === undefined ? {present:false} : {present:true,value:read.value}), legacy, broken};
+    startupDiagnostic.brokenCount = broken.length;
+  } catch (error) { failed = true; startupRecordFailure(error,'read-recovery-index'); }
+  if (failed) throw new Error('storage-read');
+  const snapshot = {slots:reads.map(read => read.value === undefined ? {present:false} : {present:true,value:read.value}), legacy, broken};
+  startupDiagnostic.legacyRelation = startupInspectLegacyRelation(snapshot);
+  return snapshot;
 }
 function startupStateObject(value) { return !!value && typeof value === 'object' && !Array.isArray(value); }
 function validateStartupState(value) {
@@ -343,9 +437,9 @@ async function preserveStartupStorage(snapshot) {
   await new Promise((resolve,reject) => {
     const tx = database.transaction('state','readwrite'), store = tx.objectStore('state');
     let failure;
-    const fail = () => { failure = new Error('preservation-failed'); try { tx.abort(); } catch (_) {} };
+    const fail = error => { failure = startupPreservationError(error); try { tx.abort(); } catch (_) {} };
     tx.oncomplete = () => failure ? reject(failure) : resolve();
-    tx.onerror = tx.onabort = () => reject(failure || new Error('preservation-failed'));
+    tx.onerror = tx.onabort = () => reject(failure || startupPreservationError(tx.error));
     const requests = [store.get('state:0'),store.get('state:1'),store.get(key)];
     let remaining = requests.length;
     for (const request of requests) request.onsuccess = () => {
@@ -357,17 +451,66 @@ async function preserveStartupStorage(snapshot) {
         if (requests[2].result !== undefined) {
           if (JSON.stringify(requests[2].result) !== raw) return fail();
         } else if (snapshot.slots.some(slot => slot.present) || snapshot.legacy !== null) store.add(current,key);
-      } catch (_) { fail(); }
+      } catch (error) { fail(error); }
     };
   });
 }
-function blockStartup() {
+function startupDiagnosticText() {
+  const stages = {initializing:'起動準備','read-storage':'保存領域の読み取り','read-state:0':'世代0の読み取り',
+    'read-state:1':'世代1の読み取り','read-legacy':'旧保存の読み取り','read-recovery-index':'退避領域の確認',
+    'select-state':'保存内容の選択','prepare-state':'旧形式の変換（メモリ内）','validate-state':'変換後の形式確認',
+    'preserve-copy':'保全コピー','verify-startup':'起動前の再確認',script:'起動スクリプト'};
+  const status = {'not-read':'未確認',absent:'なし',present:'読み取り成功',failed:'読み取り失敗'};
+  const failure = startupDiagnostic.failure;
+  const lines = ['診断 v' + APP_VER,
+    '停止段階：' + (stages[failure?.stage || startupDiagnostic.stage] || '起動確認'),
+    '理由：' + (failure ? failure.code + ' / ' + failure.name : '未確認')];
+  const count = value => value === null || value === undefined ? '未確認' : String(value);
+  const item = (label,summary,envelope) => {
+    lines.push(label + '：' + status[summary.status]);
+    if (summary.status === 'failed') lines.push('  原因：' + summary.error.code + ' / ' + summary.error.name);
+    if (summary.status !== 'present') return;
+    if (envelope) {
+      const number = (value,state) => state === 'valid' ? String(value) : state === 'not-set' ? '未設定' : '形式不正';
+      lines.push('  seq：' + number(summary.seq,summary.seqStatus) + ' / at：' + number(summary.at,summary.atStatus));
+    }
+    lines.push('  JSON：' + (summary.validJSON ? '読取可' : '形式不正') + ' / データ形式：' + (summary.validState ? '確認済み' : '未確認'));
+    if (summary.counts) {
+      const n = summary.counts;
+      lines.push('  公演 ' + count(n.shows) + ' / 曲 ' + count(n.songs) + ' / 録音曲 ' + count(n.rsongs));
+      lines.push('  記録 ' + count(n.notes) + ' / 受信記録 ' + count(n.pubNotes) + ' / 削除保留 ' + count(n.trash));
+    }
+  };
+  startupDiagnostic.slots.forEach((summary,index) => item('保存世代' + index,summary,true));
+  item('旧保存',startupDiagnostic.legacy,false);
+  const relation = {'not-checked':'未確認',absent:'旧保存なし','legacy-only':'旧保存のみ',same:'一致',different:'差異あり（選択停止）',unconfirmed:'比較できず'};
+  lines.push('世代と旧保存：' + relation[startupDiagnostic.legacyRelation]);
+  lines.push('既存退避キー数：' + count(startupDiagnostic.brokenCount));
+  const preservation = {'not-started':'未実施',attempting:'確認中',succeeded:'確認済み',failed:'失敗'};
+  lines.push('起動時保全コピー：' + preservation[startupDiagnostic.preservation]);
+  return lines.join('\n');
+}
+function blockStartup(error) {
+  if (error) startupRecordFailure(error);
   startupPhase = 'blocked';
   bootErr = '保存データを確認できないため、保護のため停止しました。入力・保存・同期は停止しています。';
   const target = document.getElementById('app');
   if (target) {
     target.inert = true;
-    target.innerHTML = '<div style="padding:40px 24px;color:#EDEDED;font:16px/1.8 -apple-system,sans-serif"><h2>データの保護を優先して停止しました</h2><p>保存データの読み込み・確認を完了できませんでした。</p><p>入力・保存・自動送信・自動受信は停止しています。この起動処理では既存データを削除・置換していません。</p><p>この画面を保ったまま、復旧の確認をお待ちください。</p></div>';
+    const markup = '<div style="max-width:720px;margin:0 auto;padding:32px 20px calc(32px + env(safe-area-inset-bottom));color:#EDEDED;font:16px/1.8 -apple-system,sans-serif"><h2 style="font-size:22px">データの保護を優先して停止しました</h2><p>保存データの読み込み・確認を完了できませんでした。</p><p>入力・保存・自動送信・自動受信は停止しています。この起動処理では既存データを削除・置換していません。</p><pre style="margin:16px 0;padding:16px;background:#202020;border-radius:12px;font:13px/1.8 -apple-system,sans-serif;white-space:pre-wrap;overflow-wrap:anywhere">' + h(startupDiagnosticText()) + '</pre><p>読み取り失敗は、データがないことを意味しません。件数は読み取れた保存内容の確認です。</p><p>この画面を保ったまま、復旧の確認をお待ちください。</p></div>';
+    // #app remains inert. A separate text-only panel can scroll on small screens
+    // without enabling an editor, a recovery action or any storage operation.
+    target.innerHTML = markup;
+    if (document.body) {
+      let panel = document.getElementById('startup-protection');
+      if (!panel) {
+        panel = document.createElement('div'); panel.id = 'startup-protection';
+        panel.setAttribute('role','alert');
+        panel.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:#07080A;overflow-y:auto;touch-action:pan-y;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;padding-top:env(safe-area-inset-top)';
+        document.body.appendChild(panel);
+      }
+      if (panel.innerHTML !== markup) panel.innerHTML = markup;
+    }
   }
 }
 async function loadRaw() {
@@ -389,19 +532,28 @@ async function load() {
   if (startupPhase !== 'loading') return false;
   const original = S;
   try {
-    const snapshot = await readStartupStorage(), candidate = startupCandidate(snapshot);
+    startupSetStage('read-storage');
+    const snapshot = await readStartupStorage();
+    startupSetStage('select-state');
+    const candidate = startupCandidate(snapshot);
     if (startupPhase !== 'loading') throw new Error('startup-stopped');
     S = candidate.state;
+    startupSetStage('prepare-state');
     migrate({preserve:true});
+    startupSetStage('validate-state');
     validateStartupState(S);
+    startupSetStage('preserve-copy'); startupDiagnostic.preservation = 'attempting';
     await preserveStartupStorage(snapshot);
+    startupDiagnostic.preservation = 'succeeded'; startupSetStage('verify-startup');
     if (recordingInboxStale || (recordingInboxProfileRequired && !recordingInboxOwner?.canWrite)
         || startupPhase !== 'loading' || localStorage.getItem(KEY) !== snapshot.legacy) throw new Error('startup-changed');
     saveSeq = candidate.seq; idbOK = true; touched = false; saveErr = false;
     startupPhase = 'ready';
     recordingInboxOwnerUI();
     return true;
-  } catch (_) {
+  } catch (error) {
+    if (startupDiagnostic.preservation === 'attempting') startupDiagnostic.preservation = 'failed';
+    startupRecordFailure(error);
     S = original;
     blockStartup();
     return false;
@@ -2933,8 +3085,8 @@ document.addEventListener("visibilitychange", () => {
   }
 });
 // どこかで例外が出ても、真っ白のままにしない
-function showFatal(msg) {
-  if (startupPhase !== 'ready') { blockStartup(); return; }
+function showFatal(msg, error) {
+  if (startupPhase !== 'ready') { startupRecordFailure(error,'script'); blockStartup(); return; }
   try {
     document.body.innerHTML = `<div style="padding:40px 24px;color:#EDEDED;font:15px/1.7 -apple-system,sans-serif">
       <div style="font-size:17px;font-weight:700;margin-bottom:12px">うまく開けませんでした</div>
@@ -2945,11 +3097,11 @@ function showFatal(msg) {
 }
 window.addEventListener("error", (e) => {
   if (document.getElementById("app") && document.getElementById("app").innerHTML) return;
-  showFatal((e && e.message) || "不明な理由");
+  showFatal((e && e.message) || "不明な理由", e && e.error);
 });
 window.addEventListener("unhandledrejection", (e) => {
   if (document.getElementById("app") && document.getElementById("app").innerHTML) return;
-  showFatal((e && e.reason && e.reason.message) || "不明な理由");
+  showFatal((e && e.reason && e.reason.message) || "不明な理由", e && e.reason);
 });
 
 window.addEventListener("pageshow", () => {
