@@ -155,7 +155,9 @@ test('protection panel is separate static text; only its browser scroll default 
   const panel=f.elements['startup-protection'];
   assert.equal(f.target.inert,true);assert.notEqual(panel,f.target);assert.equal(panel.role,'alert');
   assert.match(panel.style.cssText,/position:fixed/);assert.match(panel.style.cssText,/overflow-y:auto/);
-  assert.match(panel.style.cssText,/touch-action:pan-y/);assert.doesNotMatch(panel.innerHTML,/<(?:button|input|textarea|select|a)\b|data-act=/);
+  assert.match(panel.style.cssText,/touch-action:pan-y/);
+  assert.equal((panel.innerHTML.match(/<button\b/g)||[]).length,1);assert.match(panel.innerHTML,/id="startup-backup-check"/);
+  assert.doesNotMatch(panel.innerHTML,/<(?:input|textarea|select|a)\b|data-act=/);
   const handlers={};f.c.document.addEventListener=(name,handler)=>handlers[name]=handler;
   f.c.recordingInboxCanWrite=()=>false;
   vm.runInContext(block("for (const type of ['click','input','change','keydown','submit','pointerdown','drop'])",'recordingInboxOwnerUI();'),f.c);

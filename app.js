@@ -62,6 +62,14 @@ window.addEventListener('storage', event => {
 });
 for (const type of ['click','input','change','keydown','submit','pointerdown','drop']) document.addEventListener(type, event => {
   if (recordingInboxCanWrite() || event.target.closest?.('[data-inbox-owner-reload]')) return;
+  const backupCheck = event.target.closest?.('#startup-backup-check');
+  if (startupPhase === 'blocked' && backupCheck?.closest?.('#startup-protection')) {
+    event.stopImmediatePropagation();
+    if (type === 'pointerdown' || (type === 'keydown' && ['Enter',' '].includes(event.key) && !event.altKey && !event.ctrlKey && !event.metaKey)) return;
+    event.preventDefault();
+    if (type === 'click' && !backupCheck.disabled) void startupInspectBackups();
+    return;
+  }
   // The protection panel contains only static text. Keep editor handlers blocked,
   // while allowing the browser's own scrolling on this non-inert panel.
   if (startupPhase === 'blocked' && type === 'pointerdown'
@@ -74,7 +82,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.33";
+const APP_VER = "16.41.34";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -279,6 +287,75 @@ let startupDiagnostic = {
   slots:[{status:'not-read'},{status:'not-read'}], legacy:{status:'not-read'},
   legacyRelation:'not-checked', brokenCount:null, preservation:'not-started'
 };
+let startupBackupInspector = null;
+function startupBackupResultText(result) {
+  const status = {checking:'確認中',checked:'確認終了（送信・復元なし）','no-existing-connection':'既存接続なし',
+    cancelled:'中止','storage-changed':'端末の保存内容が変わったため中止','connection-invalid':'既存接続の形式を確認できず','connection-unconfirmed':'既存接続を確認できず',
+    'http-401':'既存の接続情報では認証できず','http-403':'アクセス確認できず','http-404':'保存先を取得できず',
+    'http-429':'取得制限のため未確認','http-error':'保存先を取得できず','network-failed':'通信未確認',
+    'network-timeout':'通信時間切れ','response-format':'保存先の応答未確認','response-limit':'応答が確認上限を超過',
+    'backup-missing':'この版のバックアップ未確認','backup-format':'バックアップ形式未確認','backup-limit':'確認上限を超過',
+    'part-missing':'分割ファイル未確認','part-url':'分割ファイルの取得先未確認','part-integrity':'分割内容の整合未確認',
+    'saved-key-missing':'保存済みの復号情報なし','decrypt-failed':'保存済み情報では復号未確認','state-format':'保存内容の形式未確認',
+    'compression-unavailable':'この端末ではバックアップの展開を確認できず',
+    'work-present':'制作データあり','empty':'曲・記録などの制作件数は0'};
+  const lines=[status[result.status] || '未確認'];
+  const description = n => '公演 '+n.shows+' / 曲 '+n.songs+' / 録音曲 '+n.rsongs+' / 記録 '+n.notes+' / 受信記録 '+n.pubNotes
+    +'\n  管理メモ '+n.staffMemos+' / 総括 '+n.memos+' / 手書き '+n.draws+' / 録音管理 '+n.recs+' / 予定 '+n.planSlots+' / 削除保留 '+n.trash;
+  for(const item of result.local || [])lines.push('端末世代'+item.generation+'：'+(item.counts?description(item.counts):'読み取り未確認'));
+  if(result.ancillary)lines.push('端末ファイル数：'+(result.ancillary.clips??'未確認')+' / 起動時保全コピー数：'+(result.ancillary.preserved??'未確認'));
+  for(const [index,candidate] of (result.candidates || []).entries()) {
+    const when = candidate.at && candidate.at<=8640000000000000 ? new Date(candidate.at).toLocaleString('ja-JP') : '時刻未確認';
+    lines.push('保存先候補'+(index+1)+'（接続'+(candidate.connection+1)+'・'+(candidate.current?'現在版':'過去版')+'） '+when+'\n  '+(status[candidate.status]||'未確認'));
+    if(candidate.counts)lines.push('  '+description(candidate.counts));
+  }
+  if(result.connections)lines.push('履歴の確認範囲は各接続の現在版と、取得できた直近10更新までです。');
+  if(result.limited)lines.push('容量・取得件数・履歴の確認上限に達した部分は未確認です。');
+  lines.push('候補はまだ取り込んでいません。ダウンロード・送信・復元は行いません。');
+  return lines.join('\n');
+}
+function startupBackupAncillary() {
+  if (!DB || !DB.objectStoreNames.contains('state') || !DB.objectStoreNames.contains('clips')) return Promise.resolve({status:'read-failed',clips:null,preserved:null});
+  return new Promise((resolve,reject)=>{
+    const tx=DB.transaction(['state','clips'],'readonly');let clips=null,preserved=0;
+    const count=tx.objectStore('clips').count(),cursor=tx.objectStore('state').openKeyCursor();
+    count.onsuccess=()=>{clips=count.result;};
+    cursor.onsuccess=()=>{const current=cursor.result;if(!current)return;
+      if(typeof current.key==='string'&&current.key.startsWith('preserved:startup:v1:'))preserved++;current.continue();};
+    tx.oncomplete=()=>resolve({status:'read',clips,preserved});
+    tx.onerror=tx.onabort=()=>reject(new Error('storage-read'));
+  });
+}
+async function startupBackupReadSlot(key) {
+  if(!DB || !DB.objectStoreNames.contains('state'))throw new Error('storage-read');
+  return new Promise((resolve,reject)=>{
+    const tx=DB.transaction('state','readonly'),request=tx.objectStore('state').get(key);
+    request.onsuccess=()=>resolve(request.result);
+    request.onerror=tx.onabort=()=>reject(new Error('storage-read'));
+  });
+}
+async function startupInspectBackups() {
+  if(startupPhase!=='blocked'||document.hidden||startupBackupInspector?.busy)return;
+  const output=document.getElementById('startup-backup-result'),button=document.getElementById('startup-backup-check');
+  if(!output||!button)return;
+  if(typeof StartupBackupInspection==='undefined'){output.textContent='確認機能を読み込めませんでした。保存・復元はしていません。';return;}
+  if(!startupBackupInspector)startupBackupInspector=StartupBackupInspection.create({
+    readSlots:()=>Promise.allSettled(['state:0','state:1'].map(key=>startupBackupReadSlot(key))),
+    readAncillary:startupBackupAncillary,fetch:(url,options)=>fetch(url,options),
+    unpackBackup:(raw,key,context)=>StartupBackupInspection.decodeBackup(raw,key,{...context,openJSON,base64Decode:b64d}),
+    digest:backupDigest,isActive:()=>startupPhase==='blocked'&&!document.hidden,
+    onUpdate:result=>{const target=document.getElementById('startup-backup-result');if(target)target.textContent=startupBackupResultText(result);}
+  });
+  button.disabled=true;
+  try{await startupBackupInspector.run();}finally{button.disabled=false;}
+}
+function startupCancelBackupInspection() {
+  if(!startupBackupInspector?.busy)return;
+  startupBackupInspector.cancel();
+  const output=document.getElementById('startup-backup-result');if(output)output.textContent='確認を中止しました。送信・復元はしていません。';
+}
+if(typeof window!=='undefined')window.addEventListener('pagehide',startupCancelBackupInspection);
+if(typeof document!=='undefined'&&document.addEventListener)document.addEventListener('visibilitychange',()=>{if(document.hidden)startupCancelBackupInspection();});
 function startupSafeError(error) {
   const names = ['Error','TypeError','SyntaxError','RangeError','DOMException','AbortError','DataError',
     'InvalidStateError','NotFoundError','NotReadableError','NotSupportedError','QuotaExceededError',
@@ -319,6 +396,8 @@ function startupReadSummary(value, envelope = false) {
     if (startupStateObject(decoded)) {
       result.counts = Object.fromEntries(['shows','songs','rsongs','notes','pubNotes','trash'].map(key =>
         [key,Array.isArray(decoded[key]) ? decoded[key].length : decoded[key] === undefined ? 0 : null]));
+      for(const key of ['memos','staffMemos','draws','recs'])result.counts[key]=decoded[key]===undefined?0:startupStateObject(decoded[key])?Object.keys(decoded[key]).length:null;
+      result.counts.planSlots=decoded.plan?.slots===undefined?0:Array.isArray(decoded.plan.slots)?decoded.plan.slots.length:null;
     }
     try { validateStartupState(decoded); result.validState = true; }
     catch (error) { result.formatError = startupSafeError(error).code; }
@@ -479,6 +558,7 @@ function startupDiagnosticText() {
       const n = summary.counts;
       lines.push('  公演 ' + count(n.shows) + ' / 曲 ' + count(n.songs) + ' / 録音曲 ' + count(n.rsongs));
       lines.push('  記録 ' + count(n.notes) + ' / 受信記録 ' + count(n.pubNotes) + ' / 削除保留 ' + count(n.trash));
+      lines.push('  管理メモ '+count(n.staffMemos)+' / 総括 '+count(n.memos)+' / 手書き '+count(n.draws)+' / 録音管理 '+count(n.recs)+' / 予定 '+count(n.planSlots));
     }
   };
   startupDiagnostic.slots.forEach((summary,index) => item('保存世代' + index,summary,true));
@@ -509,7 +589,8 @@ function blockStartup(error) {
         panel.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:#07080A;overflow-y:auto;touch-action:pan-y;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;padding-top:env(safe-area-inset-top)';
         document.body.appendChild(panel);
       }
-      if (panel.innerHTML !== markup) panel.innerHTML = markup;
+      const inspection = '<div style="max-width:720px;margin:0 auto;padding:0 20px 32px"><button id="startup-backup-check" type="button" style="padding:14px;background:#283A52;border:1px solid #67798F;border-radius:12px;line-height:1.6">保存先のバックアップを確認（送信・復元なし）</button><pre id="startup-backup-result" role="status" aria-live="polite" style="margin-top:16px;white-space:pre-wrap;font:13px/1.8 -apple-system,sans-serif;overflow-wrap:anywhere"></pre></div>';
+      if (!panel.querySelector?.('#startup-backup-check')) panel.innerHTML = markup + inspection;
     }
   }
 }
