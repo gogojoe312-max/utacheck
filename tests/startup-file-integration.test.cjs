@@ -120,7 +120,7 @@ function handlers(){
  const captured={},calls=[],panel={id:'startup-protection'},controls={};
  for(const id of ['input','password','label','check','cancel'])controls[id]={id:'startup-file-'+id,disabled:false,files:[{size:123}],closest:selector=>selector==='#startup-protection'?panel:null};
  const c=vm.createContext({startupPhase:'blocked',recordingInboxCanWrite:()=>false,document:{addEventListener:(type,fn)=>captured[type]=fn},
-  startupSelectLocalFile:value=>calls.push(['select',value.size]),startupCheckLocalFile:()=>calls.push(['check']),startupCancelLocalFileInspection:()=>calls.push(['cancel']),startupInspectBackups:()=>calls.push(['backup'])});
+  startupFileIMEActive:()=>false,startupSelectLocalFile:value=>calls.push(['select',value.size]),startupCheckLocalFile:()=>calls.push(['check']),startupCancelLocalFileInspection:()=>calls.push(['cancel']),startupInspectBackups:()=>calls.push(['backup'])});
  vm.runInContext(block("for (const type of ['click','input','change','keydown','submit','pointerdown','drop'])",'recordingInboxOwnerUI();'),c);
  const event=(kind,extra={})=>{const actions=[],control=controls[kind],target={closest:selector=>control&&selector.includes('#'+control.id)?control:selector==='#startup-protection'?panel:null};
   return{actions,value:{target,...extra,stopImmediatePropagation:()=>actions.push('stop'),preventDefault:()=>actions.push('prevent')}};};
@@ -153,11 +153,13 @@ test('dedicated controls cannot escape their protection panel or run outside blo
  assert.deepEqual(f.calls,[]);
 });
 test('file/password controls and script cache wiring are minimal and do not advertise restoration guarantees',()=>{
- assert.match(source,/id="startup-file-password" type="password" maxlength="4096" autocomplete="off"/);
+ const passwordMarkup=source.match(/<input id="startup-file-password"[^>]*>/)?.[0]||'';
+ assert.match(passwordMarkup,/type="password"/);assert.match(passwordMarkup,/maxlength="4096"/);assert.match(passwordMarkup,/autocomplete="off"/);
+ assert.match(passwordMarkup,/inputmode="text"/);assert.match(passwordMarkup,/lang="ja"/);
  assert.match(source,/id="startup-file-label"[^>]*for="startup-file-password"|for="startup-file-password"[^>]*id="startup-file-label"/);
  const local=block('let startupFileInspector=null;','function startupSafeError(');assert.doesNotMatch(local,/\b(?:fetch|save|idbPut|putClip|delClip|restoreBackupFile|backupDigest)\s*\(/);
  assert.doesNotMatch(local,/復元可能|完全復旧|復元を完了/);
  const html=fs.readFileSync(__dirname+'/../index.html','utf8'),sw=fs.readFileSync(__dirname+'/../sw.js','utf8');
  assert(html.indexOf('startup-file-inspection.js')<html.indexOf('<script src="app.js'));
- assert.match(html,/startup-file-inspection\.js\?v=16\.41\.35/);assert.match(sw,/"\.\/startup-file-inspection\.js"/);assert.match(sw,/if \(url\.origin !== self\.location\.origin\) return;/);
+ assert.match(html,/startup-file-inspection\.js\?v=16\.41\.36/);assert.match(sw,/"\.\/startup-file-inspection\.js"/);assert.match(sw,/if \(url\.origin !== self\.location\.origin\) return;/);
 });

@@ -62,7 +62,7 @@ window.addEventListener('storage', event => {
 });
 for (const type of ['click','input','change','keydown','submit','pointerdown','drop']) document.addEventListener(type, event => {
   if (recordingInboxCanWrite() || event.target.closest?.('[data-inbox-owner-reload]')) return;
-  const fileControl=event.target.closest?.('#startup-file-input,#startup-file-password,#startup-file-label,#startup-file-check,#startup-file-cancel');
+  const fileControl=event.target.closest?.('#startup-file-input,#startup-file-password,#startup-file-label,#startup-file-visibility,#startup-file-check,#startup-file-cancel');
   if(startupPhase==='blocked'&&fileControl?.closest?.('#startup-protection')){
     event.stopImmediatePropagation();
     const id=fileControl.id;
@@ -70,7 +70,8 @@ for (const type of ['click','input','change','keydown','submit','pointerdown','d
     if(type==='click'&&(id==='startup-file-password'||id==='startup-file-label'))return;
     if(type==='keydown'&&event.key==='Tab'&&!event.altKey&&!event.ctrlKey&&!event.metaKey)return;
     if(id==='startup-file-password'&&['input','change','keydown'].includes(type)){
-      if(type==='keydown'&&event.key==='Enter'&&!event.isComposing){event.preventDefault();void startupCheckLocalFile();}
+      if(type==='keydown'&&event.key==='Enter'&&!event.isComposing&&event.keyCode!==229
+          &&!(typeof startupFileIMEActive==='function'&&startupFileIMEActive())){event.preventDefault();void startupCheckLocalFile();}
       return;
     }
     if(id==='startup-file-input'&&type==='click'){startupCancelLocalFileInspection();return;}
@@ -78,6 +79,7 @@ for (const type of ['click','input','change','keydown','submit','pointerdown','d
     event.preventDefault();
     if(id==='startup-file-input'&&type==='change')startupSelectLocalFile(fileControl.files?.[0]);
     if(id==='startup-file-check'&&type==='click'&&!fileControl.disabled)void startupCheckLocalFile();
+    if(id==='startup-file-visibility'&&type==='click')startupTogglePassphrase();
     if(id==='startup-file-cancel'&&type==='click')startupCancelLocalFileInspection();
     return;
   }
@@ -101,7 +103,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.35";
+const APP_VER = "16.41.36";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -376,6 +378,38 @@ function startupCancelBackupInspection() {
 if(typeof window!=='undefined')window.addEventListener('pagehide',()=>{startupCancelBackupInspection();startupCancelLocalFileInspection();});
 if(typeof document!=='undefined'&&document.addEventListener)document.addEventListener('visibilitychange',()=>{if(document.hidden){startupCancelBackupInspection();startupCancelLocalFileInspection();}});
 let startupFileInspector=null;
+let startupFileComposing=false;
+const startupIMEFields=new WeakSet();
+function startupFileIMEActive(){return startupFileComposing;}
+function startupBindPassphraseIME(field){
+  if(!field?.addEventListener||startupIMEFields.has(field))return;
+  startupIMEFields.add(field);
+  for(const type of ['compositionstart','compositionupdate','compositionend','beforeinput','paste','cut','select'])field.addEventListener(type,event=>{
+    if(startupPhase!=='blocked')return;
+    event.stopImmediatePropagation();
+    if(type==='compositionstart')startupFileComposing=true;
+    if(type==='compositionend')startupFileComposing=false;
+  });
+}
+function startupPassphraseMode(show){
+  const {password}=startupFileControls(),button=document.getElementById('startup-file-visibility'),notice=document.getElementById('startup-file-visible-notice');
+  if(password){const value=password.value;password.type=show?'text':'password';password.inputMode='text';password.lang='ja';password.value=value;}
+  if(button){button.textContent=show?'合言葉を隠す':'日本語で入力（表示）';button.setAttribute?.('aria-pressed',show?'true':'false');}
+  if(notice)notice.hidden=!show;
+}
+function startupTogglePassphrase(){
+  if(startupPhase!=='blocked'||document.hidden||startupFileInspector?.busy||startupFileComposing)return;
+  const {password}=startupFileControls();if(!password)return;
+  startupBindPassphraseIME(password);
+  let start,end;try{start=password.selectionStart;end=password.selectionEnd;}catch(_){}
+  password.blur?.();
+  startupPassphraseMode(password.type!=='text');
+  try{password.focus({preventScroll:true});}catch(_){password.focus?.();}
+  if(Number.isInteger(start)&&Number.isInteger(end))try{password.setSelectionRange(start,end);}catch(_){}
+}
+function startupClearPassphrase(){
+  const {password}=startupFileControls();if(password){password.blur?.();password.value='';}startupFileComposing=false;startupPassphraseMode(false);
+}
 function startupLocalFileText(result){
   const labels={selected:'ファイルを選択しました。合言葉はこの画面だけで入力してください。',checking:'端末内で確認中（送信・復元なし）',
     checked:'このファイルの候補確認ができました（復元はまだしていません）。',cancelled:'確認を中止しました。',
@@ -433,6 +467,7 @@ function startupFileControls(){
     check:document.getElementById('startup-file-check'),output:document.getElementById('startup-file-result')};
 }
 function startupEnsureFileInspector(){
+  startupBindPassphraseIME(startupFileControls().password);
   if(startupFileInspector)return true;
   if(typeof StartupFileInspection==='undefined'||typeof StartupBackupInspection==='undefined')return false;
   startupFileInspector=StartupFileInspection.create({readFile:startupReadLocalFile,
@@ -444,18 +479,18 @@ function startupEnsureFileInspector(){
 }
 function startupSelectLocalFile(file){
   if(startupPhase!=='blocked')return;startupCancelBackupInspection();const controls=startupFileControls();
-  if(controls.file)controls.file.value='';if(controls.password)controls.password.value='';
+  if(controls.file)controls.file.value='';startupClearPassphrase();
   if(!file)return;if(!startupEnsureFileInspector()){if(controls.output)controls.output.textContent='確認機能を読み込めませんでした。';return;}
   startupFileInspector.select(file);
 }
 async function startupCheckLocalFile(){
-  const controls=startupFileControls();if(startupPhase!=='blocked'||document.hidden||startupFileInspector?.busy||controls.check?.disabled)return;
-  if(!startupEnsureFileInspector())return;const password=controls.password?.value||'';if(controls.password)controls.password.value='';
+  const controls=startupFileControls();if(startupPhase!=='blocked'||document.hidden||startupFileInspector?.busy||startupFileComposing||controls.check?.disabled)return;
+  if(!startupEnsureFileInspector())return;const password=controls.password?.value||'';startupClearPassphrase();
   await startupFileInspector.check(password);
 }
 function startupCancelLocalFileInspection(){
   startupFileInspector?.cancel();const controls=startupFileControls();
-  if(controls.file)controls.file.value='';if(controls.password)controls.password.value='';if(controls.check)controls.check.disabled=true;
+  if(controls.file)controls.file.value='';startupClearPassphrase();if(controls.check)controls.check.disabled=true;
   if(controls.output&&controls.output.textContent)controls.output.textContent='確認を中止しました。送信・復元はしていません。';
 }
 function startupSafeError(error) {
@@ -692,7 +727,7 @@ function blockStartup(error) {
         document.body.appendChild(panel);
       }
       const inspection = '<div style="max-width:720px;margin:0 auto;padding:0 20px 32px"><button id="startup-backup-check" type="button" style="padding:14px;background:#283A52;border:1px solid #67798F;border-radius:12px;line-height:1.6">保存先のバックアップを確認（送信・復元なし）</button><pre id="startup-backup-result" role="status" aria-live="polite" style="margin-top:16px;white-space:pre-wrap;font:13px/1.8 -apple-system,sans-serif;overflow-wrap:anywhere"></pre></div>';
-      const fileInspection='<div style="max-width:720px;margin:0 auto;padding:0 20px 40px;border-top:1px solid #344152"><h3 style="margin:20px 0 12px">手元のファイルを確認（送信・復元なし）</h3><p>端末のFilesにあるバックアップを選び、合言葉はこの画面だけで入力してください。</p><input id="startup-file-input" type="file" accept=".json,application/json" style="display:block;max-width:100%;margin:16px 0"><label id="startup-file-label" for="startup-file-password">合言葉（保存・送信しません）</label><input id="startup-file-password" type="password" maxlength="4096" autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off" style="display:block;width:100%;padding:14px;background:#202020;border:1px solid #67798F;border-radius:10px;margin:8px 0 16px"><button id="startup-file-check" type="button" disabled style="padding:14px;background:#283A52;border:1px solid #67798F;border-radius:12px">このファイルの件数を確認</button> <button id="startup-file-cancel" type="button" style="padding:14px;border:1px solid #67798F;border-radius:12px">確認を中止</button><pre id="startup-file-result" role="status" aria-live="polite" style="margin-top:16px;white-space:pre-wrap;font:13px/1.8 -apple-system,sans-serif;overflow-wrap:anywhere"></pre></div>';
+      const fileInspection='<div style="max-width:720px;margin:0 auto;padding:0 20px 40px;border-top:1px solid #344152"><h3 style="margin:20px 0 12px">手元のファイルを確認（送信・復元なし）</h3><p>端末のFilesにあるバックアップを選び、合言葉はこの画面だけで入力してください。</p><input id="startup-file-input" type="file" accept=".json,application/json" style="display:block;max-width:100%;margin:16px 0"><label id="startup-file-label" for="startup-file-password">合言葉（保存・送信しません）</label><input id="startup-file-password" type="password" inputmode="text" lang="ja" maxlength="4096" autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off" style="display:block;width:100%;padding:14px;background:#202020;border:1px solid #67798F;border-radius:10px;margin:8px 0 16px"><button id="startup-file-visibility" type="button" aria-pressed="false" style="padding:12px;border:1px solid #67798F;border-radius:12px;margin-bottom:12px">日本語で入力（表示）</button><p id="startup-file-visible-notice" hidden style="margin-bottom:12px;color:#FFCE99">日本語入力中は合言葉が画面に表示されます。周囲から見えない場所で入力してください。</p><button id="startup-file-check" type="button" disabled style="padding:14px;background:#283A52;border:1px solid #67798F;border-radius:12px">このファイルの件数を確認</button> <button id="startup-file-cancel" type="button" style="padding:14px;border:1px solid #67798F;border-radius:12px">確認を中止</button><pre id="startup-file-result" role="status" aria-live="polite" style="margin-top:16px;white-space:pre-wrap;font:13px/1.8 -apple-system,sans-serif;overflow-wrap:anywhere"></pre></div>';
       if (!panel.querySelector?.('#startup-file-input')) panel.innerHTML = markup + inspection + fileInspection;
     }
   }

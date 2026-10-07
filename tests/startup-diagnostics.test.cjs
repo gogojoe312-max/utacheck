@@ -156,7 +156,7 @@ test('protection panel is separate static text; only its browser scroll default 
   assert.equal(f.target.inert,true);assert.notEqual(panel,f.target);assert.equal(panel.role,'alert');
   assert.match(panel.style.cssText,/position:fixed/);assert.match(panel.style.cssText,/overflow-y:auto/);
   assert.match(panel.style.cssText,/touch-action:pan-y/);
-  assert.equal((panel.innerHTML.match(/<button\b/g)||[]).length,3);assert.match(panel.innerHTML,/id="startup-backup-check"/);
+  assert.equal((panel.innerHTML.match(/<button\b/g)||[]).length,4);assert.match(panel.innerHTML,/id="startup-backup-check"/);
   assert.match(panel.innerHTML,/id="startup-file-input"/);assert.match(panel.innerHTML,/id="startup-file-password"/);
   assert.doesNotMatch(panel.innerHTML,/<(?:textarea|select|a)\b|data-act=/);
   const handlers={};f.c.document.addEventListener=(name,handler)=>handlers[name]=handler;
