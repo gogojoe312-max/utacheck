@@ -64,6 +64,10 @@ window.addEventListener('storage', event => {
   }
 });
 for (const type of ['click','input','change','keydown','submit','pointerdown','drop']) document.addEventListener(type, event => {
+  const originalBackup=event.target.closest?.('#recovery-original-backup-check');
+  if(type==='click'&&originalBackup&&startupPhase==='ready'){
+    event.preventDefault();event.stopImmediatePropagation();if(!originalBackup.disabled)void recoveryInspectOriginalBackup();return;
+  }
   if (recordingInboxCanWrite() || event.target.closest?.('[data-inbox-owner-reload]')) return;
   const fileControl=event.target.closest?.('#startup-file-input,#startup-file-password,#startup-file-label,#startup-file-visibility,#startup-file-check,#startup-file-cancel,#startup-file-restore');
   if(startupPhase==='blocked'&&fileControl?.closest?.('#startup-protection')){
@@ -109,7 +113,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.39";
+const APP_VER = "16.41.40";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -385,6 +389,147 @@ if(typeof window!=='undefined')window.addEventListener('pagehide',()=>{startupCa
 if(typeof document!=='undefined'&&document.addEventListener)document.addEventListener('visibilitychange',()=>{if(document.hidden){startupCancelAutomaticRecovery();startupCancelBackupInspection();startupCancelLocalFileInspection();}});
 let startupFileInspector=null;
 let startupLocalRestorer=null;
+let recoveryOriginalBackupInspector=null,recoveryOriginalBackupReport='',recoveryOriginalBackupCandidates=[],recoveryOriginalRestorer=null,recoveryOriginalWriteCommitted=false;
+function recoveryOriginalBackupCanRead(){return startupPhase==='ready'&&startupRecoveryNetworkHold&&!document.hidden
+  &&!recordingInboxStale&&(!recordingInboxProfileRequired||!!recordingInboxOwner?.canWrite);}
+function recoveryOriginalBackupText(result){
+  const flag=value=>value===true?'あり':value===false?'なし':'未確認';
+  const lines=['復旧前の保存情報（値は表示しません）','GitHub認証情報：'+flag(result.tokenStored),
+    '全体バックアップの保存先：'+flag(result.backupTargetStored),'全体バックアップの保存鍵：'+flag(result.backupKeyStored),
+    'ほかの保存鍵（用途の一致は未確認）：'+flag(result.savedKeyStored),
+    '配信先の保存情報：'+flag(result.groupTargetStored)];
+  if(result.status==='no-existing-connection')lines.push('元の保存世代から全体バックアップの保存先IDを確認できません。トークンだけでは復旧先を確定できません。');
+  else if(result.status==='checking')lines.push('元の保存先を読み取り確認中です。');
+  else if(result.status==='storage-changed')lines.push('編集または保存内容が変わったため中止しました。現在の作業を保持しています。');
+  else if(result.status==='local-work-present')lines.push('復旧資料への追加・変更があるため置き換えていません。現在の作業とバックアップ候補を保持しています。');
+  else if(result.status==='candidate-conflict')lines.push('異なるバックアップ候補があるため自動選択を停止しています。');
+  else if(result.status==='restoring')lines.push('元のバックアップを確認しました。現在の保存世代も保全して復旧中です。');
+  else if(result.status==='restore-unconfirmed')lines.push('原本保全・復旧後の再読確認を完了できませんでした。自動送受信は停止中です。');
+  else if(!['checked','cancelled'].includes(result.status))lines.push('元の保存情報または既存保存先の読み取りは未確認です。');
+  if(result.candidates?.length)lines.push(startupBackupResultText(result).split('\n').slice(1,-1).join('\n'));
+  if(result.status!=='restoring')lines.push('現在の作業と原ファイルを保持しています。認証情報の再設定はせず、自動送受信は停止中です。');
+  return lines.join('\n');
+}
+function recoveryOriginalBackupShow(result){
+  recoveryOriginalBackupReport=recoveryOriginalBackupText(result);
+  const output=document.getElementById('recovery-original-backup-output');if(output)output.textContent=recoveryOriginalBackupReport;
+}
+async function recoveryOriginalBackupSnapshot(){
+  const values=await Promise.all(['state:0','state:1','recovery:network-hold:v1'].map(key=>startupBackupReadSlot(key)));
+  return JSON.stringify({values,legacy:localStorage.getItem(KEY),editor:S,draft:U.sheet||null,stateRevision});
+}
+function recoveryProductionText(state){
+  const normalized=Object.assign(JSON.parse(JSON.stringify(S0)),unpackState(JSON.parse(JSON.stringify(state))));
+  // Account only for deterministic startup conversions; unknown fields stay in
+  // the comparison, so later edits cannot disappear from the restored editor.
+  normalized.kbps=128;normalized.planAuto=false;
+  if(normalized.preroll==null||normalized.preroll>10)normalized.preroll=5;
+  if(!normalized.recOvSize)normalized.recOvSize=14;if(!normalized.planMin)normalized.planMin=90;
+  if(normalized.planPrep==null)normalized.planPrep=10;
+  if(normalized.recBars==null)normalized.recBars=true;if(normalized.secAll==null)normalized.secAll=false;
+  normalized.tagWords=(normalized.tagWords||[]).map(word=>TAGMAP[word]||word);
+  for(const songs of [normalized.songs,normalized.rsongs])for(const song of songs||[]){
+    const tags={};for(const line of song.lines||[]){
+      if(line.tag&&!/\d$/.test(line.tag)){const base=TAGMAP[line.tag]||line.tag;tags[base]=(tags[base]||0)+1;line.tag=base+tags[base];}
+      if(line.solo&&!line.vt)line.vt='ソロ';
+    }
+    if(!song.roster?.length)song.roster=songRoster(song);if(!song.sig)song.sig=songSig(song);
+  }
+  delete normalized.show;
+  for(const key of ['showId','groupId','deviceId','ghToken','bkAt','bkSeen','bkHash','bkError','bkFileAt','bkPendingParts'])delete normalized[key];
+  const sorted=value=>Array.isArray(value)?value.map(sorted):startupStateObject(value)?Object.fromEntries(Object.keys(value).sort().map(key=>[key,sorted(value[key])])):value;
+  return JSON.stringify(sorted(normalized));
+}
+function recoverySafeCandidate(value){
+  if(Array.isArray(value)){value.forEach(recoverySafeCandidate);return;}
+  if(startupStateObject(value))for(const key of Object.keys(value)){
+    if(['__proto__','prototype','constructor'].includes(key))throw new Error('candidate-invalid');recoverySafeCandidate(value[key]);
+  }
+}
+function recoveryValidateCloudState(value){
+  const invalid=()=>{const error=new Error('state-format');error.inspectionCode='state-format';throw error;};
+  validateStartupState(value);const state=unpackState(JSON.parse(JSON.stringify(value)));
+  const id=value=>typeof value==='string'&&value.length>0&&!/[|\x00-\x1f]/.test(value);
+  const ids=rows=>Array.isArray(rows)&&rows.every(id);
+  for(const member of state.members||[])if(!id(member.id)||typeof member.name!=='string')invalid();
+  for(const group of state.groups||[])if(!id(group.id)||typeof group.name!=='string')invalid();
+  for(const show of state.shows||[])if(!id(show.id)||typeof show.name!=='string')invalid();
+  for(const list of [state.songs||[],state.rsongs||[]])for(const song of list){
+    if(!id(song.id)||typeof song.title!=='string'||!Array.isArray(song.lines))invalid();
+    for(const line of song.lines)if(typeof line.t!=='string'||!ids(line.parts))invalid();
+  }
+  for(const song of state.songs||[])if(!id(song.showId))invalid();
+  for(const note of [...(state.notes||[]),...(state.pubNotes||[])])
+    if(!id(note.songId)||!id(note.showId)||!Array.isArray(note.tags)||note.tags.some(tag=>typeof tag!=='string')||!ids(note.memberIds))invalid();
+}
+async function recoveryAdoptOriginalBackup(result,baseline){
+  if(!recoveryOriginalBackupCanRead()||result.limited||result.status!=='checked'||!recoveryOriginalBackupCandidates.length)return;
+  const unique=new Map();for(const candidate of recoveryOriginalBackupCandidates){
+    const key=startupComparableText(JSON.stringify(candidate.packet.state)),previous=unique.get(key);
+    if(!previous||candidate.metadata.current&&!previous.metadata.current)unique.set(key,candidate);
+  }
+  if(unique.size!==1){recoveryOriginalBackupShow({...result,status:'candidate-conflict'});return;}
+  const live=JSON.parse(baseline),hold=live.values[2];
+  if(hold?.sourceKind!=='local-excel'||! /^preserved:startup:v1:[a-f0-9]{64}$/.test(hold.startupKey||''))return;
+  const initialCopy=await startupBackupReadSlot(hold.startupKey);
+  if(!initialCopy||await backupDigest(JSON.stringify(initialCopy))!==hold.startupKey.slice('preserved:startup:v1:'.length))return;
+  const initialEnvelope=initialCopy.slots?.[hold.slot]?.value;
+  if(initialEnvelope?.seq!==hold.seq||typeof initialEnvelope.txt!=='string')return;
+  const initial=unpackState(JSON.parse(initialEnvelope.txt));validateStartupState(initial);
+  if(recoveryProductionText(S)!==recoveryProductionText(initial)||(U.sheet&&sheetHasInput())){
+    recoveryOriginalBackupShow({...result,status:'local-work-present'});return;
+  }
+  if(await recoveryOriginalBackupSnapshot()!==baseline){recoveryOriginalBackupShow({...result,status:'storage-changed'});return;}
+  const originalEditorRaw=JSON.stringify(S),draftRaw=JSON.stringify(U.sheet||null),revision=stateRevision;
+  let restoring=false;
+  const active=()=>!document.hidden&&!recordingInboxStale&&(!recordingInboxProfileRequired||!!recordingInboxOwner?.canWrite)
+    &&startupRecoveryNetworkHold&&(startupPhase==='ready'||restoring&&startupPhase==='blocked')
+    &&stateRevision===revision&&JSON.stringify(S)===originalEditorRaw&&JSON.stringify(U.sheet||null)===draftRaw;
+  const packet=JSON.parse(JSON.stringify(unique.values().next().value.packet));packet.sourceKind='cloud-backup';
+  const context={isActive:active,expectedOriginalRaw:JSON.stringify({slots:live.values.slice(0,2).map(value=>value===undefined?{present:false}:{present:true,value}),legacy:live.legacy}),
+    expectedHoldRaw:JSON.stringify(hold),editorOriginalRaw:originalEditorRaw};
+  recoveryOriginalRestorer=StartupFileRestoration.create({database:()=>DB,readLegacy:()=>localStorage.getItem(KEY),
+    validate:validateStartupState,hasWork:startupHasWork,hash:backupDigest,isActive:active});
+  if(!await recoveryOriginalRestorer.prepare(packet,context)||!active()){
+    recoveryOriginalBackupShow({...result,status:'restore-unconfirmed'});return;
+  }
+  recoveryOriginalBackupShow({...result,status:'restoring'});
+  restoring=true;startupPhase='blocked';const app=document.getElementById('app');if(app)app.inert=true;
+  const saved=await recoveryOriginalRestorer.commit(context);
+  if(saved.status==='restored'&&active()){location.reload();return;}
+  recoveryOriginalBackupShow({...result,status:'restore-unconfirmed'});
+  // The original editor remains available only after a confirmed transaction
+  // rollback; a failed postcommit verification stays protected.
+  if(saved.committed===false){
+    startupPhase='ready';if(app)app.inert=false;
+  }else{recoveryOriginalWriteCommitted=saved.committed===true;blockStartup(new Error('startup-changed'));}
+}
+async function recoveryInspectOriginalBackup(){
+  if(!recoveryOriginalBackupCanRead()||recoveryOriginalBackupInspector?.busy||typeof StartupPreservedBackupInspection==='undefined')return;
+  recoveryOriginalBackupCandidates=[];
+  const button=document.getElementById('recovery-original-backup-check');if(button)button.disabled=true;
+  let baseline;
+  const active=()=>recoveryOriginalBackupCanRead();
+  try{
+    baseline=await recoveryOriginalBackupSnapshot();if(!active())return;
+    recoveryOriginalBackupInspector=StartupPreservedBackupInspection.create({database:()=>DB,digest:backupDigest,
+      inspection:StartupBackupInspection,fetch:(url,options)=>fetch(url,options),
+      unpackBackup:(raw,key,context)=>StartupBackupInspection.decodeBackup(raw,key,{...context,openJSON,base64Decode:b64d}),
+      isActive:active,onUpdate:recoveryOriginalBackupShow,
+      onCandidate:(packet,metadata)=>{recoverySafeCandidate(packet);recoveryValidateCloudState(packet.state);recoveryOriginalBackupCandidates.push({packet,metadata});}});
+    const result=await recoveryOriginalBackupInspector.run();if(!active())return;
+    if(await recoveryOriginalBackupSnapshot()!==baseline){recoveryOriginalBackupCandidates=[];recoveryOriginalBackupShow({...result,status:'storage-changed',candidates:[]});return;}
+    recoveryOriginalBackupShow(result);
+    await recoveryAdoptOriginalBackup(result,baseline);
+  }catch(_){recoveryOriginalBackupCandidates=[];if(active())recoveryOriginalBackupShow({status:'storage-read'});}
+  finally{if(button)button.disabled=false;}
+}
+function recoveryOriginalBackupHTML(){
+  if(!startupRecoveryNetworkHold)return '';
+  return '<div class="card" style="margin-bottom:16px"><h4>元のGitHubバックアップから復旧</h4><p class="note">復旧前の保存先を読み、安全な候補が一つで追加変更がない場合は、現在の作業も保全して元の内容へ戻します。自動送受信は停止したままです。</p>'+
+    '<button id="recovery-original-backup-check" type="button" class="ghost" '+(recoveryOriginalBackupInspector?.busy?'disabled':'')+'>元の保存先を確認して復旧（送信なし）</button>'+
+    '<pre id="recovery-original-backup-output" role="status" style="white-space:pre-wrap;font:12px/1.7 inherit;overflow-wrap:anywhere">'+h(recoveryOriginalBackupReport||'自動送受信は停止中です。')+'</pre></div>';
+}
 let startupAutomaticRecoveryStarted=false,startupAutomaticRecoveryActive=false,startupAutomaticRecoveryController=null;
 function startupAutomaticRecoveryOutput(text){
   const output=document.getElementById('startup-local-recovery-result');if(output)output.textContent=text;
@@ -601,6 +746,7 @@ async function startupAutomaticLocalRecovery(){
   finally{startupAutomaticRecoveryActive=false;if(startupAutomaticRecoveryController===controller)startupAutomaticRecoveryController=null;}
 }
 function startupCancelAutomaticRecovery(){
+  recoveryOriginalBackupInspector?.cancel();recoveryOriginalRestorer?.cancel();recoveryOriginalBackupCandidates=[];
   startupAutomaticRecoveryController?.abort();if(startupAutomaticRecoveryActive)startupLocalRestorer?.cancel();startupAutomaticRecoveryActive=false;
 }
 let startupFileComposing=false;
@@ -969,7 +1115,7 @@ function blockStartup(error) {
   const target = document.getElementById('app');
   if (target) {
     target.inert = true;
-    const markup = '<div style="max-width:720px;margin:0 auto;padding:32px 20px calc(32px + env(safe-area-inset-bottom));color:#EDEDED;font:16px/1.8 -apple-system,sans-serif"><h2 style="font-size:22px">データの保護を優先して停止しました</h2><p>保存データの読み込み・確認を完了できませんでした。</p><p>入力・保存・自動送信・自動受信は停止しています。この起動処理では既存データを削除・置換していません。</p><pre style="margin:16px 0;padding:16px;background:#202020;border-radius:12px;font:13px/1.8 -apple-system,sans-serif;white-space:pre-wrap;overflow-wrap:anywhere">' + h(startupDiagnosticText()) + '</pre><p>読み取り失敗は、データがないことを意味しません。件数は読み取れた保存内容の確認です。</p><p>この画面を保ったまま、復旧の確認をお待ちください。</p></div>';
+    const markup = '<div style="max-width:720px;margin:0 auto;padding:32px 20px calc(32px + env(safe-area-inset-bottom));color:#EDEDED;font:16px/1.8 -apple-system,sans-serif"><h2 style="font-size:22px">データの保護を優先して停止しました</h2><p>保存データの読み込み・確認を完了できませんでした。</p><p>' + (recoveryOriginalWriteCommitted?'入力・保存・自動送受信は停止しています。原本を保全した復元結果の再読確認で停止しました。復元前の保存世代と作業コピーは保持されています。':'入力・保存・自動送信・自動受信は停止しています。この起動処理では既存データを削除・置換していません。') + '</p><pre style="margin:16px 0;padding:16px;background:#202020;border-radius:12px;font:13px/1.8 -apple-system,sans-serif;white-space:pre-wrap;overflow-wrap:anywhere">' + h(startupDiagnosticText()) + '</pre><p>読み取り失敗は、データがないことを意味しません。件数は読み取れた保存内容の確認です。</p><p>この画面を保ったまま、復旧の確認をお待ちください。</p></div>';
     // #app remains inert. A separate text-only panel can scroll on small screens
     // without enabling an editor, a recovery action or any storage operation.
     target.innerHTML = markup;
@@ -1013,7 +1159,7 @@ async function load() {
     startupOriginalSnapshotRaw=JSON.stringify({slots:snapshot.slots,legacy:snapshot.legacy});
     const recoveryHold=await idbGet('recovery:network-hold:v1');
     startupRecoveryNetworkHold=recoveryHold!==undefined;
-    startupRecoverySourceKind=['local-publication','local-excel'].includes(recoveryHold?.sourceKind)?recoveryHold.sourceKind:'';
+    startupRecoverySourceKind=['local-publication','local-excel','cloud-backup'].includes(recoveryHold?.sourceKind)?recoveryHold.sourceKind:'';
     startupRecoveryExcelSummary=recoveryHold?.sourceKind==='local-excel'&&Number.isSafeInteger(recoveryHold.excelSummary?.read)&&recoveryHold.excelSummary.read>=0
       &&Number.isSafeInteger(recoveryHold.excelSummary?.total)&&recoveryHold.excelSummary.total>=recoveryHold.excelSummary.read?recoveryHold.excelSummary:null;
     startupSetStage('select-state');
@@ -6641,7 +6787,7 @@ function backupSettingsHTML() {
     : !S.ghToken ? "クラウド未接続。ファイルで保存できます。"
     : S.bkAt ? "クラウド保存：" + new Date(S.bkAt).toLocaleString("ja-JP") + (bkSignature() !== S.bkHash ? "（未保存の変更あり）" : "")
     : "クラウドにはまだ保存されていません";
-  return `<h4 class="head">バックアップ</h4><div class="card">
+  return `${recoveryOriginalBackupHTML()}<h4 class="head">バックアップ</h4><div class="card">
     <p class="note" role="status" ${S.bkError ? 'style="color:var(--bad)"' : ""}>${h(status)}</p>
     ${S.bkFileAt ? `<p class="note">ファイル作成：${new Date(S.bkFileAt).toLocaleString("ja-JP")}</p>` : ""}
     <button class="primary" data-act="bknow" ${backupInFlight ? "disabled" : ""}>${backupInFlight ? "保存中…" : S.ghToken ? "バックアップする" : "ファイルに保存"}</button>
@@ -12629,7 +12775,8 @@ function copyText(t, msg) {
   if (VIEW()) restoreViewerMember();
   // Keep the original localStorage copy for recovery after a successful import.
   render();
-  if(startupRecoveryNetworkHold){const notice=document.createElement('div');notice.textContent=startupRecoverySourceKind==='local-excel'?'元Excel救出'+(startupRecoveryExcelSummary?' '+startupRecoveryExcelSummary.read+' / '+startupRecoveryExcelSummary.total+'資料':'')+'。元公演との対応・過去の指摘や管理メモ等は未回復です。原本保持・同期停止中です。':startupRecoverySourceKind==='local-publication'?'配信コピーから曲・指摘などを部分復旧しました。配信外の管理メモ・録音管理などは未回復です。元ファイルを保持し、自動送受信は停止中です。':'端末内の復元内容で再開しました。自動送受信は停止中です。';notice.setAttribute('role','status');notice.style.cssText='position:fixed;bottom:0;left:0;right:0;z-index:99999;background:#283A52;color:white;padding:10px;text-align:center;font-size:12px;pointer-events:none';document.body.appendChild(notice);}
+  if(startupRecoveryNetworkHold&&startupRecoverySourceKind==='local-excel')void recoveryInspectOriginalBackup();
+  if(startupRecoveryNetworkHold){const notice=document.createElement('div');notice.textContent=startupRecoverySourceKind==='cloud-backup'?'元のGitHubバックアップから公演・曲・指摘を再開しました。現在の作業と原ファイルを保全し、自動送受信は停止中です。':startupRecoverySourceKind==='local-excel'?'元Excel救出'+(startupRecoveryExcelSummary?' '+startupRecoveryExcelSummary.read+' / '+startupRecoveryExcelSummary.total+'資料':'')+'。元公演との対応・過去の指摘や管理メモ等は未回復です。原本保持・同期停止中です。':startupRecoverySourceKind==='local-publication'?'配信コピーから曲・指摘などを部分復旧しました。配信外の管理メモ・録音管理などは未回復です。元ファイルを保持し、自動送受信は停止中です。':'端末内の復元内容で再開しました。自動送受信は停止中です。';notice.setAttribute('role','status');notice.style.cssText='position:fixed;bottom:0;left:0;right:0;z-index:99999;background:#283A52;color:white;padding:10px;text-align:center;font-size:12px;pointer-events:none';document.body.appendChild(notice);}
   if(!startupRecoveryNetworkHold){importFromLink();syncSetlist(false);}
 })();
 // 指摘の画面を開いたままアプリを閉じても、書きかけのメモが消えないように記録してから保存する

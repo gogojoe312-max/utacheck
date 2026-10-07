@@ -194,6 +194,8 @@
             candidate.counts=counts(unpacked.state);candidate.at=unpacked.at;
             const n=candidate.counts;
             candidate.status=['songs','rsongs','notes','pubNotes','trash','memos','staffMemos','draws','recs','planSlots'].some(k=>n[k]>0)?'work-present':'empty';
+            if(candidate.status==='work-present'&&typeof options.onCandidate==='function')
+              options.onCandidate(JSON.parse(JSON.stringify(unpacked)),{connection:ordinal,current,revision});
           } catch(error){candidate.status=safeCode(error);if(['backup-limit','response-limit'].includes(candidate.status))result.limited=true;if(candidate.status==='cancelled')throw error;}
           if(candidate.at===null){const when=Date.parse(metadata);if(Number.isFinite(when)&&when>0)candidate.at=when;}
           result.candidates.push(candidate);emit();return candidate.status==='work-present';
