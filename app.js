@@ -113,7 +113,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.42";
+const APP_VER = "16.41.43";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1493,6 +1493,24 @@ function autoShowGroupId(sw) {
   const ids = [...new Set(S.songs.filter(so => so.showId === sw.id).map(so => so.groupId).filter(valid))];
   return ids.length === 1 ? ids[0] : "";
 }
+// Keep recovery materials and REC-only groups out of live navigation. This is
+// a derived view: no original row, file, connection or publication flag is changed.
+function recoveryMaterialShow(sw) {
+  return !!sw && (sw.recoverySource === "original-workbooks" || !!sw.hidden && !!sw.recoveredSourceShowId);
+}
+function liveGroups() {
+  return S.groups.filter(g => {
+    const liveSongs = (S.songs || []).filter(so => so.groupId === g.id || so.deliveryGroupId === g.id);
+    const liveShows = (S.shows || []).filter(sw => sw.groupId === g.id || sw.deliveryGroupId === g.id);
+    const normalSongs = liveSongs.some(so => !recoveryMaterialShow(S.shows.find(sw => sw.id === so.showId)));
+    const normalShows = liveShows.some(sw => !recoveryMaterialShow(sw));
+    if (normalSongs || normalShows) return true;
+    if (liveShows.some(recoveryMaterialShow) || liveSongs.some(so => so.recoveredFromOriginalExcel)) return false;
+    if ((S.rsongs || []).some(so => so.groupId === g.id)) return false;
+    // A deliberately named or connected empty group remains available.
+    return !!(g.gistId || g.src || !/^グループ[0-9０-９]+$/.test(String(g.name || "").trim()));
+  });
+}
 function showDeliveryGroupId(sw) {
   if (!sw || sw.deliveryMode === "song") return "";
   return S.groups.some(g => g.id === sw.deliveryGroupId) ? sw.deliveryGroupId : autoShowGroupId(sw);
@@ -1548,7 +1566,7 @@ function setSongDelivery(ids, groupId) {
   save(); schedulePush();
 }
 function showDeliveryLabel(sw) {
-  if (sw.nopub) return "配信しない";
+  if (sw.nopub) return sw.recoveredSourceShowId ? "復旧済み・配信再接続待ち" : "配信しない";
   const songs = S.songs.filter(so => so.showId === sw.id);
   if (songs.length && songs.every(so => {
     const id = songDeliveryGroupId(so);
@@ -1594,9 +1612,9 @@ function restoreViewSelection(previousShowId = S.showId) {
   const saved = readViewSelection();
   if (!saved) return false;
   const validGroup = id => S.groups.some(g => g.id === id);
-  U.showFilter = saved.showFilter === "__unassigned__" || validGroup(saved.showFilter) ? saved.showFilter : "";
+  U.showFilter = saved.showFilter === "__unassigned__" || saved.showFilter === "__archive__" && !VIEW() || liveGroups().some(g => g.id === saved.showFilter) ? saved.showFilter : "";
   // A viewer can only reopen a performance included in this source's data.
-  const available = S.shows.filter(sw => !sw.hidden && (!VIEW() || S.songs.some(so =>
+  const available = S.shows.filter(sw => (!sw.hidden || U.showFilter === "__archive__" && !VIEW() && recoveryMaterialShow(sw)) && (!VIEW() || S.songs.some(so =>
     so.showId === sw.id && (!so.groupId || so.groupId === S.groupId))));
   const selected = available.find(sw => sw.id === saved.showId);
   const fallback = available.find(sw => sw.id === S.showId) || available[0];
@@ -1638,13 +1656,15 @@ function setShowDelivery(id, groupId) {
 function showsFor() {
   const gid = U.showFilter;
   const all = showsNewestFirst().filter((x) => !x.hidden);
-  if (gid === "__unassigned__") return all.filter(sw => sw.deliveryMode !== "song" && !showDeliveryGroupId(sw));
-  if (!gid || !S.groups.some((g) => g.id === gid)) return all;
-  return all.filter(sw => showGroupIds(sw).includes(gid)
+  if (gid === "__archive__") return VIEW() ? [] : showsNewestFirst().filter(recoveryMaterialShow);
+  const regular = all.filter(x => !recoveryMaterialShow(x));
+  if (gid === "__unassigned__") return regular.filter(sw => sw.deliveryMode !== "song" && !showDeliveryGroupId(sw));
+  if (!gid || !liveGroups().some((g) => g.id === gid)) return regular;
+  return regular.filter(sw => showGroupIds(sw).includes(gid)
     || (sw.deliveryMode === "song" && sw.groupId === gid));
 }
 function setShowFilter(id) {
-  U.showFilter = id === "__unassigned__" || S.groups.some(g => g.id === id) ? id : "";
+  U.showFilter = id === "__unassigned__" || id === "__archive__" && !VIEW() || liveGroups().some(g => g.id === id) ? id : "";
   // Browsing never changes the current performance or its publication destination.
   // "All" also opens folders so a saved performance can always be found.
   if (!U.showFilter) S.shows.forEach(sw => { if (sw.folder) S.folders[sw.folder] = true; });
@@ -5568,7 +5588,7 @@ function organizeSheetHTML(m) {
     }
     if (m.mode === "show") {
       const selected = item ? showDeliveryGroupId(item) || autoShowGroupId(item) : S.groups.some(g => g.id === U.showFilter) ? U.showFilter : autoShowGroupId({name:"",folder}) || S.groupId;
-      body += `<label class="organize-field">公演のグループ<select class="field" id="org-group"><option value="">未設定</option>${S.groups.map(g => `<option value="${h(g.id)}" ${selected === g.id ? "selected" : ""}>${h(g.name)}</option>`).join("")}</select></label>
+      body += `<label class="organize-field">公演のグループ<select class="field" id="org-group"><option value="">未設定</option>${S.groups.filter(g => g.id === selected || liveGroups().includes(g)).map(g => `<option value="${h(g.id)}" ${selected === g.id ? "selected" : ""}>${h(g.name)}</option>`).join("")}</select></label>
         <label class="organize-field">配信方法<select class="field" id="org-delivery"><option value="show">公演のグループに配信</option><option value="song" ${item?.deliveryMode === "song" ? "selected" : ""}>曲ごとに配信先を分ける（ハロコンなど）</option></select></label>`;
     }
     body += `<p id="org-error" role="alert" class="organize-error" hidden></p><button class="primary" type="submit">${m.mode === "move" ? "ここに移動" : m.mode === "show" && !item ? "公演を作成" : m.mode === "folder" && !m.id ? "フォルダを作成" : "保存"}</button></form>`;
@@ -5673,7 +5693,7 @@ function renderSheet() {
       <p class="note">${h(sw.name)}</p>
       ${option("", "自動（" + (auto ? auto.name : "曲ごとのグループ") + "）")}
       ${option("__songs__", "曲ごとに配信先を分ける（ハロコンなど）")}
-      ${S.groups.map(g => option(g.id, g.name)).join("")}
+      ${liveGroups().map(g => option(g.id, g.name)).join("")}
     </div>`;
     document.body.appendChild(overlay); return;
   }
@@ -5939,7 +5959,7 @@ function renderSheet() {
     const B = (act, label, col) => `<button class="ghost" data-act="${act}" style="text-align:left;margin-bottom:8px;${col ? "color:" + col : ""}">${label}</button>`;
     const inner = U.menu.kind === "group"
       ? `<div class="sec"><h4>どのグループにしますか</h4>
-          ${S.groups.map((g) => `<button class="ghost" data-act="m-setgroup" data-id="${g.id}"
+          ${liveGroups().map((g) => `<button class="ghost" data-act="m-setgroup" data-id="${g.id}"
             style="text-align:left;margin-bottom:8px;${!many && x && songDeliveryGroupId(x) === g.id ? "background:var(--accent);color:#0A0A0A" : ""}">${h(g.name)}</button>`).join("")}
           <button class="ghost" data-act="m-setgroup" data-id="" style="text-align:left;color:var(--dim);${!many && x && !songDeliveryGroupId(x) ? "background:var(--accent);color:#0A0A0A" : ""}">なし（配信しない）</button></div>`
       : `<div class="sec">
@@ -6003,9 +6023,9 @@ function renderSheet() {
   }
 
   if (U.picker) {
-    const gfil = S.groups.length > 1 ? `<div class="chips" style="margin-bottom:8px">
+    const gfil = liveGroups().length > 1 || U.showFilter === "__archive__" ? `<div class="chips" style="margin-bottom:8px">
         <button class="chip sm" data-act="showfilter" data-id="" style="${!U.showFilter ? "background:var(--accent);color:#0A0A0A" : ""}">全公演を表示</button>
-        ${S.groups.map((g) => `<button class="chip sm" data-act="showfilter" data-id="${g.id}"
+        ${liveGroups().map((g) => `<button class="chip sm" data-act="showfilter" data-id="${g.id}"
           style="${U.showFilter === g.id ? "background:var(--accent);color:#0A0A0A" : ""}">${h(g.name)}</button>`).join("")}
       </div>` : "";
     const shows = groupShows(showsFor()).map(([fname, list]) => `
@@ -6870,11 +6890,11 @@ function lyricDisplaySettings() {
   </div>`;
 }
 function memberPreviewSettings() {
-  const groups = S.groups.filter(g => !g.nopub && g.src);
+  const groups = liveGroups().filter(g => !g.nopub && g.src);
   return `<h4 class="head">メンバー画面</h4><div class="card">
     ${groups.length ? groups.map(g => `<button class="ghost member-preview-link" data-act="pvnow" data-id="${h(g.id)}">${h(g.name)}のメンバー画面を見る</button>`).join("")
       : '<p class="note">グループの自動公開を始めると、配信したメンバー画面を確認できます。</p>'}
-    ${S.groups.filter(g => !g.nopub).map(g => `<button class="ghost" data-act="publication-inspect" data-id="${h(g.id)}">${h(g.name)}の配信状況を確認（送信なし）</button>`).join("")}
+    ${liveGroups().filter(g => !g.nopub).map(g => `<button class="ghost" data-act="publication-inspect" data-id="${h(g.id)}">${h(g.name)}の配信状況を確認（送信なし）</button>`).join("")}
   </div>`;
 }
 
@@ -8216,13 +8236,17 @@ function viewSetup() {
     <div class="organize-create"><button class="primary" data-act="newshow">＋ 公演を追加</button><button class="chip" data-act="newfolder">＋ フォルダ</button></div>
     <button class="ghost" data-act="show-recovery" style="margin-bottom:12px">公演を探す・復元</button>
     ${S.shows.some(sw => !sw.hidden && sw.deliveryMode !== "song" && !showDeliveryGroupId(sw)) ? `<button class="ghost" data-act="showfilter" data-id="__unassigned__" style="color:var(--bad);margin-bottom:12px">グループ未設定の公演を確認</button>` : ""}
-    ${S.groups.length > 1 ? `<div class="chips" style="margin-bottom:10px">
+    ${liveGroups().length > 1 ? `<div class="chips" style="margin-bottom:10px">
       <button class="chip sm" data-act="showfilter" data-id="" style="${!U.showFilter ? "background:var(--accent);color:#0A0A0A" : ""}">全公演を表示</button>
-      ${S.groups.map((g) => `<button class="chip sm" data-act="showfilter" data-id="${g.id}"
+      ${liveGroups().map((g) => `<button class="chip sm" data-act="showfilter" data-id="${g.id}"
         style="${U.showFilter === g.id ? "background:var(--accent);color:#0A0A0A" : ""}">${h(g.name)}</button>`).join("")}
     </div>` : ""}
     ${shows}
-
+    ${S.shows.some(recoveryMaterialShow) ? `<details class="card"><summary>復旧資料の保管</summary>
+      <p class="note">救出した元資料・過去の配信履歴を保持しています。通常の公演・配信先とは分けて表示します。</p>
+      <button class="ghost" data-act="showfilter" data-id="__archive__">保管資料を見る</button>
+      ${U.showFilter === "__archive__" ? '<button class="ghost" data-act="showfilter" data-id="">通常の公演に戻る</button>' : ''}
+    </details>` : ""}
 
     <h4 class="head">セットリスト</h4>
     ${cur.length ? bar : ""}
@@ -8233,8 +8257,9 @@ function viewSetup() {
     </div>`}
 
     <h4 class="head">配信設定</h4>
+    ${startupRecoveryNetworkHold ? `<p class="note" role="status">復旧した公演の配信は再接続待ちです。${!S.ghToken ? "この端末に配信の認証情報がありません。" : "元の配信先と公開範囲の確認が必要です。"}元の保存先と接続を確認してから再開します。</p>` : ""}
     <details class="card"><summary>接続・グループを管理</summary>
-    ${S.groups.map((g) => {
+    ${liveGroups().map((g) => {
       const n = SONGS().filter((x) => songDeliveryGroupId(x) === g.id).length;
       const cur = g.id === S.groupId;
       return `<div class="row card" style="padding:9px 12px;margin-bottom:6px;${cur ? "outline:1px solid var(--accent)" : ""}">
@@ -8245,6 +8270,9 @@ function viewSetup() {
         <button data-act="gmenu" data-id="${g.id}" style="padding:6px 10px;color:var(--dim);font-size:17px">⋯</button>
       </div>`;
     }).join("")}
+    ${S.groups.some(g => !liveGroups().includes(g)) ? `<details><summary>REC・保管用グループ</summary>
+      ${S.groups.filter(g => !liveGroups().includes(g)).map(g => `<div class="row card"><span class="grow">${h(g.name)}</span><button class="chip" data-act="gmenu" data-id="${h(g.id)}">設定</button></div>`).join("")}
+    </details>` : ""}
     <div class="row" style="margin-bottom:22px">
       <input class="field grow" id="newgroup" placeholder="グループ名">
       <button class="chip" data-act="addgroup">追加</button>
@@ -8528,7 +8556,7 @@ document.addEventListener("click", (e) => {
       if (U.sheet && sheetHasInput()) { U.picker = false; commitNote(); break; }
       U.picker = false; U.sheet = null; renderSheet();
       break;
-    case "picker": U.picker = true; renderSheet(); break;
+    case "picker": if (U.showFilter === "__archive__") U.showFilter = ""; U.picker = true; renderSheet(); break;
     case "draw": U.draw = !U.draw; U.erase = false; render(); break;
     case "pen": U.erase = false; render(); break;
     case "eraser": U.erase = true; render(); break;
