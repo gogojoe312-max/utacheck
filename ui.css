@@ -331,3 +331,6 @@ select.field{appearance:auto}textarea.field{resize:vertical}
 .organize-sheet .primary{min-height:48px;margin-top:12px}
 .organize-error{color:var(--bad);font-size:13px;line-height:1.5}
 .organize-action{display:block;width:100%;text-align:left;min-height:48px;padding:12px 4px;border-bottom:1px solid var(--line);font-size:15px}
+
+/* Keep recovery status out of the recording lyrics and take controls. */
+#app[data-rec="1"] ~ #recovery-network-notice{display:none}

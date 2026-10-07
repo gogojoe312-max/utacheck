@@ -113,7 +113,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.40";
+const APP_VER = "16.41.41";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -5470,7 +5470,6 @@ function viewOverview(s) {
     <button class="ic" data-act="ovsize">${S.recMode ? S.recOvSize : U.ovSize}px</button>
   </div>
   ${blockBar(s)}
-  ${S.recMode ? recMemberSelector() : ""}
   <div class="scroll" style="padding:8px 10px">${bodyHTML}
     ${songMemo(s.id) && !S.recMode ? `<div class="card" style="margin-top:12px">
       <h4 style="font-size:11px;color:var(--dim);margin-bottom:6px">総括</h4>
@@ -6860,6 +6859,7 @@ function viewSetupRec() {
              : `<button data-act="recon" class="chip sm" style="color:var(--accent)">レコーディングモード ⇄</button>`}</div>
   <div class="scroll pad">
     ${lyricDisplaySettings()}
+    ${recMemberSelector()}
     <h4 class="head">曲</h4>
     <div class="organize-create"><button class="chip" data-act="newfolder" data-rec="1">＋ フォルダを作成</button></div>
     ${list || `<p class="note">曲がありません</p>`}
@@ -7040,7 +7040,7 @@ function recBar() {
     }
   }
 
-  return `${recMemberSelector()}${tabs ? `<div class="sectabs">${tabs}</div>` : ""}${subTabs}
+  return `${tabs ? `<div class="sectabs">${tabs}</div>` : ""}${subTabs}
   <div class="aubar rec-tools">
     <div class="rec-tools-meta">
       <button class="chip sm" data-act="goplan">進行表</button>
@@ -12776,7 +12776,7 @@ function copyText(t, msg) {
   // Keep the original localStorage copy for recovery after a successful import.
   render();
   if(startupRecoveryNetworkHold&&startupRecoverySourceKind==='local-excel')void recoveryInspectOriginalBackup();
-  if(startupRecoveryNetworkHold){const notice=document.createElement('div');notice.textContent=startupRecoverySourceKind==='cloud-backup'?'元のGitHubバックアップから公演・曲・指摘を再開しました。現在の作業と原ファイルを保全し、自動送受信は停止中です。':startupRecoverySourceKind==='local-excel'?'元Excel救出'+(startupRecoveryExcelSummary?' '+startupRecoveryExcelSummary.read+' / '+startupRecoveryExcelSummary.total+'資料':'')+'。元公演との対応・過去の指摘や管理メモ等は未回復です。原本保持・同期停止中です。':startupRecoverySourceKind==='local-publication'?'配信コピーから曲・指摘などを部分復旧しました。配信外の管理メモ・録音管理などは未回復です。元ファイルを保持し、自動送受信は停止中です。':'端末内の復元内容で再開しました。自動送受信は停止中です。';notice.setAttribute('role','status');notice.style.cssText='position:fixed;bottom:0;left:0;right:0;z-index:99999;background:#283A52;color:white;padding:10px;text-align:center;font-size:12px;pointer-events:none';document.body.appendChild(notice);}
+  if(startupRecoveryNetworkHold){const notice=document.createElement('div');notice.id='recovery-network-notice';notice.textContent=startupRecoverySourceKind==='cloud-backup'?'元のGitHubバックアップから公演・曲・指摘を再開しました。現在の作業と原ファイルを保全し、自動送受信は停止中です。':startupRecoverySourceKind==='local-excel'?'元Excel救出'+(startupRecoveryExcelSummary?' '+startupRecoveryExcelSummary.read+' / '+startupRecoveryExcelSummary.total+'資料':'')+'。元公演との対応・過去の指摘や管理メモ等は未回復です。原本保持・同期停止中です。':startupRecoverySourceKind==='local-publication'?'配信コピーから曲・指摘などを部分復旧しました。配信外の管理メモ・録音管理などは未回復です。元ファイルを保持し、自動送受信は停止中です。':'端末内の復元内容で再開しました。自動送受信は停止中です。';notice.setAttribute('role','status');notice.style.cssText='position:fixed;bottom:0;left:0;right:0;z-index:99999;background:#283A52;color:white;padding:10px;text-align:center;font-size:12px;pointer-events:none';document.body.appendChild(notice);}
   if(!startupRecoveryNetworkHold){importFromLink();syncSetlist(false);}
 })();
 // 指摘の画面を開いたままアプリを閉じても、書きかけのメモが消えないように記録してから保存する
