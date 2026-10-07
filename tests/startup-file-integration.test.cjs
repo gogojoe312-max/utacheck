@@ -157,10 +157,10 @@ test('file/password controls and script cache wiring are minimal and do not adve
  assert.match(passwordMarkup,/type="password"/);assert.match(passwordMarkup,/maxlength="4096"/);assert.match(passwordMarkup,/autocomplete="off"/);
  assert.match(passwordMarkup,/inputmode="text"/);assert.match(passwordMarkup,/lang="ja"/);
  assert.match(source,/id="startup-file-label"[^>]*for="startup-file-password"|for="startup-file-password"[^>]*id="startup-file-label"/);
- const local=block('let startupFileInspector=null;','function startupSafeError(');assert.doesNotMatch(local,/\b(?:fetch|save|idbPut|putClip|delClip|restoreBackupFile|backupDigest)\s*\(/);
+ const local=block('let startupFileComposing=false;','function startupSafeError(');assert.doesNotMatch(local,/\b(?:fetch|save|idbPut|putClip|delClip|restoreBackupFile|backupDigest)\s*\(/);
  assert.doesNotMatch(local,/復元可能|完全復旧|復元を完了/);
  const html=fs.readFileSync(__dirname+'/../index.html','utf8'),sw=fs.readFileSync(__dirname+'/../sw.js','utf8');
  assert(html.indexOf('startup-file-inspection.js')<html.indexOf('<script src="app.js'));
- assert.match(html,/startup-file-inspection\.js\?v=16\.41\.37/);assert.match(sw,/"\.\/startup-file-inspection\.js"/);assert.match(sw,/if \(url\.origin !== self\.location\.origin\) return;/);
+ assert.match(html,/startup-file-inspection\.js\?v=16\.41\.38/);assert.match(sw,/"\.\/startup-file-inspection\.js"/);assert.match(sw,/if \(url\.origin !== self\.location\.origin\) return;/);
 });
 

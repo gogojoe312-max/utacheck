@@ -30,10 +30,12 @@
         for(const slot of slots)if(slot.present){if(!slot.value||typeof slot.value.txt!=='string'||!Number.isSafeInteger(slot.value.seq)||slot.value.seq<0)fail('storage-read');seq=Math.max(seq,slot.value.seq);}
         if(!Number.isSafeInteger(seq+1))fail('candidate-invalid');seq++;
         const slot=seq%2,envelope={seq,at:Date.now(),txt},original={slots,legacy},originalRaw=JSON.stringify(original);
+        if(context.expectedOriginalRaw!==undefined&&context.expectedOriginalRaw!==originalRaw)fail('storage-changed');
         const copyKey='preserved:recovery:v1:'+await options.hash(originalRaw);
         const after={slots:JSON.parse(JSON.stringify(slots)),legacy};after.slots[slot]={present:true,value:envelope};
         const afterRaw=JSON.stringify(after),startupKey='preserved:startup:v1:'+await options.hash(afterRaw);
-        const hold={v:1,seq,slot,copyKey,startupKey,sourceAt:packet.at,candidateDigest:await options.hash(txt)};
+        const hold={v:1,seq,slot,copyKey,startupKey,sourceAt:packet.sourceDateUnknown===true?null:packet.at,candidateDigest:await options.hash(txt)};
+        if(packet.sourceDateUnknown===true){hold.sourceDateUnknown=true;hold.sourceKind='local-publication';}
         if(!active(turn,context))return false;
         plan={database,slots,legacy,envelope,slot,copyKey,original,originalRaw,startupKey,after,afterRaw,hold};return true;
       }catch(_){if(turn===epoch)plan=null;return false;}

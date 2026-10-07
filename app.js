@@ -2,7 +2,7 @@
 "use strict";
 // A failed or unfinished startup must never write an empty replacement state.
 let startupPhase = 'loading';
-let startupRecoveryNetworkHold=true;
+let startupRecoveryNetworkHold=true,startupRecoverySourceKind='',startupOriginalSnapshotRaw=null;
 function startupCanCommunicate(){return recordingInboxCanWrite()&&!startupRecoveryNetworkHold;}
 function startupRecoveryCanAct(){return startupPhase==='blocked'&&!document.hidden&&!recordingInboxStale&&(!recordingInboxProfileRequired||!!recordingInboxOwner?.canWrite);}
 /* Must precede app state initialization and boot. Unenrolled profiles keep legacy behavior. */
@@ -68,6 +68,7 @@ for (const type of ['click','input','change','keydown','submit','pointerdown','d
   const fileControl=event.target.closest?.('#startup-file-input,#startup-file-password,#startup-file-label,#startup-file-visibility,#startup-file-check,#startup-file-cancel,#startup-file-restore');
   if(startupPhase==='blocked'&&fileControl?.closest?.('#startup-protection')){
     event.stopImmediatePropagation();
+    if(typeof startupAutomaticRecoveryActive!=='undefined'&&startupAutomaticRecoveryActive){event.preventDefault();return;}
     const id=fileControl.id;
     if(type==='pointerdown')return;
     if(type==='click'&&(id==='startup-file-password'||id==='startup-file-label'))return;
@@ -90,6 +91,7 @@ for (const type of ['click','input','change','keydown','submit','pointerdown','d
   const backupCheck = event.target.closest?.('#startup-backup-check');
   if (startupPhase === 'blocked' && backupCheck?.closest?.('#startup-protection')) {
     event.stopImmediatePropagation();
+    if(typeof startupAutomaticRecoveryActive!=='undefined'&&startupAutomaticRecoveryActive){event.preventDefault();return;}
     if (type === 'pointerdown' || (type === 'keydown' && ['Enter',' '].includes(event.key) && !event.altKey && !event.ctrlKey && !event.metaKey)) return;
     event.preventDefault();
     if (type === 'click' && !backupCheck.disabled) void startupInspectBackups();
@@ -107,7 +109,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.37";
+const APP_VER = "16.41.38";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -379,10 +381,128 @@ function startupCancelBackupInspection() {
   startupBackupInspector.cancel();
   const output=document.getElementById('startup-backup-result');if(output)output.textContent='確認を中止しました。送信・復元はしていません。';
 }
-if(typeof window!=='undefined')window.addEventListener('pagehide',()=>{startupCancelBackupInspection();startupCancelLocalFileInspection();});
-if(typeof document!=='undefined'&&document.addEventListener)document.addEventListener('visibilitychange',()=>{if(document.hidden){startupCancelBackupInspection();startupCancelLocalFileInspection();}});
+if(typeof window!=='undefined')window.addEventListener('pagehide',()=>{startupCancelAutomaticRecovery();startupCancelBackupInspection();startupCancelLocalFileInspection();});
+if(typeof document!=='undefined'&&document.addEventListener)document.addEventListener('visibilitychange',()=>{if(document.hidden){startupCancelAutomaticRecovery();startupCancelBackupInspection();startupCancelLocalFileInspection();}});
 let startupFileInspector=null;
 let startupLocalRestorer=null;
+let startupAutomaticRecoveryStarted=false,startupAutomaticRecoveryActive=false,startupAutomaticRecoveryController=null;
+function startupAutomaticRecoveryOutput(text){
+  const output=document.getElementById('startup-local-recovery-result');if(output)output.textContent=text;
+}
+function startupLocalRecoveryText(inventory,result,remote){
+  const status={ready:'端末内の配信コピーを確認しました。', 'publication-empty':'端末内の配信コピーには曲を確認できませんでした。',
+    'no-valid-state':'保存内容の確認を完了できませんでした。','original-nonempty':'作業内容が残る原本候補があります。自動選択を停止しています。',
+    'identity-unconfirmed':'配信コピーはありますが、編集元との一致は未確認です。','identity-conflict':'編集元の情報が一致しないため自動選択を停止しています。',
+    'publication-conflict':'異なる配信コピーがあるため自動選択を停止しています。','show-conflict':'公演の情報が異なるため自動選択を停止しています。',
+    'base-conflict':'元の保存世代が異なるため自動選択を停止しています。','member-conflict':'担当者の対応が異なるため自動選択を停止しています。',
+    'publication-invalid':'配信コピーの参照・形式を確認できませんでした。','candidate-invalid':'復旧候補の確認を完了できませんでした。'};
+  const lines=[status[result?.status]||'端末内の保存コピーを確認しています。'];
+  const n=inventory?.summary,count=value=>Number.isSafeInteger(value)&&value>=0?String(value):'未確認';
+  if(n){lines.push('保存キー '+count(n.stateKeys)+' / 保存内容候補 '+count(n.records)+' / 配信コピー '+count(n.lastKeyCopies));
+    lines.push('端末ファイル '+count(n.clipsTotal)+' / 元Excel形式 '+count(n.workbookClips)+' / 音声形式 '+count(n.audioClips)+' / JSON形式 '+count(n.jsonClips));
+    lines.push('旧受信先の記録 '+count(n.memberRecords)+' / 旧表示先の記録 '+count(n.viewerSelections)+' / 正規の既存配信先 '+count(n.endpoints));
+    if(n.partial)lines.push('読み取り失敗または確認上限のため未確認の保存領域があります。');
+    if(n.cacheEnumeration==='partial')lines.push('キャッシュは既知の保存先のみ照合し、全エントリーの列挙は未確認です。');
+  }
+  const c=result?.summary?.counts;
+  if(c)lines.push('候補：公演 '+count(c.shows)+' / 曲 '+count(c.songs)+' / 指摘 '+count(c.notes)+' / 総括 '+count(c.memos));
+  if(remote){lines.push('既存配信先の確認：候補 '+count(remote.publications)+' / 読取 '+count(remote.requests));
+    const labels={'publication-present':'配信コピーを読取確認','publication-empty':'曲を確認できず','encrypted-unconfirmed':'暗号化原本はありますが復号は未確認',
+      'publication-missing':'対象ファイル未確認','publication-invalid':'参照・形式未確認','http-401':'取得許可未確認','http-403':'取得許可未確認',
+      'http-404':'既存保存先の読取未確認','http-429':'取得制限','network-failed':'通信未確認','network-timeout':'通信時間内の確認未完了'};
+    for(const item of remote.candidates||[])lines.push('  '+(labels[item.status]||'未確認'));
+    if(remote.limited)lines.push('配信先・履歴・容量の確認上限に達したため、未確認の範囲があります。');
+  }
+  lines.push('原本と端末ファイルを保持しています。追加の入力やファイル選択は不要です。');
+  return lines.join('\n');
+}
+function startupSavedPublicationEndpoints(inventory){
+  const map=new Map(),add=(id,url,key)=>{
+    if(typeof id!=='string'||! /^[a-f0-9]{5,40}$/i.test(id))return;
+    id=id.toLowerCase();let endpoint=map.get(id);if(!endpoint){endpoint={id,keys:[]};map.set(id,endpoint);}
+    if(url)endpoint.url=url;
+    if(typeof key==='string'&&key.length>0&&key.length<=4096&&!endpoint.keys.includes(key)&&endpoint.keys.length<24)endpoint.keys.push(key);
+  };
+  for(const {state} of inventory.records||[])for(const group of state.groups||[]){
+    const source=gistRawSource(group.src||'');
+    if(source&&group.gistId&&source.id!==String(group.gistId).toLowerCase())continue;
+    const id=source?.id||group.gistId;add(id,source?.url,group.key);add(id,source?.url,state.key);
+  }
+  for(const endpoint of inventory.endpoints||[])add(endpoint.id,endpoint.url);
+  return [...map.values()];
+}
+function startupRecordsWithPublications(records,publications){
+  const bodies=new Map(),sorted=value=>Array.isArray(value)?value.map(sorted):value&&typeof value==='object'
+    ?Object.fromEntries(Object.keys(value).sort().map(key=>[key,sorted(value[key])])):value;
+  for(const publication of publications){
+    const payload=publication.payload||publication.data,id=publication.id||gistRawSource(payload?.src||'')?.id;
+    if(!payload||!id)continue;
+    const copy={...payload};delete copy.version;
+    const key=JSON.stringify(sorted(copy)),previous=bodies.get(id.toLowerCase());
+    if(previous!==undefined&&previous!==key)return null;bodies.set(id.toLowerCase(),key);
+  }
+  return records.map(record=>{
+    const state=JSON.parse(JSON.stringify(record.state));
+    for(const publication of publications){
+      const payload=publication.payload||publication.data,id=publication.id||gistRawSource(payload?.src||'')?.id;
+      if(!payload||!id)continue;
+      const source=gistRawSource(payload.src||'');if(source&&source.id!==id.toLowerCase())continue;
+      const groups=(state.groups||[]).filter(group=>String(group.gistId||'').toLowerCase()===id.toLowerCase()||gistRawSource(group.src||'')?.id===id.toLowerCase());
+      if(groups.length===1&&groups[0].name===payload.groupName)groups[0].lastKey=JSON.stringify(payload);
+      else if(groups.length===0&&state.deviceId&&payload.authorId===state.deviceId&&typeof payload.groupName==='string'&&payload.groupName){
+        state.groups.push({id:'local-publication-source-'+id.toLowerCase(),name:payload.groupName,gistId:id.toLowerCase(),
+          src:source?.url||'',key:'',lastKey:JSON.stringify(payload)});
+      }
+    }
+    return {...record,state};
+  });
+}
+async function startupAutomaticLocalRecovery(){
+  if(startupAutomaticRecoveryStarted||!startupRecoveryCanAct()||startupDiagnostic.failure?.code!=='empty-saved-state')return;
+  startupAutomaticRecoveryStarted=true;
+  for(const id of ['startup-file-input','startup-backup-check']){
+    const control=document.getElementById(id);if(control?.parentElement)control.parentElement.hidden=true;
+  }
+  if(typeof StartupLocalStorageInventory==='undefined'||typeof StartupLocalPublicationRecovery==='undefined')return;
+  startupCancelBackupInspection();startupCancelLocalFileInspection();startupAutomaticRecoveryActive=true;
+  const controller=new AbortController();startupAutomaticRecoveryController=controller;
+  const active=()=>startupAutomaticRecoveryActive&&!controller.signal.aborted&&startupRecoveryCanAct();
+  const context={signal:controller.signal,isActive:active,expectedOriginalRaw:startupOriginalSnapshotRaw};
+  try{
+    startupAutomaticRecoveryOutput('端末内の保存コピーを自動確認しています。入力・ファイル選択は不要です。');
+    const inventory=await StartupLocalStorageInventory.inspect({database:DB,storage:localStorage,
+      cacheStorage:typeof caches==='undefined'?null:caches,indexedDB:window.indexedDB,...context,validateState:validateStartupState,unpackState});
+    if(!active())return;
+    const build=records=>StartupLocalPublicationRecovery.build(records,S0,{buildSong,validateState:validateStartupState,hasWork:startupHasWork,now:Date.now()});
+    let result=build(inventory.records),remote;
+    const safeInventory=typeof context.expectedOriginalRaw==='string'&&!inventory.summary.partial&&!inventory.summary.invalidJSON&&!inventory.summary.invalidState;
+    if(safeInventory&&result.status==='publication-empty'){
+      if(typeof StartupSavedPublicationReader!=='undefined'){
+        const endpoints=startupSavedPublicationEndpoints(inventory);
+        if(endpoints.length){const read=await StartupSavedPublicationReader.read(endpoints,{fetch:(url,options)=>fetch(url,options),openJSON,...context});
+          if(!active())return;remote=read.summary;
+          if(read.publications.length){const records=startupRecordsWithPublications(inventory.records,read.publications);result=records?build(records):{status:'publication-conflict'};}
+        }
+      }
+      if(result.status==='publication-empty'){
+        const cached=startupRecordsWithPublications(inventory.records,inventory.publications||[]);
+        result=cached?build(cached):{status:'publication-conflict'};
+      }
+    }
+    startupAutomaticRecoveryOutput(startupLocalRecoveryText(inventory,result,remote));
+    if(!safeInventory||remote?.limited||result.status!=='ready'||!result.packet||!active())return;
+    if(!await startupPrepareLocalRestore(result.packet,context)||!active())return;
+    startupAutomaticRecoveryOutput('配信コピーを確認しました。元の保存世代と端末ファイルを保全して復旧しています。');
+    const saved=await startupLocalRestorer.commit(context);
+    if(!active())return;
+    if(saved.status==='restored'){startupAutomaticRecoveryOutput('配信コピーの部分復旧を確認しました。自動送受信を停止して再開します。');location.reload();}
+    else startupAutomaticRecoveryOutput(startupLocalRecoveryText(inventory,result,remote)+'\n保全・再読確認を完了できなかったため、保護停止を維持しています。');
+  }catch(_){if(active())startupAutomaticRecoveryOutput('端末内の読み取り・保全確認を完了できませんでした。原本を保持して保護停止を維持しています。追加の入力は不要です。');}
+  finally{startupAutomaticRecoveryActive=false;if(startupAutomaticRecoveryController===controller)startupAutomaticRecoveryController=null;}
+}
+function startupCancelAutomaticRecovery(){
+  startupAutomaticRecoveryController?.abort();if(startupAutomaticRecoveryActive)startupLocalRestorer?.cancel();startupAutomaticRecoveryActive=false;
+}
 let startupFileComposing=false;
 const startupIMEFields=new WeakSet();
 function startupFileIMEActive(){return startupFileComposing;}
@@ -763,9 +883,11 @@ function blockStartup(error) {
       }
       const inspection = '<div style="max-width:720px;margin:0 auto;padding:0 20px 32px"><button id="startup-backup-check" type="button" style="padding:14px;background:#283A52;border:1px solid #67798F;border-radius:12px;line-height:1.6">保存先のバックアップを確認（送信・復元なし）</button><pre id="startup-backup-result" role="status" aria-live="polite" style="margin-top:16px;white-space:pre-wrap;font:13px/1.8 -apple-system,sans-serif;overflow-wrap:anywhere"></pre></div>';
       const fileInspection='<div style="max-width:720px;margin:0 auto;padding:0 20px 40px;border-top:1px solid #344152"><h3 style="margin:20px 0 12px">手元のファイルを確認（送信・復元なし）</h3><p>端末のFilesにあるバックアップを選んで確認してください。保存済みの合言葉があれば端末内で使用します。入力した文字は保存・送信しません。</p><input id="startup-file-input" type="file" accept=".json,application/json" style="display:block;max-width:100%;margin:16px 0"><label id="startup-file-label" for="startup-file-password">合言葉（保存・送信しません）</label><input id="startup-file-password" type="password" inputmode="text" lang="ja" maxlength="4096" autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off" style="display:block;width:100%;padding:14px;background:#202020;border:1px solid #67798F;border-radius:10px;margin:8px 0 16px"><button id="startup-file-visibility" type="button" aria-pressed="false" style="padding:12px;border:1px solid #67798F;border-radius:12px;margin-bottom:12px">日本語で入力（表示）</button><p id="startup-file-visible-notice" hidden style="margin-bottom:12px;color:#FFCE99">日本語入力中は合言葉が画面に表示されます。周囲から見えない場所で入力してください。</p><button id="startup-file-check" type="button" disabled style="padding:14px;background:#283A52;border:1px solid #67798F;border-radius:12px">このファイルの件数を確認</button> <button id="startup-file-cancel" type="button" style="padding:14px;border:1px solid #67798F;border-radius:12px">確認を中止</button><button id="startup-file-restore" type="button" hidden disabled style="padding:14px;margin-top:16px;background:#4A5534;border:1px solid #819A59;border-radius:12px">この日時の内容に戻す（端末ファイル保持・同期停止）</button><pre id="startup-file-result" role="status" aria-live="polite" style="margin-top:16px;white-space:pre-wrap;font:13px/1.8 -apple-system,sans-serif;overflow-wrap:anywhere"></pre></div>';
-      if (!panel.querySelector?.('#startup-file-input')) panel.innerHTML = markup + inspection + fileInspection;
+      const localRecovery='<pre id="startup-local-recovery-result" role="status" aria-live="polite" style="max-width:680px;margin:0 auto 24px;padding:16px 20px;white-space:pre-wrap;font:14px/1.8 -apple-system,sans-serif;overflow-wrap:anywhere"></pre>';
+      if (!panel.querySelector?.('#startup-file-input')) panel.innerHTML = markup + localRecovery + inspection + fileInspection;
     }
   }
+  if(typeof startupAutomaticLocalRecovery==='function')Promise.resolve().then(()=>startupAutomaticLocalRecovery()).catch(()=>{});
 }
 async function loadRaw() {
   // まずIndexedDB。新しい方を採り、読めなければ古い方。
@@ -788,8 +910,10 @@ async function load() {
   try {
     startupSetStage('read-storage');
     const snapshot = await readStartupStorage();
+    startupOriginalSnapshotRaw=JSON.stringify({slots:snapshot.slots,legacy:snapshot.legacy});
     const recoveryHold=await idbGet('recovery:network-hold:v1');
     startupRecoveryNetworkHold=recoveryHold!==undefined;
+    startupRecoverySourceKind=recoveryHold?.sourceKind==='local-publication'?'local-publication':'';
     startupSetStage('select-state');
     const candidate = startupCandidate(snapshot);
     if (startupPhase !== 'loading') throw new Error('startup-stopped');
@@ -1921,19 +2045,20 @@ function addMember(name) {
 
 /* ---------------- 歌割データ → 曲 ---------------- */
 // rows: [[label, text], ...]  label "→" は上の行の続き、["",""] は段落の切れ目
-function buildSong(parsed) {
+function buildSong(parsed, local) {
+  const addName=local?.addMember||addMember, makeSongId=local?.uid||uid;
   const groups = {};
-  Object.keys(parsed.groups || {}).forEach((k) => { groups[k] = (parsed.groups[k] || []).map((n) => addMember(n).id); });
+  Object.keys(parsed.groups || {}).forEach((k) => { groups[k] = (parsed.groups[k] || []).map((n) => addName(n).id); });
 
   // この曲に出てくる人だけを名簿にする。他の曲・他のグループの人は入れない。
   const roster = [];
   const put = (id) => { if (id && !roster.includes(id)) roster.push(id); };
-  (parsed.order || []).forEach((n) => put(addMember(n).id));
+  (parsed.order || []).forEach((n) => put(addName(n).id));
   Object.keys(groups).forEach((k) => groups[k].forEach(put));
   (parsed.lines || []).forEach((r) => {
     const label = (r[0] || "").trim();
     if (!label || label === "→" || /^全/.test(label)) return;
-    splitNames(label).forEach((k) => { if (!groups[k]) put(addMember(k).id); });
+    splitNames(label).forEach((k) => { if (!groups[k]) put(addName(k).id); });
   });
 
   let carry = [];
@@ -1944,7 +2069,7 @@ function buildSong(parsed) {
     const exRaw = r[4] || "";
     const exIds = [];
     if (exRaw) splitNames(exRaw.replace(/(ハモ|ハーモニー|コーラス|ｺｰﾗｽ|Cho|cho)/gi, " ")).forEach((k) => {
-      (groups[k] || [addMember(k).id]).forEach((n) => { if (!exIds.includes(n)) exIds.push(n); });
+      (groups[k] || [addName(k).id]).forEach((n) => { if (!exIds.includes(n)) exIds.push(n); });
     });
     if (label === "→") {
       return { label: exRaw ? "　" + exRaw : "", raw: "", labelRaw: "", extraRaw: r[7] || "", t,
@@ -1958,17 +2083,17 @@ function buildSong(parsed) {
       // 「全（広本以外）」のような書き方は、その人を外す
       const ex = label.match(/[（(]([^）)]*)以外[）)]/);
       if (ex) {
-        const out2 = splitNames(ex[1]).map((n) => addMember(n).id);
+        const out2 = splitNames(ex[1]).map((n) => addName(n).id);
         parts = parts.filter((p) => !out2.includes(p));
       }
       // 「全（広本以外）・広本」のように後ろに名前が続く場合（ハモなど）は足す
       splitNames(label).filter((n) => !/^全/.test(n)).forEach((k) => {
-        (groups[k] || [addMember(k).id]).forEach((n) => { if (!parts.includes(n)) parts.push(n); });
+        (groups[k] || [addName(k).id]).forEach((n) => { if (!parts.includes(n)) parts.push(n); });
       });
     }
     else splitNames(label).forEach((k) => {
       if (groups[k]) groups[k].forEach((n) => parts.push(n));
-      else parts.push(addMember(k).id);
+      else parts.push(addName(k).id);
     });
     carry = parts.slice();
     const all2 = parts.concat(exIds.filter((x) => !parts.includes(x)));
@@ -1976,7 +2101,7 @@ function buildSong(parsed) {
       main: parts.slice(), extra: exIds, cell: r[2] || "", lcell: r[3] || "", extraCell: r[5] || "",
       cut: r[8] === "cut" ? 1 : undefined };
   });
-  const so = { id: uid(), title: parsed.title || "無題", credit: parsed.credit || "", lines,
+  const so = { id: makeSongId(), title: parsed.title || "無題", credit: parsed.credit || "", lines,
     roster, blocks: groups, blockCells: parsed.groupCells || {}, blockRows: parsed.groupRows || [], sheetName: parsed.sheetName || "",
     micSheet: parsed.micSheet || "", micMap: parsed.micMap || null };
   // Section markers are optional in older publications. Preserve explicit names only.
@@ -12391,7 +12516,7 @@ function copyText(t, msg) {
   if (VIEW()) restoreViewerMember();
   // Keep the original localStorage copy for recovery after a successful import.
   render();
-  if(startupRecoveryNetworkHold){const notice=document.createElement('div');notice.textContent='端末内の復元内容で再開しました。自動送受信は停止中です。';notice.setAttribute('role','status');notice.style.cssText='position:fixed;bottom:0;left:0;right:0;z-index:99999;background:#283A52;color:white;padding:10px;text-align:center';document.body.appendChild(notice);}
+  if(startupRecoveryNetworkHold){const notice=document.createElement('div');notice.textContent=startupRecoverySourceKind==='local-publication'?'配信コピーから曲・指摘などを部分復旧しました。配信外の管理メモ・録音管理などは未回復です。元ファイルを保持し、自動送受信は停止中です。':'端末内の復元内容で再開しました。自動送受信は停止中です。';notice.setAttribute('role','status');notice.style.cssText='position:fixed;bottom:0;left:0;right:0;z-index:99999;background:#283A52;color:white;padding:10px;text-align:center;font-size:12px;pointer-events:none';document.body.appendChild(notice);}
   if(!startupRecoveryNetworkHold){importFromLink();syncSetlist(false);}
 })();
 // 指摘の画面を開いたままアプリを閉じても、書きかけのメモが消えないように記録してから保存する

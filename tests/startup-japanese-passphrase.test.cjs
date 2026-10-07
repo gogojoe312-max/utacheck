@@ -156,7 +156,7 @@ test('a blocked, hidden or busy toggle cannot reveal an entered passphrase',asyn
  }
 });
 test('new local passphrase code has no normalization, persistent state writes, network or logging path',()=>{
- const local=block('let startupFileInspector=null;','function startupReadSavedLocalKeys(');
+ const local=block('let startupFileComposing=false;','function startupReadSavedLocalKeys(');
  assert.doesNotMatch(local,/\b(?:fetch|save|saveNow|idbPut|putClip|delClip|restoreBackupFile|backupDigest|alert|prompt)\s*\(/);
  assert.doesNotMatch(local,/\b(?:console|localStorage|sessionStorage|indexedDB)\s*\./);assert.doesNotMatch(local,/\.\s*(?:trim|normalize|toLowerCase|toUpperCase)\s*\(/);
  assert.doesNotMatch(local,/\b(?:S|U)\s*\./);

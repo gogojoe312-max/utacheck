@@ -1,8 +1,8 @@
 /* 自分のコードは毎回ネットワークを見に行き、圏外のときだけキャッシュを使う。
    重い vendor/ だけはキャッシュ優先。これで「更新したのに変わらない」が起きない。 */
-const CACHE = "utacheck-16.41.37";
+const CACHE = "utacheck-16.41.38";
 const ASSETS = [
-  "./", "./index.html", "./app.js", "./startup-backup-inspection.js", "./startup-file-inspection.js", "./startup-file-restoration.js", "./recording-inbox.js", "./recording-inbox-ownership.js", "./show-recovery.js", "./manifest.webmanifest",
+  "./", "./index.html", "./app.js", "./startup-backup-inspection.js", "./startup-file-inspection.js", "./startup-file-restoration.js", "./startup-local-storage-inventory.js", "./startup-local-publication-recovery.js", "./startup-saved-publication-reader.js", "./recording-inbox.js", "./recording-inbox-ownership.js", "./show-recovery.js", "./manifest.webmanifest",
   "./ui.css", "./ui.js", "./voice-notes.js", "./reading.js", "./gestures.js",
   "./recflow.css", "./ptlink.js", "./ptmac.html",
   "./icon-192.png", "./icon-512.png", "./setlist.json",
@@ -13,10 +13,9 @@ self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting()));
 });
 
+// Retain every existing cache while recovery sources remain under investigation.
 self.addEventListener("activate", (e) => {
-  e.waitUntil(caches.keys()
-    .then((ks) => Promise.all(ks.filter((k) => k.startsWith("utacheck-") && k !== CACHE).map((k) => caches.delete(k))))
-    .then(() => self.clients.claim()));
+  e.waitUntil(self.clients.claim());
 });
 
 const put = (req, res) => {
