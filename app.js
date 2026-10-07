@@ -2,7 +2,7 @@
 "use strict";
 // A failed or unfinished startup must never write an empty replacement state.
 let startupPhase = 'loading';
-let startupRecoveryNetworkHold=true,startupRecoverySourceKind='',startupOriginalSnapshotRaw=null;
+let startupRecoveryNetworkHold=true,startupRecoverySourceKind='',startupOriginalSnapshotRaw=null,startupRecoveryExcelSummary=null;
 function startupCanCommunicate(){return recordingInboxCanWrite()&&!startupRecoveryNetworkHold;}
 function startupRecoveryCanAct(){return startupPhase==='blocked'&&!document.hidden&&!recordingInboxStale&&(!recordingInboxProfileRequired||!!recordingInboxOwner?.canWrite);}
 /* Must precede app state initialization and boot. Unenrolled profiles keep legacy behavior. */
@@ -109,7 +109,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.38";
+const APP_VER = "16.41.39";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -457,6 +457,98 @@ function startupRecordsWithPublications(records,publications){
     return {...record,state};
   });
 }
+async function startupExcelDigest(value){
+  const bytes=value instanceof Blob?new Uint8Array(await value.arrayBuffer()):value;
+  return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),v=>v.toString(16).padStart(2,'0')).join('');
+}
+function startupExcelWithinBudget(bytes){
+  if(bytes.byteLength>16*1024*1024)return false;
+  if(bytes[0]!==0x50||bytes[1]!==0x4b)return true;
+  const view=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength);let end=-1;
+  for(let i=bytes.length-22;i>=Math.max(0,bytes.length-65557);i--)if(view.getUint32(i,true)===0x06054b50){end=i;break;}
+  if(end<0||view.getUint16(end+4,true)||view.getUint16(end+6,true))return false;
+  const count=view.getUint16(end+10,true),size=view.getUint32(end+12,true),offset=view.getUint32(end+16,true);
+  if(!count||count>4096||offset+size>end)return false;
+  let at=offset,total=0;
+  for(let i=0;i<count;i++){
+    if(at+46>offset+size||view.getUint32(at,true)!==0x02014b50)return false;
+    const expanded=view.getUint32(at+24,true);total+=expanded;
+    if(expanded>32*1024*1024||total>64*1024*1024)return false;
+    at+=46+view.getUint16(at+28,true)+view.getUint16(at+30,true)+view.getUint16(at+32,true);
+  }
+  return at===offset+size;
+}
+async function startupExcelSourcesUnchanged(sources,context){
+  if(!context.isActive())return false;
+  const blobs=await new Promise((resolve,reject)=>{
+    const tx=DB.transaction('clips','readonly'),store=tx.objectStore('clips'),requests=sources.map(item=>store.get(item.key));
+    tx.oncomplete=()=>resolve(requests.map(q=>q.result));tx.onerror=tx.onabort=()=>reject(new Error('excel-read'));
+  });
+  for(let i=0;i<sources.length;i++){
+    if(!context.isActive()||!(blobs[i] instanceof Blob)||blobs[i].size!==sources[i].bytes
+      ||await startupExcelDigest(blobs[i])!==sources[i].digest)return false;
+  }
+  return context.isActive();
+}
+async function startupRecoverOriginalExcel(inventory,context){
+  if(typeof StartupLocalExcelRecovery==='undefined'||typeof XLSX==='undefined')return {status:'excel-unavailable'};
+  const entries=[],sources=[],clips=inventory.clips.filter(item=>item.kind==='workbook'&&typeof item.key==='string'&&item.key.startsWith('xls:'));
+  if(!clips.length)return {status:'excel-empty'};
+  const base=inventory.records.slice().sort((a,b)=>(b.seq||0)-(a.seq||0))[0]?.state;
+  if(!base)return {status:'no-valid-state'};
+  let failed=0,totalBytes=0;
+  for(let index=0;index<clips.length;index++){
+    if(!context.isActive())return {status:'cancelled'};
+    const clip=clips[index];startupAutomaticRecoveryOutput('元Excelの本文を読み取っています。 '+(index+1)+' / '+clips.length+'\n元ファイルを保持しています。追加操作は不要です。');
+    try{
+      if(!(clip.value instanceof Blob)||clip.value.size>16*1024*1024||totalBytes+clip.value.size>256*1024*1024)throw new Error('excel-limit');
+      totalBytes+=clip.value.size;
+      const bytes=new Uint8Array(await clip.value.arrayBuffer());
+      if(!context.isActive())return {status:'cancelled'};
+      const digest=await startupExcelDigest(bytes);sources.push({key:clip.key,bytes:bytes.length,digest,blob:clip.value});
+      if(!startupExcelWithinBudget(bytes))throw new Error('excel-limit');
+      let wb;try{wb=XLSX.read(bytes,{type:'array',cellStyles:true,bookFiles:true});}catch(_){wb=XLSX.read(bytes,{type:'array',bookFiles:true});}
+      if(!Array.isArray(wb.SheetNames)||!wb.SheetNames.length||wb.SheetNames.length>32||new Set(wb.SheetNames).size!==wb.SheetNames.length
+        ||!wb.Sheets||wb.SheetNames.some(name=>typeof name!=='string'||!wb.Sheets[name]))throw new Error('excel-format');
+      let cells=0,gridCells=0;for(const sheet of Object.values(wb.Sheets)){
+        for(const address of Object.keys(sheet))if(/^[A-Z]+[1-9]\d*$/.test(address)){
+          const point=XLSX.utils.decode_cell(address);if(point.r>=20000||point.c>=512||++cells>250000)throw new Error('excel-limit');
+        }
+        trimExcelRange(sheet);
+        if(sheet['!ref']){const range=XLSX.utils.decode_range(sheet['!ref']);gridCells+=(range.e.r+1)*(range.e.c+1);if(gridCells>1500000)throw new Error('excel-limit');}
+      }
+      const named=wb.SheetNames.filter(name=>/歌割|唄割|うたわり/.test(name));
+      const possible=wb.SheetNames.filter(name=>!/マイク|ﾏｲｸ|番号|MC|表紙|メモ/i.test(name)&&wb.Sheets[name]['!ref']);
+      const matched=possible.filter(name=>(base.groups||[]).some(group=>group.name&&name.includes(group.name))||Object.keys(base.rosters||{}).some(name0=>name0&&name.includes(name0)));
+      const sheetName=named.length===1?named[0]:possible.length===1?possible[0]:matched.length===1?matched[0]:null;
+      if(!sheetName)throw new Error('excel-sheet-unconfirmed');
+      let title=typeof wb.Props?.Title==='string'&&wb.Props.Title.trim()?wb.Props.Title:'';
+      if(!title){const grid=XLSX.utils.sheet_to_json(wb.Sheets[sheetName],{header:1,blankrows:true,defval:''});
+        const titles=new Set();for(const row of grid.slice(0,12))for(let column=0;column<row.length;column++){
+          const label=String(row[column]??''),inline=/^\s*(?:曲名|タイトル)\s*[:：]\s*(\S[\s\S]*)$/.exec(label);
+          if(inline)titles.add(inline[1]);else if(/^\s*(?:曲名|タイトル)\s*[:：]?\s*$/.test(label)&&typeof row[column+1]==='string'&&row[column+1].trim())titles.add(row[column+1]);
+        }
+        if(titles.size===1)title=[...titles][0];
+      }
+      if(!title)title='復旧資料'+String(index+1).padStart(3,'0');
+      const parsed=await parseXLSX({name:title+'.xlsx'},bytes,{state:base,workbook:wb,sheetName});
+      const textRows=parsed.lines.map(row=>String(row[1]||'').trim()).filter(Boolean);
+      const numerical=textRows.filter(text=>/^[\d０-９\s.,，．￥¥$€£+＋\-－()%％円]+$/.test(text)).length;
+      if(numerical>=Math.ceil(textRows.length/2)&&!textRows.some(text=>text.length>=8&&/[A-Za-z\u3040-\u30ff\u4e00-\u9fff]/.test(text)))throw new Error('excel-lyrics-unconfirmed');
+      parsed.title=title;entries.push({key:clip.key,parsed,index,bytes:bytes.length,digest});
+    }catch(_){failed++;}
+    await new Promise(resolve=>setTimeout(resolve,0));
+  }
+  if(!context.isActive())return {status:'cancelled'};
+  const result=StartupLocalExcelRecovery.build(inventory.records,S0,entries,{buildSong,validateState:validateStartupState,hasWork:startupHasWork,now:Date.now()});
+  result.excelSummary={total:clips.length,read:entries.length,failed};
+  if(result.status==='ready'){
+    result.packet.sourceKind='local-excel';result.packet.sourceDateUnknown=true;
+    result.packet.excelSummary=result.excelSummary;
+    context.sourceSnapshots=sources;context.verifySources=()=>startupExcelSourcesUnchanged(sources,context);context.hashBlob=startupExcelDigest;
+  }
+  return result;
+}
 async function startupAutomaticLocalRecovery(){
   if(startupAutomaticRecoveryStarted||!startupRecoveryCanAct()||startupDiagnostic.failure?.code!=='empty-saved-state')return;
   startupAutomaticRecoveryStarted=true;
@@ -489,13 +581,21 @@ async function startupAutomaticLocalRecovery(){
         result=cached?build(cached):{status:'publication-conflict'};
       }
     }
-    startupAutomaticRecoveryOutput(startupLocalRecoveryText(inventory,result,remote));
+    if(safeInventory&&!remote?.limited&&result.status==='publication-empty'&&inventory.summary.workbookClips){
+      result=await startupRecoverOriginalExcel(inventory,context);if(!active())return;
+    }
+    const excel=result.excelSummary;
+    const excelReasons={'candidate-invalid':'候補の形式未確認','original-nonempty':'既存作業が残存','base-conflict':'保存世代の競合',
+      'identity-conflict':'保存元の不一致','source-identity-conflict':'元資料IDの競合','member-conflict':'担当者IDの競合',
+      'parsed-workbook-invalid':'本文の形式未確認','candidate-too-large':'候補の容量上限','excel-unavailable':'解析機能未読込','excel-empty':'対象資料未確認'};
+    startupAutomaticRecoveryOutput(excel?'元Excel本文の読取成功 '+excel.read+' / 元資料 '+excel.total+'。残りの原本も保持しています。\n'+
+      (result.status==='ready'?'過去の指摘・管理メモ・公演の対応は推測せず、復旧資料として再開します。':'保護停止を維持しています（'+(excelReasons[result.status]||'本文の確認未完了')+'）。'):startupLocalRecoveryText(inventory,result,remote));
     if(!safeInventory||remote?.limited||result.status!=='ready'||!result.packet||!active())return;
     if(!await startupPrepareLocalRestore(result.packet,context)||!active())return;
-    startupAutomaticRecoveryOutput('配信コピーを確認しました。元の保存世代と端末ファイルを保全して復旧しています。');
+    startupAutomaticRecoveryOutput(excel?'元Excelから曲・歌詞・歌割を再構成し、原本を保全して再開しています。':'配信コピーを確認しました。元の保存世代と端末ファイルを保全して復旧しています。');
     const saved=await startupLocalRestorer.commit(context);
     if(!active())return;
-    if(saved.status==='restored'){startupAutomaticRecoveryOutput('配信コピーの部分復旧を確認しました。自動送受信を停止して再開します。');location.reload();}
+    if(saved.status==='restored'){startupAutomaticRecoveryOutput(excel?'元Excelからの曲・歌詞・歌割の救出を確認しました。自動送受信を停止して再開します。':'配信コピーの部分復旧を確認しました。自動送受信を停止して再開します。');location.reload();}
     else startupAutomaticRecoveryOutput(startupLocalRecoveryText(inventory,result,remote)+'\n保全・再読確認を完了できなかったため、保護停止を維持しています。');
   }catch(_){if(active())startupAutomaticRecoveryOutput('端末内の読み取り・保全確認を完了できませんでした。原本を保持して保護停止を維持しています。追加の入力は不要です。');}
   finally{startupAutomaticRecoveryActive=false;if(startupAutomaticRecoveryController===controller)startupAutomaticRecoveryController=null;}
@@ -913,9 +1013,22 @@ async function load() {
     startupOriginalSnapshotRaw=JSON.stringify({slots:snapshot.slots,legacy:snapshot.legacy});
     const recoveryHold=await idbGet('recovery:network-hold:v1');
     startupRecoveryNetworkHold=recoveryHold!==undefined;
-    startupRecoverySourceKind=recoveryHold?.sourceKind==='local-publication'?'local-publication':'';
+    startupRecoverySourceKind=['local-publication','local-excel'].includes(recoveryHold?.sourceKind)?recoveryHold.sourceKind:'';
+    startupRecoveryExcelSummary=recoveryHold?.sourceKind==='local-excel'&&Number.isSafeInteger(recoveryHold.excelSummary?.read)&&recoveryHold.excelSummary.read>=0
+      &&Number.isSafeInteger(recoveryHold.excelSummary?.total)&&recoveryHold.excelSummary.total>=recoveryHold.excelSummary.read?recoveryHold.excelSummary:null;
     startupSetStage('select-state');
     const candidate = startupCandidate(snapshot);
+    // The first reopen must verify the workbook sources even if the previous
+    // page closed between the atomic commit and its final reread. Later local
+    // edits advance the state sequence and remain editable without this check.
+    if(recoveryHold?.sourceKind==='local-excel'&&candidate.seq===recoveryHold.seq){
+      if(!Array.isArray(recoveryHold.excelSources)||!recoveryHold.excelSources.length||recoveryHold.excelSources.length>1024
+        ||recoveryHold.excelSources.some(source=>typeof source.key!=='string'||!source.key.startsWith('xls:')||!Number.isSafeInteger(source.bytes)
+          ||source.bytes<0||! /^[a-f0-9]{64}$/.test(source.digest)))throw new Error('startup-changed');
+      const localContext={isActive:()=>startupPhase==='loading'&&!document.hidden&&!recordingInboxStale
+        &&(!recordingInboxProfileRequired||!!recordingInboxOwner?.canWrite)};
+      if(!await startupExcelSourcesUnchanged(recoveryHold.excelSources,localContext))throw new Error('startup-changed');
+    }
     if (startupPhase !== 'loading') throw new Error('startup-stopped');
     S = candidate.state;
     startupSetStage('prepare-state');
@@ -2672,7 +2785,7 @@ const looksName = (v) => nameScore(v) >= 0.6;
 
 // どのシートが歌割かを選ぶ。
 // 1枚目が「マイク番号」のように番号だけの表のことがあるため。
-function pickSheet(wb) {
+function pickSheet(wb, localState=S) {
   const names = wb.SheetNames;
   const score = (sn) => {
     const sh2 = wb.Sheets[sn];
@@ -2682,8 +2795,8 @@ function pickSheet(wb) {
     if (/マイク|ﾏｲｸ|番号|MC|表紙|メモ/i.test(sn)) pt -= 800;
     if (/^(sheet|シート)\s*\d*$/i.test(sn.trim())) pt -= 600;   // 名前を付けていない予備のシート
     // グループ名が付いたシートは、その曲の歌割である見込みが高い
-    if ((S.groups || []).some((g) => g.name && sn.indexOf(g.name) >= 0)) pt += 500;
-    (Object.keys(S.rosters || {})).forEach((gn) => { if (gn && sn.indexOf(gn) >= 0) pt += 500; });
+    if ((localState.groups || []).some((g) => g.name && sn.indexOf(g.name) >= 0)) pt += 500;
+    (Object.keys(localState.rosters || {})).forEach((gn) => { if (gn && sn.indexOf(gn) >= 0) pt += 500; });
     // 名前らしい文字（漢字・かな）が入った短いセルを数える
     const g = XLSX.utils.sheet_to_json(sh2, { header: 1, blankrows: false, defval: "" });
     let nameLike = 0, numLike = 0;
@@ -2742,15 +2855,15 @@ function trimExcelRange(sheet) {
   else delete sheet["!ref"];
 }
 
-async function parseXLSX(file, buf) {
+async function parseXLSX(file, buf, local) {
   const raw0 = buf || new Uint8Array(await file.arrayBuffer());
   // cellStyles を付けると、セルの塗りつぶしの色が読める。
   // 歌割表ではワンハーフでカットした箇所をグレーで塗ってあるので、それを歌詞から外す。
-  let wb;
-  try { wb = XLSX.read(raw0, { type: "array", cellStyles: true, bookFiles: true }); }
-  catch (e) { wb = XLSX.read(raw0, { type: "array", bookFiles: true }); }
+  let wb=local?.workbook;
+  if(!wb){try { wb = XLSX.read(raw0, { type: "array", cellStyles: true, bookFiles: true }); }
+  catch (e) { wb = XLSX.read(raw0, { type: "array", bookFiles: true }); }}
   Object.values(wb.Sheets).forEach(trimExcelRange);
-  const pickedName = pickSheet(wb);
+  const pickedName = local?.sheetName || pickSheet(wb,local?.state||S);
   const sh = wb.Sheets[pickedName];
   const bubbles = readBubbles(wb.files, wb.SheetNames.indexOf(pickedName));
   const isGray = (ri, ci) => {
@@ -12516,7 +12629,7 @@ function copyText(t, msg) {
   if (VIEW()) restoreViewerMember();
   // Keep the original localStorage copy for recovery after a successful import.
   render();
-  if(startupRecoveryNetworkHold){const notice=document.createElement('div');notice.textContent=startupRecoverySourceKind==='local-publication'?'配信コピーから曲・指摘などを部分復旧しました。配信外の管理メモ・録音管理などは未回復です。元ファイルを保持し、自動送受信は停止中です。':'端末内の復元内容で再開しました。自動送受信は停止中です。';notice.setAttribute('role','status');notice.style.cssText='position:fixed;bottom:0;left:0;right:0;z-index:99999;background:#283A52;color:white;padding:10px;text-align:center;font-size:12px;pointer-events:none';document.body.appendChild(notice);}
+  if(startupRecoveryNetworkHold){const notice=document.createElement('div');notice.textContent=startupRecoverySourceKind==='local-excel'?'元Excel救出'+(startupRecoveryExcelSummary?' '+startupRecoveryExcelSummary.read+' / '+startupRecoveryExcelSummary.total+'資料':'')+'。元公演との対応・過去の指摘や管理メモ等は未回復です。原本保持・同期停止中です。':startupRecoverySourceKind==='local-publication'?'配信コピーから曲・指摘などを部分復旧しました。配信外の管理メモ・録音管理などは未回復です。元ファイルを保持し、自動送受信は停止中です。':'端末内の復元内容で再開しました。自動送受信は停止中です。';notice.setAttribute('role','status');notice.style.cssText='position:fixed;bottom:0;left:0;right:0;z-index:99999;background:#283A52;color:white;padding:10px;text-align:center;font-size:12px;pointer-events:none';document.body.appendChild(notice);}
   if(!startupRecoveryNetworkHold){importFromLink();syncSetlist(false);}
 })();
 // 指摘の画面を開いたままアプリを閉じても、書きかけのメモが消えないように記録してから保存する

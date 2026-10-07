@@ -16,6 +16,14 @@
       cancel();const turn=epoch;
       try{
         if(!active(turn,context)||busy)return false;
+        if(context.verifySources&&!await context.verifySources())fail('storage-changed');
+        const archives=[];
+        for(const source of context.sourceSnapshots||[]){
+          if(typeof source.key!=='string'||!source.key.startsWith('xls:')||! /^[a-f0-9]{64}$/.test(source.digest)
+            ||!(source.blob instanceof Blob)||source.blob.size!==source.bytes)fail('candidate-invalid');
+          const archiveKey='preserved:excel:v1:'+source.digest;
+          if(!archives.some(value=>value.key===archiveKey))archives.push({key:archiveKey,blob:source.blob,bytes:source.bytes,digest:source.digest});
+        }
         const state=JSON.parse(JSON.stringify(packet.state));
         // A file never creates token access; the original export excludes this field.
         delete state.ghToken;
@@ -35,15 +43,28 @@
         const after={slots:JSON.parse(JSON.stringify(slots)),legacy};after.slots[slot]={present:true,value:envelope};
         const afterRaw=JSON.stringify(after),startupKey='preserved:startup:v1:'+await options.hash(afterRaw);
         const hold={v:1,seq,slot,copyKey,startupKey,sourceAt:packet.sourceDateUnknown===true?null:packet.at,candidateDigest:await options.hash(txt)};
-        if(packet.sourceDateUnknown===true){hold.sourceDateUnknown=true;hold.sourceKind='local-publication';}
+        if(packet.sourceDateUnknown===true){hold.sourceDateUnknown=true;hold.sourceKind=packet.sourceKind==='local-excel'?'local-excel':'local-publication';}
+        if(archives.length)hold.excelSources=(context.sourceSnapshots||[]).map(source=>({key:source.key,bytes:source.bytes,digest:source.digest}));
+        if(packet.excelSummary)hold.excelSummary=JSON.parse(JSON.stringify(packet.excelSummary));
         if(!active(turn,context))return false;
-        plan={database,slots,legacy,envelope,slot,copyKey,original,originalRaw,startupKey,after,afterRaw,hold};return true;
+        plan={database,slots,legacy,envelope,slot,copyKey,original,originalRaw,startupKey,after,afterRaw,hold,archives};return true;
       }catch(_){if(turn===epoch)plan=null;return false;}
     }
     async function commit(context){
       if(busy||!plan)return {status:'candidate-invalid'};
       const current=plan,turn=epoch;busy=true;
       try{
+        if(!active(turn,context))fail('cancelled');
+        if(context.verifySources&&!await context.verifySources())fail('storage-changed');
+        if(!active(turn,context))fail('cancelled');
+        // Immutable workbook originals are preserved in the state-only commit.
+        // Existing clips are never put or deleted by restoration.
+        const previousArchives=current.archives.length?await read(current.database,current.archives.map(value=>value.key)):[];
+        for(let i=0;i<previousArchives.length;i++)if(previousArchives[i]!==undefined){
+          const previous=previousArchives[i],wanted=current.archives[i];
+          if(!(previous instanceof Blob)||previous.size!==wanted.bytes||!context.hashBlob
+            ||await context.hashBlob(previous)!==wanted.digest)fail('storage-changed');
+        }
         if(!active(turn,context))fail('cancelled');
         await new Promise((resolve,reject)=>{
           const tx=current.database.transaction('state','readwrite'),store=tx.objectStore('state');transaction=tx;
@@ -66,6 +87,7 @@
                 else store.add(value,key);
               }
               store.add(current.hold,HOLD);store.put(current.envelope,'state:'+current.slot);
+              current.archives.forEach((archive,index)=>{if(previousArchives[index]===undefined)store.add(archive.blob,archive.key);});
             }catch(_){abort('preservation-failed');}
           };
         });
@@ -75,6 +97,11 @@
         const after={slots:checked.slice(0,2).map(value=>value===undefined?{present:false}:{present:true,value}),legacy:options.readLegacy()};
         if(JSON.stringify(after)!==current.afterRaw||JSON.stringify(checked[2])!==current.originalRaw
           ||JSON.stringify(checked[3])!==current.afterRaw||JSON.stringify(checked[4])!==JSON.stringify(current.hold))fail('verify-failed');
+        const checkedArchives=current.archives.length?await read(current.database,current.archives.map(value=>value.key)):[];
+        for(let i=0;i<checkedArchives.length;i++)if(!(checkedArchives[i] instanceof Blob)||checkedArchives[i].size!==current.archives[i].bytes
+          ||!context.hashBlob||await context.hashBlob(checkedArchives[i])!==current.archives[i].digest)fail('verify-failed');
+        if(context.verifySources&&!await context.verifySources())fail('verify-failed');
+        if(!active(turn,context))fail('cancelled');
         plan=null;return {status:'restored'};
       }catch(error){return {status:codes.includes(error?.recoveryCode)?error.recoveryCode:'preservation-failed'};}
       finally{busy=false;}
