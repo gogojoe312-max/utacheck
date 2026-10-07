@@ -62,6 +62,25 @@ window.addEventListener('storage', event => {
 });
 for (const type of ['click','input','change','keydown','submit','pointerdown','drop']) document.addEventListener(type, event => {
   if (recordingInboxCanWrite() || event.target.closest?.('[data-inbox-owner-reload]')) return;
+  const fileControl=event.target.closest?.('#startup-file-input,#startup-file-password,#startup-file-label,#startup-file-check,#startup-file-cancel');
+  if(startupPhase==='blocked'&&fileControl?.closest?.('#startup-protection')){
+    event.stopImmediatePropagation();
+    const id=fileControl.id;
+    if(type==='pointerdown')return;
+    if(type==='click'&&(id==='startup-file-password'||id==='startup-file-label'))return;
+    if(type==='keydown'&&event.key==='Tab'&&!event.altKey&&!event.ctrlKey&&!event.metaKey)return;
+    if(id==='startup-file-password'&&['input','change','keydown'].includes(type)){
+      if(type==='keydown'&&event.key==='Enter'&&!event.isComposing){event.preventDefault();void startupCheckLocalFile();}
+      return;
+    }
+    if(id==='startup-file-input'&&type==='click'){startupCancelLocalFileInspection();return;}
+    if(type==='keydown'&&['Enter',' '].includes(event.key)&&!event.altKey&&!event.ctrlKey&&!event.metaKey)return;
+    event.preventDefault();
+    if(id==='startup-file-input'&&type==='change')startupSelectLocalFile(fileControl.files?.[0]);
+    if(id==='startup-file-check'&&type==='click'&&!fileControl.disabled)void startupCheckLocalFile();
+    if(id==='startup-file-cancel'&&type==='click')startupCancelLocalFileInspection();
+    return;
+  }
   const backupCheck = event.target.closest?.('#startup-backup-check');
   if (startupPhase === 'blocked' && backupCheck?.closest?.('#startup-protection')) {
     event.stopImmediatePropagation();
@@ -82,7 +101,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.34";
+const APP_VER = "16.41.35";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -354,8 +373,91 @@ function startupCancelBackupInspection() {
   startupBackupInspector.cancel();
   const output=document.getElementById('startup-backup-result');if(output)output.textContent='確認を中止しました。送信・復元はしていません。';
 }
-if(typeof window!=='undefined')window.addEventListener('pagehide',startupCancelBackupInspection);
-if(typeof document!=='undefined'&&document.addEventListener)document.addEventListener('visibilitychange',()=>{if(document.hidden)startupCancelBackupInspection();});
+if(typeof window!=='undefined')window.addEventListener('pagehide',()=>{startupCancelBackupInspection();startupCancelLocalFileInspection();});
+if(typeof document!=='undefined'&&document.addEventListener)document.addEventListener('visibilitychange',()=>{if(document.hidden){startupCancelBackupInspection();startupCancelLocalFileInspection();}});
+let startupFileInspector=null;
+function startupLocalFileText(result){
+  const labels={selected:'ファイルを選択しました。合言葉はこの画面だけで入力してください。',checking:'端末内で確認中（送信・復元なし）',
+    checked:'このファイルの候補確認ができました（復元はまだしていません）。',cancelled:'確認を中止しました。',
+    'file-limit':'ファイルの容量を確認できないか、32MiBの確認上限を超えています。','file-read-failed':'ファイルを読み取れませんでした。',
+    'backup-format':'バックアップの形式を確認できませんでした。','backup-limit':'展開後の容量が20MiBの確認上限を超えています。',
+    'decrypt-failed':'この合言葉では復号を確認できませんでした。この画面で再入力できます。',
+    'saved-key-missing':'この画面に合言葉を入力してください。','compression-unavailable':'この端末では展開を確認できませんでした。',
+    'state-format':'保存内容の形式を確認できませんでした。','password-format':'合言葉の入力を確認してください。'};
+  const lines=[labels[result.status]||'未確認'];
+  if(Number.isSafeInteger(result.bytes))lines.push('ファイル容量：'+result.bytes+' bytes');
+  if(result.status==='checked'&&result.counts){const n=result.counts;
+    lines.push('保存日時：'+new Date(result.at).toLocaleString('ja-JP'));
+    lines.push('公演 '+n.shows+' / 曲 '+n.songs+' / 録音曲 '+n.rsongs+' / 記録 '+n.notes+' / 受信記録 '+n.pubNotes);
+    lines.push('管理メモ '+n.staffMemos+' / 総括 '+n.memos+' / 手書き '+n.draws+' / 録音管理 '+n.recs+' / 予定 '+n.planSlots+' / 削除保留 '+n.trash);
+    lines.push('バックアップ内の保存先ID：'+(result.backupIdPresent?'形式確認済み（通信していません）':'未確認'));
+    if(result.ancillary){const a=result.ancillary,count=n=>n===null?'未確認':String(n);
+      lines.push('端末ファイル：'+count(a.total)+' / 音声形式 '+count(a.audio)+' / Excelキー '+count(a.workbooks)+' / その他 '+count(a.other)+' / 未分類 '+count(a.unclassified));
+      lines.push('サイズを確認できた分の合計：'+count(a.bytes)+' bytes / この候補の録音参照と同じキー：'+count(a.matchedRecordings));
+      lines.push('参照が一致しないファイルもすべて保持しています。');
+    }
+  }
+  lines.push('合言葉・バックアップ内容を保存・送信せず、元データと端末ファイルは変更しません。');return lines.join('\n');
+}
+function startupReadLocalFile(file,signal){
+  return new Promise((resolve,reject)=>{const reader=new FileReader();let listening=false;
+    const cleanup=()=>{if(listening){signal.removeEventListener('abort',abort);listening=false;}};
+    const abort=()=>{cleanup();try{reader.abort();}catch(_){}reject(new Error('cancelled'));};
+    if(signal.aborted){abort();return;}signal.addEventListener('abort',abort,{once:true});
+    listening=true;
+    reader.onload=()=>{cleanup();resolve(reader.result);};reader.onerror=reader.onabort=()=>{cleanup();reject(new Error('file-read-failed'));};
+    try{reader.readAsArrayBuffer(file);}catch(_){cleanup();reject(new Error('file-read-failed'));}
+  });
+}
+function startupLocalClipMetadata(recordingKeys,context){
+  if(!DB||!DB.objectStoreNames.contains('clips'))return Promise.reject(new Error('storage-read'));
+  return new Promise((resolve,reject)=>{
+    const tx=DB.transaction('clips','readonly'),references=new Set(recordingKeys),result={total:0,audio:0,workbooks:0,other:0,unclassified:0,bytes:0,matchedRecordings:0};
+    const request=tx.objectStore('clips').openCursor(),abort=()=>{try{tx.abort();}catch(_){}};
+    context.signal?.addEventListener('abort',abort,{once:true});
+    const cleanup=()=>context.signal?.removeEventListener('abort',abort);
+    request.onsuccess=()=>{if(!context.isActive()){abort();return;}const row=request.result;if(!row)return;
+      result.total++;if(references.has(row.key))result.matchedRecordings++;
+      const value=row.value,isBlob=typeof Blob!=='undefined'&&value instanceof Blob;
+      const size=isBlob?value.size:ArrayBuffer.isView(value)||value instanceof ArrayBuffer?value.byteLength:null;
+      if(Number.isSafeInteger(size)&&size>=0&&Number.isSafeInteger(result.bytes+size))result.bytes+=size;else result.unclassified++;
+      if(typeof row.key==='string'&&row.key.startsWith('xls:'))result.workbooks++;
+      else if(isBlob&&/^audio\//i.test(value.type))result.audio++;
+      else if(size!==null)result.other++;
+      row.continue();};
+    tx.oncomplete=()=>{cleanup();resolve(result);};tx.onabort=tx.onerror=()=>{cleanup();reject(new Error('storage-read'));};
+  });
+}
+function startupFileControls(){
+  return {file:document.getElementById('startup-file-input'),password:document.getElementById('startup-file-password'),
+    check:document.getElementById('startup-file-check'),output:document.getElementById('startup-file-result')};
+}
+function startupEnsureFileInspector(){
+  if(startupFileInspector)return true;
+  if(typeof StartupFileInspection==='undefined'||typeof StartupBackupInspection==='undefined')return false;
+  startupFileInspector=StartupFileInspection.create({readFile:startupReadLocalFile,
+    decodeBackup:(raw,key,context)=>StartupBackupInspection.decodeBackup(raw,key,{...context,openJSON,base64Decode:b64d}),
+    counts:StartupBackupInspection.counts,readAncillary:startupLocalClipMetadata,
+    isActive:()=>startupPhase==='blocked'&&!document.hidden,
+    onUpdate:result=>{const {output,check}=startupFileControls();if(output)output.textContent=startupLocalFileText(result);if(check)check.disabled=result.status==='checking'||result.status==='checked';}
+  });return true;
+}
+function startupSelectLocalFile(file){
+  if(startupPhase!=='blocked')return;startupCancelBackupInspection();const controls=startupFileControls();
+  if(controls.file)controls.file.value='';if(controls.password)controls.password.value='';
+  if(!file)return;if(!startupEnsureFileInspector()){if(controls.output)controls.output.textContent='確認機能を読み込めませんでした。';return;}
+  startupFileInspector.select(file);
+}
+async function startupCheckLocalFile(){
+  const controls=startupFileControls();if(startupPhase!=='blocked'||document.hidden||startupFileInspector?.busy||controls.check?.disabled)return;
+  if(!startupEnsureFileInspector())return;const password=controls.password?.value||'';if(controls.password)controls.password.value='';
+  await startupFileInspector.check(password);
+}
+function startupCancelLocalFileInspection(){
+  startupFileInspector?.cancel();const controls=startupFileControls();
+  if(controls.file)controls.file.value='';if(controls.password)controls.password.value='';if(controls.check)controls.check.disabled=true;
+  if(controls.output&&controls.output.textContent)controls.output.textContent='確認を中止しました。送信・復元はしていません。';
+}
 function startupSafeError(error) {
   const names = ['Error','TypeError','SyntaxError','RangeError','DOMException','AbortError','DataError',
     'InvalidStateError','NotFoundError','NotReadableError','NotSupportedError','QuotaExceededError',
@@ -590,7 +692,8 @@ function blockStartup(error) {
         document.body.appendChild(panel);
       }
       const inspection = '<div style="max-width:720px;margin:0 auto;padding:0 20px 32px"><button id="startup-backup-check" type="button" style="padding:14px;background:#283A52;border:1px solid #67798F;border-radius:12px;line-height:1.6">保存先のバックアップを確認（送信・復元なし）</button><pre id="startup-backup-result" role="status" aria-live="polite" style="margin-top:16px;white-space:pre-wrap;font:13px/1.8 -apple-system,sans-serif;overflow-wrap:anywhere"></pre></div>';
-      if (!panel.querySelector?.('#startup-backup-check')) panel.innerHTML = markup + inspection;
+      const fileInspection='<div style="max-width:720px;margin:0 auto;padding:0 20px 40px;border-top:1px solid #344152"><h3 style="margin:20px 0 12px">手元のファイルを確認（送信・復元なし）</h3><p>端末のFilesにあるバックアップを選び、合言葉はこの画面だけで入力してください。</p><input id="startup-file-input" type="file" accept=".json,application/json" style="display:block;max-width:100%;margin:16px 0"><label id="startup-file-label" for="startup-file-password">合言葉（保存・送信しません）</label><input id="startup-file-password" type="password" maxlength="4096" autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off" style="display:block;width:100%;padding:14px;background:#202020;border:1px solid #67798F;border-radius:10px;margin:8px 0 16px"><button id="startup-file-check" type="button" disabled style="padding:14px;background:#283A52;border:1px solid #67798F;border-radius:12px">このファイルの件数を確認</button> <button id="startup-file-cancel" type="button" style="padding:14px;border:1px solid #67798F;border-radius:12px">確認を中止</button><pre id="startup-file-result" role="status" aria-live="polite" style="margin-top:16px;white-space:pre-wrap;font:13px/1.8 -apple-system,sans-serif;overflow-wrap:anywhere"></pre></div>';
+      if (!panel.querySelector?.('#startup-file-input')) panel.innerHTML = markup + inspection + fileInspection;
     }
   }
 }
