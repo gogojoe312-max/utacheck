@@ -1,5 +1,7 @@
 /* 歌チェック — ライブ本番用 歌割チェックアプリ (offline PWA) */
 "use strict";
+// A failed or unfinished startup must never write an empty replacement state.
+let startupPhase = 'loading';
 /* Must precede app state initialization and boot. Unenrolled profiles keep legacy behavior. */
 const recordingInboxEnrollmentKey = 'utacheck:recording-inbox:device-v1';
 const recordingInboxWriterKey = 'utacheck:recording-inbox:writer-required-v1';
@@ -11,7 +13,7 @@ let recordingInboxWriters = 0, recordingInboxDrainWaiters = [], recordingInboxIn
 let recordingInboxResolveBoot;
 const recordingInboxBootReady = new Promise(resolve => { recordingInboxResolveBoot = resolve; });
 function recordingInboxCanWrite() {
-  return !recordingInboxStale && (!recordingInboxProfileRequired || !!recordingInboxOwner?.canWrite);
+  return startupPhase === 'ready' && !recordingInboxStale && (!recordingInboxProfileRequired || !!recordingInboxOwner?.canWrite);
 }
 function recordingInboxAssertWriter() {
   if (!recordingInboxCanWrite()) { const error = new Error('この画面は読み取り専用です。編集用の画面を確認してください。'); error.code = 'EDITOR_READ_ONLY'; throw error; }
@@ -30,8 +32,8 @@ function recordingInboxStorageSet(key, value) { recordingInboxAssertWriter(); re
 function recordingInboxStorageRemove(key) { recordingInboxAssertWriter(); return localStorage.removeItem(key); }
 function recordingInboxBeforeBoot() { return recordingInboxProfileRequired ? recordingInboxBootReady : Promise.resolve(true); }
 function recordingInboxOwnerUI() {
-  const denied = !recordingInboxCanWrite(), appElement = document.getElementById('app');
-  if (appElement) appElement.inert = denied;
+  const denied = recordingInboxStale || (recordingInboxProfileRequired && !recordingInboxOwner?.canWrite), appElement = document.getElementById('app');
+  if (appElement) appElement.inert = !recordingInboxCanWrite();
   let notice = document.getElementById('recording-inbox-readonly');
   if (!denied) { if (notice) notice.remove(); return; }
   if (notice || !document.body) return;
@@ -66,7 +68,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.31";
+const APP_VER = "16.41.32";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -263,6 +265,111 @@ let U = { view: "live", songIdx: 0, sheet: null, mode: "member", allShows: false
 
 const S0 = JSON.parse(JSON.stringify(S));
 
+// Read-only startup inspection. A failed read is never treated as an absent slot.
+async function readStartupStorage() {
+  const reads = await Promise.allSettled([idbGet('state:0'), idbGet('state:1')]);
+  let legacy, broken;
+  try {
+    legacy = localStorage.getItem(KEY);
+    broken = Object.keys(localStorage).filter(key => key.startsWith(KEY + ':broken:'));
+  } catch (_) { throw new Error('storage-read'); }
+  if (reads.some(read => read.status !== 'fulfilled')) throw new Error('storage-read');
+  return {slots:reads.map(read => read.value === undefined ? {present:false} : {present:true,value:read.value}), legacy, broken};
+}
+function startupStateObject(value) { return !!value && typeof value === 'object' && !Array.isArray(value); }
+function validateStartupState(value) {
+  if (!startupStateObject(value)) throw new Error('state-format');
+  for (const key of ['songs','rsongs','notes','pubNotes','shows','members','groups','trash']) {
+    if (value[key] === undefined) continue;
+    if (!Array.isArray(value[key]) || value[key].some(item => !startupStateObject(item))) throw new Error('state-format');
+  }
+  for (const key of ['memos','staffMemos','draws','recs','folders','rfolders','subs','subsMan','subLib','gsubs','rosters','plan']) {
+    if (value[key] !== undefined && !startupStateObject(value[key])) throw new Error('state-format');
+  }
+  if (value.plan?.slots !== undefined && (!Array.isArray(value.plan.slots) || value.plan.slots.some(item => !startupStateObject(item)))) throw new Error('state-format');
+  if (value.songLib !== undefined && !Array.isArray(value.songLib)) throw new Error('state-format');
+  for (const [list, packed] of [[value.songs || [], true],[value.rsongs || [], false]]) for (const song of list) {
+    let lines = song.lines;
+    if (packed && song.L != null) {
+      if (!Number.isInteger(song.L) || song.L < 0 || !Array.isArray(value.songLib?.[song.L])) throw new Error('lyric-reference');
+      lines = value.songLib[song.L];
+    }
+    if (!Array.isArray(lines) || lines.some(line => !startupStateObject(line))) throw new Error('lyric-format');
+  }
+}
+function startupHasWork(value) {
+  return ['songs','rsongs','notes','pubNotes','trash'].some(key => value[key]?.length)
+    || !!value.plan?.slots?.length || ['memos','staffMemos','draws','recs'].some(key => Object.keys(value[key] || {}).length);
+}
+function startupCandidate(snapshot) {
+  const candidates = [];
+  for (const slot of snapshot.slots) {
+    if (!slot.present) continue;
+    const value = slot.value;
+    if (!startupStateObject(value) || typeof value.txt !== 'string' || !value.txt
+        || (value.seq !== undefined && (!Number.isSafeInteger(value.seq) || value.seq < 0))) throw new Error('slot-format');
+    candidates.push(value);
+  }
+  candidates.sort((a,b) => (b.seq || 0) - (a.seq || 0));
+  if (candidates.length === 2 && (candidates[0].seq || 0) === (candidates[1].seq || 0)
+      && candidates[0].txt !== candidates[1].txt) throw new Error('ambiguous-generations');
+  // Do not silently promote an older generation over unreadable newer work.
+  const txt = candidates.length ? candidates[0].txt : snapshot.legacy;
+  if (txt === null) {
+    if (snapshot.broken.length) throw new Error('recovery-originals');
+    return {state:JSON.parse(JSON.stringify(S0)),seq:0};
+  }
+  const decoded = JSON.parse(txt);
+  validateStartupState(decoded);
+  if (candidates.length && snapshot.legacy !== null) {
+    const legacy = JSON.parse(snapshot.legacy);
+    validateStartupState(legacy);
+    const sorted = value => Array.isArray(value) ? value.map(sorted)
+      : startupStateObject(value) ? Object.fromEntries(Object.keys(value).sort().map(key => [key,sorted(value[key])])) : value;
+    const currentText = JSON.stringify(sorted(unpackState(JSON.parse(txt))));
+    if (currentText !== JSON.stringify(sorted(unpackState(legacy)))) throw new Error('ambiguous-storage');
+  }
+  if (!startupHasWork(decoded)) throw new Error('empty-saved-state');
+  return {state:Object.assign(JSON.parse(JSON.stringify(S0)),unpackState(decoded)),seq:candidates[0]?.seq || 0};
+}
+async function preserveStartupStorage(snapshot) {
+  // Exact raw envelopes are retained under an immutable, content-addressed key.
+  // No state slot or legacy/broken key is modified by this transaction.
+  const raw = JSON.stringify({slots:snapshot.slots,legacy:snapshot.legacy});
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(raw));
+  const key = 'preserved:startup:v1:' + Array.from(new Uint8Array(digest),x => x.toString(16).padStart(2,'0')).join('');
+  const database = await db();
+  if (startupPhase !== 'loading') throw new Error('startup-stopped');
+  await new Promise((resolve,reject) => {
+    const tx = database.transaction('state','readwrite'), store = tx.objectStore('state');
+    let failure;
+    const fail = () => { failure = new Error('preservation-failed'); try { tx.abort(); } catch (_) {} };
+    tx.oncomplete = () => failure ? reject(failure) : resolve();
+    tx.onerror = tx.onabort = () => reject(failure || new Error('preservation-failed'));
+    const requests = [store.get('state:0'),store.get('state:1'),store.get(key)];
+    let remaining = requests.length;
+    for (const request of requests) request.onsuccess = () => {
+      if (--remaining) return;
+      try {
+        if (startupPhase !== 'loading') return fail();
+        const current = {slots:requests.slice(0,2).map(q => q.result === undefined ? {present:false} : {present:true,value:q.result}),legacy:localStorage.getItem(KEY)};
+        if (JSON.stringify(current) !== raw) return fail();
+        if (requests[2].result !== undefined) {
+          if (JSON.stringify(requests[2].result) !== raw) return fail();
+        } else if (snapshot.slots.some(slot => slot.present) || snapshot.legacy !== null) store.add(current,key);
+      } catch (_) { fail(); }
+    };
+  });
+}
+function blockStartup() {
+  startupPhase = 'blocked';
+  bootErr = '保存データを確認できないため、保護のため停止しました。入力・保存・同期は停止しています。';
+  const target = document.getElementById('app');
+  if (target) {
+    target.inert = true;
+    target.innerHTML = '<div style="padding:40px 24px;color:#EDEDED;font:16px/1.8 -apple-system,sans-serif"><h2>データの保護を優先して停止しました</h2><p>保存データの読み込み・確認を完了できませんでした。</p><p>入力・保存・自動送信・自動受信は停止しています。この起動処理では既存データを削除・置換していません。</p><p>この画面を保ったまま、復旧の確認をお待ちください。</p></div>';
+  }
+}
 async function loadRaw() {
   // まずIndexedDB。新しい方を採り、読めなければ古い方。
   try {
@@ -279,28 +386,30 @@ async function loadRaw() {
 let booted = false;      // 起動の読み込みが済んだか
 let touched = false;     // 読み込みの前に、こちらで何か触ったか
 async function load() {
-  let raw = null;
+  if (startupPhase !== 'loading') return false;
+  const original = S;
   try {
-    raw = await loadRaw();
-    // 読み込みを待っている間に取り込みなどをしていたら、その内容を消さない
-    if (raw && !touched) S = Object.assign(S, unpackState(JSON.parse(raw)));
-  } catch (e) { /* 初回、または壊れている */ }
-  try {
-    migrate();
-  } catch (e) {
-    // 古いデータの変換でつまずいた場合。消さずに横に退避して、まっさらで開く。
-    try {
-      if (raw) recordingInboxStorageSet(KEY + ":broken:" + Date.now(), raw);
-      recordingInboxStorageRemove(KEY);
-    } catch (e2) { /* 保存できない場合は諦める */ }
-    S = JSON.parse(JSON.stringify(S0));
-    bootErr = "前のデータを読めなかったため、まっさらで開きました。\n古いデータは端末内に残してあります。";
-    try { migrate(); } catch (e3) { /* ここで転ぶなら何もできない */ }
+    const snapshot = await readStartupStorage(), candidate = startupCandidate(snapshot);
+    if (startupPhase !== 'loading') throw new Error('startup-stopped');
+    S = candidate.state;
+    migrate({preserve:true});
+    validateStartupState(S);
+    await preserveStartupStorage(snapshot);
+    if (recordingInboxStale || (recordingInboxProfileRequired && !recordingInboxOwner?.canWrite)
+        || startupPhase !== 'loading' || localStorage.getItem(KEY) !== snapshot.legacy) throw new Error('startup-changed');
+    saveSeq = candidate.seq; idbOK = true; touched = false; saveErr = false;
+    startupPhase = 'ready';
+    recordingInboxOwnerUI();
+    return true;
+  } catch (_) {
+    S = original;
+    blockStartup();
+    return false;
   }
 }
 
 let bootErr = "";
-function migrate() {
+function migrate({preserve = false} = {}) {
   // 表記を日本語から英語へ、そして連番へ。
   // 「ガヤ」が2行あれば Gaya1 Gaya2 になる。Pro Tools のマーカー名と揃えるため。
   try {
@@ -317,7 +426,10 @@ function migrate() {
       });
     });
     S.tagWords = (S.tagWords || []).map((x) => TAGMAP[x] || x);
-  } catch (e) { /* 変換できないものはそのまま残す */ }
+  } catch (e) {
+    if (preserve) throw e;
+    /* Explicit legacy conversions retain their previous tolerant behavior. */
+  }
 
   // 旧データの引き継ぎ：公演名の文字列しか無かったものを公演として作り直す
   if (!S.shows || !S.shows.length) {
@@ -368,10 +480,10 @@ function migrate() {
   if (S.planPrep == null) S.planPrep = 10;
   if (!S.secWords) S.secWords = [];
   if (!S.trash) S.trash = [];
-  purgeTrash();
+  if (!preserve) purgeTrash();
   if (!S.rosters) S.rosters = {};
   if (!S.seen) S.seen = {};
-  purgeRecs();
+  if (!preserve) purgeRecs();
   if (!S.plan.slots) S.plan.slots = [];
   if (S.recBars == null) S.recBars = true;
   if (S.secAll == null) S.secAll = false;
@@ -382,7 +494,7 @@ function migrate() {
     (so.lines || []).forEach((l) => { if (l.solo && !l.vt) l.vt = "ソロ"; });
   });
   // 古いデータにも、その曲に出てくる人の名簿を持たせる
-  if (orderTakes()) save();
+  if (orderTakes() && !preserve) save();
   S.songs.forEach((so) => {
     if (!so.roster || !so.roster.length) so.roster = songRoster(so);
     if (!so.sig) so.sig = songSig(so);
@@ -405,7 +517,7 @@ function migrate() {
       });
     }
   });
-  sweep();
+  if (!preserve) sweep();
   S.kbps = 128;
   if (S.preroll == null || S.preroll > 10) S.preroll = 5;
   // 旧データの引き継ぎ：グループが無ければ1つ作り、既存の曲と配信設定を移す
@@ -1237,23 +1349,8 @@ function unpackState(o) {
 // 保存に失敗したら、まず自分で空きを作ってから もう一度試す。
 // 消すのは「読めなくなった取り残し」だけ。中身が残っているものは勝手に消さない。
 function freeSpace() {
-  let freed = 0;
-  try {
-    const junk = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const k = localStorage.key(i);
-      if (!k || k.indexOf(KEY + ":broken:") !== 0) continue;
-      const v = localStorage.getItem(k) || "";
-      let empty = true;
-      try {
-        const o = unpackState(JSON.parse(v));
-        empty = !((o.songs || []).length || (o.notes || []).length);
-      } catch (e) { empty = true; }      // 読めないものは残しても使えない
-      if (empty) junk.push(k);
-    }
-    junk.forEach((k) => { recordingInboxStorageRemove(k); freed++; });
-  } catch (e) { /* 数えられない端末もある */ }
-  return freed;
+  // Unreadable/recording-only originals may be the only recovery source.
+  return 0;
 }
 // 保存はIndexedDBへ。書き込みは非同期なので、呼ばれた直後の分をまとめて書く。
 // 交互に2か所へ書き、片方が途中で切れても もう片方が残るようにする。
@@ -2826,6 +2923,7 @@ async function keepAwake() {
   } catch (e) { /* 対応していない端末では何もしない */ }
 }
 document.addEventListener("visibilitychange", () => {
+  if (!recordingInboxCanWrite()) return;
   if (document.hidden) { if (VIEW()) markRead(song()); return; }
   keepAwake();
   // ホーム画面から開き直した時に、待たずに最新を取りに行く
@@ -2836,13 +2934,12 @@ document.addEventListener("visibilitychange", () => {
 });
 // どこかで例外が出ても、真っ白のままにしない
 function showFatal(msg) {
+  if (startupPhase !== 'ready') { blockStartup(); return; }
   try {
     document.body.innerHTML = `<div style="padding:40px 24px;color:#EDEDED;font:15px/1.7 -apple-system,sans-serif">
       <div style="font-size:17px;font-weight:700;margin-bottom:12px">うまく開けませんでした</div>
       <div style="color:#9A9A9A;font-size:13px;white-space:pre-wrap;margin-bottom:20px">${String(msg || "").slice(0, 300)}</div>
       <button onclick="location.reload()" style="width:100%;padding:14px;border-radius:12px;background:#D97757;color:#0A0A0A;font-weight:700;border:0;margin-bottom:10px">開き直す</button>
-      <button onclick="try{var k='utacheck.v1';recordingInboxStorageSet(k+':broken:'+Date.now(),localStorage.getItem(k)||'');recordingInboxStorageRemove(k);}catch(e){};location.reload()"
-        style="width:100%;padding:14px;border-radius:12px;background:#1C1C1C;color:#9A9A9A;border:0">データを退避してまっさらで開く</button>
     </div>`;
   } catch (e) { /* これ以上は打つ手なし */ }
 }
@@ -2856,6 +2953,7 @@ window.addEventListener("unhandledrejection", (e) => {
 });
 
 window.addEventListener("pageshow", () => {
+  if (!recordingInboxCanWrite()) return;
   keepLinkInURL();
   if (S.ghToken && S.bkGistId) checkOther();
   if (S.src && !S.groups.some((g) => g.gistId)) syncSetlist(false);
@@ -4101,6 +4199,7 @@ function typingNow() {
   return true;
 }
 function render(background = false) {
+  if (!recordingInboxCanWrite()) return;
   // メンバーへのお知らせだけは、打っていても割り込ませる
   if ((typingNow() || renderPointers.size || Date.now() < scrollingUntil
     || (background && (U.sheet || U.menu || U.picker))) && !alertPending()) {
@@ -6222,6 +6321,7 @@ function finishSlot(sl) {
 let autoMsg = "";
 
 function tickPlan() {
+  if (!recordingInboxCanWrite()) return;
   autoPlan();
   const el = document.getElementById("pcd");
   const el2 = document.getElementById("pcd2");
@@ -10003,6 +10103,10 @@ function retainUnresolvedPublication(current, previous, unresolved, g) {
 }
 
 async function gh(path, opts) {
+  if (!recordingInboxCanWrite()) {
+    const error = new Error('データの確認が完了していないため、通信を停止しています。');
+    error.code = 'EDITOR_READ_ONLY'; throw error;
+  }
   const recordingInboxDone = /^(GET|HEAD)$/i.test((opts && opts.method) || "GET") ? () => {} : recordingInboxAdmitWriter();
   try {
   return await boundedPublicationRequest("https://api.github.com" + path, Object.assign({
@@ -10321,6 +10425,7 @@ function payloadKey(d) {
 }
 
 async function gistPush(gid, force) {
+  if (!recordingInboxCanWrite()) return false;
   const g = S.groups.find(x => x.id === gid);
   if (!g || !g.gistId || g.nopub || !S.ghToken) return "skip";
   const destination = g.gistId, token = S.ghToken, encryptionKey = g.key;
@@ -10391,6 +10496,7 @@ async function gistPush(gid, force) {
 // 送りすぎるとGitHubの上限に当たるので、30秒まとめてから1回だけ送る
 let lastPushAt = 0, limitedAt = "";
 function schedulePush() {
+  if (!recordingInboxCanWrite()) return;
   if (!S.ghToken || !S.autoPub || !S.groups.some((g) => g.gistId)) return;
   pushState = "未送信";
   clearTimeout(pushTimer);
@@ -10415,6 +10521,7 @@ async function pushOne(gid) {
   return queuePublication(() => publishOne(gid));
 }
 async function publishOne(gid) {
+  if (!recordingInboxCanWrite()) return false;
   const g = S.groups.find(x => x.id === gid);
   if (!S.ghToken || !g || !g.gistId || g.nopub) { pushState = "未送信"; return {sent:false, state:pushState}; }
   publishIssues = [];
@@ -10445,9 +10552,10 @@ let publishInFlight = false;
 let publicationQueue = Promise.resolve();
 let queuedPublications = 0;
 function queuePublication(work) {
+  if (!recordingInboxCanWrite()) return Promise.resolve(false);
   queuedPublications++;
   publishInFlight = true;
-  const result = publicationQueue.then(work).finally(() => {
+  const result = publicationQueue.then(() => recordingInboxCanWrite() ? work() : false).finally(() => {
     queuedPublications--;
     publishInFlight = queuedPublications > 0;
   });
@@ -10460,6 +10568,7 @@ async function doPush(silent) {
   return queuePublication(() => publishGroups(silent));
 }
 async function publishGroups(silent) {
+  if (!recordingInboxCanWrite()) return false;
   const live = S.groups.filter((g) => g.gistId && !g.nopub);
   if (!S.ghToken || !live.length) return;
   pushState = "送信中"; renderPublishStatus();
@@ -10530,7 +10639,7 @@ function hasPending() {
 
 // アプリを開いている間、自動でやりとりする
 setInterval(() => {
-  if (document.hidden || preview || renderPointers.size || Date.now() < scrollingUntil || typingNow()) return;
+  if (!recordingInboxCanWrite() || document.hidden || preview || renderPointers.size || Date.now() < scrollingUntil || typingNow()) return;
   if (S.ghToken && S.groups.some((g) => g.gistId)) {
     if (S.autoPub && !publishInFlight && !pushTimer && Date.now() - lastPushAt >= 8000 && hasPending()) doPush(true);
   } else if (S.src) {
@@ -10540,12 +10649,12 @@ setInterval(() => {
 }, 6000);
 
 setInterval(() => {
-  if (document.hidden || preview) return;
+  if (!recordingInboxCanWrite() || document.hidden || preview) return;
   if (VIEW() && S.pubAt && U.view === "live") render(true);     // 「◯分前」の表示を進める
 }, 60000);
 
 setInterval(() => {
-  if (document.hidden || preview) return;
+  if (!recordingInboxCanWrite() || document.hidden || preview) return;
   // 変わっていれば送る（別の端末とすぐ揃うように）
   if (VIEW() || backupInFlight || syncing || Date.now() < backupRetryAt) return;
   if (S.ghToken && bkSignature() !== S.bkHash && Date.now() - (S.bkAt || 0) > 20000) doBackup(true);
@@ -11852,32 +11961,21 @@ function copyText(t, msg) {
 /* ---------------- boot ---------------- */
 (async () => {
   if (!await recordingInboxBeforeBoot()) return;
-  await load();
+  if (await load() === false) return;
   booted = true;
   restoreViewSelection();
   if (!readViewSelection()) rememberViewSelection();
   if (VIEW() || /^#g=/.test(location.hash)) { U.view = "summary"; U.mode = "member"; }
   if (VIEW()) restoreViewerMember();
-  // 前まで localStorage に置いていた分は、IndexedDB へ引っ越す。
-  // 移し終えてから消すので、途中で止まっても元は残る。
-  if (idbOK) {
-    try {
-      const old = localStorage.getItem(KEY);
-      if (old) {
-        await saveNow();
-        const back = await idbGet("state:" + (saveSeq % 2));
-        if (back && back.txt) recordingInboxStorageRemove(KEY);
-      }
-    } catch (e) { /* 引っ越せなくても、IndexedDB側で動く */ }
-  }
+  // Keep the original localStorage copy for recovery after a successful import.
   render();
   importFromLink();
   syncSetlist(false);
 })();
 // 指摘の画面を開いたままアプリを閉じても、書きかけのメモが消えないように記録してから保存する
 const flushSheet = () => { if (U.sheet && sheetHasInput()) { clearTimeout(sheetTimer); commitNote(); } };
-window.addEventListener("pagehide", () => { flushSheet(); commitFields(); save(); saveNow(); });
-document.addEventListener("visibilitychange", () => { if (document.hidden) { flushSheet(); commitFields(); save(); saveNow(); } });
+window.addEventListener("pagehide", () => { if (!recordingInboxCanWrite()) return; flushSheet(); commitFields(); save(); saveNow(); });
+document.addEventListener("visibilitychange", () => { if (document.hidden && recordingInboxCanWrite()) { flushSheet(); commitFields(); save(); saveNow(); } });
 if ("serviceWorker" in navigator) {
   // 更新の到着だけでリハ中の画面や録音を中断しない。次の起動・再読み込みで反映する。
   navigator.serviceWorker.register("sw.js?v=" + APP_VER).then((r) => r.update()).catch(() => {});
@@ -11886,6 +11984,7 @@ if ("serviceWorker" in navigator) {
 /* App integration helpers. Optional module failure leaves existing app behavior intact. */
 let recordingInboxIntegration = null;
 function enterRecordingInboxEditor() {
+  if (!recordingInboxCanWrite()) return null;
   return recordingInboxIntegration ? recordingInboxIntegration.gate.acquireEditor() : () => {};
 }
 function withRecordingInboxEditor(work) {
