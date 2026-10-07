@@ -31,7 +31,11 @@
         }
         const state=JSON.parse(JSON.stringify(packet.state));
         // Restoration never creates token access; credentials stay in originals.
-        delete state.ghToken;
+        if(context.preserveEditorCredentials===true){
+          const editor=checkedObject(context.editorOriginalRaw,'candidate-invalid');
+          if(editor.ghToken!==undefined&&typeof editor.ghToken!=='string')fail('candidate-invalid');
+          if(state.ghToken!==editor.ghToken)fail('candidate-invalid');
+        }else delete state.ghToken;
         options.validate(state);if(!options.hasWork(state))fail('candidate-invalid');
         const txt=JSON.stringify(state);if(new TextEncoder().encode(txt).byteLength>MAX_JSON_BYTES)fail('candidate-invalid');
         const replaceHold=context.expectedHoldRaw!==undefined;
@@ -60,6 +64,7 @@
         const hold={v:1,seq,slot,copyKey,startupKey,sourceAt:packet.sourceDateUnknown===true?null:packet.at,candidateDigest:await options.hash(txt)};
         if(packet.sourceDateUnknown===true){hold.sourceDateUnknown=true;hold.sourceKind=packet.sourceKind==='local-excel'?'local-excel':'local-publication';}
         if(packet.sourceKind==='cloud-backup')hold.sourceKind='cloud-backup';
+        if(packet.sourceKind==='cloud-publication')hold.sourceKind='cloud-publication';
         const immutable=[{key:copyKey,value:original,raw:originalRaw},{key:startupKey,value:after,raw:afterRaw}];
         if(oldHold){
           hold.originalConnectionCopyKey=oldHold.originalConnectionCopyKey||oldHold.copyKey;
@@ -69,6 +74,14 @@
           // Keep the exact editor bytes, including JSON whitespace and key order.
           immutable.push({key:'preserved:editor:v1:'+await options.hash(editorOriginalRaw),value:editorOriginalRaw,raw:JSON.stringify(editorOriginalRaw)});
         }
+        if(context.sourceOriginalRaw!==undefined){
+          checkedObject(context.sourceOriginalRaw,'candidate-invalid');
+          immutable.push({key:'preserved:recovery-source:v1:'+await options.hash(context.sourceOriginalRaw),
+            value:context.sourceOriginalRaw,raw:JSON.stringify(context.sourceOriginalRaw)});
+          hold.sourceCopyKey=immutable.at(-1).key;
+        }
+        if(oldHold?.excelSources)hold.excelSources=JSON.parse(JSON.stringify(oldHold.excelSources));
+        if(oldHold?.excelSummary)hold.excelSummary=JSON.parse(JSON.stringify(oldHold.excelSummary));
         if(archives.length)hold.excelSources=(context.sourceSnapshots||[]).map(source=>({key:source.key,bytes:source.bytes,digest:source.digest}));
         if(packet.excelSummary)hold.excelSummary=JSON.parse(JSON.stringify(packet.excelSummary));
         if(!active(turn,context))return false;

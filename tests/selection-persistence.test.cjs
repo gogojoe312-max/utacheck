@@ -101,7 +101,7 @@ test('boot restores selection before first render, without replacing the state p
 });
 test('legacy saved selection is seeded before cloud synchronization on the first upgraded boot',async()=>{
   const a=setup();a.c.S.showId='o';a.c.S.groupId='ocha';
-  Object.assign(a.c,{startupRecoveryNetworkHold:false,load:async()=>{},booted:false,idbOK:false,location:{hash:''},restoreViewerMember(){},importFromLink(){},syncSetlist(){}});
+  Object.assign(a.c,{startupRecoveryNetworkHold:false,startupRecoveryRestoredView:false,load:async()=>{},booted:false,idbOK:false,location:{hash:''},restoreViewerMember(){},importFromLink(){},syncSetlist(){}});
   await vm.runInContext(block('/* ---------------- boot ---------------- */', '// 指摘の画面'),a.c);
   assert.equal(a.c.booted,true);assert.equal(JSON.parse(a.storage.get('utacheck.selection:editor')).showId,'o');
   a.c.S.showId='r';a.c.S.groupId='rose';a.run('restoreViewSelection()');assert.equal(a.c.S.showId,'o');
@@ -119,4 +119,3 @@ test('source replacement clears temporary navigation before applying the new sou
   vm.runInContext(block('function resetForNewSource()', 'function applySetlist(d)'),a.c);a.run('resetForNewSource()');
   assert.equal(a.c.U.summaryReturn,null);assert.equal(a.c.U.lyricTarget,null);assert.equal(a.c.U.summaryScroll,null);
 });
-

@@ -2,7 +2,7 @@
 "use strict";
 // A failed or unfinished startup must never write an empty replacement state.
 let startupPhase = 'loading';
-let startupRecoveryNetworkHold=true,startupRecoverySourceKind='',startupOriginalSnapshotRaw=null,startupRecoveryExcelSummary=null;
+let startupRecoveryNetworkHold=true,startupRecoverySourceKind='',startupOriginalSnapshotRaw=null,startupRecoveryExcelSummary=null,startupRecoveryRestoredView=false;
 function startupCanCommunicate(){return recordingInboxCanWrite()&&!startupRecoveryNetworkHold;}
 function startupRecoveryCanAct(){return startupPhase==='blocked'&&!document.hidden&&!recordingInboxStale&&(!recordingInboxProfileRequired||!!recordingInboxOwner?.canWrite);}
 /* Must precede app state initialization and boot. Unenrolled profiles keep legacy behavior. */
@@ -113,7 +113,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.41";
+const APP_VER = "16.41.42";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -530,6 +530,57 @@ function recoveryOriginalBackupHTML(){
     '<button id="recovery-original-backup-check" type="button" class="ghost" '+(recoveryOriginalBackupInspector?.busy?'disabled':'')+'>元の保存先を確認して復旧（送信なし）</button>'+
     '<pre id="recovery-original-backup-output" role="status" style="white-space:pre-wrap;font:12px/1.7 inherit;overflow-wrap:anywhere">'+h(recoveryOriginalBackupReport||'自動送受信は停止中です。')+'</pre></div>';
 }
+let recoveryShowAdditionRestorer=null,recoveryShowAdditionBusy=false,recoveryShowFileReading=false;
+async function recoveryImportShowAddition(rawText,addition){
+  if(!recoveryOriginalBackupCanRead()||recoveryShowAdditionBusy||typeof StartupRecoveredShowAddition==='undefined')
+    throw new Error('復旧資料を取り込める状態ではありません。現在の作業を保持しています。');
+  if(REC||(U.sheet&&sheetHasInput()))throw new Error('録音または書きかけの指摘を終えてから取り込んでください。');
+  if(typeof rawText!=='string'||new TextEncoder().encode(rawText).byteLength>20*1024*1024)
+    throw new Error('復旧ファイルの大きさを確認できません。取り込んでいません。');
+  recoveryShowAdditionBusy=true;let restoring=false,committed=false;
+  try{
+    addition=JSON.parse(rawText);
+    await saveNow();
+    if(saveErr)throw new Error('現在の作業の保存を確認できません。取り込んでいません。');
+    const baseline=await recoveryOriginalBackupSnapshot();
+    if(!recoveryOriginalBackupCanRead())throw new Error('確認を中止しました。現在の作業を保持しています。');
+    if(typeof addition?.originalText!=='string'||await backupDigest(addition.originalText)!==addition.source?.sha256)
+      throw new Error('配信原本の整合性を確認できません。取り込んでいません。');
+    let merged;
+    try{merged=StartupRecoveredShowAddition.merge(S,addition,{validateState:recoveryValidateCloudState,packState});}
+    catch(error){throw new Error(error?.recoveryCode==='source-already-added'
+      ?'この救出ファイルは追加済みです。二重に取り込んでいません。'
+      :'公演・指摘の参照または形式を確認できません。現在の作業を保持しています。');}
+    if(await recoveryOriginalBackupSnapshot()!==baseline)
+      throw new Error('編集中の内容が変わったため中止しました。現在の作業を保持しています。');
+    const live=JSON.parse(baseline),hold=live.values[2],originalEditorRaw=JSON.stringify(S),draftRaw=JSON.stringify(U.sheet||null),revision=stateRevision;
+    const active=()=>!document.hidden&&!recordingInboxStale&&(!recordingInboxProfileRequired||!!recordingInboxOwner?.canWrite)
+      &&startupRecoveryNetworkHold&&(startupPhase==='ready'||restoring&&startupPhase==='blocked')
+      &&stateRevision===revision&&JSON.stringify(S)===originalEditorRaw&&JSON.stringify(U.sheet||null)===draftRaw;
+    const packet={app:'utacheck',at:addition.source.at,sourceKind:'cloud-publication',state:merged.state};
+    packet.state.showId=merged.focusShowId;packet.state.groupId=merged.focusGroupId;packet.state.viewer=false;
+    // Preserve the selected REC song, current takes and timetable. REC can be
+    // reopened after the recovered original performances are shown.
+    packet.state.recMode=false;
+    packet.state=packState(packet.state);
+    const context={isActive:active,expectedOriginalRaw:JSON.stringify({slots:live.values.slice(0,2).map(value=>value===undefined?{present:false}:{present:true,value}),legacy:live.legacy}),
+      expectedHoldRaw:JSON.stringify(hold),editorOriginalRaw:originalEditorRaw,sourceOriginalRaw:rawText,preserveEditorCredentials:true};
+    recoveryShowAdditionRestorer=StartupFileRestoration.create({database:()=>DB,readLegacy:()=>localStorage.getItem(KEY),
+      validate:recoveryValidateCloudState,hasWork:startupHasWork,hash:backupDigest,isActive:active});
+    if(!await recoveryShowAdditionRestorer.prepare(packet,context)||!active())
+      throw new Error('原本保全の準備を確認できません。取り込んでいません。');
+    startupCancelBackupInspection();recoveryOriginalBackupInspector?.cancel();
+    restoring=true;startupPhase='blocked';const app=document.getElementById('app');if(app)app.inert=true;
+    const saved=await recoveryShowAdditionRestorer.commit(context);committed=saved.committed!==false;
+    if(saved.status==='restored'&&active()){location.reload();return true;}
+    if(saved.committed===false){startupPhase='ready';if(app)app.inert=false;}
+    else{recoveryOriginalWriteCommitted=saved.committed===true;blockStartup(new Error('startup-changed'));}
+    throw new Error('原本保全・取り込み後の再読確認を完了できません。自動送受信は停止中です。');
+  }finally{
+    if(!restoring||!committed)recoveryShowAdditionRestorer?.cancel();
+    recoveryShowAdditionBusy=false;
+  }
+}
 let startupAutomaticRecoveryStarted=false,startupAutomaticRecoveryActive=false,startupAutomaticRecoveryController=null;
 function startupAutomaticRecoveryOutput(text){
   const output=document.getElementById('startup-local-recovery-result');if(output)output.textContent=text;
@@ -746,6 +797,7 @@ async function startupAutomaticLocalRecovery(){
   finally{startupAutomaticRecoveryActive=false;if(startupAutomaticRecoveryController===controller)startupAutomaticRecoveryController=null;}
 }
 function startupCancelAutomaticRecovery(){
+  recoveryShowAdditionRestorer?.cancel();
   recoveryOriginalBackupInspector?.cancel();recoveryOriginalRestorer?.cancel();recoveryOriginalBackupCandidates=[];
   startupAutomaticRecoveryController?.abort();if(startupAutomaticRecoveryActive)startupLocalRestorer?.cancel();startupAutomaticRecoveryActive=false;
 }
@@ -1159,11 +1211,12 @@ async function load() {
     startupOriginalSnapshotRaw=JSON.stringify({slots:snapshot.slots,legacy:snapshot.legacy});
     const recoveryHold=await idbGet('recovery:network-hold:v1');
     startupRecoveryNetworkHold=recoveryHold!==undefined;
-    startupRecoverySourceKind=['local-publication','local-excel','cloud-backup'].includes(recoveryHold?.sourceKind)?recoveryHold.sourceKind:'';
+    startupRecoverySourceKind=['local-publication','local-excel','cloud-backup','cloud-publication'].includes(recoveryHold?.sourceKind)?recoveryHold.sourceKind:'';
     startupRecoveryExcelSummary=recoveryHold?.sourceKind==='local-excel'&&Number.isSafeInteger(recoveryHold.excelSummary?.read)&&recoveryHold.excelSummary.read>=0
       &&Number.isSafeInteger(recoveryHold.excelSummary?.total)&&recoveryHold.excelSummary.total>=recoveryHold.excelSummary.read?recoveryHold.excelSummary:null;
     startupSetStage('select-state');
     const candidate = startupCandidate(snapshot);
+    startupRecoveryRestoredView=recoveryHold?.sourceKind==='cloud-publication'&&candidate.seq===recoveryHold.seq;
     // The first reopen must verify the workbook sources even if the previous
     // page closed between the atomic commit and its final reread. Later local
     // edits advance the state sequence and remain editable without this check.
@@ -1178,7 +1231,7 @@ async function load() {
     if (startupPhase !== 'loading') throw new Error('startup-stopped');
     S = candidate.state;
     startupSetStage('prepare-state');
-    migrate({preserve:true});
+    migrate({preserve:true,keepPublicationBindings:startupRecoverySourceKind==='cloud-publication'});
     startupSetStage('validate-state');
     validateStartupState(S);
     startupSetStage('preserve-copy'); startupDiagnostic.preservation = 'attempting';
@@ -1200,7 +1253,7 @@ async function load() {
 }
 
 let bootErr = "";
-function migrate({preserve = false} = {}) {
+function migrate({preserve = false,keepPublicationBindings = false} = {}) {
   // 表記を日本語から英語へ、そして連番へ。
   // 「ガヤ」が2行あれば Gaya1 Gaya2 になる。Pro Tools のマーカー名と揃えるため。
   try {
@@ -1236,6 +1289,7 @@ function migrate({preserve = false} = {}) {
   // 元の歌詞が残っているので、合う行があればそこへ戻してから消す。
   // メンバー側の指摘は S.pubNotes に入る。両方を見る。
   [].concat(S.notes || [], S.pubNotes || []).forEach((n) => {
+    if(keepPublicationBindings)return;
     const m = /^［元：([\s\S]*?)］[\s　]*/.exec(n.memo || "");
     if (!m) return;
     n.memo = String(n.memo).slice(m[0].length);
@@ -1285,7 +1339,7 @@ function migrate({preserve = false} = {}) {
     (so.lines || []).forEach((l) => { if (l.solo && !l.vt) l.vt = "ソロ"; });
   });
   // 古いデータにも、その曲に出てくる人の名簿を持たせる
-  if (orderTakes() && !preserve) save();
+  if (!keepPublicationBindings&&orderTakes()&&!preserve) save();
   S.songs.forEach((so) => {
     if (!so.roster || !so.roster.length) so.roster = songRoster(so);
     if (!so.sig) so.sig = songSig(so);
@@ -1327,7 +1381,7 @@ function migrate({preserve = false} = {}) {
   syncShowGroup();
   // 「全（データ）」等が人名として登録されてしまった分を掃除し、全員扱いに直す
   const zen = S.members.filter((m) => /^全/.test(m.name));
-  if (zen.length) {
+  if (zen.length&&!keepPublicationBindings) {
     const zids = zen.map((m) => m.id);
     S.members = S.members.filter((m) => !/^全/.test(m.name));
     const all = S.members.map((m) => m.id);
@@ -6792,7 +6846,8 @@ function backupSettingsHTML() {
     <button class="primary" data-act="bknow" ${backupInFlight ? "disabled" : ""}>${backupInFlight ? "保存中…" : S.ghToken ? "バックアップする" : "ファイルに保存"}</button>
     ${S.ghToken ? '<button class="ghost" data-act="bkfile">ファイルに保存</button>' : ""}
     ${S.ghToken ? '<button class="ghost" data-act="backup-restore">クラウドから復元</button>' : ""}
-    <button class="ghost" data-act="backup-file-restore">ファイルから復元</button>
+    <button class="ghost" data-act="backup-file-restore">${startupRecoveryNetworkHold?'公演・指摘の救出ファイルを追加':'ファイルから復元'}</button>
+    ${startupRecoveryNetworkHold?'<p class="note">救出用の追加ファイルは現在の資料・REC・追加指摘を保持して取り込みます。自動送受信は停止したままです。</p>':''}
     ${S.ghToken && S.bkGistId ? '<button class="ghost" data-act="backup-inspect">クラウドを確認（送信・復元しない）</button>' : ''}
     ${syncReadReport ? `<p class="note" role="status" style="white-space:pre-wrap">${h(syncReadReport)}</p>` : ''}
     <button class="ghost" data-act="recording-addition">録音曲・時間割を追加用ファイルから追加</button>
@@ -12238,9 +12293,29 @@ function chooseBackupFile() {
 async function restoreBackupFile(file) {
   const recordingInboxRelease = enterRecordingInboxEditor();
   if (!recordingInboxRelease) return false;
+  let ownsRecoveryFileRead=false;
   try {
   try {
-    const raw = JSON.parse(await file.text());
+    const held=startupRecoveryNetworkHold;let fileBaseline;
+    if(held){
+      if(recoveryShowFileReading||recoveryShowAdditionBusy||!recoveryOriginalBackupCanRead())throw new Error('復旧資料を取り込める状態ではありません。現在の作業を保持しています。');
+      if(REC||(U.sheet&&sheetHasInput()))throw new Error('録音または書きかけの指摘を終えてから取り込んでください。');
+      recoveryShowFileReading=true;ownsRecoveryFileRead=true;
+      await saveNow();if(saveErr)throw new Error('現在の作業の保存を確認できません。取り込んでいません。');
+      fileBaseline=await recoveryOriginalBackupSnapshot();
+    }
+    if(held&&(!Number.isSafeInteger(file?.size)||file.size<=0||file.size>20*1024*1024))
+      throw new Error('救出ファイルの大きさを確認できません。取り込んでいません。');
+    let sourceText;
+    try{sourceText=await file.text();}catch(error){if(held)throw new Error('救出ファイルを読み取れません。現在の作業を保持しています。');throw error;}
+    let raw;
+    try{raw=JSON.parse(sourceText);}catch(error){if(held)throw new Error('救出ファイルの形式を確認できません。取り込んでいません。');throw error;}
+    if(held){
+      if(!recoveryOriginalBackupCanRead()||await recoveryOriginalBackupSnapshot()!==fileBaseline)
+        throw new Error('ファイル確認中に編集または保存内容が変わったため中止しました。現在の作業を保持しています。');
+      if(raw?.app!=='utacheck-recovered-shows-addition')throw new Error('現在の資料を保持するため、公演・指摘の救出用追加ファイルを選んでください。');
+      await recoveryImportShowAddition(sourceText,raw);return;
+    }
     let obj;
     try { obj = await unpackWithPass(raw, S.bkKey, true); }
     catch (e) {
@@ -12262,6 +12337,7 @@ async function restoreBackupFile(file) {
     if (saveErr) throw new Error("端末に保存できません。空き容量を確認してください。");
     render(); alert("ファイルから復元しました。");
   } catch (e) { alert("復元できませんでした。\n" + e.message); }
+  finally{if(ownsRecoveryFileRead)recoveryShowFileReading=false;}
   } finally { recordingInboxRelease(); }
 }
 
@@ -12769,14 +12845,14 @@ function copyText(t, msg) {
   if (!await recordingInboxBeforeBoot()) return;
   if (await load() === false) return;
   booted = true;
-  restoreViewSelection();
-  if (!readViewSelection()) rememberViewSelection();
+  if(startupRecoveryRestoredView){U.view='setup';U.showFilter='';U.songIdx=0;rememberViewSelection();}
+  else{restoreViewSelection();if (!readViewSelection()) rememberViewSelection();}
   if (VIEW() || /^#g=/.test(location.hash)) { U.view = "summary"; U.mode = "member"; }
   if (VIEW()) restoreViewerMember();
   // Keep the original localStorage copy for recovery after a successful import.
   render();
   if(startupRecoveryNetworkHold&&startupRecoverySourceKind==='local-excel')void recoveryInspectOriginalBackup();
-  if(startupRecoveryNetworkHold){const notice=document.createElement('div');notice.id='recovery-network-notice';notice.textContent=startupRecoverySourceKind==='cloud-backup'?'元のGitHubバックアップから公演・曲・指摘を再開しました。現在の作業と原ファイルを保全し、自動送受信は停止中です。':startupRecoverySourceKind==='local-excel'?'元Excel救出'+(startupRecoveryExcelSummary?' '+startupRecoveryExcelSummary.read+' / '+startupRecoveryExcelSummary.total+'資料':'')+'。元公演との対応・過去の指摘や管理メモ等は未回復です。原本保持・同期停止中です。':startupRecoverySourceKind==='local-publication'?'配信コピーから曲・指摘などを部分復旧しました。配信外の管理メモ・録音管理などは未回復です。元ファイルを保持し、自動送受信は停止中です。':'端末内の復元内容で再開しました。自動送受信は停止中です。';notice.setAttribute('role','status');notice.style.cssText='position:fixed;bottom:0;left:0;right:0;z-index:99999;background:#283A52;color:white;padding:10px;text-align:center;font-size:12px;pointer-events:none';document.body.appendChild(notice);}
+  if(startupRecoveryNetworkHold){const notice=document.createElement('div');notice.id='recovery-network-notice';notice.textContent=startupRecoverySourceKind==='cloud-backup'?'元のGitHubバックアップから公演・曲・指摘を再開しました。現在の作業と原ファイルを保全し、自動送受信は停止中です。':startupRecoverySourceKind==='local-excel'?'元Excel救出'+(startupRecoveryExcelSummary?' '+startupRecoveryExcelSummary.read+' / '+startupRecoveryExcelSummary.total+'資料':'')+'。元公演との対応・過去の指摘や管理メモ等は未回復です。原本保持・同期停止中です。':['local-publication','cloud-publication'].includes(startupRecoverySourceKind)?'配信コピーから公演・曲・指摘などを部分復旧しました。配信外の管理メモ・録音管理などは未回復です。元ファイルを保持し、自動送受信は停止中です。':'端末内の復元内容で再開しました。自動送受信は停止中です。';notice.setAttribute('role','status');notice.style.cssText='position:fixed;bottom:0;left:0;right:0;z-index:99999;background:#283A52;color:white;padding:10px;text-align:center;font-size:12px;pointer-events:none';document.body.appendChild(notice);}
   if(!startupRecoveryNetworkHold){importFromLink();syncSetlist(false);}
 })();
 // 指摘の画面を開いたままアプリを閉じても、書きかけのメモが消えないように記録してから保存する
