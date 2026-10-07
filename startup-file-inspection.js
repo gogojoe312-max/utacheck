@@ -7,10 +7,19 @@
     'saved-key-missing','compression-unavailable','state-format','password-format'];
   const fail=code=>{const error=new Error(code);error.inspectionCode=code;throw error;};
   const safe=error=>codes.includes(error?.inspectionCode)?error.inspectionCode:'backup-format';
+  // Match the existing local import's bounded Unicode/whitespace compatibility.
+  // The entered value is tried first and is never replaced or persisted.
+  function localKeyVariants(password){
+    const out=[],add=value=>{if(!out.includes(value))out.push(value);};
+    for(const value of [password,password.trim(),password.replace(/[\s　]/g,'')]){
+      add(value);try{add(value.normalize('NFC'));add(value.normalize('NFD'));}catch(_){}
+    }
+    return out;
+  }
   function create(options){
     let selected=null,busy=false,epoch=0,controller=null;
     const visible=()=>options.isActive();
-    function cancel(){epoch++;controller?.abort();selected=null;}
+    function cancel(){epoch++;controller?.abort();selected=null;options.onDiscard?.();}
     function select(file){
       cancel();
       if(!visible())return null;
@@ -43,10 +52,20 @@
               ||Math.floor(raw.data.replace(/=+$/,'').length*3/4)<16)fail('backup-format');}
           catch(_){fail('backup-format');}
         }
-        if(raw.enc&&!password)fail('saved-key-missing');
+        const keys=raw.enc?localKeyVariants(password).filter(key=>key!==''):[password];
+        if(raw.enc&&options.readSavedKeys){
+          let saved;try{saved=await options.readSavedKeys({signal,isActive:active});}catch(_){saved=[];}
+          assert();for(const key of Array.isArray(saved)?saved.slice(0,24):[])
+            if(typeof key==='string'&&key.length>0&&key.length<=4096&&!keys.includes(key))keys.push(key);
+        }
+        if(raw.enc&&!keys.length)fail('saved-key-missing');
         let packet;
-        try{packet=await options.decodeBackup(raw,password,{signal,isActive:active});}
-        catch(error){if(error?.inspectionCode)throw error;fail('decrypt-failed');}
+        for(const key of keys){
+          assert();
+          try{packet=await options.decodeBackup(raw,key,{signal,isActive:active});break;}
+          catch(error){assert();if(error?.inspectionCode?error.inspectionCode!=='decrypt-failed':!error?.badKey)throw error;}
+        }
+        if(packet===undefined)fail('decrypt-failed');
         password='';assert();
         if(!object(packet)||packet.app!=='utacheck'||!Number.isSafeInteger(packet.at)||packet.at<=0||packet.at>8640000000000000||!object(packet.state))fail('backup-format');
         result.counts=options.counts(packet.state);result.at=packet.at;
@@ -56,6 +75,10 @@
           assert();result.ancillary={};
           for(const key of ['total','audio','workbooks','other','unclassified','bytes','matchedRecordings'])
             result.ancillary[key]=Number.isSafeInteger(value?.[key])&&value[key]>=0?value[key]:null;
+        }
+        if(options.prepareRestore){
+          let prepared=false;try{prepared=await options.prepareRestore(packet,{signal,isActive:active});}catch(_){}
+          assert();result.restoreAvailable=prepared===true;
         }
         assert();result.status='checked';selected=null;emit(result);return JSON.parse(JSON.stringify(result));
       }catch(error){password='';result.status=safe(error);result.counts=null;result.at=null;result.backupIdPresent=false;result.ancillary=null;

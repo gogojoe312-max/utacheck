@@ -2,6 +2,9 @@
 "use strict";
 // A failed or unfinished startup must never write an empty replacement state.
 let startupPhase = 'loading';
+let startupRecoveryNetworkHold=true;
+function startupCanCommunicate(){return recordingInboxCanWrite()&&!startupRecoveryNetworkHold;}
+function startupRecoveryCanAct(){return startupPhase==='blocked'&&!document.hidden&&!recordingInboxStale&&(!recordingInboxProfileRequired||!!recordingInboxOwner?.canWrite);}
 /* Must precede app state initialization and boot. Unenrolled profiles keep legacy behavior. */
 const recordingInboxEnrollmentKey = 'utacheck:recording-inbox:device-v1';
 const recordingInboxWriterKey = 'utacheck:recording-inbox:writer-required-v1';
@@ -62,7 +65,7 @@ window.addEventListener('storage', event => {
 });
 for (const type of ['click','input','change','keydown','submit','pointerdown','drop']) document.addEventListener(type, event => {
   if (recordingInboxCanWrite() || event.target.closest?.('[data-inbox-owner-reload]')) return;
-  const fileControl=event.target.closest?.('#startup-file-input,#startup-file-password,#startup-file-label,#startup-file-visibility,#startup-file-check,#startup-file-cancel');
+  const fileControl=event.target.closest?.('#startup-file-input,#startup-file-password,#startup-file-label,#startup-file-visibility,#startup-file-check,#startup-file-cancel,#startup-file-restore');
   if(startupPhase==='blocked'&&fileControl?.closest?.('#startup-protection')){
     event.stopImmediatePropagation();
     const id=fileControl.id;
@@ -81,6 +84,7 @@ for (const type of ['click','input','change','keydown','submit','pointerdown','d
     if(id==='startup-file-check'&&type==='click'&&!fileControl.disabled)void startupCheckLocalFile();
     if(id==='startup-file-visibility'&&type==='click')startupTogglePassphrase();
     if(id==='startup-file-cancel'&&type==='click')startupCancelLocalFileInspection();
+    if(id==='startup-file-restore'&&type==='click'&&!fileControl.disabled)void startupRestoreLocalFile();
     return;
   }
   const backupCheck = event.target.closest?.('#startup-backup-check');
@@ -103,7 +107,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.36";
+const APP_VER = "16.41.37";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -378,6 +382,7 @@ function startupCancelBackupInspection() {
 if(typeof window!=='undefined')window.addEventListener('pagehide',()=>{startupCancelBackupInspection();startupCancelLocalFileInspection();});
 if(typeof document!=='undefined'&&document.addEventListener)document.addEventListener('visibilitychange',()=>{if(document.hidden){startupCancelBackupInspection();startupCancelLocalFileInspection();}});
 let startupFileInspector=null;
+let startupLocalRestorer=null;
 let startupFileComposing=false;
 const startupIMEFields=new WeakSet();
 function startupFileIMEActive(){return startupFileComposing;}
@@ -411,17 +416,19 @@ function startupClearPassphrase(){
   const {password}=startupFileControls();if(password){password.blur?.();password.value='';}startupFileComposing=false;startupPassphraseMode(false);
 }
 function startupLocalFileText(result){
-  const labels={selected:'ファイルを選択しました。合言葉はこの画面だけで入力してください。',checking:'端末内で確認中（送信・復元なし）',
+  const labels={selected:'ファイルを選択しました。まず入力せず件数確認を押すと、保存済みの合言葉を端末内で確認します。',checking:'端末内で確認中（送信・復元なし）',
     checked:'このファイルの候補確認ができました（復元はまだしていません）。',cancelled:'確認を中止しました。',
     'file-limit':'ファイルの容量を確認できないか、32MiBの確認上限を超えています。','file-read-failed':'ファイルを読み取れませんでした。',
     'backup-format':'バックアップの形式を確認できませんでした。','backup-limit':'展開後の容量が20MiBの確認上限を超えています。',
-    'decrypt-failed':'この合言葉では復号を確認できませんでした。この画面で再入力できます。',
-    'saved-key-missing':'この画面に合言葉を入力してください。','compression-unavailable':'この端末では展開を確認できませんでした。',
+    'decrypt-failed':'保存済みの合言葉と旧形式の文字表現では復号を確認できませんでした。元データは保持されています。',
+    'saved-key-missing':'端末内に使える保存済みの合言葉を確認できませんでした。','compression-unavailable':'この端末では展開を確認できませんでした。',
     'state-format':'保存内容の形式を確認できませんでした。','password-format':'合言葉の入力を確認してください。'};
   const lines=[labels[result.status]||'未確認'];
   if(Number.isSafeInteger(result.bytes))lines.push('ファイル容量：'+result.bytes+' bytes');
   if(result.status==='checked'&&result.counts){const n=result.counts;
     lines.push('保存日時：'+new Date(result.at).toLocaleString('ja-JP'));
+    if(result.restoreAvailable)lines.push('この日時の内容へ戻せます。以降の変更はこのファイルに含まれません。端末ファイルを保持し、自動同期は停止して再開します。');
+    else if(result.restoreAvailable===false)lines.push('件数は確認できましたが、元の保存世代の保全準備は未確認です。保護停止を維持します。');
     lines.push('公演 '+n.shows+' / 曲 '+n.songs+' / 録音曲 '+n.rsongs+' / 記録 '+n.notes+' / 受信記録 '+n.pubNotes);
     lines.push('管理メモ '+n.staffMemos+' / 総括 '+n.memos+' / 手書き '+n.draws+' / 録音管理 '+n.recs+' / 予定 '+n.planSlots+' / 削除保留 '+n.trash);
     lines.push('バックアップ内の保存先ID：'+(result.backupIdPresent?'形式確認済み（通信していません）':'未確認'));
@@ -431,7 +438,7 @@ function startupLocalFileText(result){
       lines.push('参照が一致しないファイルもすべて保持しています。');
     }
   }
-  lines.push('合言葉・バックアップ内容を保存・送信せず、元データと端末ファイルは変更しません。');return lines.join('\n');
+  lines.push('件数確認では保存・送信しません。復元ボタンを押すと原本を保全して端末内の内容を戻します。端末ファイルは保持します。');return lines.join('\n');
 }
 function startupReadLocalFile(file,signal){
   return new Promise((resolve,reject)=>{const reader=new FileReader();let listening=false;
@@ -466,15 +473,43 @@ function startupFileControls(){
   return {file:document.getElementById('startup-file-input'),password:document.getElementById('startup-file-password'),
     check:document.getElementById('startup-file-check'),output:document.getElementById('startup-file-result')};
 }
+function startupReadSavedLocalKeys(context){
+  if(!DB||!DB.objectStoreNames.contains('state'))return Promise.resolve([]);
+  return new Promise(resolve=>{
+    const tx=DB.transaction('state','readonly'),store=tx.objectStore('state'),requests=['state:0','state:1'].map(key=>store.get(key));
+    const abort=()=>{try{tx.abort();}catch(_){}},cleanup=()=>context.signal?.removeEventListener('abort',abort);
+    context.signal?.addEventListener('abort',abort,{once:true});
+    tx.onerror=tx.onabort=()=>{cleanup();resolve([]);};
+    tx.oncomplete=()=>{cleanup();if(!context.isActive()){resolve([]);return;}const keys=[],add=key=>{if(typeof key==='string'&&key.length>0&&key.length<=4096&&!keys.includes(key)&&keys.length<24)keys.push(key);};
+      for(const request of requests)try{const state=JSON.parse(request.result?.txt||'null');if(!startupStateObject(state))continue;add(state.bkKey);add(state.key);if(Array.isArray(state.groups))for(const group of state.groups)add(group?.key);}catch(_){}
+      resolve(keys);};
+  });
+}
+async function startupPrepareLocalRestore(packet,context){
+  if(typeof StartupFileRestoration==='undefined'||!DB||!startupRecoveryCanAct())return false;
+  startupLocalRestorer??=StartupFileRestoration.create({database:()=>DB,readLegacy:()=>localStorage.getItem(KEY),
+    validate:validateStartupState,hasWork:startupHasWork,hash:backupDigest,isActive:startupRecoveryCanAct});
+  return startupLocalRestorer.prepare(packet,context);
+}
+async function startupRestoreLocalFile(){
+  const button=document.getElementById('startup-file-restore'),output=startupFileControls().output;
+  if(!startupRecoveryCanAct()||!startupLocalRestorer||startupLocalRestorer.busy||startupFileInspector?.busy||button?.disabled)return;
+  if(button)button.disabled=true;startupCancelBackupInspection();startupClearPassphrase();
+  if(output)output.textContent='元の保存世代を保全して端末内で復元中です。';
+  const result=await startupLocalRestorer.commit({isActive:startupRecoveryCanAct});
+  if(result.status==='restored'&&startupRecoveryCanAct()){if(output)output.textContent='保全コピーと復元内容を再確認しました。自動同期を停止して開き直します。';location.reload();return;}
+  if(output)output.textContent='復元の確認を完了できませんでした（'+result.status+'）。保護停止を維持しています。';
+}
 function startupEnsureFileInspector(){
   startupBindPassphraseIME(startupFileControls().password);
   if(startupFileInspector)return true;
   if(typeof StartupFileInspection==='undefined'||typeof StartupBackupInspection==='undefined')return false;
   startupFileInspector=StartupFileInspection.create({readFile:startupReadLocalFile,
     decodeBackup:(raw,key,context)=>StartupBackupInspection.decodeBackup(raw,key,{...context,openJSON,base64Decode:b64d}),
-    counts:StartupBackupInspection.counts,readAncillary:startupLocalClipMetadata,
+    counts:StartupBackupInspection.counts,readAncillary:startupLocalClipMetadata,readSavedKeys:startupReadSavedLocalKeys,
+    prepareRestore:startupPrepareLocalRestore,onDiscard:()=>startupLocalRestorer?.cancel(),
     isActive:()=>startupPhase==='blocked'&&!document.hidden,
-    onUpdate:result=>{const {output,check}=startupFileControls();if(output)output.textContent=startupLocalFileText(result);if(check)check.disabled=result.status==='checking'||result.status==='checked';}
+    onUpdate:result=>{const restore=document.getElementById('startup-file-restore');if(restore){restore.hidden=result.restoreAvailable!==true;restore.disabled=result.restoreAvailable!==true;}const {output,check}=startupFileControls();if(output)output.textContent=startupLocalFileText(result);if(check)check.disabled=result.status==='checking'||result.status==='checked';}
   });return true;
 }
 function startupSelectLocalFile(file){
@@ -489,7 +524,7 @@ async function startupCheckLocalFile(){
   await startupFileInspector.check(password);
 }
 function startupCancelLocalFileInspection(){
-  startupFileInspector?.cancel();const controls=startupFileControls();
+  startupFileInspector?.cancel();startupLocalRestorer?.cancel();const restore=document.getElementById('startup-file-restore');if(restore){restore.hidden=true;restore.disabled=true;}const controls=startupFileControls();
   if(controls.file)controls.file.value='';startupClearPassphrase();if(controls.check)controls.check.disabled=true;
   if(controls.output&&controls.output.textContent)controls.output.textContent='確認を中止しました。送信・復元はしていません。';
 }
@@ -727,7 +762,7 @@ function blockStartup(error) {
         document.body.appendChild(panel);
       }
       const inspection = '<div style="max-width:720px;margin:0 auto;padding:0 20px 32px"><button id="startup-backup-check" type="button" style="padding:14px;background:#283A52;border:1px solid #67798F;border-radius:12px;line-height:1.6">保存先のバックアップを確認（送信・復元なし）</button><pre id="startup-backup-result" role="status" aria-live="polite" style="margin-top:16px;white-space:pre-wrap;font:13px/1.8 -apple-system,sans-serif;overflow-wrap:anywhere"></pre></div>';
-      const fileInspection='<div style="max-width:720px;margin:0 auto;padding:0 20px 40px;border-top:1px solid #344152"><h3 style="margin:20px 0 12px">手元のファイルを確認（送信・復元なし）</h3><p>端末のFilesにあるバックアップを選び、合言葉はこの画面だけで入力してください。</p><input id="startup-file-input" type="file" accept=".json,application/json" style="display:block;max-width:100%;margin:16px 0"><label id="startup-file-label" for="startup-file-password">合言葉（保存・送信しません）</label><input id="startup-file-password" type="password" inputmode="text" lang="ja" maxlength="4096" autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off" style="display:block;width:100%;padding:14px;background:#202020;border:1px solid #67798F;border-radius:10px;margin:8px 0 16px"><button id="startup-file-visibility" type="button" aria-pressed="false" style="padding:12px;border:1px solid #67798F;border-radius:12px;margin-bottom:12px">日本語で入力（表示）</button><p id="startup-file-visible-notice" hidden style="margin-bottom:12px;color:#FFCE99">日本語入力中は合言葉が画面に表示されます。周囲から見えない場所で入力してください。</p><button id="startup-file-check" type="button" disabled style="padding:14px;background:#283A52;border:1px solid #67798F;border-radius:12px">このファイルの件数を確認</button> <button id="startup-file-cancel" type="button" style="padding:14px;border:1px solid #67798F;border-radius:12px">確認を中止</button><pre id="startup-file-result" role="status" aria-live="polite" style="margin-top:16px;white-space:pre-wrap;font:13px/1.8 -apple-system,sans-serif;overflow-wrap:anywhere"></pre></div>';
+      const fileInspection='<div style="max-width:720px;margin:0 auto;padding:0 20px 40px;border-top:1px solid #344152"><h3 style="margin:20px 0 12px">手元のファイルを確認（送信・復元なし）</h3><p>端末のFilesにあるバックアップを選んで確認してください。保存済みの合言葉があれば端末内で使用します。入力した文字は保存・送信しません。</p><input id="startup-file-input" type="file" accept=".json,application/json" style="display:block;max-width:100%;margin:16px 0"><label id="startup-file-label" for="startup-file-password">合言葉（保存・送信しません）</label><input id="startup-file-password" type="password" inputmode="text" lang="ja" maxlength="4096" autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off" style="display:block;width:100%;padding:14px;background:#202020;border:1px solid #67798F;border-radius:10px;margin:8px 0 16px"><button id="startup-file-visibility" type="button" aria-pressed="false" style="padding:12px;border:1px solid #67798F;border-radius:12px;margin-bottom:12px">日本語で入力（表示）</button><p id="startup-file-visible-notice" hidden style="margin-bottom:12px;color:#FFCE99">日本語入力中は合言葉が画面に表示されます。周囲から見えない場所で入力してください。</p><button id="startup-file-check" type="button" disabled style="padding:14px;background:#283A52;border:1px solid #67798F;border-radius:12px">このファイルの件数を確認</button> <button id="startup-file-cancel" type="button" style="padding:14px;border:1px solid #67798F;border-radius:12px">確認を中止</button><button id="startup-file-restore" type="button" hidden disabled style="padding:14px;margin-top:16px;background:#4A5534;border:1px solid #819A59;border-radius:12px">この日時の内容に戻す（端末ファイル保持・同期停止）</button><pre id="startup-file-result" role="status" aria-live="polite" style="margin-top:16px;white-space:pre-wrap;font:13px/1.8 -apple-system,sans-serif;overflow-wrap:anywhere"></pre></div>';
       if (!panel.querySelector?.('#startup-file-input')) panel.innerHTML = markup + inspection + fileInspection;
     }
   }
@@ -753,6 +788,8 @@ async function load() {
   try {
     startupSetStage('read-storage');
     const snapshot = await readStartupStorage();
+    const recoveryHold=await idbGet('recovery:network-hold:v1');
+    startupRecoveryNetworkHold=recoveryHold!==undefined;
     startupSetStage('select-state');
     const candidate = startupCandidate(snapshot);
     if (startupPhase !== 'loading') throw new Error('startup-stopped');
@@ -1522,6 +1559,7 @@ const changedCount = () => SONGS().reduce((a, so) => a
 // 録音は30日で自動的に消す（容量を食うため）
 const REC_DAYS = 30;
 function purgeRecs() {
+  if(typeof startupRecoveryNetworkHold!=='undefined'&&startupRecoveryNetworkHold)return 0;
   const lim = Date.now() - REC_DAYS * 86400000;
   const keep = trashClips();
   let n = 0;
@@ -1543,6 +1581,7 @@ const trashClips = () => {
   return out;
 };
 function purgeTrash() {
+  if(typeof startupRecoveryNetworkHold!=='undefined'&&startupRecoveryNetworkHold)return;
   const lim = Date.now() - TRASH_DAYS * 86400000;
   const keep = [], gone = [];
   (S.trash || []).forEach((t) => (t.at < lim ? gone.push(t) : keep.push(t)));
@@ -1620,6 +1659,7 @@ function orderTakes() {
 
 // 曲や公演を消したときに残る、行き場のないデータを片付ける
 function sweep() {
+  if(typeof startupRecoveryNetworkHold!=='undefined'&&startupRecoveryNetworkHold)return;
   // レコーディングの曲は S.songs に居ない。ここに入れ忘れると、
   // その曲に付けた手書き・メモ・録音・指摘が起動のたびに消える。
   const songIds = S.songs.map((x) => x.id).concat((S.rsongs || []).map((x) => x.id));
@@ -4350,6 +4390,7 @@ async function getOriginalExcel(so) {
   return null;
 }
 function delClip(id) {
+  if(typeof startupRecoveryNetworkHold!=='undefined'&&startupRecoveryNetworkHold)return;
   if (id.startsWith("xls:") && [...(S.songs || []), ...(S.rsongs || []), ...(S.trash || []).flatMap(t => t.songs || [])]
     .some(so => so.xlsSourceId && "xls:" + so.xlsSourceId === id)) return;
   let done;
@@ -10474,6 +10515,7 @@ function retainUnresolvedPublication(current, previous, unresolved, g) {
 }
 
 async function gh(path, opts) {
+  if(typeof startupCanCommunicate==='function'&&!startupCanCommunicate())throw new Error('recovery-network-held');
   if (!recordingInboxCanWrite()) {
     const error = new Error('データの確認が完了していないため、通信を停止しています。');
     error.code = 'EDITOR_READ_ONLY'; throw error;
@@ -10519,6 +10561,7 @@ async function gh(path, opts) {
 
 // Limit the complete request, including body reads, and preserve caller cancellation.
 async function boundedPublicationRequest(url, opts, read) {
+  if(typeof startupCanCommunicate==='function'&&!startupCanCommunicate())throw new Error('recovery-network-held');
   const controller = new AbortController();
   const signal = opts && opts.signal;
   let timer, cancel;
@@ -10796,6 +10839,7 @@ function payloadKey(d) {
 }
 
 async function gistPush(gid, force) {
+  if(typeof startupCanCommunicate==='function'&&!startupCanCommunicate())return false;
   if (!recordingInboxCanWrite()) return false;
   const g = S.groups.find(x => x.id === gid);
   if (!g || !g.gistId || g.nopub || !S.ghToken) return "skip";
@@ -10934,6 +10978,7 @@ function queuePublication(work) {
   return result;
 }
 async function doPush(silent) {
+  if(typeof startupCanCommunicate==='function'&&!startupCanCommunicate())return false;
   // Timer requests coalesce; explicit sends wait their turn and build fresh data.
   if (silent === true && publishInFlight) return;
   return queuePublication(() => publishGroups(silent));
@@ -11468,6 +11513,7 @@ async function backupFileText(file, stage = 'バックアップファイル') {
   if (url.protocol !== "https:" || url.hostname !== "gist.githubusercontent.com") throw new Error("バックアップの取得先が不正です。");
   // GitHubが返した、その版のraw_urlを使う。トークンは送らない。
   try {
+    if(typeof startupCanCommunicate==='function'&&!startupCanCommunicate())throw new Error('recovery-network-held');
     const response = await fetch(url.href, {credentials:"omit",referrerPolicy:"no-referrer",cache:"no-store",signal:AbortSignal.timeout(60000)});
     if (!response.ok) { const e = new Error('HTTP'); e.status = response.status; throw e; }
     return await response.text();
@@ -11592,6 +11638,7 @@ async function backupWithCloudCheck() {
   } finally { recordingInboxRelease(); }
 }
 async function doBackup(silent) {
+  if(typeof startupCanCommunicate==='function'&&!startupCanCommunicate())return false;
   const recordingInboxRelease = enterRecordingInboxEditor();
   if (!recordingInboxRelease) return false;
   try {
@@ -11839,6 +11886,7 @@ const srcUrl = () => latestRaw(S.src) || "./setlist.json";
 
 let syncErr = "", syncAt = 0, syncBackoff = 0, justUpdated = 0, askedKey = false;
 async function fetchSetlist() {
+  if(typeof startupCanCommunicate==='function'&&!startupCanCommunicate())return null;
   const u = srcUrl();
   if (!u) { syncErr = "つなぎ先がありません。接続リンクを開き直してください。"; return null; }
   const url = u + (u.includes("?") ? "&" : "?") + "t=" + Date.now();
@@ -11993,6 +12041,7 @@ function applySetlist(d) {
 }
 
 async function syncSetlist(manual) {
+  if(typeof startupCanCommunicate==='function'&&!startupCanCommunicate())return false;
   const recordingInboxRelease = enterRecordingInboxEditor();
   if (!recordingInboxRelease) return false;
   try {
@@ -12190,6 +12239,7 @@ async function syncNow() {
 }
 
 async function checkOther(strict = false) {
+  if(typeof startupCanCommunicate==='function'&&!startupCanCommunicate())return false;
   const recordingInboxRelease = enterRecordingInboxEditor();
   if (!recordingInboxRelease) return false;
   try {
@@ -12274,6 +12324,7 @@ async function openEditLink(raw) {
 
 
 async function importFromLink() {
+  if(typeof startupCanCommunicate==='function'&&!startupCanCommunicate())return false;
   const recordingInboxRelease = enterRecordingInboxEditor();
   if (!recordingInboxRelease) return false;
   try {
@@ -12340,8 +12391,8 @@ function copyText(t, msg) {
   if (VIEW()) restoreViewerMember();
   // Keep the original localStorage copy for recovery after a successful import.
   render();
-  importFromLink();
-  syncSetlist(false);
+  if(startupRecoveryNetworkHold){const notice=document.createElement('div');notice.textContent='端末内の復元内容で再開しました。自動送受信は停止中です。';notice.setAttribute('role','status');notice.style.cssText='position:fixed;bottom:0;left:0;right:0;z-index:99999;background:#283A52;color:white;padding:10px;text-align:center';document.body.appendChild(notice);}
+  if(!startupRecoveryNetworkHold){importFromLink();syncSetlist(false);}
 })();
 // 指摘の画面を開いたままアプリを閉じても、書きかけのメモが消えないように記録してから保存する
 const flushSheet = () => { if (U.sheet && sheetHasInput()) { clearTimeout(sheetTimer); commitNote(); } };
@@ -12373,7 +12424,7 @@ function setupRecordingInboxIntegration() {
 /* APPEND TO app.js only after review; load recording-inbox.js BEFORE app.js. */
 let recordingInboxStatus = {status:'not-enrolled'};
 const recordingInboxGate = RecordingInbox.createGate(() =>
-  recordingInboxCanWrite() && booted && !bootErr && !VIEW() && !preview && !document.hidden && !saving
+  startupCanCommunicate() && booted && !bootErr && !VIEW() && !preview && !document.hidden && !saving
   && !syncing && !manualSync && !backupInFlight && !publishInFlight
   && !REC && !U.busy && !U.importing && !U.sheet && !U.menu && !U.showRecovery
   && !typingNow() && !renderPointers.size && Date.now() >= scrollingUntil);
@@ -12393,7 +12444,7 @@ const recordingInboxLocal = RecordingInbox.createLocalAdapter({
 const recordingInbox = RecordingInbox.create({
   storage:localStorage,
   local:recordingInboxLocal,
-  canPoll:() => recordingInboxCanWrite() && booted && !bootErr && !VIEW() && !preview && !document.hidden && !recordingInboxGate.activeEditors,
+  canPoll:() => startupCanCommunicate() && booted && !bootErr && !VIEW() && !preview && !document.hidden && !recordingInboxGate.activeEditors,
   onStatus:value => {
     recordingInboxStatus = value;
     const el = document.querySelector('[data-recording-inbox-status]');

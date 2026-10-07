@@ -38,8 +38,8 @@ const exactCases=[
  {name:'kanji',key:'疑似QA_漢字合言葉確認',wrong:'疑似QA_漢字合言葉確忍'},
  {name:'full-width and half-width',key:'疑似QA_ＡＢＣ１２３ｶﾀｶﾅ',wrong:'疑似QA_ABC123カタカナ'},
  {name:'leading and trailing whitespace',key:' \t疑似QA_前後空白\u3000 ',wrong:'疑似QA_前後空白'},
- {name:'Japanese combining mark',key:'疑似QA_か\u3099くにん',wrong:'疑似QA_がくにん'},
- {name:'Latin combining mark',key:'疑似QA_e\u0301日本語',wrong:'疑似QA_é日本語'},
+ {name:'Japanese combining mark',key:'疑似QA_か\u3099くにん',wrong:'疑似QA_がくにん別'},
+ {name:'Latin combining mark',key:'疑似QA_e\u0301日本語',wrong:'疑似QA_é日本語別'},
  {name:'mixed astral Unicode',key:'疑似QA_🎵日本語とｶﾀｶﾅ',wrong:'疑似QA_🎶日本語とｶﾀｶﾅ'}
 ];
 for(const sample of exactCases)test('fresh synthetic real encrypted file preserves exact '+sample.name+' passphrase',async()=>{
@@ -156,7 +156,7 @@ test('a blocked, hidden or busy toggle cannot reveal an entered passphrase',asyn
  }
 });
 test('new local passphrase code has no normalization, persistent state writes, network or logging path',()=>{
- const local=block('let startupFileInspector=null;','function startupSafeError(');
+ const local=block('let startupFileInspector=null;','function startupReadSavedLocalKeys(');
  assert.doesNotMatch(local,/\b(?:fetch|save|saveNow|idbPut|putClip|delClip|restoreBackupFile|backupDigest|alert|prompt)\s*\(/);
  assert.doesNotMatch(local,/\b(?:console|localStorage|sessionStorage|indexedDB)\s*\./);assert.doesNotMatch(local,/\.\s*(?:trim|normalize|toLowerCase|toUpperCase)\s*\(/);
  assert.doesNotMatch(local,/\b(?:S|U)\s*\./);
@@ -179,3 +179,4 @@ for(const action of ['check','cancel','new selection','hidden','pagehide'])test(
  assert.equal(trace[0],'blur');assert(trace.indexOf('clear')>trace.indexOf('blur'));assert.equal(f.password.value,'');assert.equal(f.password.type,'password');assert.equal(f.c.startupFileIMEActive(),false);
  assert.equal(f.toggle.getAttribute('aria-pressed'),'false');assert.equal(f.elements['startup-file-visible-notice'].hidden,true);f.safe();
 });
+

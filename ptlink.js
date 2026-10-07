@@ -9,8 +9,9 @@
 (function () {
   "use strict";
 
-  function inboxWritable() { return typeof recordingInboxCanWrite !== "function" || recordingInboxCanWrite(); }
+  function inboxWritable() { return typeof startupCanCommunicate === "function" ? startupCanCommunicate() : typeof recordingInboxCanWrite !== "function" || recordingInboxCanWrite(); }
   function inboxTransport(work) {
+    if(typeof startupCanCommunicate=== "function"&&!startupCanCommunicate())return Promise.reject(new Error("recovery-network-held"));
     var done;
     try { done = typeof recordingInboxAdmitWriter === "function" ? recordingInboxAdmitWriter() : function () {}; }
     catch (error) { return Promise.reject(error); }
@@ -266,11 +267,13 @@
   }
 
   function waitAnswer(tries) {
+    if(typeof startupCanCommunicate=== "function"&&!startupCanCommunicate())return Promise.reject(new Error("recovery-network-held"));
     var p = cfg();
     if (!rtc || rtcState !== "connecting") return Promise.resolve();
     if (tries > 20) { rtcStop(); paint(); throw new Error("Mac から応答がありません。受け側ページが開いているか確認してください。"); }
     return new Promise(function (res) { rtcAnswerTimer = setTimeout(res, 1200); })
       .then(function () {
+        if(typeof startupCanCommunicate=== "function"&&!startupCanCommunicate())throw new Error("recovery-network-held");
         return fetch("https://api.github.com/gists/" + p.gistId, {
           headers: { "Authorization": "Bearer " + S.ghToken, "Accept": "application/vnd.github+json" },
           cache: "no-store",
@@ -892,3 +895,4 @@
                       return mm ? Number(mm[1]) : 0;
                     } };
 })();
+
