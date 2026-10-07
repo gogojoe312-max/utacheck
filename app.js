@@ -66,7 +66,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.30";
+const APP_VER = "16.41.31";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -592,6 +592,11 @@ function setSongDelivery(ids, groupId) {
 }
 function showDeliveryLabel(sw) {
   if (sw.nopub) return "配信しない";
+  const songs = S.songs.filter(so => so.showId === sw.id);
+  if (songs.length && songs.every(so => {
+    const id = songDeliveryGroupId(so);
+    return !id || S.groups.some(g => g.id === id && g.nopub);
+  })) return "配信しない（全曲対象外）";
   if (sw.deliveryMode === "song") return "曲ごとのグループ";
   const targets = new Set(S.songs.filter(so => so.showId === sw.id).map(songDeliveryGroupId).filter(Boolean));
   if (targets.size > 1) return `曲ごと（${targets.size}グループ）`;
@@ -4783,6 +4788,7 @@ function renderSheet() {
         : g.gistId ? `
         ${B2("connectlink", "接続リンクを作る", "background:var(--accent);color:#0A0A0A;font-weight:700")}
         ${B2("pvnow", "メンバーの見え方を確認")}
+        ${B2("publication-inspect", "配信状況を確認（送信なし）")}
         <div class="row" style="margin:10px 0 6px">
           <span style="font-size:11px;color:var(--dim);width:52px">合言葉</span>
           <input class="field grow" id="key-${g.id}" placeholder="未設定（誰でも開けます）" value="${h(g.key || "")}">
@@ -5919,6 +5925,7 @@ function memberPreviewSettings() {
   return `<h4 class="head">メンバー画面</h4><div class="card">
     ${groups.length ? groups.map(g => `<button class="ghost member-preview-link" data-act="pvnow" data-id="${h(g.id)}">${h(g.name)}のメンバー画面を見る</button>`).join("")
       : '<p class="note">グループの自動公開を始めると、配信したメンバー画面を確認できます。</p>'}
+    ${S.groups.filter(g => !g.nopub).map(g => `<button class="ghost" data-act="publication-inspect" data-id="${h(g.id)}">${h(g.name)}の配信状況を確認（送信なし）</button>`).join("")}
   </div>`;
 }
 
@@ -7165,6 +7172,7 @@ function viewSetup() {
       <span style="font-size:11px;color:var(--accent)">${h(showName())}</span></div>
     <div class="scroll pad">
     ${preview ? '<button class="primary" data-act="endpv">メンバー画面の確認を終わる</button>' : ""}
+    ${!preview ? '<button class="ghost" data-act="publication-inspect">受信状況を確認（更新なし）</button>' : ''}
     ${lyricDisplaySettings()}
     <h4 class="head">指摘</h4><div class="card"><button class="primary" data-act="go-summary">指摘を見る</button></div>
     <h4 class="head">公演</h4>
@@ -7493,6 +7501,8 @@ document.addEventListener("click", (e) => {
   if (e.target.closest("[data-r]") && U.sheet) return;   // 文字の選択はなぞりで扱う
   if (!b) return;
   const a = b.dataset.act, i = +b.dataset.i, id = b.dataset.id;
+  // Diagnostics must not commit or blur unsaved input through the generic button path.
+  if (a === 'publication-inspect') { void inspectPublication(id); return; }
   // iPhoneではボタンを押しても入力欄からフォーカスが移らないことがある。
   // 明示的なボタン操作は、内容を確保して入力を終え、描画待ちで止まらないようにする。
   if (b.tagName === "BUTTON" && typingNow()) {
@@ -10114,6 +10124,197 @@ async function gistStart(gid) {
   } finally { recordingInboxRelease(); }
 }
 
+// Read-only diagnostics: never apply a payload, save state, prompt for keys or send.
+let publicationDiagnosticBusy = false;
+function publicationDiagnosticError(code) { const e = new Error('配信状況を確認できません。'); e.code = code; return e; }
+function publicationDiagnosticFailure(error) {
+  if (['unlinked','source-invalid','source-mismatch','invalid-data','key-required','bad-key','state-changed'].includes(error?.code)) return error.code;
+  if (error?.status === 401 || error?.status === 403) return 'auth-unavailable';
+  if (error?.status === 404) return 'not-found';
+  return 'connection-unavailable';
+}
+function publicationDiagnosticContentKey(data) {
+  const sorted = value => Array.isArray(value) ? value.map(sorted)
+    : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map(k => [k, sorted(value[k])])) : value;
+  const copy = {...data};
+  for (const k of ['version','authorId','src']) delete copy[k];
+  return JSON.stringify(sorted(copy));
+}
+function publicationDiagnosticCounts(data, showId) {
+  const songs = data.songs || [], notes = data.notes || [];
+  if (showId != null) return {shows:(data.shows || []).some(x => x.id === showId) ? 1 : 0,
+    songs:songs.filter(x => x.showId === showId).length,
+    notes:notes.filter(x => x.showId === showId || (x.showId == null && songs[x.songIdx]?.showId === showId)).length};
+  return {shows:Array.isArray(data.shows) ? data.shows.length : new Set(songs.map(x => x.showId).filter(Boolean)).size,
+    songs:songs.length, notes:notes.length};
+}
+function publicationDiagnosticExclusions(gid) {
+  const counts = {hidden:0, privateShows:0, optedOut:0, privateSongs:0, otherDestination:0, unresolved:0};
+  for (const sw of S.shows) {
+    const songs = S.songs.filter(so => so.showId === sw.id);
+    if (showDeliveryGroupId(sw) !== gid && !songs.some(so => so.groupId === gid || so.deliveryGroupId === gid || songDeliveryGroupId(so) === gid)) continue;
+    if (sw.hidden) { counts.hidden++; continue; }
+    if (sw.nopub) { counts.privateShows++; continue; }
+    for (const so of songs) {
+      const destination = songDeliveryGroupId(so);
+      if (so.deliveryGroupId === '') counts.optedOut++;
+      else if (S.groups.some(g => g.id === destination && g.nopub)) counts.privateSongs++;
+      else if (!destination) counts.unresolved++;
+      else if (destination !== gid) counts.otherDestination++;
+    }
+  }
+  return counts;
+}
+async function publicationDiagnosticReadGist(id, token) {
+  if (!token || !/^[a-f0-9]{5,40}$/i.test(id || '')) throw publicationDiagnosticError('unlinked');
+  const data = await boundedPublicationRequest('https://api.github.com/gists/' + id, {
+    method:'GET', cache:'no-store', redirect:'error', credentials:'omit', referrerPolicy:'no-referrer',
+    headers:{Accept:'application/vnd.github+json', Authorization:'Bearer ' + token, 'X-GitHub-Api-Version':'2022-11-28'},
+  }, async response => {
+    if (!response.ok) { const e = publicationDiagnosticError('http'); e.status = response.status; throw e; }
+    return response.json();
+  });
+  if (String(data?.id).toLowerCase() !== id.toLowerCase() || !data.files) throw publicationDiagnosticError('invalid-data');
+  return data;
+}
+async function publicationDiagnosticReadFile(file, id) {
+  if (!file) throw publicationDiagnosticError('invalid-data');
+  if (!file.truncated && typeof file.content === 'string') return file.content;
+  let url;
+  try { url = new URL(file.raw_url); } catch (_) { throw publicationDiagnosticError('source-invalid'); }
+  const match = url.pathname.match(/^\/[A-Za-z0-9_-]+\/([a-f0-9]{5,40})\/raw\/(?:[a-f0-9]{6,40}\/)?[A-Za-z0-9._-]+$/i);
+  if (url.protocol !== 'https:' || url.hostname !== 'gist.githubusercontent.com' || url.port || url.username || url.password || !match || match[1].toLowerCase() !== id.toLowerCase()) throw publicationDiagnosticError('source-invalid');
+  url.hash = ''; url.search = '';
+  url.searchParams.set('t', String(Date.now()));
+  return boundedPublicationRequest(url.href, {method:'GET',cache:'no-store',redirect:'error',credentials:'omit',referrerPolicy:'no-referrer'}, async response => {
+    if (!response.ok) { const e = publicationDiagnosticError('http'); e.status = response.status; throw e; }
+    return response.text();
+  });
+}
+async function publicationDiagnosticDecode(text, key) {
+  let data;
+  try { data = JSON.parse(text); } catch (_) { throw publicationDiagnosticError('invalid-data'); }
+  if (data?.enc) {
+    if (!key) throw publicationDiagnosticError('key-required');
+    try { data = await openJSON(data, key); } catch (_) { throw publicationDiagnosticError('bad-key'); }
+  }
+  if (!data || !Array.isArray(data.songs) || ['shows','notes'].some(k => data[k] != null && !Array.isArray(data[k]))
+      || ['songs','shows','notes'].some(k => (data[k] || []).some(x => !x || typeof x !== 'object' || Array.isArray(x)))) throw publicationDiagnosticError('invalid-data');
+  return data;
+}
+async function publicationDiagnosticReadSource(source, key) {
+  const parsed = gistRawSource(source);
+  if (!parsed) throw publicationDiagnosticError(source ? 'source-invalid' : 'unlinked');
+  return publicationDiagnosticDecode(await publicationDiagnosticReadFile({truncated:true,raw_url:parsed.url}, parsed.id), key);
+}
+function publicationDiagnosticBackupKey(state) {
+  const copy = {...state};
+  for (const k of ['bkAt','bkHash','bkSeen','bkGistId','bkError','bkFileAt','editPass']) delete copy[k];
+  return publicationDiagnosticContentKey({state:copy});
+}
+function publicationDiagnosticAuthority(local, remote, baseline, localSignature) {
+  if (publicationDiagnosticBackupKey(local) === publicationDiagnosticBackupKey(remote)) return 'same';
+  if (!baseline) return 'unverified';
+  const remoteSignature = backupSignature(remote);
+  if (remoteSignature === baseline && localSignature !== baseline) return 'local-unsaved';
+  if (localSignature === baseline && remoteSignature !== baseline) return 'local-behind-possible';
+  return 'both-changed';
+}
+async function publicationDiagnosticReadAuthority(snapshot, local, signature) {
+  if (!snapshot.bkGistId || !snapshot.ghToken) return 'unlinked';
+  try {
+    const gist = await publicationDiagnosticReadGist(snapshot.bkGistId, snapshot.ghToken);
+    const raw = JSON.parse(await readCloudBackupContent(gist.files, file => publicationDiagnosticReadFile(file, snapshot.bkGistId)));
+    let obj;
+    try { obj = await unpackBackup(raw, snapshot.bkKey); }
+    catch (error) { throw publicationDiagnosticError(error?.badKey ? 'bad-key' : 'invalid-data'); }
+    if (obj?.app !== 'utacheck' || !Number.isFinite(Number(obj.at)) || !obj.state || !Array.isArray(obj.state.shows) || !Array.isArray(obj.state.songs)) throw publicationDiagnosticError('invalid-data');
+    return publicationDiagnosticAuthority(local, obj.state, snapshot.bkHash, signature);
+  } catch (error) { return error instanceof SyntaxError ? 'invalid-data' : publicationDiagnosticFailure(error); }
+}
+function publicationDiagnosticDelivery(planned, published, lastKey, authority) {
+  if (publicationDiagnosticContentKey(planned) === publicationDiagnosticContentKey(published)) return 'same';
+  if (authority === 'local-behind-possible') return 'local-behind-possible';
+  if (authority === 'both-changed') return 'both-changed';
+  try { if (lastKey && publicationDiagnosticContentKey(JSON.parse(lastKey)) === publicationDiagnosticContentKey(published)) return 'unsent'; } catch (_) {}
+  return 'different-unverified';
+}
+function publicationDiagnosticText(report) {
+  const status = {unlinked:'未接続', 'source-invalid':'接続先の形式を確認できません', 'source-mismatch':'接続先が一致しません',
+    'invalid-data':'内容の形式を確認できません', 'key-required':'既存の合言葉が未設定です', 'bad-key':'既存の合言葉で内容を確認できません',
+    'auth-unavailable':'既存認証で取得できません', 'not-found':'接続先が見つかりません', 'connection-unavailable':'通信できません',
+    'state-changed':'確認中に端末の内容が変わりました。再確認してください', busy:'ほかの確認が進行中です',
+    preview:'プレビュー中は実端末の受信確認ができません', readonly:'編集用の画面を再読み込みしてください',
+    editing:'入力を終えてから確認してください。入力内容は変更していません',
+    same:'内容一致', unverified:'正本を確認できていません', 'local-unsaved':'この端末にクラウド未保存の変更があります',
+    'local-behind-possible':'クラウドに別の更新があります。この端末が古い可能性があります', 'both-changed':'双方に別の変更があります',
+    unsent:'この端末に未送信の変更があります', 'different-unverified':'内容が異なります。正本の確認が必要です',
+    'version-same':'受信版番号が一致しています', 'version-different':'配信版と端末の受信版が異なります', 'version-unknown':'旧形式のため受信版番号を照合できません'};
+  const text = value => status[value] || '未確認';
+  const counts = value => `公演${value.shows}件・曲${value.songs}件・記録${value.notes}件`;
+  if (report.status !== 'checked') return '配信確認：' + text(report.status) + '。\n送信・更新・復元はしていません。';
+  if (report.role === 'member') return '受信確認（更新なし）\n接続先：' + text(report.source) + '\n受信版：' + text(report.version)
+    + '\n配信内容：' + counts(report.published) + '\n端末の受信内容：' + counts(report.received) + '\n版番号・件数の確認です。内容の完全一致は未確認です。';
+  const e = report.excluded;
+  return '配信確認（送信・復元なし）\nこの端末の送信対象：' + counts(report.planned)
+    + '\n既存の配信内容：' + counts(report.published) + '\n送信状態：' + text(report.delivery)
+    + '\n現在の公演：送信対象 ' + counts(report.currentPlanned) + '／配信内容 ' + counts(report.currentPublished)
+    + '\n除外：非表示公演' + e.hidden + '件・非公開公演' + e.privateShows + '件・配信しない曲' + e.optedOut
+    + '曲・非公開グループの曲' + e.privateSongs + '曲・別の配信先' + e.otherDestination + '曲・配信先未確定' + e.unresolved + '曲'
+    + '\nクラウドとの比較：' + text(report.authority) + '\n設定されたメンバー参照先：' + text(report.source)
+    + '\n参照先の内容：' + text(report.memberContent)
+    + '\n他端末の未送信入力・実メンバー端末への到達は未確認です。メンバー端末の受信確認も必要です。';
+}
+async function inspectPublication(gid) {
+  if (publicationDiagnosticBusy) return {status:'busy'};
+  if (typingNow() || U.sheet) { const report = {status:'editing'}; alert(publicationDiagnosticText(report)); return report; }
+  if (preview) { const report = {status:'preview'}; alert(publicationDiagnosticText(report)); return report; }
+  const release = enterRecordingInboxEditor();
+  if (!release) return {status:'readonly'};
+  publicationDiagnosticBusy = true;
+  const before = JSON.stringify(S), snapshot = JSON.parse(before), isMember = VIEW();
+  const unchanged = () => { if (JSON.stringify(S) !== before) throw publicationDiagnosticError('state-changed'); };
+  let report;
+  try {
+    if (isMember) {
+      const selected = gistRawSource(snapshot.src), linked = gistRawSource(snapshot.linkSrc || snapshot.src);
+      if (!selected || !linked) throw publicationDiagnosticError(snapshot.src ? 'source-invalid' : 'unlinked');
+      if (selected.id !== linked.id) throw publicationDiagnosticError('source-mismatch');
+      const published = await publicationDiagnosticReadSource(snapshot.src, snapshot.key);
+      unchanged();
+      const version = published.version && snapshot.setlistVer ? (published.version === snapshot.setlistVer ? 'version-same' : 'version-different') : 'version-unknown';
+      report = {status:'checked',role:'member',source:'same',version,published:publicationDiagnosticCounts(published),
+        received:publicationDiagnosticCounts({shows:snapshot.shows,songs:snapshot.songs,notes:snapshot.pubNotes || []})};
+    } else {
+      const g = snapshot.groups.find(x => x.id === (gid || snapshot.groupId));
+      if (!g || g.nopub || !g.gistId || !snapshot.ghToken) throw publicationDiagnosticError('unlinked');
+      const local = backupState(), signature = bkSignature();
+      const gist = await publicationDiagnosticReadGist(g.gistId, snapshot.ghToken);
+      const published = await publicationDiagnosticDecode(await publicationDiagnosticReadFile(gist.files['utacheck.json'], g.gistId), g.key || snapshot.key);
+      unchanged();
+      const planned = publicationData(g.id, published), excluded = publicationDiagnosticExclusions(g.id);
+      const source = gistRawSource(g.src), metadata = gistRawSource(gist.files['utacheck.json']?.raw_url);
+      let sourceStatus = !g.src ? 'unlinked' : !source || !metadata ? 'source-invalid'
+        : source.id !== String(g.gistId).toLowerCase() || metadata.id !== source.id ? 'source-mismatch' : 'same';
+      let memberContent = sourceStatus;
+      if (sourceStatus === 'same') {
+        try { const member = await publicationDiagnosticReadSource(g.src, g.key || snapshot.key);
+          memberContent = publicationDiagnosticContentKey(member) === publicationDiagnosticContentKey(published) && member.version === published.version ? 'same' : 'different-unverified';
+        } catch (error) { memberContent = publicationDiagnosticFailure(error); }
+      }
+      unchanged();
+      const authority = await publicationDiagnosticReadAuthority(snapshot, local, signature);
+      unchanged();
+      report = {status:'checked',role:'editor',planned:publicationDiagnosticCounts(planned),published:publicationDiagnosticCounts(published),
+        currentPlanned:publicationDiagnosticCounts(planned,snapshot.showId),currentPublished:publicationDiagnosticCounts(published,snapshot.showId),excluded,
+        delivery:publicationDiagnosticDelivery(planned,published,g.lastKey,authority),authority,source:sourceStatus,memberContent};
+    }
+  } catch (error) { report = {status:publicationDiagnosticFailure(error)}; }
+  finally { publicationDiagnosticBusy = false; release(); }
+  alert(publicationDiagnosticText(report));
+  return report;
+}
+
 // version は毎回変わるので、それ以外が同じなら送る必要はない
 function payloadKey(d) {
   const c = Object.assign({}, d); delete c.version; return JSON.stringify(c);
@@ -10394,12 +10595,12 @@ async function packBackup(state = backupState(), at = Date.now()) {
   const body = { bk: 1, z: !!z, data: b64e(z || raw) };
   return S.bkKey ? await sealJSON(body, S.bkKey) : body;
 }
-async function unpackBackup(o) {
+async function unpackBackup(o, pass = S.bkKey) {
   let b = o;
   if (o && o.enc) {
     // 合言葉が違うのか、そのあとの展開で失敗したのかを区別する。
     // 一緒くたにすると「合言葉が違います」と出続けて原因が分からなくなる。
-    try { b = await openJSON(o, S.bkKey); }
+    try { b = await openJSON(o, pass); }
     catch (e) { const err = new Error("合言葉が合いません。"); err.badKey = 1; throw err; }
   }
   if (!b || !b.bk) throw new Error("バックアップの形式ではありません。");
@@ -10803,15 +11004,15 @@ function validBackupParts(index) {
     && Number.isSafeInteger(index.length) && index.length > 0 && index.length <= BACKUP_PART_SIZE * BACKUP_MAX_PARTS
     && /^[a-f0-9]{64}$/.test(index.sha256 || "");
 }
-async function readCloudBackupContent(files) {
-  const content = await backupFileText(backupIndexFile(files), "バックアップ索引");
+async function readCloudBackupContent(files, readFile = backupFileText) {
+  const content = await readFile(backupIndexFile(files), "バックアップ索引");
   const index = JSON.parse(content);
   if (index.bk !== 2) return content; // 旧版の1ファイル・暗号化形式もそのまま読める
   if (!validBackupParts(index)) throw new Error("バックアップの構成情報が壊れています。");
   const parts = [];
   // 全部同時に取得せず、スマホのメモリと通信負荷を抑える。
   for (const part of index.parts) {
-    const text = await backupFileText(files[part.name] || {raw_url:part.raw_url}, "分割ファイル " + (parts.length + 1) + "/" + index.parts.length);
+    const text = await readFile(files[part.name] || {raw_url:part.raw_url}, "分割ファイル " + (parts.length + 1) + "/" + index.parts.length);
     if (text.length > BACKUP_PART_SIZE) throw new Error("バックアップの一部が不正です。");
     parts.push(text);
   }
