@@ -1,0 +1,197 @@
+/* Existing-destination recovery only. General recovery network hold stays enabled. */
+(function(root){
+  'use strict';
+  const MAX=20*1024*1024;
+  let session=null,turn=0,pushing=false;
+  const copy=value=>JSON.parse(JSON.stringify(value));
+  const fail=code=>{const e=new Error(code);e.reconnectCode=code;throw e;};
+  const message=error=>({
+    'source-changed':'配信先に新しい変更があります。上書きせず停止しました。',
+    'encrypted':'既存の配信は暗号化されています。この再接続では変更していません。',
+    'auth':'既存トークンの有効性・Gist権限を確認できません。新規発行はしていません。',
+    'local-changed':'端末の内容が変わったため停止しました。もう一度内容を確認してください。',
+    'storage':'原本保全と保存の確認ができないため、配信していません。',
+    'unknown':'送信結果が未確認です。自動再送せず、結果確認を待っています。',
+    'cancelled':'確認を中止しました。配信・設定は変更していません。',
+    'not-ready':'録音や入力・保存を終えてから再接続してください。',
+  }[error?.reconnectCode]||'元の配信先・公演の対応または形式を確認できません。配信・設定は変更していません。');
+  function ready(){return typeof S!=='undefined'&&startupRecoveryNetworkHold&&recordingInboxCanWrite()&&!VIEW()&&!preview&&!document.hidden;}
+  function currentBinding(gid){return S.recoveryDelivery?.version===1&&Array.isArray(S.recoveryDelivery.targets)?S.recoveryDelivery.targets.find(t=>t.groupId===gid):null;}
+  function canPublish(gid){const b=currentBinding(gid),g=S.groups.find(g=>g.id===gid);return ready()&&!session&&!!S.ghToken&&!!b&&b.status==='ready'&&!!g&&!g.nopub&&g.gistId===b.gistId&&g.src===b.src;}
+  function pending(gid){if(!canPublish(gid))return false;const g=S.groups.find(g=>g.id===gid);try{return g.publishKeyPending||payloadKey(payloadFor(S,gid))!==g.lastKey;}catch(_){return true;}}
+  function hasResumed(){return ready()&&!session&&(S.recoveryDelivery?.targets||[]).some(t=>canPublish(t.groupId));}
+  function packetForBindings(){return {app:'utacheck-existing-delivery',version:1,targets:S.recoveryDelivery.targets.map(t=>{
+    const {sourceSha256,groupName,gistId,src,sourceShowIds,expectedRemoteSha256}=t;return {sourceSha256,groupName,gistId,src,sourceShowIds,expectedRemoteSha256};
+  })};}
+  function payloadFor(state,gid){const old=S;try{S=state;const data=copy(publicationData(gid,undefined,true));data.folderOrder=(data.folderOrder||[]).filter(name=>data.shows.some(sw=>sw.folder===name));for(const sw of data.shows)if(sw.from&&!data.shows.some(item=>item.id===sw.from))delete sw.from;if(data.alert?.to?.length)data.alert.to=[gid];return data;}finally{S=old;}}
+  async function request(url,token,opts={},active=()=>true){
+    if(!active())fail('cancelled');
+    const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),30000);
+    try{
+      const response=await fetch(url,{...opts,cache:'no-store',redirect:'error',credentials:'omit',referrerPolicy:'no-referrer',signal:controller.signal,
+        headers:{Accept:'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28',...(token?{Authorization:'Bearer '+token}:{}),...(opts.headers||{})}});
+      if(!active())fail('cancelled');
+      if(!response.ok){if(response.status===401||response.status===403)fail('auth');fail('remote');}
+      const text=await response.text();if(!active())fail('cancelled');if(new TextEncoder().encode(text).length>MAX*2)fail('remote');return text;
+    }catch(e){if(e.reconnectCode)throw e;fail(active()?'remote':'cancelled');}
+    finally{clearTimeout(timer);}
+  }
+  async function readTarget(target,token,active){
+    const gist=JSON.parse(await request('https://api.github.com/gists/'+target.gistId,token,{},active));
+    if(gist.id!==target.gistId||gist.public!==false||!gist.files?.['utacheck.json'])fail('target');
+    const file=gist.files['utacheck.json'],source=gistRawSource(file.raw_url);
+    if(!source||source.id!==target.gistId||source.url!==target.src)fail('target');
+    let raw=file.content;
+    if(file.truncated||typeof raw!=='string'){
+      const url=new URL(file.raw_url),want=new URL(target.src);
+      if(url.origin!==want.origin||url.username||url.password||url.port||url.search||url.hash
+        ||!new RegExp('^/'+want.pathname.split('/')[1]+'/'+target.gistId+'/raw/(?:[a-f0-9]{40}/)?utacheck\\.json$','i').test(url.pathname))fail('target');
+      raw=await request(url.href,'',{},active);
+    }
+    if(new TextEncoder().encode(raw).length>MAX)fail('remote');
+    const data=JSON.parse(raw);if(data?.enc)fail('encrypted');
+    const digest=await backupDigest(raw);if(!active())fail('cancelled');
+    return {raw,data,digest};
+  }
+  function summaryHTML(plan,payloads,merges){return plan.targets.map((t,i)=>{
+    const p=payloads[i];return '<div class="card"><b>'+h(t.groupName)+'</b><p class="note">既存の配信先：'+h(t.gistId)+'<br>公演'+p.shows.length+'件・曲'+p.songs.length+'件・指摘'+p.notes.length+'件</p><ul style="padding-left:20px">'+p.shows.map(sw=>'<li>'+h(sw.name)+'</li>').join('')+'</ul><p class="note">端末の復旧対象公演の「配信しない」を解除します。スタッフ個人メモ・REC・保管資料は対象外です。</p><p class="note">現配信のまま保持：'+merges[i].preservedShowNames.map(h).join('、')+'。同じ公演の端末版差分は上書きせず保留します。</p></div>';
+  }).join('');}
+  function settingsHTML(){
+    if(!startupRecoveryNetworkHold||VIEW())return '';
+    const targets=S.recoveryDelivery?.targets||[],pending=targets.some(t=>t.status!=='ready');
+    return '<div class="card"><b>既存の配信先に再接続</b><p class="note">元の配信先と対象公演を確認して再開します。新しい配信先は作りません。</p>'+
+      '<button class="primary" data-act="rd-open">既存の配信先に再接続</button>'+
+      (targets.length?'<p class="note">'+targets.map(t=>h(t.groupName)+'：'+(t.status==='ready'?'既存先の配信を再開済み':['blocked','prepared'].includes(t.status)?'再接続の確認が必要':'送信結果の確認待ち')).join('<br>')+'</p><p class="note">'+targets.filter(t=>t.heldLocalShowIds?.length).map(t=>h(t.groupName)+'：現配信の公演を保持し、同じ公演の端末版差分は保留しています。').join('<br>')+'</p>':'')+
+      (pending?'<button class="ghost" data-act="rd-reconcile">接続・送信結果を確認（再送しない）</button>':'')+'</div>';
+  }
+  function unlock(){const app=document.getElementById('app');if(app&&typeof recordingInboxCanWrite==='function')app.inert=!recordingInboxCanWrite();}
+  function close(){if(session?.committing)return;turn++;if(session){session.token='';session.prepared=null;const input=session.node.querySelector('#rd-token');if(input)input.value='';session.node.remove();session=null;}unlock();}
+  function open(){
+    if(!ready()||pushing||publishInFlight||saving||REC||(U.sheet&&sheetHasInput())){alert(message({reconnectCode:'not-ready'}));return;}
+    close();const id=++turn,node=document.createElement('div');node.className='mask';
+    node.innerHTML='<div class="sheet organize-sheet" role="dialog" aria-modal="true" aria-label="既存配信の再接続"><div class="row"><b class="grow">既存配信の再接続</b><button class="chip" data-act="rd-close">閉じる</button></div>'+
+      '<p class="note">接続対応ファイルと既存の認証情報を使います。確認中は端末の設定を変更しません。</p>'+
+      '<label class="organize-field">接続対応ファイル<input id="rd-file" class="field" type="file" accept=".json,application/json"></label>'+
+      '<label class="organize-field">既存のGitHubトークン<input id="rd-token" class="field" type="password" autocomplete="off" placeholder="既存トークンをこの欄に入力"></label>'+
+      '<p class="note">トークンをチャットに送らないでください。確認中はメモリだけで扱い、閉じると消します。</p>'+
+      '<button class="primary" data-act="rd-check">既存の配信先を確認（送信なし）</button><p id="rd-status" class="note" role="status"></p><div id="rd-preview"></div></div>';
+    session={id,node,token:'',prepared:null,busy:false,committing:false};document.body.appendChild(node);document.getElementById('app').inert=true;
+  }
+  function status(text){const el=session?.node.querySelector('#rd-status');if(el)el.textContent=text;}
+  function controls(disabled){session?.node.querySelectorAll('[data-act="rd-check"],#rd-file,#rd-token').forEach(el=>el.disabled=disabled);}
+  async function check(){
+    const s=session;if(!s||s.busy||!ready())return;s.busy=true;s.prepared=null;controls(true);s.node.querySelector('#rd-preview').innerHTML='';
+    const active=()=>session===s&&turn===s.id&&ready();
+    try{
+      const file=s.node.querySelector('#rd-file').files?.[0];if(!file||file.size>128*1024)fail('packet');
+      const input=s.node.querySelector('#rd-token');s.token=input.value.trim()||S.ghToken||'';input.value='';
+      if(!s.token||/^github_pat_/.test(s.token))fail('auth');
+      status('元の配信先を読み取っています。送信はしていません。');
+      const raw=await file.text();if(!active())fail('cancelled');const packet=JSON.parse(raw),original=JSON.stringify(S),revision=stateRevision;
+      const plan=RecoveryDeliveryScope.plan(S,packet),localPayloads=plan.targets.map(t=>payloadFor(plan.state,t.groupId)),payloads=[],remotes=[],merges=[];
+      for(let i=0;i<plan.targets.length;i++){
+        const remote=await readTarget(plan.targets[i],s.token,active);
+        if(remote.digest!==plan.targets[i].expectedRemoteSha256)fail('source-changed');
+        const merged=RecoveryDeliveryScope.mergePublication(plan.targets[i],remote.data,localPayloads[i]);merges.push(merged);payloads.push(merged.payload);remotes.push(remote);
+      }
+      if(!active()||JSON.stringify(S)!==original||stateRevision!==revision)fail('local-changed');
+      s.prepared={packet,plan,payloads,remotes,merges,original,revision};
+      s.node.querySelector('#rd-preview').innerHTML=summaryHTML(plan,payloads,merges)+'<p class="note">別の端末が同時に送信すると、送信直前の確認だけでは競合を防ぎきれません。</p><label class="organize-field"><span><input id="rd-exclusive" type="checkbox"> 同じ配信先へのほかの端末・アプリの自動公開を止め、この端末だけを配信元にしました。</span></label><label class="organize-field"><span><input id="rd-approve" type="checkbox"> この既存先・対象公演を確認しました。既存トークンをこの端末に保存し、上記公演の自動配信を再開します。</span></label><button class="primary" data-act="rd-commit">この既存先だけ配信を再開</button>';
+      status('接続先と対象を確認できました。まだ送信・保存していません。');
+    }catch(e){s.token='';s.prepared=null;if(session===s)status(message(e));}
+    finally{if(session===s){s.busy=false;controls(false);}}
+  }
+  async function commit(){
+    const s=session,p=s?.prepared;if(!s||s.busy||!p||!s.node.querySelector('#rd-approve')?.checked||!s.node.querySelector('#rd-exclusive')?.checked)return;
+    s.busy=true;s.committing=true;controls(true);s.node.querySelectorAll('button').forEach(b=>b.disabled=true);
+    const active=()=>session===s&&turn===s.id&&ready()&&JSON.stringify(S)===p.original&&stateRevision===p.revision;
+    let committed=false,release;
+    try{
+      release=recordingInboxAdmitWriter();
+      if(!active())fail('local-changed');await saveNow();if(saveErr||!active())fail('storage');
+      const slots=await Promise.all([idbGet('state:0'),idbGet('state:1')]),hold=await idbGet('recovery:network-hold:v1'),legacy=localStorage.getItem(KEY);
+      for(let i=0;i<p.plan.targets.length;i++){
+        const remote=await readTarget(p.plan.targets[i],s.token,active);if(remote.digest!==p.remotes[i].digest)fail('source-changed');
+      }
+      if(!active())fail('local-changed');
+      const next=copy(p.plan.state);next.ghToken=s.token;next.autoPub=true;
+      next.recoveryDelivery={version:1,targets:p.plan.targets.map((t,i)=>({...copy(t),preservedShowIds:copy(p.merges[i].preservedShowIds),heldLocalShowIds:copy(p.merges[i].heldLocalShowIds),preservedShowNames:copy(p.merges[i].preservedShowNames),status:'prepared'}))};
+      const nextRaw=JSON.stringify(packState(next));recoveryValidateCloudState(JSON.parse(nextRaw));
+      status('端末原本と既存配信を保全しています。');
+      const result=await RecoveryDeliveryStore.commit({database:()=>DB,hash:backupDigest,isActive:active,readLegacy:()=>localStorage.getItem(KEY),expectedLegacyRaw:legacy,
+        expectedSlotsRaw:JSON.stringify(slots),expectedHoldRaw:JSON.stringify(hold),originalStateRaw:p.original,nextStateRaw:nextRaw,
+        remoteCopies:p.plan.targets.map((t,i)=>({gistId:t.gistId,raw:p.remotes[i].raw}))});
+      committed=result.committed===true;if(result.status!=='committed')fail('storage');
+      if(!active())fail('local-changed');
+      S=next;saveSeq=result.seq;stateRevision++;saveDirty=false;savePend=null;
+      S.recoveryDelivery.targets.forEach(t=>t.status='ready');await persist();
+      s.token='';s.committing=false;s.busy=false;close();render();
+      await doPush('force');
+    }catch(e){
+      if(committed){s.token='';s.prepared=null;startupPhase='blocked';status('再接続設定は保存されましたが、再読確認が必要です。この画面からは送信を止めています。アプリを開き直してください。');}
+      else if(session===s){s.token='';s.prepared=null;status(message(e));s.committing=false;s.busy=false;s.node.querySelectorAll('button').forEach(b=>b.disabled=false);controls(false);}
+    }finally{release?.();}
+  }
+  async function persist(){save();await saveNow();if(saveErr)fail('storage');const envelope=await idbGet('state:'+(saveSeq%2));if(envelope?.txt!==JSON.stringify(packState(S)))fail('storage');}
+  async function preserveRemote(target,remote,active){
+    const key='preserved:delivery-remote:v1:'+target.gistId+':'+remote.digest,old=await idbGet(key);
+    if(old!==undefined&&old!==remote.raw)fail('storage');if(!active())fail('cancelled');
+    if(old===undefined)await idbPut(key,remote.raw);if(await idbGet(key)!==remote.raw||!active())fail('storage');
+  }
+  async function push(gid,force){
+    if(!canPublish(gid)||pushing)return false;
+    const binding=currentBinding(gid),token=S.ghToken,group=S.groups.find(g=>g.id===gid),baseline=JSON.stringify(S),contentSnapshot=JSON.stringify({...S,recoveryDelivery:undefined});
+    pushing=true;
+    let attempted=false,pendingDigest='',pendingKey='',previousDigest=binding.expectedRemoteSha256,release;
+    const active=()=>ready()&&!session&&currentBinding(gid)===binding&&S.ghToken===token&&S.groups.find(g=>g.id===gid)===group&&!group.nopub&&group.gistId===binding.gistId&&group.src===binding.src&&JSON.stringify({...S,recoveryDelivery:undefined})===contentSnapshot;
+    try{
+      release=recordingInboxAdmitWriter();
+      const plan=RecoveryDeliveryScope.plan(S,packetForBindings()),target=plan.targets.find(t=>t.groupId===gid);if(!target)fail('target');
+      const localPayload=payloadFor(S,gid),key=payloadKey(localPayload);
+      if(!force&&!group.publishKeyPending&&group.lastKey===key)return 'same';
+      const remote=await readTarget(target,token,active);
+      if(remote.digest!==binding.expectedRemoteSha256)fail('source-changed');
+      const merged=RecoveryDeliveryScope.mergePublication(target,remote.data,localPayload,binding.preservedShowIds),payload=merged.payload;
+      if(JSON.stringify(S)!==baseline)fail('local-changed');
+      await preserveRemote(target,remote,active);
+      const second=await readTarget(target,token,active);if(second.digest!==remote.digest)fail('source-changed');
+      if(JSON.stringify(S)!==baseline)fail('local-changed');
+      const raw=JSON.stringify(payload),digest=await backupDigest(raw);if(!active())fail('local-changed');
+      pendingDigest=digest;pendingKey=key;binding.status='sending';binding.pendingDigest=digest;binding.pendingKey=key;
+      await persist();if(!active())fail('cancelled');
+      attempted=true;
+      await request('https://api.github.com/gists/'+target.gistId,token,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({files:{'utacheck.json':{content:raw}}})},active);
+      const confirmed=await readTarget(target,token,active);if(confirmed.digest!==digest)fail('unknown');
+      binding.expectedRemoteSha256=digest;binding.status='ready';delete binding.pendingDigest;delete binding.pendingKey;
+      group.lastKey=key;group.publishKeyPending=false;group.publishWarning=merged.heldLocalShowIds.length?'現配信の公演を保持しています。同じ公演の端末版差分は保留です。':'';await persist();return 'sent';
+    }catch(e){
+      if(attempted){binding.expectedRemoteSha256=previousDigest;binding.status='uncertain';binding.pendingDigest=pendingDigest;binding.pendingKey=pendingKey;try{await persist();}catch(_){};const error=new Error(message({reconnectCode:'unknown'}));error.publicationUnknown=true;throw error;}
+      if(binding.status==='sending'||!['cancelled','local-changed'].includes(e.reconnectCode)){binding.status='blocked';try{await persist();}catch(_){}}
+      throw new Error(message(e));
+    }finally{release?.();pushing=false;}
+  }
+  async function reconcile(){
+    if(!ready()||session||pushing||publishInFlight)return;pushing=true;let release;
+    try{
+      release=recordingInboxAdmitWriter();
+      RecoveryDeliveryScope.plan(S,packetForBindings());
+      for(const target of S.recoveryDelivery?.targets||[]){
+        if(target.status==='ready')continue;if(target.status==='prepared')fail('storage');if(!target.pendingDigest&&target.status!=='blocked')fail('unknown');
+        const token=S.ghToken,active=()=>ready()&&!session&&S.ghToken===token&&currentBinding(target.groupId)===target;
+        const remote=await readTarget(target,token,active);
+        if(remote.digest!==target.pendingDigest&&remote.digest!==target.expectedRemoteSha256)fail('source-changed');
+        const prior=copy(target),g=S.groups.find(g=>g.id===target.groupId),priorKey=g?.lastKey,priorPending=g?.publishKeyPending;
+        if(remote.digest===target.pendingDigest){target.expectedRemoteSha256=remote.digest;if(g){g.lastKey=target.pendingKey;g.publishKeyPending=false;}}
+        target.status='ready';delete target.pendingDigest;delete target.pendingKey;
+        try{await persist();}catch(error){Object.keys(target).forEach(k=>delete target[k]);Object.assign(target,prior);if(g){g.lastKey=priorKey;g.publishKeyPending=priorPending;}throw error;}
+      }
+      alert('既存先の送信結果を確認しました。この確認では再送していません。');render();
+    }catch(e){alert(message(e));}finally{release?.();pushing=false;}
+  }
+  document.addEventListener('click',e=>{const b=e.target.closest?.('[data-act^="rd-"]');if(!b)return;e.preventDefault();e.stopImmediatePropagation();
+    const action=b.dataset.act;if(action==='rd-open')open();if(action==='rd-close')close();if(action==='rd-check')void check();if(action==='rd-commit')void commit();if(action==='rd-reconcile')void reconcile();},true);
+  document.addEventListener('input',e=>{if(session&&!session.busy&&['rd-file','rd-token'].includes(e.target.id)){session.prepared=null;session.token='';session.node.querySelector('#rd-preview').innerHTML='';status('入力が変わりました。もう一度接続先を確認してください。');}},true);
+  document.addEventListener('change',e=>{if(session&&!session.busy&&e.target.id==='rd-file'){session.prepared=null;session.token='';session.node.querySelector('#rd-preview').innerHTML='';status('ファイルが変わりました。もう一度接続先を確認してください。');}},true);
+  document.addEventListener('visibilitychange',()=>{if(document.hidden&&!session?.committing)close();});
+  root.RecoveryDelivery=Object.freeze({settingsHTML,open,close,canPublish,hasResumed,pending,push,reconcile});
+})(globalThis);

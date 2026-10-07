@@ -113,7 +113,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.43";
+const APP_VER = "16.41.44";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1566,6 +1566,7 @@ function setSongDelivery(ids, groupId) {
   save(); schedulePush();
 }
 function showDeliveryLabel(sw) {
+  if(S.recoveryDelivery?.targets?.some(t=>t.heldLocalShowIds?.includes(sw.id)))return "現配信保持・端末差分は保留";
   if (sw.nopub) return sw.recoveredSourceShowId ? "復旧済み・配信再接続待ち" : "配信しない";
   const songs = S.songs.filter(so => so.showId === sw.id);
   if (songs.length && songs.every(so => {
@@ -8257,7 +8258,8 @@ function viewSetup() {
     </div>`}
 
     <h4 class="head">配信設定</h4>
-    ${startupRecoveryNetworkHold ? `<p class="note" role="status">復旧した公演の配信は再接続待ちです。${!S.ghToken ? "この端末に配信の認証情報がありません。" : "元の配信先と公開範囲の確認が必要です。"}元の保存先と接続を確認してから再開します。</p>` : ""}
+    ${typeof RecoveryDelivery!=="undefined" ? RecoveryDelivery.settingsHTML() : ""}
+    ${startupRecoveryNetworkHold ? `<p class="note" role="status">${S.recoveryDelivery?.targets?.some(t=>t.status==='ready')?"確認した既存先だけ配信を再開しています。バックアップ・他端末の自動同期は停止中です。":"復旧した公演の配信は再接続待ちです。"}${!S.ghToken ? "この端末に配信の認証情報がありません。" : "元の配信先と公開範囲の確認が必要です。"}元の保存先と接続を確認してから再開します。</p>` : ""}
     <details class="card"><summary>接続・グループを管理</summary>
     ${liveGroups().map((g) => {
       const n = SONGS().filter((x) => songDeliveryGroupId(x) === g.id).length;
@@ -8282,7 +8284,7 @@ function viewSetup() {
     </div>
 
     </details>
-    ${(() => { const gg = group(); return gg && gg.gistId && !gg.nopub && !showNoPub(); })() ? `
+    ${(() => { const gg = group(); return !startupRecoveryNetworkHold && gg && gg.gistId && !gg.nopub && !showNoPub(); })() ? `
     <h4 class="head">ライブ中のお知らせ</h4>
     <div class="card" style="margin-bottom:22px">
       ${S.alertMsg ? `<div style="background:var(--bad);color:#0A0A0A;border-radius:10px;padding:10px 12px;margin-bottom:8px">
@@ -8343,7 +8345,7 @@ function viewSetup() {
 
     <h4 class="head">自動公開</h4>
     <div class="card">
-      ${S.ghToken ? `<div class="row" style="margin-bottom:10px">
+      ${startupRecoveryNetworkHold ? `<p class="note">復旧中は上の「既存の配信先に再接続」を使ってください。通常の新規公開は停止しています。</p>` : S.ghToken ? `<div class="row" style="margin-bottom:10px">
           <span class="grow" style="font-size:13px">トークン設定済み　<span style="color:var(--dim)">${h(pushState || "待機中")}</span></span>
           <button class="chip sm" data-act="autopub" style="${S.autoPub ? "background:var(--accent);color:#0A0A0A" : ""}">自動${S.autoPub ? "オン" : "オフ"}</button>
         </div>
@@ -8978,6 +8980,7 @@ document.addEventListener("click", (e) => {
       break;
     }
     case "showpub": {
+      if(S.recoveryDelivery?.targets?.some(t=>t.heldLocalShowIds?.includes(id))){alert("この公演は現配信版を保持しています。端末版との差分を確認するまで、この公演だけの配信設定変更は保留です。");break;}
       const sw = S.shows.find((x) => x.id === id); if (!sw) break;
       if (!sw.nopub) {
         const n = S.songs.filter((x) => x.showId === id).length;
@@ -10826,7 +10829,7 @@ async function wrap(obj, g) {
 }
 
 /* ---- GitHub Gist：グループごとに配信する ---- */
-function publicationData(gid, previous) {
+function publicationData(gid, previous, isolatedLibraries = false) {
   const g = group(gid);
   const unresolved = unresolvedPublicationShows(gid);
   if (unresolved.length && previous === undefined) {
@@ -10861,7 +10864,7 @@ function publicationData(gid, previous) {
            (l.extra || []).length ? "ハモ " + (l.extra || []).map((m) => (member(m) || {}).name).filter(Boolean).join("・") : "",
            l.extraCell || "", l.labelRaw || l.raw || "", l.extraRaw || ""]));
       const sections = x.lines.flatMap((l, lineIdx) => typeof l.sec === "string" && l.sec.trim() ? [{lineIdx, name:l.sec.trim()}] : []);
-      const key = x.title + "\u0001" + JSON.stringify(lines) + "\u0001" + JSON.stringify(sections);
+      const key = (isolatedLibraries ? x.id + "\u0001" : "") + x.title + "\u0001" + JSON.stringify(lines) + "\u0001" + JSON.stringify(sections);
       if (libKey.has(key)) return libKey.get(key);
       const gs = {};
       Object.keys(x.blocks || {}).forEach((b) => {
@@ -11074,6 +11077,7 @@ const latestRaw = (u) => (gistRawSource(u) || {}).url || u || "";
 
 // 入れたトークンが本当にGistを扱えるか、その場で確かめる
 async function verifyToken() {
+  if(startupRecoveryNetworkHold){alert("復旧中は「既存の配信先に再接続」で確認してください。トークンの有効性はまだ確認していません。");return;}
   U.busy = "トークンを確認中…"; render();
   try {
     await gh("/gists?per_page=1");
@@ -11306,6 +11310,7 @@ function payloadKey(d) {
 }
 
 async function gistPush(gid, force) {
+  if(typeof startupRecoveryNetworkHold!=='undefined'&&startupRecoveryNetworkHold&&typeof RecoveryDelivery!=='undefined')return RecoveryDelivery.push(gid,force);
   if(typeof startupCanCommunicate==='function'&&!startupCanCommunicate())return false;
   if (!recordingInboxCanWrite()) return false;
   const g = S.groups.find(x => x.id === gid);
@@ -11445,14 +11450,16 @@ function queuePublication(work) {
   return result;
 }
 async function doPush(silent) {
-  if(typeof startupCanCommunicate==='function'&&!startupCanCommunicate())return false;
+  if(typeof startupCanCommunicate==='function'&&!startupCanCommunicate()
+    &&!(typeof RecoveryDelivery!=='undefined'&&RecoveryDelivery.hasResumed()))return false;
   // Timer requests coalesce; explicit sends wait their turn and build fresh data.
   if (silent === true && publishInFlight) return;
   return queuePublication(() => publishGroups(silent));
 }
 async function publishGroups(silent) {
   if (!recordingInboxCanWrite()) return false;
-  const live = S.groups.filter((g) => g.gistId && !g.nopub);
+  const live = S.groups.filter((g) => g.gistId && !g.nopub
+    &&(typeof startupRecoveryNetworkHold==='undefined'||!startupRecoveryNetworkHold||typeof RecoveryDelivery!=='undefined'&&RecoveryDelivery.canPublish(g.id)));
   if (!S.ghToken || !live.length) return;
   pushState = "送信中"; renderPublishStatus();
   lastPushAt = Date.now();
@@ -11513,6 +11520,7 @@ function hasPending() {
   const keys = S.groups.map(g => [g.id, g.gistId, g.nopub, g.lastKey, g.publishKeyPending].join(":")).join("|");
   if (pendingCheck && pendingCheck.revision === stateRevision && pendingCheck.keys === keys) return pendingCheck.result;
   const result = S.groups.some((g) => {
+    if(typeof startupRecoveryNetworkHold!=='undefined'&&startupRecoveryNetworkHold&&typeof RecoveryDelivery!=='undefined')return RecoveryDelivery.pending(g.id);
     if (!g.gistId || g.nopub) return false;
     try { return g.publishKeyPending || payloadKey(publicationData(g.id)) !== g.lastKey; } catch (e) { return true; }
   });
@@ -12880,7 +12888,7 @@ function copyText(t, msg) {
   // Keep the original localStorage copy for recovery after a successful import.
   render();
   if(startupRecoveryNetworkHold&&startupRecoverySourceKind==='local-excel')void recoveryInspectOriginalBackup();
-  if(startupRecoveryNetworkHold){const notice=document.createElement('div');notice.id='recovery-network-notice';notice.textContent=startupRecoverySourceKind==='cloud-backup'?'元のGitHubバックアップから公演・曲・指摘を再開しました。現在の作業と原ファイルを保全し、自動送受信は停止中です。':startupRecoverySourceKind==='local-excel'?'元Excel救出'+(startupRecoveryExcelSummary?' '+startupRecoveryExcelSummary.read+' / '+startupRecoveryExcelSummary.total+'資料':'')+'。元公演との対応・過去の指摘や管理メモ等は未回復です。原本保持・同期停止中です。':['local-publication','cloud-publication'].includes(startupRecoverySourceKind)?'配信コピーから公演・曲・指摘などを部分復旧しました。配信外の管理メモ・録音管理などは未回復です。元ファイルを保持し、自動送受信は停止中です。':'端末内の復元内容で再開しました。自動送受信は停止中です。';notice.setAttribute('role','status');notice.style.cssText='position:fixed;bottom:0;left:0;right:0;z-index:99999;background:#283A52;color:white;padding:10px;text-align:center;font-size:12px;pointer-events:none';document.body.appendChild(notice);}
+  if(startupRecoveryNetworkHold){const notice=document.createElement('div');notice.id='recovery-network-notice';notice.textContent=S.recoveryDelivery?.targets?.length?'確認した既存先のみ配信を再開できます。原本保持・バックアップと他端末同期は停止中です。':startupRecoverySourceKind==='cloud-backup'?'元のGitHubバックアップから公演・曲・指摘を再開しました。現在の作業と原ファイルを保全し、自動送受信は停止中です。':startupRecoverySourceKind==='local-excel'?'元Excel救出'+(startupRecoveryExcelSummary?' '+startupRecoveryExcelSummary.read+' / '+startupRecoveryExcelSummary.total+'資料':'')+'。元公演との対応・過去の指摘や管理メモ等は未回復です。原本保持・同期停止中です。':['local-publication','cloud-publication'].includes(startupRecoverySourceKind)?'配信コピーから公演・曲・指摘などを部分復旧しました。配信外の管理メモ・録音管理などは未回復です。元ファイルを保持し、自動送受信は停止中です。':'端末内の復元内容で再開しました。自動送受信は停止中です。';notice.setAttribute('role','status');notice.style.cssText='position:fixed;bottom:0;left:0;right:0;z-index:99999;background:#283A52;color:white;padding:10px;text-align:center;font-size:12px;pointer-events:none';document.body.appendChild(notice);}
   if(!startupRecoveryNetworkHold){importFromLink();syncSetlist(false);}
 })();
 // 指摘の画面を開いたままアプリを閉じても、書きかけのメモが消えないように記録してから保存する
