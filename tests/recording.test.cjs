@@ -12,8 +12,8 @@ function declaration(name){
 }
 function state(){
  const c=vm.createContext({Date,console,setTimeout:()=>{},document:{getElementById:()=>null},save:()=>{},render:()=>{},pushUndo:()=>{},alert:()=>{throw Error('Unexpected alert');}});
- vm.runInContext(`let S={recMode:true,rsongId:'second',rsongs:[{id:'first'},{id:'second'}],planAuto:true,plan:{start:'10:00',slots:[{id:'a',kind:'member',name:'A',min:60},{id:'b',kind:'break',name:'休憩',min:15},{id:'c',kind:'member',name:'C',min:60}]}}, U={songIdx:0,secView:''};let autoMsg='';const nowMin=()=>600;const PREP='RH';const SEC_MIN=5;const sectionOrder=()=>['1A'];const secBars=()=>({});const tagBase=s=>s;const isTagSec=()=>false;`,c);
- for(const name of ['hm2min','planRows','focusRow','sectionsOf','startSlot','finishSlot','autoPlan'])vm.runInContext(declaration(name),c);
+ vm.runInContext(`let S={recMode:true,rsongId:'second',rsongs:[{id:'first'},{id:'second'}],planAuto:true,plan:{start:'10:00',slots:[{id:'a',kind:'member',name:'A',min:60},{id:'b',kind:'break',name:'休憩',min:15},{id:'c',kind:'member',name:'C',min:60}]}}, U={songIdx:0,secView:''};let autoMsg='',preview=null;const VIEW=()=>false;const nowMin=()=>600;const PREP='RH';const SEC_MIN=5;const sectionOrder=()=>['1A'];const secBars=()=>({});const tagBase=s=>s;const isTagSec=()=>false;`,c);
+ for(const name of ['hm2min','planRows','focusRow','sectionsOf','startSlot','finishSlot','recScheduleClock','recScheduledRow','recScheduleEditing','pauseRecSchedule','autoPlan'])vm.runInContext(declaration(name),c);
  for(const name of ['recSong','song'])vm.runInContext(source.split('\n').find(l=>l.startsWith('const '+name+' =')),c);
  const start=source.indexOf('    case "pnextsec":');
  const end=source.indexOf('    case "psetstart":',start);

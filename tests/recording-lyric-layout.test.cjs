@@ -167,3 +167,46 @@ test('REC section labels start dim; unassigned lyrics and assigned singing remai
   assert.deepEqual(f.idb.snapshot(),stored);
   assert.deepEqual(f.localWrites,local);
 });
+
+test('REC planned Tokyo slots switch and count down without starting takes or writing state',async()=>{
+  const f=await fixture();
+  f.run(`S.plan.slots=[{id:'a',name:'担当A',kind:'member',day:'10/8',at:690,min:90,takes:{'1A':4},secLog:{'1A':7}},
+    {id:'b',name:'担当B',kind:'member',day:'10/8',at:780,min:60},
+    {id:'c',name:'担当C',kind:'member',day:'10/9',at:690,min:90}];
+    S.planFocus='';U.recFocusId='';U.recScheduleId='';U.recSchedulePaused=false;
+    Date.now=()=>Date.parse('2026-10-08T02:45:00Z');`);
+  const before=f.run('JSON.stringify(S)'),stored=f.idb.snapshot(),local=clone(f.localWrites);
+  assert.equal(f.run('recScheduledRow().left'),4500);
+  f.run('autoPlan()');
+  assert.equal(f.run('focusRow().s.id'),'a');
+  assert.equal(f.run('focusRow().scheduled'),true);
+  assert.equal(f.run('recFocusMember().id'),'member-0');
+  assert.equal(f.run('takeCtx()'),'');
+  assert.match(f.run('recWho()'),/担当A/);
+  const el={textContent:'',style:{}};f.elements.set('pcd',el);f.run('tickPlan()');assert.equal(el.textContent,'75:00');
+  f.run(`Date.now=()=>Date.parse('2026-10-08T04:00:00Z');tickPlan()`);
+  assert.equal(f.run('focusRow().s.id'),'b');assert.equal(el.textContent,'60:00');
+  f.run(`Date.now=()=>Date.parse('2026-10-08T04:12:30Z');tickPlan()`);assert.equal(el.textContent,'47:30');
+  unchanged(f,before,stored,local);
+});
+
+test('REC automatic schedule defers editing and respects manual choice, dates and actual takes',async()=>{
+  const f=await fixture();
+  f.run(`S.plan.slots=[{id:'a',name:'担当A',day:'10/8',at:690,min:90},{id:'b',name:'担当B',day:'10/8',at:780,min:60}];
+    S.planFocus='';U.recScheduleId='';U.recSchedulePaused=false;Date.now=()=>Date.parse('2026-10-08T02:45:00Z');U.menu={kind:'note'};autoPlan()`);
+  assert.equal(f.run('U.recScheduleId'),'');
+  f.run('U.menu=null;autoPlan()');assert.equal(f.run('U.recScheduleId'),'a');
+  f.run('save=()=>{}'); // Existing manual navigation persists; automatic path is checked separately.
+  f.click('psecgo','b');assert.equal(f.run('U.recSchedulePaused'),true);
+  f.run('autoPlan()');assert.equal(f.run('focusRow().s.id'),'b');
+  f.click('recschedule');assert.equal(f.run('focusRow().s.id'),'a');
+  f.run(`S.plan.slots[1].a0=780;S.plan.slots[1].secCur='1A';S.planFocus='b';autoPlan()`);
+  assert.equal(f.run('U.recScheduleId'),'');assert.equal(f.run('focusRow().s.id'),'b');
+  f.run(`delete S.plan.slots[1].a0;delete S.plan.slots[1].secCur;Date.now=()=>Date.parse('2026-10-10T02:45:00Z')`);
+  assert.equal(f.run('recScheduledRow()'),null);
+  f.run(`Date.now=()=>Date.parse('2026-10-08T02:45:00Z');S.plan.slots[0].day=''`);assert.equal(f.run('recScheduledRow()'),null);
+  f.run(`S.plan.slots[0].day='invalid'`);assert.equal(f.run('recScheduledRow()'),null);
+  f.run(`S.plan.slots[0].day='2025-10-08'`);assert.equal(f.run('recScheduledRow()'),null);
+  f.run(`S.plan.slots[0].day='2026-10-08';S.plan.slots.push({...S.plan.slots[0],id:'overlap'})`);assert.equal(f.run('recScheduledRow()'),null);
+  assert.equal(f.calls.network.length,0);
+});

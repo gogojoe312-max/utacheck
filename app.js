@@ -113,7 +113,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.47";
+const APP_VER = "16.41.48";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -7024,9 +7024,7 @@ function viewSetupRec() {
 // いま録っている人（進行で開いた人があればその人）。曲名と同じ大きさで出す。
 function recWho() {
   if (!S.recMode) return "";
-  const rows = planRows();
-  const foc = S.planFocus ? rows.find((r) => r.s.id === S.planFocus) : null;
-  const r = foc || rows.find((x) => x.live);
+  const r = focusRow();
   if (!r || r.s.kind === "break") return "";
   return `<span style="color:var(--accent);font-weight:700">　${h(r.s.name)}</span>`;
 }
@@ -7045,6 +7043,9 @@ function takeNo(slot) {
 function focusRow() {
   const rows = planRows();
   const foc = S.planFocus ? rows.find((r) => r.s.id === S.planFocus) : null;
+  const scheduled = !U.recSchedulePaused && U.recScheduleId ? rows.find(r => r.s.id === U.recScheduleId) : null;
+  // An explicitly running take always keeps its existing context.
+  if (scheduled && !rows.some(r => r.live)) return {...scheduled, scheduled:true};
   return foc || rows.find((r) => r.live);
 }
 
@@ -7099,8 +7100,9 @@ function recBar() {
   const live = focusRow();
   if (live && live.s.kind === "break") return `<div class="rec-break-bar">
     <strong>${live.live ? "休憩中" : live.done ? "休憩終了" : "休憩"}</strong>
-    ${live.live ? '<span id="pcd">—</span>' : `<span>${live.s.min}分</span>`}
+    ${live.live || live.scheduled ? '<span id="pcd">—</span>' : `<span>${live.s.min}分</span>`}
     <button data-act="goplan">進行表</button>
+    <button data-act="recschedule" aria-pressed="${!U.recSchedulePaused}">${U.recSchedulePaused ? "予定に合わせる" : "自動切替中"}</button>
     ${live.live ? `<button class="rec-primary" data-act="pnext" data-id="${live.s.id}">休憩終了</button>`
       : !live.done ? `<button class="rec-primary" data-act="pstart" data-id="${live.s.id}">休憩開始</button>` : ""}
   </div>`;
@@ -7136,8 +7138,9 @@ function recBar() {
   <div class="aubar rec-tools">
     <div class="rec-tools-meta">
       <button class="chip sm" data-act="goplan">進行表</button>
+      <button class="chip sm" data-act="recschedule" aria-pressed="${!U.recSchedulePaused}">${U.recSchedulePaused ? "予定に合わせる" : "自動切替中"}</button>
       ${live ? `<span class="rec-person">${h(live.s.name)}${live.done ? " · 終了" : ""}</span>` : '<span class="grow"></span>'}
-      ${live && live.live ? '<span id="pcd">—</span>' : ""}
+      ${live && (live.live || live.scheduled) ? '<span id="pcd">—</span>' : ""}
       <button class="chip sm" data-act="draw" aria-label="手書き" aria-pressed="${!!U.draw}">✎</button>
       ${U.draw ? `<button class="chip sm" data-act="eraser" aria-label="消しゴム" aria-pressed="${!!U.erase}">消</button>` : ""}
     </div>
@@ -7176,11 +7179,47 @@ function isToday(sw) {
   return Number(m[1]) === d.getMonth() + 1 && Number(m[2]) === d.getDate();
 }
 
+function recScheduleClock(at = Date.now()) {
+  const parts = new Intl.DateTimeFormat("en-CA", {timeZone:"Asia/Tokyo", year:"numeric", month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit", second:"2-digit", hourCycle:"h23"}).formatToParts(new Date(at));
+  const p = Object.fromEntries(parts.map(x => [x.type,x.value]));
+  return {day:p.year+"-"+p.month+"-"+p.day, year:Number(p.year), month:Number(p.month), date:Number(p.day), seconds:Number(p.hour)*3600+Number(p.minute)*60+Number(p.second)};
+}
+function recScheduledRow(at = Date.now()) {
+  const clock = recScheduleClock(at);
+  const rows = planRows().filter(r => {
+    const text = String(r.s.day || "").trim();
+    const full = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(text);
+    const short = /^(\d{1,2})\s*\/\s*(\d{1,2})$/.exec(text);
+    const today = full ? Number(full[1])===clock.year && Number(full[2])===clock.month && Number(full[3])===clock.date
+      : short && Number(short[1])===clock.month && Number(short[2])===clock.date;
+    return today && !r.done && Number.isFinite(r.pS) && Number.isFinite(r.pE) && r.pS>=0 && r.pE<=1440 && r.pE>r.pS && clock.seconds>=r.pS*60 && clock.seconds<r.pE*60;
+  });
+  return rows.length===1 ? {...rows[0],scheduled:true,left:rows[0].pE*60-clock.seconds} : null;
+}
+function recScheduleEditing() {
+  const e=document.activeElement;
+  return !!(U.recSchedulePointer || (U.recScheduleInputUntil || 0)>Date.now() || U.sheet || U.menu || U.picker || U.draw || U.wordEdit || U.busy || U.view==="recplan" && (U.planSec || U.secOrd) || (U.pick || []).length || e && (e.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(e.tagName)));
+}
+function pauseRecSchedule() {
+  U.recSchedulePaused=true; U.recScheduleId="";
+}
+document.addEventListener("pointerdown",()=>{if(S.recMode)U.recSchedulePointer=true;},true);
+window.addEventListener("blur",()=>{U.recSchedulePointer=false;});
+for (const event of ["pointerup","pointercancel"]) document.addEventListener(event,()=>{U.recSchedulePointer=false;U.recScheduleInputUntil=Date.now()+700;},true);
 function autoPlan() {
-  // 予定時刻は目安。選択中の曲・人・休憩を自動で切り替えない。
+  if (!S.recMode || VIEW() || preview || document.hidden || !["live","recplan"].includes(U.view) || U.recSchedulePaused || recScheduleEditing()) return;
+  // Do not finish/start actual takes or alter any persisted schedule/work.
+  const row = (S.plan.slots || []).some(s => s.a0!=null && s.a1==null) ? null : recScheduledRow();
+  const id = row ? row.s.id : "";
+  if ((U.recScheduleId || "") === id) return;
+  U.recScheduleId=id;
+  if(id) U.view="live";
+  U.recFocusId=""; U.secView="";
+  render();
 }
 
 function startSlot(s2, auto) {
+  pauseRecSchedule();
   // 明示的に開始した枠だけを動かし、曲の選択には触れない。
   for (const sl of S.plan.slots || []) {
     if (sl !== s2 && sl.a0 != null && sl.a1 == null) finishSlot(sl);
@@ -7214,6 +7253,12 @@ function tickPlan() {
   const el = document.getElementById("pcd");
   const el2 = document.getElementById("pcd2");
   const live = focusRow();
+  if (live && live.scheduled) {
+    const current=recScheduledRow();
+    const text=current && current.s.id===live.s.id ? fmtLeft(current.left) : "—";
+    for (const target of [el,el2]) if(target){target.textContent=text;target.style.color="var(--dim)";}
+    return;
+  }
   if (!live || !live.live) { if (el) el.textContent = "—"; if (el2) el2.textContent = ""; return; }
   if (el2 && !live.s.startAt) { el2.textContent = ""; }
   else if (el2) {
@@ -7232,6 +7277,8 @@ function tickPlan() {
   el.style.color = left < 0 ? "var(--bad)" : "var(--text)";
 }
 setInterval(() => { if (S.recMode && !document.hidden) tickPlan(); }, 1000);
+document.addEventListener("visibilitychange",()=>{if(!document.hidden && S.recMode){U.recSchedulePointer=false;tickPlan();}});
+window.addEventListener("pageshow",()=>{if(!document.hidden && S.recMode){U.recSchedulePointer=false;tickPlan();}});
 
 // 曲の区切り（1A・1B…）と、その持ち時間
 // 歌詞に出てくる順
@@ -8746,7 +8793,8 @@ document.addEventListener("click", (e) => {
     case "bpm": metSet(metBpm() + Number(id)); break;
     case "metsub": S.sub = Number(id); save(); render(); break;
     case "focus": U.focus = id; U.picker = false; render(); break;
-    case "recfocus": U.recFocusId = id; render(); break;
+    case "recschedule": U.recSchedulePaused=!U.recSchedulePaused; U.recScheduleId=""; if(!U.recSchedulePaused)autoPlan(); render(); break;
+    case "recfocus": pauseRecSchedule(); U.recFocusId = id; render(); break;
     case "jumpshow": selectShow(id); renderSheet(); render(); break;
 
     case "key": {
@@ -9279,7 +9327,7 @@ document.addEventListener("click", (e) => {
     case "psecgo": {
       // 人名を押したら、その人の歌詞画面へ行く。テイクは自分で選ぶ。
       const sl = (S.plan.slots || []).find((x) => x.id === id);
-      if (sl) { S.planFocus = sl.id; U.recFocusId = ""; U.view = "live"; save(); render(); }
+      if (sl) { pauseRecSchedule(); S.planFocus = sl.id; U.recFocusId = ""; U.view = "live"; save(); render(); }
       break;
     }
     case "psecopen": {
@@ -9523,7 +9571,7 @@ document.addEventListener("click", (e) => {
     }
     case "pedit": {
       const _sl = (S.plan.slots || []).find((x) => x.id === id);
-      if (_sl) { S.planFocus = _sl.id; U.view = "live"; save(); render(); break; }
+      if (_sl) { pauseRecSchedule(); S.planFocus = _sl.id; U.view = "live"; save(); render(); break; }
     }
     case "peditbreak": U.menu = { kind: "pedit", id }; renderSheet(); break;
     case "pset": {
