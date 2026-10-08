@@ -135,3 +135,54 @@ test('reconnection dialog keeps its bottom controls clear of the fixed recovery 
  const f=await fixture();const notice=f.c.document.getElementById('recovery-network-notice');notice.hidden=false;f.click('rd-open');assert.equal(notice.hidden,true);f.click('rd-close');assert.equal(notice.hidden,false);
  notice.hidden=true;f.click('rd-open');f.click('rd-close');assert.equal(notice.hidden,true);
 });
+
+function enablePreviewBinding(f){
+ const t=f.packet.targets[0],g=f.c.S.groups[0];Object.assign(g,{src:t.src,gistId:t.gistId,nopub:false});
+ f.c.S.recoveryDelivery={version:2,targets:[{...clone(t),groupId:g.id,status:'ready'}]};
+ return t.src;
+}
+test('reconnected member preview reads exact approved raw source without tokens or writes',async()=>{
+ const f=await fixture(),src=enablePreviewBinding(f);f.c.S.ghToken='SYNTHETIC_STORED_TOKEN';const before=JSON.stringify(f.c.S),db=f.idb.snapshot();let request;
+ f.c.fetch=async(url,opts)=>{request={url,opts};return {ok:true,text:async()=>f.remote()};};
+ const d=await f.c.RecoveryDelivery.readPreview(src);
+ assert.equal(d.songs.length,1);assert.equal(request.url,src);assert.equal(request.opts.method,'GET');
+ assert.equal(request.opts.credentials,'omit');assert.equal(request.opts.redirect,'error');assert.equal(request.opts.headers.Authorization,undefined);
+ assert.equal(JSON.stringify(f.c.S),before);assert.deepEqual(f.idb.snapshot(),db);assert.equal(f.c.startupRecoveryNetworkHold,true);assert.equal(f.patches(),0);
+});
+test('preview rejects unbound, ambiguous, stale, and changed bindings without widening recovery transport',async()=>{
+ for(const kind of ['wrong-source','missing','pending','duplicate','mismatch','legacy']){
+  const f=await fixture(),src=enablePreviewBinding(f);let n=0;f.c.fetch=async()=>{n++;throw Error('must not fetch');};
+  let input=src;if(kind==='wrong-source')input+='?x=1';if(kind==='missing')f.c.S.recoveryDelivery.targets=[];
+  if(kind==='pending')f.c.S.recoveryDelivery.targets[0].status='sending';
+  if(kind==='duplicate')f.c.S.recoveryDelivery.targets.push(clone(f.c.S.recoveryDelivery.targets[0]));
+  if(kind==='mismatch')f.c.S.groups[0].gistId='c'.repeat(32);
+  if(kind==='legacy')f.c.S.recoveryDelivery.version=1;
+  await assert.rejects(f.c.RecoveryDelivery.readPreview(input));assert.equal(n,0);assert.equal(f.patches(),0);
+ }
+ const f=await fixture(),src=enablePreviewBinding(f);f.c.fetch=async()=>{f.c.S.notes[0].memo='new edit';return {ok:true,text:async()=>f.remote()};};
+ await assert.rejects(f.c.RecoveryDelivery.readPreview(src),e=>e.reconnectCode==='local-changed');assert.equal(f.c.S.notes[0].memo,'new edit');
+});
+test('whole member preview keeps editor data and restores it exactly on exit under recovery hold',async()=>{
+ const f=await fixture(),src=enablePreviewBinding(f),before=JSON.stringify(f.c.S),db=f.idb.snapshot();
+ Object.assign(f.c,{previewLoading:false,recordingStartPending:false,recordingFinalizePending:false,pitchStartPending:false,PT:{on:false},micStream:null,enterRecordingInboxEditor:()=>()=>{},uid:()=> 'preview-id',syncErr:'',
+  fetchSetlist:async()=>{throw Error('held receiver must not be used');},applySetlist:d=>{f.c.S.songs=clone(d.songs);f.c.S.shows=clone(d.shows);}});
+ f.c.fetch=async()=>({ok:true,text:async()=>f.remote()});
+ vm.runInContext('async '+fn('startPreview'),f.c);vm.runInContext(fn('endPreview'),f.c);
+ await f.c.startPreview(src,'');assert.equal(f.c.S.viewer,true);assert.equal(f.c.S.songs.length,1);assert.equal(f.c.startupRecoveryNetworkHold,true);
+ f.c.endPreview();assert.equal(JSON.stringify(f.c.S),before);assert.deepEqual(f.idb.snapshot(),db);assert.equal(f.patches(),0);
+});
+
+test('preview rejects recording, pending microphone starts and navigation during its read',async()=>{
+ for(const field of ['REC','recordingStartPending','recordingFinalizePending','pitchStartPending','PT','micStream']){
+  const f=await fixture(),src=enablePreviewBinding(f);let calls=0;
+  const activity=()=>{f.c[field]=field==='REC'?{state:'recording'}:field==='PT'?{on:true}:true;};
+  f.c.fetch=async()=>{calls++;return {ok:true,text:async()=>f.remote()};};activity();
+  await assert.rejects(f.c.RecoveryDelivery.readPreview(src));assert.equal(calls,0);
+ }
+ for(const change of [c=>c.REC={state:'recording'},c=>c.U.view='live',c=>c.recordingStartPending=true,c=>c.recordingFinalizePending=true]){
+  const f=await fixture(),src=enablePreviewBinding(f),before=JSON.stringify(f.c.S);
+  f.c.fetch=async()=>{change(f.c);return {ok:true,text:async()=>f.remote()};};
+  await assert.rejects(f.c.RecoveryDelivery.readPreview(src),e=>e.reconnectCode==='local-changed');
+  assert.equal(JSON.stringify(f.c.S),before);assert.equal(f.patches(),0);
+ }
+});

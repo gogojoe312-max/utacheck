@@ -113,7 +113,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.48";
+const APP_VER = "16.41.49";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -2181,6 +2181,7 @@ function pushUndo(songId, notesOnly = false) {
   if (undoStack.length > 40) undoStack.shift();
 }
 let saveErr = false;
+let previewLoading = false, recordingStartPending = false, recordingFinalizePending = false, pitchStartPending = false;
 let preview = null;                    // メンバーの見え方を確認中は、手元に保存しない
 
 // 同じ曲を公演の数だけ持つと、歌詞が丸ごと複製されて保存領域を食い潰す。
@@ -4372,7 +4373,8 @@ async function playPitch(only) {
 }
 
 async function startPitch() {
-  if (PT.on) return;
+  if (PT.on || preview || previewLoading || pitchStartPending) return;
+  pitchStartPending=true;
   try {
     unlockAudio();
     const st = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
@@ -4404,7 +4406,7 @@ async function startPitch() {
     PT.timer = setTimeout(() => { if (PT.on && PT.rec === mr) stopPitch(); }, 10000);
   } catch (e) {
     alert("マイクを使えませんでした。\n設定でマイクを許可してください。");
-  }
+  } finally { pitchStartPending=false; }
 }
 function stopPitch() {
   clearTimeout(PT.timer); clearInterval(PT.tick);
@@ -4901,11 +4903,12 @@ const mmss = (sec) => {
 };
 
 async function startRec() {
-  if (VIEW()) return;
+  if (VIEW() || previewLoading || REC || recordingStartPending || recordingFinalizePending) return;
   const so = song();
   if (!so) return;
 
   if (!navigator.mediaDevices || !window.MediaRecorder) { alert("この端末では録音できません。"); return; }
+  recordingStartPending=true;
   try {
     if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
     // エコー除去・ノイズ抑制・自動音量は通話用の加工で、歌が潰れる原因になる
@@ -4924,6 +4927,8 @@ async function startRec() {
     recKey = S.showId + "|" + so.id + "|" + Date.now();
     REC.ondataavailable = (e) => { if (e.data && e.data.size) recChunks.push(e.data); };
     REC.onstop = async () => {
+      recordingFinalizePending=true;
+      try {
       st.getTracks().forEach((t) => t.stop());
       const blob = new Blob(recChunks, { type: (REC && REC.mimeType) || "audio/mp4" });
       const dur = (Date.now() - recT0) / 1000;
@@ -4937,6 +4942,7 @@ async function startRec() {
         } catch (e) { alert("保存できませんでした。端末の空き容量を確認してください。"); }
       }
       render();
+      } finally { recordingFinalizePending=false; }
     };
     REC.start(1000);
     recT0 = Date.now();
@@ -4947,7 +4953,7 @@ async function startRec() {
     render();
   } catch (e) {
     alert("マイクを使えませんでした。\niPhoneの設定 → Safari → マイク の許可を確認してください。");
-  }
+  } finally { recordingStartPending=false; }
 }
 function stopRec() { if (REC && REC.state === "recording") REC.stop(); }
 const recAt = () => (REC && REC.state === "recording") ? (Date.now() - recT0) / 1000 : null;
@@ -12684,11 +12690,22 @@ async function startPreview(src, key) {
   const recordingInboxRelease = enterRecordingInboxEditor();
   if (!recordingInboxRelease) return false;
   try {
-  if (preview) return;
+  if (preview || previewLoading) return;
+  if(REC || PT.on || micStream || recordingStartPending || recordingFinalizePending || pitchStartPending){alert("録音が終わってからメンバー画面を開いてください。");return;}
+  let recoveredPreview=null;
+  if(startupRecoveryNetworkHold){
+    previewLoading=true;
+    try{recoveredPreview=await RecoveryDelivery.readPreview(src);}
+    catch(e){
+      alert(e?.reconnectCode==='local-changed' ? "確認中に端末の内容が変わりました。入力が終わってからメンバー画面を開いてください。"
+        : "接続済みの配信内容を読み取れませんでした。送信し直さず、接続状態と通信を確認してください。");
+      return;
+    }finally{previewLoading=false;}
+  }
   preview = JSON.stringify(S);
   const keep = { src: S.src, key: S.key };
   S.src = src; S.key = key || "";
-  const d = await fetchSetlist();
+  const d = recoveredPreview || await fetchSetlist();
   if (!d || typeof d === "string" || !d.songs || !d.songs.length) {
     S.src = keep.src; S.key = keep.key;
     preview = null;

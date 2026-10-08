@@ -35,6 +35,31 @@
   function ready(){return typeof S!=='undefined'&&startupRecoveryNetworkHold&&recordingInboxCanWrite()&&!VIEW()&&!preview&&!document.hidden;}
   function currentBinding(gid){return S.recoveryDelivery?.version===2&&Array.isArray(S.recoveryDelivery.targets)?S.recoveryDelivery.targets.find(t=>t.groupId===gid):null;}
   function canPublish(gid){const b=currentBinding(gid),g=S.groups.find(g=>g.id===gid);return ready()&&!session&&!!S.ghToken&&!!b&&b.status==='ready'&&!!g&&!g.nopub&&g.gistId===b.gistId&&g.src===b.src;}
+  // Preview is a token-free read of an already approved, ready destination.
+  // It never clears the recovery hold or uses the publication transport.
+  async function readPreview(src){
+    if(!ready()||session||pushing||publishInFlight||REC||(typeof recordingFinalizePending!=='undefined'&&recordingFinalizePending)||(typeof recordingStartPending!=='undefined'&&recordingStartPending)||(typeof pitchStartPending!=='undefined'&&pitchStartPending)||(typeof PT!=='undefined'&&PT.on)||(typeof micStream!=='undefined'&&micStream))fail('not-ready');
+    const canonical=gistRawSource(src);
+    const matches=(S.recoveryDelivery?.version===2?S.recoveryDelivery.targets:[]).filter(t=>t.src===src&&t.status==='ready');
+    if(!canonical||canonical.url!==src||matches.length!==1)fail('target');
+    const target=matches[0],g=S.groups.find(g=>g.id===target.groupId);
+    if(!g||g.src!==src||g.gistId!==target.gistId||canonical.id!==target.gistId)fail('target');
+    const snapshot=JSON.stringify(S),viewSnapshot=JSON.stringify(U),active=()=>ready()&&!session&&!pushing&&!publishInFlight&&!REC&&!(typeof recordingFinalizePending!=='undefined'&&recordingFinalizePending)&&!(typeof recordingStartPending!=='undefined'&&recordingStartPending)&&!(typeof pitchStartPending!=='undefined'&&pitchStartPending)&&!(typeof PT!=='undefined'&&PT.on)&&!(typeof micStream!=='undefined'&&micStream)&&JSON.stringify(S)===snapshot&&JSON.stringify(U)===viewSnapshot;
+    const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),30000);
+    try{
+      const response=await fetch(src,{method:'GET',headers:{},cache:'no-store',credentials:'omit',redirect:'error',referrerPolicy:'no-referrer',signal:controller.signal});
+      if(!active())fail('local-changed');
+      if(!response.ok)fail('remote');
+      const raw=await response.text();
+      if(!active())fail('local-changed');
+      if(new TextEncoder().encode(raw).length>MAX)fail('remote');
+      const data=JSON.parse(raw);
+      if(data?.enc)fail('encrypted');
+      if(!data||data.groupName!==target.groupName||!Array.isArray(data.songs)||!data.songs.length||!Array.isArray(data.shows))fail('target');
+      return data;
+    }catch(e){if(e.reconnectCode)throw e;fail('remote');}
+    finally{clearTimeout(timer);}
+  }
   function pending(gid){if(!canPublish(gid))return false;const g=S.groups.find(g=>g.id===gid);try{return g.publishKeyPending||payloadKey(payloadFor(S,gid))!==g.lastKey;}catch(_){return true;}}
   function hasResumed(){return ready()&&!session&&(S.recoveryDelivery?.targets||[]).some(t=>canPublish(t.groupId));}
   function packetForBindings(){return {app:'utacheck-existing-delivery',version:2,targets:S.recoveryDelivery.targets.map(t=>{
@@ -212,5 +237,5 @@
   document.addEventListener('input',e=>{if(session&&!session.busy&&['rd-file','rd-token'].includes(e.target.id)){session.prepared=null;session.token='';session.node.querySelector('#rd-preview').innerHTML='';status('入力が変わりました。もう一度接続先を確認してください。');}},true);
   document.addEventListener('change',e=>{if(session&&!session.busy&&e.target.id==='rd-file'){session.prepared=null;session.token='';session.node.querySelector('#rd-preview').innerHTML='';status('ファイルが変わりました。もう一度接続先を確認してください。');}},true);
   document.addEventListener('visibilitychange',()=>{if(document.hidden&&!session?.committing)close();});
-  root.RecoveryDelivery=Object.freeze({settingsHTML,open,close,canPublish,hasResumed,pending,push,reconcile});
+  root.RecoveryDelivery=Object.freeze({settingsHTML,open,close,canPublish,hasResumed,pending,push,reconcile,readPreview});
 })(globalThis);
