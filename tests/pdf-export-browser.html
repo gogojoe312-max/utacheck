@@ -1,0 +1,16 @@
+<!doctype html><meta charset="utf-8"><title>PDF export synthetic check</title>
+<style>
+body{background:#eee;color:#111;font-family:Arial,sans-serif;margin:16px}button{font-size:18px;padding:12px}.pr{width:170mm;transform:scale(.45);transform-origin:top left}.prs{width:170mm;margin:0 0 10px;background:white}.prbox{box-sizing:border-box;width:170mm;height:196mm;padding:12px;background:white}.pr.land .prbox{width:257mm;height:144mm}.prin{font-size:18px;color:black}.cols{display:flex;justify-content:space-between;gap:24px}.cols>div{width:45%}.mark{color:#b00;text-decoration:underline}#result{font-weight:bold;padding:10px}#pdf-canvas{max-width:95vw;border:1px solid black}
+</style>
+<button id="portrait">Create portrait PDF</button> <button id="landscape">Create landscape PDF</button>
+<div id="result">Ready</div><a id="download" hidden target="_blank" rel="noopener">Open generated PDF</a><iframe id="pdf-canvas" style="width:90vw;height:70vh"></iframe>
+<div class="pr" id="prpage">
+<section class="prs"><div class="prbox"><div class="prin"><h2>合成テスト：歌割と指摘 1</h2><div class="cols"><div>担当甲　日本語の歌詞<br><span class="mark">赤い下線［強い］</span><br>1A　表示を確認</div><div>右端の担当・歌詞<br>担当乙　次のフレーズ<br><span class="mark">［音程］</span></div></div></div></div></section>
+<section class="prs"><div class="prbox"><div class="prin"><h2>合成テスト：歌割と指摘 2</h2><p>別ページ。実際の公演・人・歌詞は含みません。</p></div></div></section>
+</div>
+<script src="../vendor/html2canvas.min.js"></script><script src="../vendor/jspdf.umd.min.js"></script><script src="../print-pdf.js"></script>
+<script>
+
+async function run(land){const status=document.getElementById('result');status.textContent='Generating';const root=document.getElementById('prpage');root.classList.toggle('land',land);try{const result=await PrintPDF.create({root,filename:'synthetic-'+(land?'landscape':'portrait')+'.pdf'});const bytes=new Uint8Array(await result.blob.arrayBuffer());const text=new TextDecoder('latin1').decode(bytes);const count=(text.match(/\/Type\s*\/Page\b/g)||[]).length;const box=/\/MediaBox\s*\[\s*0\s+0\s+([0-9.]+)\s+([0-9.]+)/.exec(text);const width=box?Number(box[1]):0,height=box?Number(box[2]):0;const good=count===2&&text.startsWith('%PDF-')&&(land?width>height:height>width);const url=URL.createObjectURL(result.blob);document.getElementById('pdf-canvas').src=url;status.textContent=(good?'PASS':'FAIL')+': '+count+' pages, '+Math.round(width)+' x '+Math.round(height)+', '+result.blob.type+', '+result.blob.size+' bytes';const a=document.getElementById('download');a.href=url;a.download=result.filename;a.hidden=false;}catch(e){status.textContent='FAIL: '+e.message;}}
+document.getElementById('portrait').onclick=()=>run(false);document.getElementById('landscape').onclick=()=>run(true);
+</script>

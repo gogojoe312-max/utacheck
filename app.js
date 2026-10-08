@@ -113,7 +113,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.50";
+const APP_VER = "16.41.51";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -5670,6 +5670,17 @@ function renderSheet() {
     document.body.appendChild(overlay); return;
   }
 
+  if(U.menu?.kind==="pdf-export"&&U.pdfExport){
+    const item=U.pdfExport;
+    overlay=document.createElement("div");overlay.className="mask";
+    overlay.innerHTML=`<button class="sp" data-act="pdf-export-close" aria-label="閉じる"></button><div class="sheet organize-sheet" role="dialog" aria-modal="true" aria-label="PDFの保存">
+      <div class="row"><b class="grow">${item.pages}ページのPDFを作成しました</b><button class="chip" data-act="pdf-export-close">閉じる</button></div>
+      <p class="note" style="overflow-wrap:anywhere">${h(item.name)}</p>
+      <button class="primary" data-act="pdf-export-share">ファイルに保存・共有</button>
+      <a class="organize-action" href="${h(item.url)}" download="${h(item.name)}" target="_blank" rel="noopener">PDFを開く・ダウンロード</a>
+    </div>`;document.body.appendChild(overlay);return;
+  }
+
   if (U.menu?.kind === "excel-export" && U.excelExport && !VIEW()) {
     const item = U.excelExport;
     overlay = document.createElement("div"); overlay.className = "mask";
@@ -6669,6 +6680,39 @@ function downloadBlob(name, blob) {
   a.href = url; a.download = name;
   document.body.appendChild(a); a.click();
   setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 60000);
+}
+
+function closePdfExport() {
+  if(U.pdfExport?.url)URL.revokeObjectURL(U.pdfExport.url);
+  U.pdfExport=null;if(U.menu?.kind==="pdf-export")U.menu=null;
+}
+async function sharePdfExport() {
+  const item=U.pdfExport;if(!item||U.sharingPdf)return;
+  try{
+    const file=new File([item.blob],item.name,{type:"application/pdf"});
+    if(!navigator.canShare?.({files:[file]})){downloadBlob(item.name,item.blob);return;}
+    U.sharingPdf=true;await navigator.share({files:[file]});
+  }catch(e){if(e.name!=="AbortError")alert("共有を開けませんでした。「PDFを開く・ダウンロード」をお使いください。");}
+  finally{U.sharingPdf=false;}
+}
+async function savePrintPDF() {
+  if(U.pdfBuilding||!["print","recprint"].includes(U.view))return;
+  U.pdfBuilding=true;
+  const view=U.view,before=JSON.stringify(S),buttons=Array.from(document.querySelectorAll('[data-act="doprint"]'));
+  buttons.forEach(b=>{b.disabled=true;b.textContent="PDF作成中…";});
+  try{
+    if(U.lookWait)await U.lookWait;
+    if(document.fonts?.ready)await document.fonts.ready;
+    if(U.view!==view||JSON.stringify(S)!==before)throw new Error("内容が変わりました。PDF画面を開き直してください。");
+    fitPrintDOM();
+    const page=document.getElementById("prpage");
+    const title=S.recMode?(recSong()?.title||"REC歌割表"):(U.printPick?.length===1?songName(SONGS().find(s=>s.id===U.printPick[0])||{}):showName())||"歌チェック";
+    const result=await PrintPDF.create({root:page,filename:title+".pdf"});
+    if(U.view!==view||document.getElementById("prpage")!==page||JSON.stringify(S)!==before)throw new Error("作成中に内容が変わりました。もう一度PDFを作成してください。");
+    closePdfExport();U.pdfExport={blob:result.blob,name:result.filename,pages:result.pages,url:URL.createObjectURL(result.blob)};
+    U.menu={kind:"pdf-export"};renderSheet();
+  }catch(e){alert("PDFを作成できませんでした。\n"+(e.message||"時間をおいてもう一度お試しください。"));}
+  finally{U.pdfBuilding=false;buttons.forEach(b=>{b.disabled=false;b.textContent="PDFで保存";});}
 }
 
 function closeExcelExport() {
@@ -7954,14 +7998,9 @@ function fitPrintDOM() {
   pr.style.marginBottom = (-(1 - k2) * pr.offsetHeight) + "px";
 }
 
-// 曲はもう決まっているので、確認の画面は挟まずそのまま印刷へ。
-// 紙面の組み直し（fitPrintDOM）が終わってから呼ぶ。
-// 印刷から戻ったときのために画面自体は残す。
+// Keep the print preview open until the user explicitly generates a PDF.
 function autoPrint() {
-  const go = () => setTimeout(() => { try { window.print(); } catch (e) { /* 出せなければ画面が残るだけ */ } }, 150);
-  // 元のExcelの見た目を読んでいる途中なら、読み終えて組み直してから
-  if (U.lookWait) U.lookWait.then(() => setTimeout(go, 50));
-  else go();
+  // Keep the preview available; the explicit PDF button generates a real file.
 }
 
 function viewPrint() {
@@ -8145,7 +8184,7 @@ function viewPrint() {
     }
 
     return `<section class="prs"><div class="prbox"><div class="prin">
-      <h3>${h(songName(so))}<span class="prc">　${h((S.groups.find((x) => x.id === so.groupId) || {}).name || "")}　${h(showName())}　${ns0.length}件</span></h3>
+      <h3>${h(songName(so))}<span class="prc">　${h((S.groups.find((x) => x.id === (VIEW() ? so.groupId : showDeliveryGroupId(S.shows.find(sw=>sw.id===so.showId)) || songDeliveryGroupId(so))) || {}).name || "")}　${h(showName())}　${ns0.length}件</span></h3>
       ${blocksOf(so).length && !(hasGrid && (so.blockRows || []).length) ? `<div class="prb">${blocksOf(so).map((b) => `<span><b>${h(b)}</b> ${h(names(blockParts(so, b)) || "—")}</span>`).join("　")}</div>` : ""}
       ${inner}
       ${mm ? `<div class="prm"><b>総括</b>　${h(mm)}</div>` : ""}
@@ -8172,8 +8211,7 @@ function viewPrint() {
     ${needWide ? `<style>@page{size:A4 landscape;margin:0}</style>
     <div class="noprint" style="padding:8px 12px;background:#2A2118;color:#F0C089;font-size:12px;line-height:1.6">
       ${anyLook ? "この歌割表は横長なので" : "この曲は歌割表が横に2段あるので"}、紙は<b>横向き</b>で組んでいます。
-      印刷／PDFの画面で「方向」が縦向きになっていたら、<b>横向きに変えてください</b>。
-      iPhoneは方向の指定を無視することがあり、縦のままだと文字が小さくなります。
+      PDFも横向きで保存します。
     </div>` : ""}
     <div class="pr${needWide ? " land" : ""}" id="prpage">${body}</div>
     ${body ? "" : `<p class="noprint" style="padding:30px;text-align:center;color:var(--dim);font-size:13px">この公演には曲がありません</p>`}
@@ -8989,6 +9027,8 @@ document.addEventListener("click", (e) => {
       save(); schedulePush(); renderSheet(); render();
       break;
     }
+    case "pdf-export-close": closePdfExport();renderSheet();break;
+    case "pdf-export-share": void sharePdfExport();break;
     case "excel-export-close": closeExcelExport(); renderSheet(); break;
     case "excel-export-share": shareExcelExport(); break;
     case "xlsout": exportAbsentXlsx(id); break;
@@ -9652,7 +9692,7 @@ document.addEventListener("click", (e) => {
       break;
     }
     case "gopdf": commitFields(); U.picker = false; U.printPick = null; U.view = "print"; render(); autoPrint(); break;
-    case "doprint": window.print(); break;
+    case "doprint": void savePrintPDF(); break;
     case "prlook": setPrLook(prLook() === "plain" ? "xl" : "plain"); render(); break;
     case "ghstart": gistStart(id); break;
     case "ghpush": doPush("force"); break;
@@ -12973,7 +13013,7 @@ function copyText(t, msg) {
   // Keep the original localStorage copy for recovery after a successful import.
   render();
   if(startupRecoveryNetworkHold&&startupRecoverySourceKind==='local-excel')void recoveryInspectOriginalBackup();
-  if(startupRecoveryNetworkHold){const notice=document.createElement('div');notice.id='recovery-network-notice';notice.textContent=S.recoveryDelivery?.version===2&&S.recoveryDelivery?.targets?.length?'確認した既存先のみ配信を再開できます。原本保持・バックアップと他端末同期は停止中です。':startupRecoverySourceKind==='cloud-backup'?'元のGitHubバックアップから公演・曲・指摘を再開しました。現在の作業と原ファイルを保全し、自動送受信は停止中です。':startupRecoverySourceKind==='local-excel'?'元Excel救出'+(startupRecoveryExcelSummary?' '+startupRecoveryExcelSummary.read+' / '+startupRecoveryExcelSummary.total+'資料':'')+'。元公演との対応・過去の指摘や管理メモ等は未回復です。原本保持・同期停止中です。':['local-publication','cloud-publication'].includes(startupRecoverySourceKind)?'配信コピーから公演・曲・指摘などを部分復旧しました。配信外の管理メモ・録音管理などは未回復です。元ファイルを保持し、自動送受信は停止中です。':'端末内の復元内容で再開しました。自動送受信は停止中です。';notice.setAttribute('role','status');notice.style.cssText='position:fixed;bottom:0;left:0;right:0;z-index:99999;background:#283A52;color:white;padding:10px;text-align:center;font-size:12px;pointer-events:none';document.body.appendChild(notice);}
+  if(startupRecoveryNetworkHold){const notice=document.createElement('div');notice.id='recovery-network-notice';notice.textContent=S.recoveryDelivery?.version===2&&S.recoveryDelivery?.targets?.length?'確認した既存先のみ配信を再開できます。原本保持・バックアップと他端末同期は停止中です。':startupRecoverySourceKind==='cloud-backup'?'元のGitHubバックアップから公演・曲・指摘を再開しました。現在の作業と原ファイルを保全し、自動送受信は停止中です。':startupRecoverySourceKind==='local-excel'?'元Excel救出'+(startupRecoveryExcelSummary?' '+startupRecoveryExcelSummary.read+' / '+startupRecoveryExcelSummary.total+'資料':'')+'。元公演との対応・過去の指摘や管理メモ等は未回復です。原本保持・同期停止中です。':['local-publication','cloud-publication'].includes(startupRecoverySourceKind)?'配信コピーから公演・曲・指摘などを部分復旧しました。配信外の管理メモ・録音管理などは未回復です。元ファイルを保持し、自動送受信は停止中です。':'端末内の復元内容で再開しました。自動送受信は停止中です。';notice.hidden=true;notice.setAttribute('role','status');notice.style.cssText='position:fixed;bottom:0;left:0;right:0;z-index:99999;background:#283A52;color:white;padding:10px;text-align:center;font-size:12px;pointer-events:none';document.body.appendChild(notice);}
   if(!startupRecoveryNetworkHold){importFromLink();syncSetlist(false);}
 })();
 // 指摘の画面を開いたままアプリを閉じても、書きかけのメモが消えないように記録してから保存する

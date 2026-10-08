@@ -1,12 +1,12 @@
 /* 自分のコードは毎回ネットワークを見に行き、圏外のときだけキャッシュを使う。
    重い vendor/ だけはキャッシュ優先。これで「更新したのに変わらない」が起きない。 */
-const CACHE = "utacheck-16.41.50";
+const CACHE = "utacheck-16.41.51";
 const ASSETS = [
   "./", "./index.html", "./app.js", "./recording-schedule-update.js", "./recording-schedule-ui.js", "./recovery-delivery-scope.js", "./recovery-delivery-store.js", "./recovery-delivery.js", "./startup-backup-inspection.js", "./startup-preserved-backup-inspection.js", "./startup-file-inspection.js", "./startup-file-restoration.js", "./startup-local-storage-inventory.js", "./startup-local-publication-recovery.js", "./startup-local-excel-recovery.js", "./startup-saved-publication-reader.js", "./startup-recovered-show-addition.js", "./recording-inbox.js", "./recording-inbox-ownership.js", "./show-recovery.js", "./manifest.webmanifest",
   "./ui.css", "./ui.js", "./voice-notes.js", "./reading.js", "./gestures.js",
   "./recflow.css", "./ptlink.js", "./ptmac.html",
   "./icon-192.png", "./icon-512.png", "./setlist.json",
-  "./vendor/pdf.min.js", "./vendor/pdf.worker.min.js", "./vendor/xlsx.full.min.js",
+  "./print-pdf.js", "./vendor/html2canvas.min.js", "./vendor/jspdf.umd.min.js", "./vendor/pdf.min.js", "./vendor/pdf.worker.min.js", "./vendor/xlsx.full.min.js",
 ];
 
 self.addEventListener("install", (e) => {

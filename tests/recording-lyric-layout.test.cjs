@@ -221,3 +221,11 @@ test('unconfirmed old schedule rows remain visible but never trigger automatic f
  const html=f.run('viewPlan()');assert.match(html,/時刻未確認・自動切替対象外/);assert(html.indexOf('Earlier slot')<html.indexOf('Later slot'));
  assert.equal(f.run('JSON.stringify(S)'),before);assert.equal(f.calls.network.length,0);
 });
+
+test('normal views hide the fixed recovery banner while keeping recovery protection enabled',async()=>{
+ for(const recMode of [false,true]){const f=await fixture({recMode});assert.equal(f.elements.get('recovery-network-notice').hidden,true);assert.equal(f.run('startupRecoveryNetworkHold'),true);assert.equal(f.run('startupCanCommunicate()'),false);}
+});
+test('printed group follows the current show destination without rewriting the old imported song group',async()=>{
+ const f=await fixture({recMode:false});f.run(`S.groups=[{id:'old',name:'Old import'},{id:'current',name:'Current destination'}];S.shows[0].groupId='current';S.shows[0].deliveryGroupId='current';S.songs[0].groupId='old';U.printPick=null;`);
+ const before=f.run('JSON.stringify(S)'),html=f.run('viewPrint()');assert.match(html,/class="prc">[^<]*Current destination/);assert.doesNotMatch(html,/class="prc">[^<]*Old import/);assert.equal(f.run('JSON.stringify(S)'),before);assert.equal(f.calls.saves,0);assert.equal(f.calls.network.length,0);
+});
