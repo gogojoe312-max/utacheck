@@ -113,7 +113,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.49";
+const APP_VER = "16.41.50";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -6878,6 +6878,7 @@ function backupSettingsHTML() {
     ${startupRecoveryNetworkHold?'<p class="note">救出用の追加ファイルは現在の資料・REC・追加指摘を保持して取り込みます。自動送受信は停止したままです。</p>':''}
     ${S.ghToken && S.bkGistId ? '<button class="ghost" data-act="backup-inspect">クラウドを確認（送信・復元しない）</button>' : ''}
     ${syncReadReport ? `<p class="note" role="status" style="white-space:pre-wrap">${h(syncReadReport)}</p>` : ''}
+    <button class="ghost" data-act="recording-schedule-update">REC時間割の変更ファイルを適用</button>
     <button class="ghost" data-act="recording-addition">録音曲・時間割を追加用ファイルから追加</button>
     ${recordingInboxSettingsHTML()}
     <p class="note">歌割・指摘・手書き・設定を保存します。録音音声は含みません。</p>
@@ -7198,13 +7199,13 @@ function recScheduledRow(at = Date.now()) {
     const short = /^(\d{1,2})\s*\/\s*(\d{1,2})$/.exec(text);
     const today = full ? Number(full[1])===clock.year && Number(full[2])===clock.month && Number(full[3])===clock.date
       : short && Number(short[1])===clock.month && Number(short[2])===clock.date;
-    return today && !r.done && Number.isFinite(r.pS) && Number.isFinite(r.pE) && r.pS>=0 && r.pE<=1440 && r.pE>r.pS && clock.seconds>=r.pS*60 && clock.seconds<r.pE*60;
+    return today && !r.s.scheduleTimeUnconfirmed && !r.done && Number.isFinite(r.pS) && Number.isFinite(r.pE) && r.pS>=0 && r.pE<=1440 && r.pE>r.pS && clock.seconds>=r.pS*60 && clock.seconds<r.pE*60;
   });
   return rows.length===1 ? {...rows[0],scheduled:true,left:rows[0].pE*60-clock.seconds} : null;
 }
 function recScheduleEditing() {
   const e=document.activeElement;
-  return !!(U.recSchedulePointer || (U.recScheduleInputUntil || 0)>Date.now() || U.sheet || U.menu || U.picker || U.draw || U.wordEdit || U.busy || U.view==="recplan" && (U.planSec || U.secOrd) || (U.pick || []).length || e && (e.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(e.tagName)));
+  return !!((typeof RecordingScheduleUI!=="undefined"&&RecordingScheduleUI.isApplying()) || U.recSchedulePointer || (U.recScheduleInputUntil || 0)>Date.now() || U.sheet || U.menu || U.picker || U.draw || U.wordEdit || U.busy || U.view==="recplan" && (U.planSec || U.secOrd) || (U.pick || []).length || e && (e.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(e.tagName)));
 }
 function pauseRecSchedule() {
   U.recSchedulePaused=true; U.recScheduleId="";
@@ -7666,6 +7667,8 @@ function applySchedule(text) {
 
 function viewPlan() {
   const allRows = planRows();
+  const dayKey=s=>{const m=/^(\d{1,2})\/(\d{1,2})$/.exec(s.day||"");return m?Number(m[1])*100+Number(m[2]):null;};
+  if(allRows.every(r=>dayKey(r.s)!==null&&Number.isFinite(r.s.at)))allRows.sort((a,b)=>dayKey(a.s)-dayKey(b.s)||a.pS-b.pS);
   const dayList = [...new Set(allRows.map((r) => r.s.day).filter(Boolean))];
   // 日付が複数ある時は、その日だけを見られるようにする
   const pickDay = dayList.length > 1 && U.planDay && dayList.includes(U.planDay) ? U.planDay : "";
@@ -7701,7 +7704,7 @@ function viewPlan() {
           <span class="trunc" style="color:${col};font-weight:${r.live ? 700 : 400}">${h(s.name || (isBreak ? "休憩" : "—"))}</span>
         </div>
         <div style="font-size:11px;color:var(--dim);margin-top:2px">
-          ${s.min}分
+          ${s.min}分${s.scheduleTimeUnconfirmed ? "　時刻未確認・自動切替対象外" : ""}
           ${r.done ? `　実際 ${r.aE - r.aS}分 <span style="color:${diff > 0 ? "var(--bad)" : diff < 0 ? "var(--good)" : "var(--dim)"}">${diff ? dmin(diff) : "ぴったり"}</span>` : ""}
           ${r.live ? `　<b style="color:${rest < 0 ? "var(--bad)" : "var(--accent)"}">${rest >= 0 ? "残り " + rest + "分" : "超過 " + (-rest) + "分"}</b>` : ""}
           ${!r.done && !r.live && i === nextIdx ? `　<span style="color:var(--accent)">次</span>` : ""}
@@ -7800,6 +7803,7 @@ function viewPlan() {
       ${last ? (gap ? dmin(gap) : "予定どおり") : ""}</span></div>
   <div class="scroll pad">
     <div class="plan-song">${h((recSong() || {}).title || "曲を選択してください")}</div>
+    <button class="ghost" data-act="recording-schedule-update">時間割の変更ファイルを適用</button>
     ${dayBar}${list || `<p class="note">予定はまだありません</p>`}
     <details class="plan-settings"><summary>進行表を編集</summary>
     <div class="card">

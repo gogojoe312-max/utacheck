@@ -210,3 +210,14 @@ test('REC automatic schedule defers editing and respects manual choice, dates an
   f.run(`S.plan.slots[0].day='2026-10-08';S.plan.slots.push({...S.plan.slots[0],id:'overlap'})`);assert.equal(f.run('recScheduledRow()'),null);
   assert.equal(f.calls.network.length,0);
 });
+
+test('unconfirmed old schedule rows remain visible but never trigger automatic focus',async()=>{
+ const f=await fixture();f.run(`S.plan.slots=[
+ {id:'later',name:'Later slot',kind:'member',day:'10/8',at:900,min:75},
+ {id:'early',name:'Earlier slot',kind:'member',day:'10/8',at:810,min:75},
+ {id:'uncertain',name:'Old break',kind:'break',day:'10/8',at:750,min:60,scheduleTimeUnconfirmed:true}];
+ S.planFocus='';U.recSchedulePaused=false;Date.now=()=>Date.parse('2026-10-08T03:45:00Z');`);
+ const before=f.run('JSON.stringify(S)');assert.equal(f.run('recScheduledRow()'),null);
+ const html=f.run('viewPlan()');assert.match(html,/時刻未確認・自動切替対象外/);assert(html.indexOf('Earlier slot')<html.indexOf('Later slot'));
+ assert.equal(f.run('JSON.stringify(S)'),before);assert.equal(f.calls.network.length,0);
+});
