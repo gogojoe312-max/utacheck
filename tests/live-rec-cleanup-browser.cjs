@@ -43,6 +43,24 @@ function seed() {
    await page.evaluate(seed);
    const data=()=>page.evaluate(()=>JSON.stringify([S.groups,S.shows.filter(s=>!s.hidden),S.songs,S.rsongs,S.notes,S.staffMemos,S.plan]));
    const before=await data();
+   for (const panel of ['practice','recovery','recording-import','publication','sync','storage']) {
+    assert.equal(await page.locator(`[data-settings-panel="${panel}"]`).evaluate(el=>el.open),false,panel+' must start closed');
+   }
+   for (const action of ['recording-schedule-update','recording-addition','show-recovery']) {
+    assert.equal(await page.locator(`[data-act="${action}"]`).isVisible(),false,action+' stays in maintenance');
+   }
+   assert.equal(await page.locator('[data-act="bkfile"]').first().isVisible(),true);
+   assert.equal(await page.locator('[data-act="bknow"]').count(),0,'held recovery must not offer cloud save');
+   assert.equal(await page.locator('[data-act="syncnow"]').count(),0,'held recovery must not offer unsupported sync');
+   const manual=page.locator('[data-settings-panel="recording-import"]');
+   await manual.locator('summary').click();
+   assert.equal(await manual.locator('[data-act="recording-schedule-update"]').isVisible(),true);
+   await manual.locator('summary').click();
+   const practice=page.locator('[data-settings-panel="practice"]');
+   await practice.locator('summary').click();
+   assert.equal(await practice.locator('.pno').isVisible(),true);
+   await practice.locator('summary').click();
+
    const filter=await page.locator('[data-act="showfilter"]').allTextContents();
    assert(!filter.some(t=>/グループ1|元Excel|REC専用/.test(t)));
    assert.equal(await page.locator('[data-act="useshow"]').count(),1);
@@ -50,17 +68,26 @@ function seed() {
    assert((await page.locator('#app').innerText()).includes('配信再接続待ち'));
    assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
    await page.screenshot({path:path.join(out,`live-clean-${width}.png`)});
-   await page.getByText('復旧資料の保管',{exact:true}).click();
+   await page.locator('[data-settings-panel="recovery"] > summary').click();
    await page.getByText('保管資料を見る',{exact:true}).click();
    assert((await page.locator('[data-act="useshow"]').innerText()).includes('元Excel'));
-   await page.getByText('復旧資料の保管',{exact:true}).click();
    await page.getByText('通常の公演に戻る',{exact:true}).click();
    assert((await page.locator('[data-act="useshow"]').innerText()).includes('本公演'));
    await page.evaluate(()=>{S.recMode=true;U.view='setup';render(true)});
    assert((await page.locator('#app').innerText()).includes('録音曲'));
+   assert.equal(await page.locator('[data-settings-panel="practice"]').count(),1);
+   assert.equal(await page.locator('[data-settings-panel="storage"]').count(),1);
+   assert.equal(await page.locator('[data-settings-panel="recovery"] [data-act="show-recovery"]').count(),0);
+   assert.equal(await page.locator('[data-act="goplan"]').isVisible(),true);
+
    await page.screenshot({path:path.join(out,`rec-retained-${width}.png`)});
    await page.evaluate(()=>{S.recMode=false;U.view='setup';render(true)});
    assert.equal(await data(),before);
+   await page.evaluate(()=>{saveErr=true;render(true)});
+   assert.equal(await page.locator('[data-settings-panel="storage"]').evaluate(el=>el.open),true,'save failures must stay visible');
+   await page.evaluate(()=>{saveErr=false;render(true)});
+   assert.equal(await data(),before);
+
    results.push({width,height,archiveRoundtrip:true,recRetained:true,dataUnchanged:true});
    await context.close();
   }

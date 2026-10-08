@@ -182,9 +182,9 @@ function inboxFixture(extra) {
   const integration = f.c.setupRecordingInboxIntegration();
   return { ...f, inbox, options, integration };
 }
-test('real recording inbox receive, scheduled polling, apply gate and local adapter stay sealed', async () => {
+test('real recording inbox receive, scheduled polling and remote local adapter stay sealed while shared mutation gate remains available', async () => {
   const f = inboxFixture(); assert.equal(f.inbox.enrolled, true);
-  assert.equal(f.options.canPoll(), false); assert.equal(f.integration.gate.acquire(), null);
+  assert.equal(f.options.canPoll(), false); const release=f.integration.gate.acquire(); assert.equal(typeof release,'function'); release();
   assert.equal((await f.inbox.receive()).status, 'busy');
   await assert.rejects(f.options.local.apply({}), /EDITOR_BUSY/);
   assert.equal(f.intervals.size, 1);

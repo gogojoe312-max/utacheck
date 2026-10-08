@@ -113,7 +113,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.51";
+const APP_VER = "16.41.52";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -6907,30 +6907,109 @@ function viewAbsent() {
 }
 
 /* ---- レコーディングの設定 ---- */
+// Shared settings renderers only describe existing state; they never migrate or delete data.
+function storageSettingsHTML() {
+  return `
+    <h4 class="head">保存領域</h4>
+    <details class="practice-tools card" data-settings-panel="storage" ${saveErr ? "open" : ""}><summary>${saveErr ? "保存できていません・保存領域を確認" : "保存容量・以前の保存データ"}</summary>
+      ${(() => {
+        // Safariは保存領域を「この場所ぜんぶ」で数える。今のデータだけ見ても実態は分からない。
+        const enc = new TextEncoder();
+        let total = 0;
+        const stray = [];
+        try {
+          for (let i = 0; i < localStorage.length; i++) {
+            const k = localStorage.key(i);
+            const v = localStorage.getItem(k) || "";
+            const b = enc.encode(k).length + enc.encode(v).length;
+            total += b;
+            if (k.indexOf(KEY + ":broken:") === 0) {
+              const at = Number(k.split(":broken:")[1] || 0);
+              let n = null;
+              try { const o = unpackState(JSON.parse(v)); n = { sh: (o.shows || []).length, sg: (o.songs || []).length, nt: (o.notes || []).length }; }
+              catch (e) { /* 読めなくても大きさは分かる */ }
+              stray.push({ k, at, b, n });
+            }
+          }
+        } catch (e) { /* 数えられない端末もある */ }
+        stray.sort((a, b2) => b2.at - a.at);
+        const mb = (x) => (x / 1048576).toFixed(2);
+        const cur = enc.encode(JSON.stringify(packState(S))).length;
+        const over = saveErr;
+        return `<div class="row" style="margin-bottom:6px">
+          <span class="grow" style="font-size:13px">いまのデータ</span>
+          <span style="font-size:13px;color:${over ? "var(--bad)" : "var(--dim)"};font-weight:700">${mb(cur)} MB</span>
+        </div>
+        <div style="font-size:11px;color:var(--dim);line-height:1.7;margin-bottom:${stray.length || total ? 10 : 0}px">
+          公演${S.shows.length}件・LIVE曲${S.songs.length}件・REC曲${(S.rsongs || []).length}件・記録${S.notes.length}件<br>
+          ${idbOK ? "保存先は端末のデータベースです。大切な内容はファイルにも保存してください。"
+                  : "<b style=\"color:var(--bad)\">この端末ではデータベースが使えず、上限5MBの場所に保存しています。</b>"}
+          ${over ? "<br><b style=\"color:var(--bad)\">いま保存できていません。</b>" : ""}
+        </div>
+        ${total ? `<div style="font-size:11px;color:var(--dim);margin-bottom:8px">従来の保存領域に ${mb(total)} MB 残っています。復元用の原本は保持しています。</div>` : ""}
+        ${over ? `<button class="primary" data-act="shrinknow" style="margin-bottom:10px">いま空きを作る（古い公演を消す）</button>` : ""}
+        ${stray.length ? `<div style="font-size:11px;color:var(--accent);margin-bottom:6px">
+          取り残しのデータが ${stray.length}件 あります（合計 ${mb(stray.reduce((a, x) => a + x.b, 0))} MB）。<br>
+          読み込みでつまずいた時に、消さずに横へ避けたものです。中身が残っていれば戻せます。</div>
+        ${stray.map((x) => `<div class="row card" style="padding:8px 10px;margin-bottom:6px">
+          <div class="grow" style="min-width:0">
+            <div style="font-size:12px">${x.at ? new Date(x.at).toLocaleString("ja-JP") : "日時不明"}　${mb(x.b)} MB</div>
+            <div style="font-size:11px;color:var(--dim)">${x.n ? `公演${x.n.sh}件・曲${x.n.sg}件・記録${x.n.nt}件` : "中身を読み取れません"}</div>
+          </div>
+          ${x.n && (x.n.sg || x.n.nt) ? `<button class="chip sm" data-act="strayuse" data-id="${h(x.k)}">戻す</button>` : ""}
+          <button class="chip sm" data-act="straydel" data-id="${h(x.k)}" style="color:var(--bad)">消す</button>
+        </div>`).join("")}` : ""}`;
+      })()}
+    </details>`;
+}
+
+function practiceToolsSettingsHTML() {
+  return `<h4 class="head">練習ツール</h4>
+    <details class="practice-tools card" data-settings-panel="practice"><summary>鍵盤・ピッチ・メトロノーム</summary>
+      <h4 class="head">音を確かめる</h4>
+      <div class="card">${pianoHTML(null)}</div>
+      <h4 class="head">ピッチを見る</h4>
+      ${pitchHTML()}
+      <h4 class="head">メトロノーム</h4>
+      ${metroHTML()}
+    </details>`;
+}
+
 function backupSettingsHTML() {
   const status = backupInFlight ? "バックアップ中…" : S.bkError ? "クラウド保存に失敗しました：" + S.bkError
+    : startupRecoveryNetworkHold ? "復旧保護中。ファイルに保存できます。クラウド保存・他端末との同期は停止中です。"
     : !S.ghToken ? "クラウド未接続。ファイルで保存できます。"
     : S.bkAt ? "クラウド保存：" + new Date(S.bkAt).toLocaleString("ja-JP") + (bkSignature() !== S.bkHash ? "（未保存の変更あり）" : "")
     : "クラウドにはまだ保存されていません";
-  return `${recoveryOriginalBackupHTML()}<h4 class="head">バックアップ</h4><div class="card">
+  const fileOnly = startupRecoveryNetworkHold || !S.ghToken;
+  return `<h4 class="head">バックアップ</h4><div class="card">
+    ${typeof PrivatePreparationUI!=="undefined" ? PrivatePreparationUI.settingsHTML() : ""}
     <p class="note" role="status" ${S.bkError ? 'style="color:var(--bad)"' : ""}>${h(status)}</p>
     ${S.bkFileAt ? `<p class="note">ファイル作成：${new Date(S.bkFileAt).toLocaleString("ja-JP")}</p>` : ""}
-    <button class="primary" data-act="bknow" ${backupInFlight ? "disabled" : ""}>${backupInFlight ? "保存中…" : S.ghToken ? "バックアップする" : "ファイルに保存"}</button>
-    ${S.ghToken ? '<button class="ghost" data-act="bkfile">ファイルに保存</button>' : ""}
-    ${S.ghToken ? '<button class="ghost" data-act="backup-restore">クラウドから復元</button>' : ""}
-    <button class="ghost" data-act="backup-file-restore">${startupRecoveryNetworkHold?'公演・指摘の救出ファイルを追加':'ファイルから復元'}</button>
-    ${startupRecoveryNetworkHold?'<p class="note">救出用の追加ファイルは現在の資料・REC・追加指摘を保持して取り込みます。自動送受信は停止したままです。</p>':''}
-    ${S.ghToken && S.bkGistId ? '<button class="ghost" data-act="backup-inspect">クラウドを確認（送信・復元しない）</button>' : ''}
-    ${syncReadReport ? `<p class="note" role="status" style="white-space:pre-wrap">${h(syncReadReport)}</p>` : ''}
-    <button class="ghost" data-act="recording-schedule-update">REC時間割の変更ファイルを適用</button>
-    <button class="ghost" data-act="recording-addition">録音曲・時間割を追加用ファイルから追加</button>
-    ${recordingInboxSettingsHTML()}
+    <button class="primary" data-act="${fileOnly ? "bkfile" : "bknow"}" ${backupInFlight ? "disabled" : ""}>${backupInFlight ? "保存中…" : fileOnly ? "ファイルに保存" : "バックアップする"}</button>
+    ${!fileOnly ? '<button class="ghost" data-act="bkfile">ファイルに保存</button>' : ""}
     <p class="note">歌割・指摘・手書き・設定を保存します。録音音声は含みません。</p>
     ${otherAt ? `<div role="status" class="card"><b>クラウドとこの端末に違いがあります</b><p class="note">クラウドへの送信は止めています。両方のファイルを保管し、残す内容を確認してください。</p>
       ${syncComparison ? `<p class="note">この端末の公演：${syncComparison.localShows.map(h).join('、')}<br>クラウドの公演：${syncComparison.cloudShows.map(h).join('、')}</p>` : ''}
       <button class="ghost" data-act="bkfile">この端末をファイルに保存</button>
       <button class="ghost" data-act="backup-check">クラウドをもう一度確認</button></div>` : ''}
-  </div>`;
+  </div>
+  <details class="practice-tools card" data-settings-panel="recovery"><summary>復元・旧資料</summary>
+    ${recoveryOriginalBackupHTML()}
+    ${S.ghToken ? '<button class="ghost" data-act="backup-restore">クラウドから復元</button>' : ""}
+    <button class="ghost" data-act="backup-file-restore">${startupRecoveryNetworkHold?'公演・指摘の救出ファイルを追加':'ファイルから復元'}</button>
+    ${startupRecoveryNetworkHold?'<p class="note">救出用の追加ファイルは現在の資料・REC・追加指摘を保持して取り込みます。自動送受信は停止したままです。</p>':''}
+    ${!S.recMode ? '<button class="ghost" data-act="show-recovery">公演を探す・復元</button>' : ''}
+    ${!S.recMode && S.shows.some(recoveryMaterialShow) ? `<p class="note">救出した元資料・過去の配信履歴を保持しています。</p><button class="ghost" data-act="showfilter" data-id="__archive__">保管資料を見る</button>` : ''}
+    ${S.ghToken && S.bkGistId ? '<button class="ghost" data-act="backup-inspect">クラウドを確認（送信・復元しない）</button>' : ''}
+    ${syncReadReport ? `<p class="note" role="status" style="white-space:pre-wrap">${h(syncReadReport)}</p>` : ''}
+  </details>
+  <details class="practice-tools card" data-settings-panel="recording-import"><summary>REC資料の手動取り込み・接続</summary>
+    <button class="ghost" data-act="recording-schedule-update">REC時間割の変更ファイルを適用</button>
+    <button class="ghost" data-act="recording-addition">録音曲・時間割を追加用ファイルから追加</button>
+    ${recordingInboxSettingsHTML()}
+  </details>
+  ${storageSettingsHTML()}`;
 }
 
 function lyricDisplaySettings() {
@@ -6999,67 +7078,7 @@ function viewSetupRec() {
     <h4 class="head">進行</h4>
     <div class="card"><button class="primary" data-act="goplan">進行表をひらく</button></div>
 
-    <h4 class="head">音を確かめる</h4>
-    <div class="card">${pianoHTML(null)}</div>
-
-    <h4 class="head">ピッチを見る</h4>
-    ${pitchHTML()}
-
-    <h4 class="head">メトロノーム</h4>
-    ${metroHTML()}
-
-    <h4 class="head">保存領域</h4>
-    <div class="card" style="margin-bottom:22px">
-      ${(() => {
-        // Safariは保存領域を「この場所ぜんぶ」で数える。今のデータだけ見ても実態は分からない。
-        const enc = new TextEncoder();
-        let total = 0, mine = 0;
-        const stray = [];
-        try {
-          for (let i = 0; i < localStorage.length; i++) {
-            const k = localStorage.key(i);
-            const v = localStorage.getItem(k) || "";
-            const b = enc.encode(k).length + enc.encode(v).length;
-            total += b;
-            if (k === KEY) mine = b;
-            else if (k.indexOf(KEY + ":broken:") === 0) {
-              const at = Number(k.split(":broken:")[1] || 0);
-              let n = null;
-              try { const o = unpackState(JSON.parse(v)); n = { sh: (o.shows || []).length, sg: (o.songs || []).length, nt: (o.notes || []).length }; }
-              catch (e) { /* 読めなくても大きさは分かる */ }
-              stray.push({ k, at, b, n });
-            }
-          }
-        } catch (e) { /* 数えられない端末もある */ }
-        stray.sort((a, b2) => b2.at - a.at);
-        const mb = (x) => (x / 1048576).toFixed(2);
-        const cur = enc.encode(JSON.stringify(packState(S))).length;
-        const over = saveErr;
-        return `<div class="row" style="margin-bottom:6px">
-          <span class="grow" style="font-size:13px">いまのデータ</span>
-          <span style="font-size:13px;color:${over ? "var(--bad)" : "var(--dim)"};font-weight:700">${mb(cur)} MB</span>
-        </div>
-        <div style="font-size:11px;color:var(--dim);line-height:1.7;margin-bottom:${stray.length || total ? 10 : 0}px">
-          公演${S.shows.length}件・曲${S.songs.length}件・記録${S.notes.length}件<br>
-          ${idbOK ? "保存先は端末のデータベースです。上限はほぼ気にしなくて構いません。"
-                  : "<b style=\"color:var(--bad)\">この端末ではデータベースが使えず、上限5MBの場所に保存しています。</b>"}
-          ${over ? "<br><b style=\"color:var(--bad)\">いま保存できていません。</b>" : ""}
-        </div>
-        ${total ? `<div style="font-size:11px;color:var(--dim);margin-bottom:8px">古い置き場所に ${mb(total)} MB 残っています。${stray.length ? "" : "次に開いた時に自動で片付きます。"}</div>` : ""}
-        ${over ? `<button class="primary" data-act="shrinknow" style="margin-bottom:10px">いま空きを作る（古い公演を消す）</button>` : ""}
-        ${stray.length ? `<div style="font-size:11px;color:var(--accent);margin-bottom:6px">
-          取り残しのデータが ${stray.length}件 あります（合計 ${mb(stray.reduce((a, x) => a + x.b, 0))} MB）。<br>
-          読み込みでつまずいた時に、消さずに横へ避けたものです。中身が残っていれば戻せます。</div>
-        ${stray.map((x) => `<div class="row card" style="padding:8px 10px;margin-bottom:6px">
-          <div class="grow" style="min-width:0">
-            <div style="font-size:12px">${x.at ? new Date(x.at).toLocaleString("ja-JP") : "日時不明"}　${mb(x.b)} MB</div>
-            <div style="font-size:11px;color:var(--dim)">${x.n ? `公演${x.n.sh}件・曲${x.n.sg}件・記録${x.n.nt}件` : "中身を読み取れません"}</div>
-          </div>
-          ${x.n && (x.n.sg || x.n.nt) ? `<button class="chip sm" data-act="strayuse" data-id="${h(x.k)}">戻す</button>` : ""}
-          <button class="chip sm" data-act="straydel" data-id="${h(x.k)}" style="color:var(--bad)">消す</button>
-        </div>`).join("")}` : ""}`;
-      })()}
-    </div>
+    ${practiceToolsSettingsHTML()}
 
     ${backupSettingsHTML()}
 
@@ -8261,16 +8280,7 @@ function viewSetup() {
     <h4 class="head">公演</h4>
     ${list || `<p class="note">公演がありません</p>`}
 
-    <h4 class="head">練習ツール</h4>
-    <details class="practice-tools card"><summary>鍵盤・ピッチ・メトロノーム</summary>
-    <h4 class="head">音を確かめる</h4>
-    <div class="card">${pianoHTML(null)}</div>
-    <h4 class="head">ピッチを見る</h4>
-    ${pitchHTML()}
-
-    <h4 class="head">メトロノーム</h4>
-    ${metroHTML()}
-    </details>
+    ${practiceToolsSettingsHTML()}
     <h4 class="head">歌割をPDFにする</h4>
     <div class="card"><button class="primary" data-act="gopdf">PDFにする</button></div>
     ${footerHTML()}
@@ -8346,7 +8356,6 @@ function viewSetup() {
     <h4 class="head">指摘</h4><div class="card"><button class="primary" data-act="go-summary">指摘の集計を見る</button></div>
     <h4 class="head">公演</h4>
     <div class="organize-create"><button class="primary" data-act="newshow">＋ 公演を追加</button><button class="chip" data-act="newfolder">＋ フォルダ</button></div>
-    <button class="ghost" data-act="show-recovery" style="margin-bottom:12px">公演を探す・復元</button>
     ${S.shows.some(sw => !sw.hidden && sw.deliveryMode !== "song" && !showDeliveryGroupId(sw)) ? `<button class="ghost" data-act="showfilter" data-id="__unassigned__" style="color:var(--bad);margin-bottom:12px">グループ未設定の公演を確認</button>` : ""}
     ${liveGroups().length > 1 ? `<div class="chips" style="margin-bottom:10px">
       <button class="chip sm" data-act="showfilter" data-id="" style="${!U.showFilter ? "background:var(--accent);color:#0A0A0A" : ""}">全公演を表示</button>
@@ -8354,11 +8363,7 @@ function viewSetup() {
         style="${U.showFilter === g.id ? "background:var(--accent);color:#0A0A0A" : ""}">${h(g.name)}</button>`).join("")}
     </div>` : ""}
     ${shows}
-    ${S.shows.some(recoveryMaterialShow) ? `<details class="card"><summary>復旧資料の保管</summary>
-      <p class="note">救出した元資料・過去の配信履歴を保持しています。通常の公演・配信先とは分けて表示します。</p>
-      <button class="ghost" data-act="showfilter" data-id="__archive__">保管資料を見る</button>
-      ${U.showFilter === "__archive__" ? '<button class="ghost" data-act="showfilter" data-id="">通常の公演に戻る</button>' : ''}
-    </details>` : ""}
+    ${U.showFilter === "__archive__" ? '<button class="ghost" data-act="showfilter" data-id="">通常の公演に戻る</button>' : ''}
 
     <h4 class="head">セットリスト</h4>
     ${cur.length ? bar : ""}
@@ -8415,14 +8420,7 @@ function viewSetup() {
         : "欠席者を設定する"}</button>
     </div>
 
-    <h4 class="head">音を確かめる</h4>
-    <div class="card">${pianoHTML(null)}</div>
-
-    <h4 class="head">ピッチを見る</h4>
-    ${pitchHTML()}
-
-    <h4 class="head">メトロノーム</h4>
-    ${metroHTML()}
+    ${practiceToolsSettingsHTML()}
 
     <h4 class="head">録音データ</h4>
     <div class="card" style="margin-bottom:10px">
@@ -8455,7 +8453,7 @@ function viewSetup() {
     <div class="card"><button class="primary" data-act="gopdf">PDFにする</button></div>
 
     <h4 class="head">自動公開</h4>
-    <div class="card">
+    <details class="practice-tools card" data-settings-panel="publication" ${publishIssues.length ? "open" : ""}><summary>自動公開の接続設定</summary>
       ${startupRecoveryNetworkHold ? `<p class="note">復旧中は上の「既存の配信先に再接続」を使ってください。通常の新規公開は停止しています。</p>` : S.ghToken ? `<div class="row" style="margin-bottom:10px">
           <span class="grow" style="font-size:13px">トークン設定済み　<span style="color:var(--dim)">${h(pushState || "待機中")}</span></span>
           <button class="chip sm" data-act="autopub" style="${S.autoPub ? "background:var(--accent);color:#0A0A0A" : ""}">自動${S.autoPub ? "オン" : "オフ"}</button>
@@ -8470,66 +8468,13 @@ function viewSetup() {
             <button class="chip" data-act="ghtoken">確認して保存</button>
           </div>
           <div style="font-size:11px;color:var(--dim);margin-top:6px">Tokens (classic) / gist</div>`}
-    </div>
-
-
-    <h4 class="head">保存領域</h4>
-    <div class="card" style="margin-bottom:22px">
-      ${(() => {
-        // Safariは保存領域を「この場所ぜんぶ」で数える。今のデータだけ見ても実態は分からない。
-        const enc = new TextEncoder();
-        let total = 0, mine = 0;
-        const stray = [];
-        try {
-          for (let i = 0; i < localStorage.length; i++) {
-            const k = localStorage.key(i);
-            const v = localStorage.getItem(k) || "";
-            const b = enc.encode(k).length + enc.encode(v).length;
-            total += b;
-            if (k === KEY) mine = b;
-            else if (k.indexOf(KEY + ":broken:") === 0) {
-              const at = Number(k.split(":broken:")[1] || 0);
-              let n = null;
-              try { const o = unpackState(JSON.parse(v)); n = { sh: (o.shows || []).length, sg: (o.songs || []).length, nt: (o.notes || []).length }; }
-              catch (e) { /* 読めなくても大きさは分かる */ }
-              stray.push({ k, at, b, n });
-            }
-          }
-        } catch (e) { /* 数えられない端末もある */ }
-        stray.sort((a, b2) => b2.at - a.at);
-        const mb = (x) => (x / 1048576).toFixed(2);
-        const cur = enc.encode(JSON.stringify(packState(S))).length;
-        const over = saveErr;
-        return `<div class="row" style="margin-bottom:6px">
-          <span class="grow" style="font-size:13px">いまのデータ</span>
-          <span style="font-size:13px;color:${over ? "var(--bad)" : "var(--dim)"};font-weight:700">${mb(cur)} MB</span>
-        </div>
-        <div style="font-size:11px;color:var(--dim);line-height:1.7;margin-bottom:${stray.length || total ? 10 : 0}px">
-          公演${S.shows.length}件・曲${S.songs.length}件・記録${S.notes.length}件<br>
-          ${idbOK ? "保存先は端末のデータベースです。上限はほぼ気にしなくて構いません。"
-                  : "<b style=\"color:var(--bad)\">この端末ではデータベースが使えず、上限5MBの場所に保存しています。</b>"}
-          ${over ? "<br><b style=\"color:var(--bad)\">いま保存できていません。</b>" : ""}
-        </div>
-        ${total ? `<div style="font-size:11px;color:var(--dim);margin-bottom:8px">古い置き場所に ${mb(total)} MB 残っています。${stray.length ? "" : "次に開いた時に自動で片付きます。"}</div>` : ""}
-        ${over ? `<button class="primary" data-act="shrinknow" style="margin-bottom:10px">いま空きを作る（古い公演を消す）</button>` : ""}
-        ${stray.length ? `<div style="font-size:11px;color:var(--accent);margin-bottom:6px">
-          取り残しのデータが ${stray.length}件 あります（合計 ${mb(stray.reduce((a, x) => a + x.b, 0))} MB）。<br>
-          読み込みでつまずいた時に、消さずに横へ避けたものです。中身が残っていれば戻せます。</div>
-        ${stray.map((x) => `<div class="row card" style="padding:8px 10px;margin-bottom:6px">
-          <div class="grow" style="min-width:0">
-            <div style="font-size:12px">${x.at ? new Date(x.at).toLocaleString("ja-JP") : "日時不明"}　${mb(x.b)} MB</div>
-            <div style="font-size:11px;color:var(--dim)">${x.n ? `公演${x.n.sh}件・曲${x.n.sg}件・記録${x.n.nt}件` : "中身を読み取れません"}</div>
-          </div>
-          ${x.n && (x.n.sg || x.n.nt) ? `<button class="chip sm" data-act="strayuse" data-id="${h(x.k)}">戻す</button>` : ""}
-          <button class="chip sm" data-act="straydel" data-id="${h(x.k)}" style="color:var(--bad)">消す</button>
-        </div>`).join("")}` : ""}`;
-      })()}
-    </div>
+    </details>
 
     <h4 class="head">ほかの端末と揃える</h4>
-    <div class="card" style="margin-bottom:22px">
+    <details class="practice-tools card" data-settings-panel="sync"><summary>端末間の同期・接続先</summary>
       ${(() => {
         const linked = !!(S.ghToken && S.bkGistId);
+        if (startupRecoveryNetworkHold) return '<p class="note">復旧保護中のため、他端末との同期は停止しています。現在の内容はバックアップの「ファイルに保存」から保管できます。</p>';
         return `<div class="row" style="margin-bottom:8px">
           <span class="grow" style="font-size:13px">${linked ? "つながっています" : "つながっていません"}</span>
           <span style="font-size:11px;color:${linked ? "var(--good)" : "var(--bad)"};font-weight:700">${linked ? "同期あり" : "同期なし"}</span>
@@ -8547,7 +8492,7 @@ function viewSetup() {
         <div style="font-size:11px;color:var(--dim)">つなぎ先がずれていると、片方の内容はもう片方に出てきません。<br>
           両方の端末でこの番号が同じか確かめてください。</div>`;
       })()}
-    </div>
+    </details>
 
     ${backupSettingsHTML()}
 
@@ -12136,11 +12081,60 @@ async function readCloudBackupContent(files, readFile = backupFileText) {
   return joined;
 }
 const readCloudBackup = async files => JSON.parse(await readCloudBackupContent(files));
+// Prepared material remains personal. Existing encrypted personal backups may
+// continue, but no preparation may silently create an unencrypted/new target.
+const PRIVATE_PREPARATION_BACKUP_MESSAGE = '本人用の準備を保護するため、既存の暗号化バックアップ先を確認できるまで送信を停止しています。端末の内容は保持しています。';
+function privatePreparationBackupRequired() {
+  const receipts = S.privatePreparations;
+  return !!receipts && (typeof receipts !== 'object' || Array.isArray(receipts) || Object.keys(receipts).length > 0);
+}
+function privatePreparationBackupReady() {
+  return typeof S.bkGistId === 'string' && !!S.bkGistId.trim()
+    && typeof S.bkKey === 'string' && !!S.bkKey.trim();
+}
+function privatePreparationReceiptsMatch(incoming) {
+  if (!privatePreparationBackupRequired()) return true;
+  const local = S.privatePreparations, remote = incoming?.privatePreparations;
+  if (!local || typeof local !== 'object' || Array.isArray(local) || !remote || typeof remote !== 'object' || Array.isArray(remote)) return false;
+  return Object.keys(local).every(id => {
+    const receipt = local[id];
+    return receipt && typeof receipt === 'object' && !Array.isArray(receipt)
+      && /^[a-f0-9]{64}$/.test(receipt.sha256 || '')
+      && ['recording-schedule', 'recording-addition', 'live-addition'].includes(receipt.type)
+      && Object.prototype.hasOwnProperty.call(remote, id)
+      && remote[id]?.sha256 === receipt.sha256 && remote[id]?.type === receipt.type;
+  });
+}
 async function uploadCloudBackup(content) {
+  const personal = privatePreparationBackupRequired(), target = S.bkGistId, key = S.bkKey, token = S.ghToken;
+  const guard = () => {
+    if (personal && (!privatePreparationBackupReady() || typeof token !== 'string' || !token.trim()
+        || S.bkGistId !== target || S.bkKey !== key || S.ghToken !== token))
+      throw new Error(PRIVATE_PREPARATION_BACKUP_MESSAGE);
+  };
+  guard();
+  if (personal) {
+    try {
+      const envelope = JSON.parse(content);
+      if (!envelope || envelope.enc !== 1 || Object.keys(envelope).sort().join(',') !== 'data,enc,iv,salt'
+          || typeof envelope.salt !== 'string' || typeof envelope.iv !== 'string' || typeof envelope.data !== 'string'
+          || b64d(envelope.salt).length !== 16 || b64d(envelope.iv).length !== 12 || b64d(envelope.data).length < 16) throw new Error('invalid');
+      // A cosmetic enc flag is insufficient: verify this is genuine ciphertext
+      // under this device's already-existing backup key before any network read.
+      const packed = await openJSON(envelope, key);
+      if (!packed || packed.bk !== 1 || typeof packed.z !== 'boolean' || typeof packed.data !== 'string') throw new Error('invalid');
+    } catch (_) { throw new Error(PRIVATE_PREPARATION_BACKUP_MESSAGE); }
+    guard();
+  }
   let previous = {};
   if (S.bkGistId) {
-    try { previous = (await gh("/gists/" + S.bkGistId, {signal:AbortSignal.timeout(60000)})).files || {}; }
-    catch (e) { if (e.status === 404) S.bkGistId = ""; else throw e; }
+    try {
+      const prior = await gh("/gists/" + S.bkGistId, {signal:AbortSignal.timeout(60000)});
+      guard();
+      if (personal && (prior.public !== false || prior.id !== target)) throw new Error(PRIVATE_PREPARATION_BACKUP_MESSAGE);
+      previous = prior.files || {};
+    }
+    catch (e) { if (personal) throw new Error(PRIVATE_PREPARATION_BACKUP_MESSAGE); if (e.status === 404) S.bkGistId = ""; else throw e; }
   }
   const oldIndexFile = backupIndexFile(previous);
   const oldIndex = oldIndexFile ? JSON.parse(await backupFileText(oldIndexFile)) : null;
@@ -12148,9 +12142,12 @@ async function uploadCloudBackup(content) {
   const oldParts = oldIndex?.bk === 2 ? oldIndex.parts.map(p => p.name) : [];
   const pending = S.bkPendingParts?.gistId === S.bkGistId ? S.bkPendingParts.names || [] : [];
   const write = async files => {
+    guard();
     const opts = {signal:AbortSignal.timeout(60000),method:S.bkGistId ? "PATCH" : "POST",
       body:JSON.stringify(S.bkGistId ? {files} : {description:"歌チェック バックアップ",public:false,files})};
     const result = await gh(S.bkGistId ? "/gists/" + S.bkGistId : "/gists", opts);
+    guard();
+    if (personal && result.id !== target) throw new Error(PRIVATE_PREPARATION_BACKUP_MESSAGE);
     if (!result.id) throw new Error("保存先を確認できませんでした。");
     if (!S.bkGistId) { S.bkGistId = result.id; save(); }
     return result;
@@ -12184,6 +12181,7 @@ async function uploadCloudBackup(content) {
   }
   const files = saved.files || (await gh("/gists/" + S.bkGistId, {signal:AbortSignal.timeout(60000)})).files;
   if (await readCloudBackupContent(files) !== content) throw new Error("保存内容の照合に失敗しました。もう一度バックアップしてください。");
+  guard();
   delete S.bkPendingParts;
 }
 
@@ -12232,6 +12230,12 @@ async function doBackup(silent) {
   if (!recordingInboxRelease) return false;
   try {
   if (backupInFlight || syncing || preview || VIEW() || U.showRecovery) return false;
+  if (S.privatePreparations && privatePreparationBackupRequired() && !privatePreparationBackupReady()) {
+    S.bkError = PRIVATE_PREPARATION_BACKUP_MESSAGE;
+    renderBackupStatus();
+    if (!silent) alert(PRIVATE_PREPARATION_BACKUP_MESSAGE);
+    return false;
+  }
   if (!S.ghToken) { if (!silent) return backupToFile(); return false; }
   backupInFlight = true;
   S.bkError = ""; renderBackupStatus();
@@ -12346,7 +12350,7 @@ function recordingAdditionScopedMembers(s, p, matches) {
   }
   return matches.filter(m => names.has(norm(m.name)) && referenced.has(m.id));
 }
-function mergeRecordingAddition(current, packet) {
+function mergeRecordingAddition(current, packet, options = {}) {
   const fail = text => { throw new Error(text); };
   if (!packet || packet.app !== 'utacheck-recording-addition' || packet.version !== 1) fail('追加専用ファイルではありません。バックアップは選択しないでください。');
   const clone = x => JSON.parse(JSON.stringify(x));
@@ -12358,6 +12362,7 @@ function mergeRecordingAddition(current, packet) {
   for (const k of ['groups', 'members', 'rsongs']) s[k] = s[k] || [];
   s.rosters = s.rosters || {}; s.plan = s.plan || {slots: []}; s.plan.slots = s.plan.slots || [];
   if (s.groups.some(x => x.id === p.group.id)) fail('この追加資料のグループは既にあります。重複追加していません。');
+  if (options.strictMemberIdentity === true && s.groups.some(x => norm(x.name) === norm(p.group.name))) fail('既存グループと同じ表示名のため、非公開資料の追加を停止しました。');
   const mapping = {}, newMembers = [];
   for (const m of p.members) {
     if (!m.id || !norm(m.name) || mapping[m.id]) fail('メンバー資料が不正です。');
@@ -12370,6 +12375,13 @@ function mergeRecordingAddition(current, packet) {
       mapping[m.id] = boundId;
     } else {
       if (p.memberBindings) fail('確認済みメンバーIDの対応が不足しています。追加していません。');
+      if (options.strictMemberIdentity === true) {
+        const exact = s.members.filter(x => x.id === m.id);
+        if (exact.length > 1 || (exact.length === 1 && norm(exact[0].name) !== norm(m.name))) fail('メンバーIDと氏名が一致しません。追加していません。');
+        mapping[m.id] = m.id;
+        if (!exact.length) newMembers.push(m);
+        continue;
+      }
       let matches = s.members.filter(x => norm(x.name) === norm(m.name) || norm(x.name).startsWith(norm(m.name)));
       if (matches.length > 1) {
         matches = recordingAdditionScopedMembers(s, p, matches);
@@ -12871,6 +12883,12 @@ async function checkOther(strict = false) {
   try {
     const obj = await readSyncBackup(target, strict);
     if (U.showRecovery || S.bkGistId !== target || S.ghToken !== token) throw new Error("つなぎ先が変わりました。取り込み・送信せずに中止しました。");
+    if (S.privatePreparations && !privatePreparationReceiptsMatch(obj.state)) {
+      otherAt = Number(obj.at || 0);
+      syncReadReport = '本人用の準備の受信記録が一致しないため、クラウドの内容で置き換えていません。端末の内容は保持しています。';
+      render();
+      return "conflict";
+    }
     const at = Number(obj.at || 0);
     if (at <= (S.bkSeen || 0)) { otherAt = 0; return "current"; }
     const dirty = bkSignature() !== S.bkHash;
@@ -13046,12 +13064,12 @@ function setupRecordingInboxIntegration() {
 /* APPEND TO app.js only after review; load recording-inbox.js BEFORE app.js. */
 let recordingInboxStatus = {status:'not-enrolled'};
 const recordingInboxGate = RecordingInbox.createGate(() =>
-  startupCanCommunicate() && booted && !bootErr && !VIEW() && !preview && !document.hidden && !saving
+  recordingInboxCanWrite() && booted && !bootErr && !VIEW() && !preview && !document.hidden && !saving
   && !syncing && !manualSync && !backupInFlight && !publishInFlight
   && !REC && !U.busy && !U.importing && !U.sheet && !U.menu && !U.showRecovery
   && !typingNow() && !renderPointers.size && Date.now() >= scrollingUntil);
 const recordingInboxLocal = RecordingInbox.createLocalAdapter({
-  acquire:() => recordingInboxGate.acquire(),
+  acquire:() => startupCanCommunicate() ? recordingInboxGate.acquire() : null,
   getState:() => S,
   commitFields:() => { flushSheet(); commitFields(); },
   merge:mergeRecordingAddition,

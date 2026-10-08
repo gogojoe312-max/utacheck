@@ -1,8 +1,8 @@
 /* 自分のコードは毎回ネットワークを見に行き、圏外のときだけキャッシュを使う。
    重い vendor/ だけはキャッシュ優先。これで「更新したのに変わらない」が起きない。 */
-const CACHE = "utacheck-16.41.51";
+const CACHE = "utacheck-16.41.52";
 const ASSETS = [
-  "./", "./index.html", "./app.js", "./recording-schedule-update.js", "./recording-schedule-ui.js", "./recovery-delivery-scope.js", "./recovery-delivery-store.js", "./recovery-delivery.js", "./startup-backup-inspection.js", "./startup-preserved-backup-inspection.js", "./startup-file-inspection.js", "./startup-file-restoration.js", "./startup-local-storage-inventory.js", "./startup-local-publication-recovery.js", "./startup-local-excel-recovery.js", "./startup-saved-publication-reader.js", "./startup-recovered-show-addition.js", "./recording-inbox.js", "./recording-inbox-ownership.js", "./show-recovery.js", "./manifest.webmanifest",
+  "./", "./index.html", "./app.js", "./private-preparation.js", "./private-preparation-source.js", "./private-preparation-ui.js", "./recording-schedule-update.js", "./recording-schedule-ui.js", "./recovery-delivery-scope.js", "./recovery-delivery-store.js", "./recovery-delivery.js", "./startup-backup-inspection.js", "./startup-preserved-backup-inspection.js", "./startup-file-inspection.js", "./startup-file-restoration.js", "./startup-local-storage-inventory.js", "./startup-local-publication-recovery.js", "./startup-local-excel-recovery.js", "./startup-saved-publication-reader.js", "./startup-recovered-show-addition.js", "./recording-inbox.js", "./recording-inbox-ownership.js", "./show-recovery.js", "./manifest.webmanifest",
   "./ui.css", "./ui.js", "./voice-notes.js", "./reading.js", "./gestures.js",
   "./recflow.css", "./ptlink.js", "./ptmac.html",
   "./icon-192.png", "./icon-512.png", "./setlist.json",
@@ -49,4 +49,20 @@ self.addEventListener("fetch", (e) => {
         .then((hit) => hit || (e.request.mode === "navigate" ? caches.match("./index.html") : null))
         .then((hit) => hit || Response.error()))
   );
+});
+
+// A first automatic preparation may establish single-writer ownership only
+// when no legacy editor tab remains. Include hidden and uncontrolled windows.
+self.addEventListener('message', event => {
+  const data=event.data,port=event.ports&&event.ports[0];
+  if(!port||data?.type!=='utacheck-private-preparation-client-check-v1'||typeof data.nonce!=='string'||!/^[a-f0-9]{32}$/.test(data.nonce))return;
+  event.waitUntil((async()=>{
+    try{
+      const scope=new URL(self.registration.scope),source=event.source;
+      const windows=await self.clients.matchAll({type:'window',includeUncontrolled:true});
+      const editors=windows.filter(client=>{try{const u=new URL(client.url);return u.origin===scope.origin&&u.pathname.startsWith(scope.pathname);}catch(_){return true;}});
+      port.postMessage({type:data.type,nonce:data.nonce,single:!!source?.id&&editors.length===1&&editors[0].id===source.id});
+    }catch(_){port.postMessage({type:data.type,nonce:data.nonce,single:false});}
+    finally{port.close();}
+  })());
 });

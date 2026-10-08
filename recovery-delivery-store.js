@@ -73,12 +73,13 @@
       // are never edited, and later caller edits cannot replace the approved bytes.
       const {database:getDatabase,hash,isActive,readLegacy,expectedSlotsRaw,expectedHoldRaw,
         originalStateRaw,nextStateRaw,expectedLegacyRaw}=options;
-      if(typeof expectedSlotsRaw!=='string'||typeof expectedHoldRaw!=='string'
+      const allowMissingHold=options.allowMissingHold===true;
+      if(typeof expectedSlotsRaw!=='string'||(typeof expectedHoldRaw!=='string'&&!(allowMissingHold&&expectedHoldRaw===undefined))
         ||(expectedLegacyRaw!==undefined&&expectedLegacyRaw!==null&&typeof expectedLegacyRaw!=='string')
         ||!Array.isArray(options.remoteCopies))fail('candidate-invalid');
       checkedObject(nextStateRaw,'candidate-invalid',true);
       checkedObject(originalStateRaw,'candidate-invalid',false,MAX_EDITOR_BYTES);
-      checkedHold(expectedHoldRaw);
+      if(expectedHoldRaw!==undefined)checkedHold(expectedHoldRaw);
       const remoteCopies=options.remoteCopies.map(value=>{
         if(!object(value)||typeof value.gistId!=='string'||!/^[a-f0-9]{32}$/i.test(value.gistId)
           ||typeof value.raw!=='string')fail('candidate-invalid');
@@ -100,8 +101,8 @@
       const before=await read(database,['state:0','state:1',HOLD]);
       checkActive();checkDatabase();
       if(getLegacy()!==legacy||json(before.slice(0,2))!==expectedSlotsRaw||json(before[2])!==expectedHoldRaw)fail('storage-changed');
-      if(before[2]===undefined)fail('hold-invalid');
-      checkedHold(json(before[2]));
+      if(before[2]===undefined){if(!allowMissingHold)fail('hold-invalid');}
+      else checkedHold(json(before[2]));
       seq=checkedSequence(before.slice(0,2));slot=seq%2;
       const envelope={seq,at:Date.now(),txt:nextStateRaw};
       const envelopeRaw=json(envelope),after=before.slice(0,2);after[slot]=envelope;
@@ -116,7 +117,7 @@
       }
       await preserve('slots',before.slice(0,2).map(value=>value===undefined?null:value),expectedSlotsRaw);
       await preserve('legacy',legacy,json(legacy));
-      await preserve('hold',before[2],expectedHoldRaw);
+      if(before[2]!==undefined)await preserve('hold',before[2],expectedHoldRaw);
       await preserve('editor',originalStateRaw,originalStateRaw);
       for(const value of remoteCopies)await preserve('remote',value,json(value));
       checkActive();checkDatabase();
