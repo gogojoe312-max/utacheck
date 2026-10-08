@@ -133,3 +133,37 @@ test('leaving REC resets the CSS visibility state and ordinary recovery preserve
   assert.match(ordinary.elements.get('recovery-network-notice').textContent,/元Excel救出 82 \/ 124資料/);
   assert.equal(ordinary.run('startupRecoveryNetworkHold'),true);
 });
+
+test('REC section labels start dim; unassigned lyrics and assigned singing remain intact',async()=>{
+  const f=await fixture();
+  f.run(`S.rsongs[0].lines=[
+    {t:'1A',sec:'1A',parts:[]},
+    {t:'他の人の歌詞',parts:['member-1']},
+    {t:'1B',sec:'1B',parts:[]},
+    {t:'自分の歌詞',parts:['member-0']},
+    {t:'1C',sec:'1C',parts:[]},
+    {t:'未割当の歌詞',parts:[]},
+    {t:'1A',parts:['member-0']}
+  ]; U.recFocusId='member-0'; U.secView='';`);
+  const before=f.run('JSON.stringify(S)'),stored=f.idb.snapshot(),local=clone(f.localWrites);
+  assert.equal(f.run('recLineFocus(recSong(),0)'),'rec-section-label');
+  assert.equal(f.run('recLineFocus(recSong(),5)'),'');
+  assert.equal(f.run('recLineFocus(recSong(),6)'),'rec-focus-own');
+  assert.equal(f.run('recSectionFocus(recSong(),"1A")'),'rec-section-other');
+  assert.equal(f.run('recSectionFocus(recSong(),"1B")'),'');
+  assert.equal(f.run('recSectionFocus(recSong(),"1C")'),'');
+  f.run('render()');
+  assert.match(f.app.innerHTML,/sectab[^\"]*rec-section-other[^\"]*\" id=\"tab-1A/);
+  assert.match(f.app.innerHTML,/data-lyric-line="0" class="ln rec-section-label/);
+  assert.match(f.app.innerHTML,/未割当の歌詞|未<\/span>/);
+  f.run(`U.overview=true;render()`);
+  assert.match(f.app.innerHTML,/ovw rec-section-label/);
+  f.run(`U.recFocusId='';S.planFocus='';S.plan.slots=[];`);
+  assert.equal(f.run('recLineFocus(recSong(),0)'),'rec-section-label');
+  assert.equal(f.run('recLineFocus(recSong(),5)'),'');
+  // Changing the selection itself is navigation; the controlled fixture above is the only data edit.
+  assert.equal(f.calls.network.length,0);
+  assert.equal(f.calls.saves,0);
+  assert.deepEqual(f.idb.snapshot(),stored);
+  assert.deepEqual(f.localWrites,local);
+});

@@ -107,7 +107,7 @@ test('ancillary missing store is unknown without database creation',async()=>{
 test('service worker includes new module before app load and retains external-origin bypass',()=>{
   const html=fs.readFileSync(__dirname+'/../index.html','utf8'),sw=fs.readFileSync(__dirname+'/../sw.js','utf8');
   assert(html.indexOf('startup-backup-inspection.js')<html.indexOf('<script src="app.js'));
-  assert.match(html,/startup-backup-inspection\.js\?v=16\.41\.46/);assert.match(sw,/"\.\/startup-backup-inspection\.js"/);
+  assert.match(html,/startup-backup-inspection\.js\?v=16\.41\.47/);assert.match(sw,/"\.\/startup-backup-inspection\.js"/);
   assert.match(sw,/if \(url\.origin !== self\.location\.origin\) return;/);
 });
 

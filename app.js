@@ -113,7 +113,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.46";
+const APP_VER = "16.41.47";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -7063,7 +7063,22 @@ function recFocusMember() {
   const surname = candidates.filter(m => normalize(m.name).startsWith(name));
   return surname.length === 1 ? surname[0] : null;
 }
+function recSectionLabel(so, i) {
+  const l = (so.lines || [])[i];
+  if (!l || l.gap || partsOf(so, i).length) return false;
+  const text = String(l.t || "").normalize("NFKC").trim();
+  // Only explicit section labels, never arbitrary unassigned lyrics.
+  return !!text && ((l.sec && text === String(l.sec).normalize("NFKC").trim()) || /^[1-9][0-9]*\s*[ABC]$/i.test(text));
+}
+function recSectionFocus(so, name) {
+  const selected = recFocusMember();
+  if (!so || !selected) return "";
+  const lines = linesInSec(so, name).filter(i => !so.lines[i].cut && !recSectionLabel(so, i) && String(so.lines[i].t || "").trim());
+  if (!lines.length || lines.some(i => !partsOf(so, i).length || partsOf(so, i).includes(selected.id))) return "";
+  return "rec-section-other";
+}
 function recLineFocus(so, i) {
+  if (recSectionLabel(so, i)) return "rec-section-label";
   const selected = recFocusMember();
   if (!selected || !(so.lines || []).some(l => (l.parts || []).length)) return "";
   if (!partsOf(so, i).length) return ""; // 未確定の担当を「他の人」と扱わない。
@@ -7096,7 +7111,7 @@ function recBar() {
   const tabList = secs.length ? secs : sectionOrder().map((nm) => ({ name: nm }));
   const tabs = tabList.map((e) => {
     const cls = (e.live || e.name === U.secView || tagBase(U.secView) === e.name) ? "on" : e.done ? "dn" : "";
-    return `<button class="sectab ${cls}" id="tab-${h(e.name)}" data-act="jumpsec" data-id="${h(e.name)}">${e.done ? "✓" : ""}${h(e.name)}</button>`;
+    return `<button class="sectab ${cls} ${recSectionFocus(recSong(), e.name)}" id="tab-${h(e.name)}" data-act="jumpsec" data-id="${h(e.name)}">${e.done ? "✓" : ""}${h(e.name)}</button>`;
   }).join("");
 
   /* Gaya のような表記を選んでいる時は、Gaya1 Gaya2 … を小さく並べる。
@@ -7112,7 +7127,7 @@ function recBar() {
     nums.sort((a, b) => (tagNum(a) || 0) - (tagNum(b) || 0));
     if (nums.length > 1) {
       subTabs = `<div class="sectabs" style="padding-top:0">` + nums.map((nm) =>
-        `<button class="sectab ${U.secView === nm ? "on" : ""}" data-act="jumpsec" data-id="${h(nm)}"
+        `<button class="sectab ${U.secView === nm ? "on" : ""} ${recSectionFocus(recSong(), nm)}" data-act="jumpsec" data-id="${h(nm)}"
           >${h(nm)}</button>`).join("") + `</div>`;
     }
   }

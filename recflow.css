@@ -59,3 +59,11 @@
 .rec-member-focus [aria-pressed="true"] { outline: 2px solid #4c9bff; }
 .rec-focus-own { border-left: 4px solid #4c9bff; background-color: color-mix(in srgb, #4c9bff 18%, transparent); }
 .rec-focus-other .txt, .ovw.rec-focus-other > span:last-child { opacity: .38; }
+
+/* Section labels are navigation, not unassigned lyrics. Keep them readable/clickable. */
+#app[data-rec="1"] .secdiv { color:var(--dim); opacity:.55; }
+#app[data-rec="1"] .secdiv:before { background:var(--dim); }
+#app[data-rec="1"] .rec-section-label .txt,
+#app[data-rec="1"] .ovw.rec-section-label > span:last-child { color:var(--dim); opacity:.45; }
+#app[data-rec="1"] .sectab.rec-section-other { background:var(--panel2); color:var(--dim); opacity:.45; }
+#app[data-rec="1"] .sectab.rec-section-other.on { outline:1px solid var(--dim); outline-offset:-1px; }
