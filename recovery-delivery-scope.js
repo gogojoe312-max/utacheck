@@ -12,7 +12,10 @@
   const GIST=/^[a-f0-9]{32}$/;
   const MAX_DEPTH=128,MAX_NODES=1000000,MAX_STATE_BYTES=100*1024*1024,MAX_PUBLICATION_BYTES=20*1024*1024;
   const failures=new WeakSet();
-  const fail=code=>{const error=new Error(code);error.code=code;error.recoveryDeliveryCode=code;failures.add(error);throw error;};
+  // Capture this engine's intrinsic formatting: WebKit uses multiline native bodies.
+  const functionSource=Function.prototype.toString;
+  const nativeObjectSource=functionSource.call(Object),nativeArraySource=functionSource.call(Array);
+  const fail=(code,targetNumber)=>{const error=new Error(code);error.code=code;error.recoveryDeliveryCode=code;if(Number.isSafeInteger(targetNumber)&&targetNumber>0&&targetNumber<=100)error.targetNumber=targetNumber;failures.add(error);throw error;};
   const ident=value=>typeof value==='string'&&value.length>0&&value.length<=512&&!/[|\x00-\x1f]/.test(value)&&!unsafe.has(value);
   const name=value=>typeof value==='string'&&value.trim().length>0&&value.length<=4096&&!/[\x00-\x1f]/.test(value)&&!unsafe.has(value);
   const strings=value=>Array.isArray(value)&&value.every(item=>typeof item==='string');
@@ -20,8 +23,10 @@
     const proto=Object.getPrototypeOf(value);
     if(proto===null)return !Array.isArray(value);
     const descriptor=Object.getOwnPropertyDescriptor(proto,'constructor');
-    if(!descriptor||!own(descriptor,'value')||typeof descriptor.value!=='function'||descriptor.value.prototype!==proto)return false;
-    return Function.prototype.toString.call(descriptor.value)===(Array.isArray(value)?'function Array() { [native code] }':'function Object() { [native code] }');
+    if(!descriptor||!own(descriptor,'value')||typeof descriptor.value!=='function')return false;
+    if(functionSource.call(descriptor.value)!==(Array.isArray(value)?nativeArraySource:nativeObjectSource))return false;
+    const prototype=Object.getOwnPropertyDescriptor(descriptor.value,'prototype');
+    return !!prototype&&own(prototype,'value')&&prototype.value===proto;
   }
   // Inspect descriptors first. No accessor, toJSON, or inherited hook is executed.
   function copy(value,mode='json'){
@@ -103,7 +108,8 @@
     if(!object(next))fail('state-invalid');
     bytes(next,MAX_STATE_BYTES);bytes(input,1024*1024);
     exact(input,['app','version','targets'],'packet-invalid');
-    if(input.app!=='utacheck-existing-delivery'||input.version!==1||!Array.isArray(input.targets)||!input.targets.length||input.targets.length>100)fail('packet-invalid');
+    if(input.app==='utacheck-existing-delivery'&&input.version===1)fail('packet-version');
+    if(input.app!=='utacheck-existing-delivery'||input.version!==2||!Array.isArray(input.targets)||!input.targets.length||input.targets.length>100)fail('packet-invalid');
     const claimed=new Set(),groups=index(next.groups,claimed),shows=index(next.shows,claimed),songs=index(next.songs,claimed);
     if(!object(next.recoveredShowSources))fail('source-receipt-missing');
     const showSongs=new Map();
@@ -119,14 +125,14 @@
     };
     const targets=[],targetGroups=new Set(),targetGists=new Set(),targetShows=new Set();
     const changes={groups:0,shows:0,songs:0,connections:0,groupFlags:0,showFlags:0};
-    for(const target of input.targets){
+    for(const [targetIndex,target] of input.targets.entries()){
       exact(target,['sourceSha256','expectedRemoteSha256','groupName','gistId','src','sourceShowIds'],'target-invalid');
       if(typeof target.sourceSha256!=='string'||!HASH.test(target.sourceSha256)||typeof target.expectedRemoteSha256!=='string'||!HASH.test(target.expectedRemoteSha256))fail('source-hash-invalid');
       if(!name(target.groupName))fail('group-name-invalid');
       source(target.src,target.gistId);
       const requested=ids(target.sourceShowIds,'source-show-identity');
       const receipt=own(next.recoveredShowSources,target.sourceSha256)?next.recoveredShowSources[target.sourceSha256]:null;
-      if(!object(receipt)||!object(receipt.source)||receipt.source.sha256!==target.sourceSha256||!ident(receipt.focusGroupId)||!groups.has(receipt.focusGroupId))fail('source-receipt-mismatch');
+      if(!object(receipt)||!object(receipt.source)||receipt.source.sha256!==target.sourceSha256||!ident(receipt.focusGroupId)||!groups.has(receipt.focusGroupId))fail('source-receipt-mismatch',targetIndex+1);
       const group=groups.get(receipt.focusGroupId);
       if(group.name!==target.groupName)fail('group-name-mismatch');
       if(targetGroups.has(group.id))fail('duplicate-target-group');

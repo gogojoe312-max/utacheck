@@ -24,7 +24,7 @@ function state(){return {
   recMode:true,rsongId:'REC_SONG',showId:'KEEP_SHOW',groupId:'KEEP_GROUP',autoPub:false,
   recoveredShowSources:{[SHA]:{version:1,source:{kind:'gist-publication',sha256:SHA},focusGroupId:'GROUP',counts:{shows:2},unknown:'keep'}}
 };}
-function packet(){return {app:'utacheck-existing-delivery',version:1,targets:[{
+function packet(){return {app:'utacheck-existing-delivery',version:2,targets:[{
   sourceSha256:SHA,expectedRemoteSha256:REMOTE,groupName:'Fixture group',gistId:GIST,src:SRC,sourceShowIds:['SOURCE_TWO','SOURCE_ONE']
 }]};}
 const target=()=>API.plan(state(),packet()).targets[0];
@@ -78,7 +78,7 @@ test('packet and target schema are exact and cannot carry new credentials or sta
     const p=packet();p[extra]='FIXTURE';fails('packet-invalid',()=>API.plan(state(),p));
     const q=packet();q.targets[0][extra]='FIXTURE';fails('target-invalid',()=>API.plan(state(),q));
   }
-  for(const change of [p=>delete p.app,p=>p.version=2,p=>p.app='other',p=>p.targets=[],p=>p.targets={}]){
+  for(const change of [p=>delete p.app,p=>p.version=3,p=>p.app='other',p=>p.targets=[],p=>p.targets={}]){
     const p=packet();change(p);fails('packet-invalid',()=>API.plan(state(),p));
   }
   const p=packet();delete p.targets[0].expectedRemoteSha256;fails('target-invalid',()=>API.plan(state(),p));
@@ -579,4 +579,25 @@ test('independent but identical local library objects remain safe across held an
   const f=mergeFixture();f.local.lib[1]=clone(f.local.lib[0]);f.local.lib[1].credit='MANAGED_CREDIT';
   const out=API.mergePublication(f.target,f.remote,f.local).payload;
   assert.equal(out.lib.at(-1).credit,'MANAGED_CREDIT');assert.equal(out.lib[0].title,f.remote.lib[0].title);
+});
+
+test('WebKit multiline native formatting accepts ordinary state without weakening prototype checks',()=>{
+  const c=vm.createContext({TextEncoder,URL});
+  vm.runInContext(`const intrinsic=Function.prototype.toString;
+    Function.prototype.toString=function(){return intrinsic.call(this).replace(/ \\{ \\[native code\\] \\}$/, ' {\\n    [native code]\\n}');};`,c);
+  vm.runInContext(fs.readFileSync(__dirname+'/../recovery-delivery-scope.js','utf8'),c);
+  const api=c.RecoveryDeliveryScope,s=state(),p=packet();
+  const result=api.plan(s,p);assert.equal(result.targets.length,1);assert.equal(result.targets[0].groupId,'GROUP');
+  const nullProto=Object.create(null);nullProto.safe='kept';s.unknown=nullProto;assert.equal(api.plan(s,p).state.unknown.safe,'kept');
+  for(const bad of [new Date(),new(class Example{constructor(){this.x=1;}})(),Object.create({x:1}),Object.assign(Object.create({constructor:Object}),{x:1})]){
+    s.unknown=bad;assert.throws(()=>api.plan(s,p),e=>e.code==='unsafe-data');
+  }
+  let calls=0;const badProto={};Object.defineProperty(badProto,'constructor',{get(){calls++;return Object;}});s.unknown=Object.create(badProto);
+  assert.throws(()=>api.plan(s,p),e=>e.code==='unsafe-data');assert.equal(calls,0);
+});
+test('old reconnection files stop before target resolution',()=>{
+  const p=packet();p.version=1;fails('packet-version',()=>API.plan(state(),p));
+});
+test('missing recovery receipt reports only a bounded target ordinal',()=>{
+  const s=state();s.recoveredShowSources={};assert.throws(()=>API.plan(s,packet()),e=>e.code==='source-receipt-mismatch'&&e.targetNumber===1&&e.message==='source-receipt-mismatch');
 });

@@ -5,22 +5,38 @@
   let session=null,turn=0,pushing=false;
   const copy=value=>JSON.parse(JSON.stringify(value));
   const fail=code=>{const e=new Error(code);e.reconnectCode=code;throw e;};
-  const message=error=>({
-    'source-changed':'配信先に新しい変更があります。上書きせず停止しました。',
-    'encrypted':'既存の配信は暗号化されています。この再接続では変更していません。',
-    'auth':'既存トークンの有効性・Gist権限を確認できません。新規発行はしていません。',
-    'local-changed':'端末の内容が変わったため停止しました。もう一度内容を確認してください。',
-    'storage':'原本保全と保存の確認ができないため、配信していません。',
-    'unknown':'送信結果が未確認です。自動再送せず、結果確認を待っています。',
-    'cancelled':'確認を中止しました。配信・設定は変更していません。',
-    'not-ready':'録音や入力・保存を終えてから再接続してください。',
-  }[error?.reconnectCode]||'元の配信先・公演の対応または形式を確認できません。配信・設定は変更していません。');
+  function message(error){
+    const code=error?.reconnectCode||error?.recoveryDeliveryCode;
+    const messages={
+      'source-changed':'配信先に新しい変更があります。上書きせず停止しました。',
+      'encrypted':'既存の配信は暗号化されています。この再接続では変更していません。',
+      'auth':'既存トークンの有効性・Gist権限を確認できません。新規発行はしていません。',
+      'local-changed':'端末の内容が変わったため停止しました。もう一度内容を確認してください。',
+      'storage':'原本保全と保存の確認ができないため、配信していません。',
+      'unknown':'送信結果が未確認です。自動再送せず、結果確認を待っています。',
+      'cancelled':'確認を中止しました。配信・設定は変更していません。',
+      'not-ready':'録音や入力・保存を終えてから再接続してください。',
+      'packet':'接続対応ファイルを選択してください。公演・指摘の救出ファイルとは別のファイルです。',
+      'packet-invalid':'接続対応ファイルの種類・形式を確認できません。公演・指摘の救出ファイルとは別のファイルを選んでください。',
+      'packet-version':'この接続ファイルは旧版です。最新の確認済み接続ファイルを選んでください。旧版では配信を再開しません。',
+      'source-receipt-missing':'必要な公演の救出情報が、この端末にまだありません。先に公演・指摘の救出ファイルを追加してください。',
+      'source-receipt-mismatch':'対応する公演の救出情報が、この端末にないか別の版です。先に対応する公演・指摘の救出ファイルを追加してください。トークンの形式エラーではありません。',
+      'group-name-mismatch':'復旧したグループ名が接続ファイルと一致しません。別グループには送信していません。',
+      'source-show-set-mismatch':'端末の公演の組み合わせが接続ファイルと一致しません。送信せず、元の内容を保持しています。',
+      'unsafe-data':'保存データまたは接続ファイルの形式を安全に確認できません。送信・設定変更はしていません。',
+      'unsafe-key':'接続ファイルに安全に扱えない項目があるため停止しました。送信・設定変更はしていません。',
+      'target':'接続ファイルと元の配信先が一致しません。別の配信先には送信していません。',
+      'remote':'GitHubから元の配信内容を読み取れませんでした。送信・設定変更はしていません。',
+    };
+    const prefix=code==='source-receipt-mismatch'&&Number.isSafeInteger(error.targetNumber)&&error.targetNumber>0&&error.targetNumber<=100?'接続対象'+error.targetNumber+'：':'';
+    return prefix+(messages[code]||'元の配信先・公演の対応または形式を確認できません。配信・設定は変更していません。');
+  }
   function ready(){return typeof S!=='undefined'&&startupRecoveryNetworkHold&&recordingInboxCanWrite()&&!VIEW()&&!preview&&!document.hidden;}
-  function currentBinding(gid){return S.recoveryDelivery?.version===1&&Array.isArray(S.recoveryDelivery.targets)?S.recoveryDelivery.targets.find(t=>t.groupId===gid):null;}
+  function currentBinding(gid){return S.recoveryDelivery?.version===2&&Array.isArray(S.recoveryDelivery.targets)?S.recoveryDelivery.targets.find(t=>t.groupId===gid):null;}
   function canPublish(gid){const b=currentBinding(gid),g=S.groups.find(g=>g.id===gid);return ready()&&!session&&!!S.ghToken&&!!b&&b.status==='ready'&&!!g&&!g.nopub&&g.gistId===b.gistId&&g.src===b.src;}
   function pending(gid){if(!canPublish(gid))return false;const g=S.groups.find(g=>g.id===gid);try{return g.publishKeyPending||payloadKey(payloadFor(S,gid))!==g.lastKey;}catch(_){return true;}}
   function hasResumed(){return ready()&&!session&&(S.recoveryDelivery?.targets||[]).some(t=>canPublish(t.groupId));}
-  function packetForBindings(){return {app:'utacheck-existing-delivery',version:1,targets:S.recoveryDelivery.targets.map(t=>{
+  function packetForBindings(){return {app:'utacheck-existing-delivery',version:2,targets:S.recoveryDelivery.targets.map(t=>{
     const {sourceSha256,groupName,gistId,src,sourceShowIds,expectedRemoteSha256}=t;return {sourceSha256,groupName,gistId,src,sourceShowIds,expectedRemoteSha256};
   })};}
   function payloadFor(state,gid){const old=S;try{S=state;const data=copy(publicationData(gid,undefined,true));data.folderOrder=(data.folderOrder||[]).filter(name=>data.shows.some(sw=>sw.folder===name));for(const sw of data.shows)if(sw.from&&!data.shows.some(item=>item.id===sw.from))delete sw.from;if(data.alert?.to?.length)data.alert.to=[gid];return data;}finally{S=old;}}
@@ -58,11 +74,11 @@
   }).join('');}
   function settingsHTML(){
     if(!startupRecoveryNetworkHold||VIEW())return '';
-    const targets=S.recoveryDelivery?.targets||[],pending=targets.some(t=>t.status!=='ready');
+    const targets=S.recoveryDelivery?.targets||[],legacy=S.recoveryDelivery?.version!==2,pending=targets.some(t=>t.status!=='ready');
     return '<div class="card"><b>既存の配信先に再接続</b><p class="note">元の配信先と対象公演を確認して再開します。新しい配信先は作りません。</p>'+
       '<button class="primary" data-act="rd-open">既存の配信先に再接続</button>'+
-      (targets.length?'<p class="note">'+targets.map(t=>h(t.groupName)+'：'+(t.status==='ready'?'既存先の配信を再開済み':['blocked','prepared'].includes(t.status)?'再接続の確認が必要':'送信結果の確認待ち')).join('<br>')+'</p><p class="note">'+targets.filter(t=>t.heldLocalShowIds?.length).map(t=>h(t.groupName)+'：現配信の公演を保持し、同じ公演の端末版差分は保留しています。').join('<br>')+'</p>':'')+
-      (pending?'<button class="ghost" data-act="rd-reconcile">接続・送信結果を確認（再送しない）</button>':'')+'</div>';
+      (targets.length?'<p class="note">'+targets.map(t=>h(t.groupName)+'：'+(legacy?'接続ファイルの更新が必要':t.status==='ready'?'既存先の配信を再開済み':['blocked','prepared'].includes(t.status)?'再接続の確認が必要':'送信結果の確認待ち')).join('<br>')+'</p><p class="note">'+targets.filter(t=>t.heldLocalShowIds?.length).map(t=>h(t.groupName)+'：現配信の公演を保持し、同じ公演の端末版差分は保留しています。').join('<br>')+'</p>':'')+
+      (pending&&!legacy?'<button class="ghost" data-act="rd-reconcile">接続・送信結果を確認（再送しない）</button>':'')+'</div>';
   }
   function unlock(){const app=document.getElementById('app');if(app&&typeof recordingInboxCanWrite==='function')app.inert=!recordingInboxCanWrite();}
   function close(){if(session?.committing)return;turn++;if(session){session.token='';session.prepared=null;const input=session.node.querySelector('#rd-token');if(input)input.value='';session.node.remove();session=null;}unlock();}
@@ -87,18 +103,19 @@
       const input=s.node.querySelector('#rd-token');s.token=input.value.trim()||S.ghToken||'';input.value='';
       if(!s.token||/^github_pat_/.test(s.token))fail('auth');
       status('元の配信先を読み取っています。送信はしていません。');
-      const raw=await file.text();if(!active())fail('cancelled');const packet=JSON.parse(raw),original=JSON.stringify(S),revision=stateRevision;
+      s.stage='file';const raw=await file.text();if(!active())fail('cancelled');const packet=JSON.parse(raw),original=JSON.stringify(S),revision=stateRevision;
+      s.stage='scope';
       const plan=RecoveryDeliveryScope.plan(S,packet),localPayloads=plan.targets.map(t=>payloadFor(plan.state,t.groupId)),payloads=[],remotes=[],merges=[];
       for(let i=0;i<plan.targets.length;i++){
-        const remote=await readTarget(plan.targets[i],s.token,active);
+        s.stage='remote';const remote=await readTarget(plan.targets[i],s.token,active);
         if(remote.digest!==plan.targets[i].expectedRemoteSha256)fail('source-changed');
-        const merged=RecoveryDeliveryScope.mergePublication(plan.targets[i],remote.data,localPayloads[i]);merges.push(merged);payloads.push(merged.payload);remotes.push(remote);
+        s.stage='merge';const merged=RecoveryDeliveryScope.mergePublication(plan.targets[i],remote.data,localPayloads[i]);merges.push(merged);payloads.push(merged.payload);remotes.push(remote);
       }
       if(!active()||JSON.stringify(S)!==original||stateRevision!==revision)fail('local-changed');
       s.prepared={packet,plan,payloads,remotes,merges,original,revision};
       s.node.querySelector('#rd-preview').innerHTML=summaryHTML(plan,payloads,merges)+'<p class="note">別の端末が同時に送信すると、送信直前の確認だけでは競合を防ぎきれません。</p><label class="organize-field"><span><input id="rd-exclusive" type="checkbox"> 同じ配信先へのほかの端末・アプリの自動公開を止め、この端末だけを配信元にしました。</span></label><label class="organize-field"><span><input id="rd-approve" type="checkbox"> この既存先・対象公演を確認しました。既存トークンをこの端末に保存し、上記公演の自動配信を再開します。</span></label><button class="primary" data-act="rd-commit">この既存先だけ配信を再開</button>';
       status('接続先と対象を確認できました。まだ送信・保存していません。');
-    }catch(e){s.token='';s.prepared=null;if(session===s)status(message(e));}
+    }catch(e){s.token='';s.prepared=null;if(session===s)status(({file:'ファイルの読取：',scope:'公演の対応確認：',remote:'配信先の読取：',merge:'配信内容の照合：'}[s.stage]||'')+message(e));}
     finally{if(session===s){s.busy=false;controls(false);}}
   }
   async function commit(){
@@ -115,7 +132,7 @@
       }
       if(!active())fail('local-changed');
       const next=copy(p.plan.state);next.ghToken=s.token;next.autoPub=true;
-      next.recoveryDelivery={version:1,targets:p.plan.targets.map((t,i)=>({...copy(t),preservedShowIds:copy(p.merges[i].preservedShowIds),heldLocalShowIds:copy(p.merges[i].heldLocalShowIds),preservedShowNames:copy(p.merges[i].preservedShowNames),status:'prepared'}))};
+      next.recoveryDelivery={version:2,targets:p.plan.targets.map((t,i)=>({...copy(t),preservedShowIds:copy(p.merges[i].preservedShowIds),heldLocalShowIds:copy(p.merges[i].heldLocalShowIds),preservedShowNames:copy(p.merges[i].preservedShowNames),status:'prepared'}))};
       const nextRaw=JSON.stringify(packState(next));recoveryValidateCloudState(JSON.parse(nextRaw));
       status('端末原本と既存配信を保全しています。');
       const result=await RecoveryDeliveryStore.commit({database:()=>DB,hash:backupDigest,isActive:active,readLegacy:()=>localStorage.getItem(KEY),expectedLegacyRaw:legacy,
@@ -171,7 +188,7 @@
     }finally{release?.();pushing=false;}
   }
   async function reconcile(){
-    if(!ready()||session||pushing||publishInFlight)return;pushing=true;let release;
+    if(!ready()||session||pushing||publishInFlight||S.recoveryDelivery?.version!==2)return;pushing=true;let release;
     try{
       release=recordingInboxAdmitWriter();
       RecoveryDeliveryScope.plan(S,packetForBindings());

@@ -37,12 +37,12 @@ async function fixture(options={}){
  vm.runInContext(app.slice(app.indexOf('function publicationData('),app.indexOf('async function gh(')),c);vm.runInContext(fn('payloadKey'),c);vm.runInContext(fn('gistRawSource'),c);
  const orig=c.S;c.S=clone(orig);c.S.groups[0].nopub=false;c.S.groups[0].gistId=gistId;c.S.groups[0].src=src;c.S.shows[0].nopub=false;
  const remote=clone(c.publicationData('g'));delete remote.shows[0].recoveredSourceShowId;remote.folderOrder=[];remoteRaw=JSON.stringify(remote);c.S=orig;
- const packet={app:'utacheck-existing-delivery',version:1,targets:[{sourceSha256:sourceHash,expectedRemoteSha256:sha(remoteRaw),groupName:'Synthetic Group',gistId,src,sourceShowIds:['show']}]};
+ const packet={app:'utacheck-existing-delivery',version:2,targets:[{sourceSha256:sourceHash,expectedRemoteSha256:sha(remoteRaw),groupName:'Synthetic Group',gistId,src,sourceShowIds:['show']}]};
  vm.runInContext(code,c);
  const click=action=>{const e={target:{closest:()=>({dataset:{act:action}})},preventDefault(){},stopImmediatePropagation(){}};for(const handler of handlers.click)handler(e);};
  const modal=()=>elements.get('modal');
  const until=async predicate=>{for(let i=0;i<500;i++){if(predicate())return;await new Promise(r=>setImmediate(r));}throw Error('UI did not settle: '+modal()?.querySelector('#rd-status').textContent);};
- const check=async()=>{click('rd-open');modal().querySelector('#rd-file').files=[{size:JSON.stringify(packet).length,text:async()=>JSON.stringify(packet)}];modal().querySelector('#rd-token').value='SYNTHETIC_EXISTING_TOKEN';click('rd-check');await until(()=>!modal().querySelector('#rd-check').disabled);await until(()=>/まだ送信|変更していません|停止しました/.test(modal().querySelector('#rd-status').textContent));};
+ const check=async()=>{click('rd-open');modal().querySelector('#rd-file').files=[{size:JSON.stringify(packet).length,text:async()=>JSON.stringify(packet)}];modal().querySelector('#rd-token').value='SYNTHETIC_EXISTING_TOKEN';click('rd-check');await until(()=>!modal().querySelector('#rd-check').disabled);await until(()=>{const text=modal().querySelector('#rd-status').textContent;return !!text&&!text.includes('読み取っています');});};
  return {c,idb,initial,hold,packet,calls,writes,alerts,handlers,click,modal,until,check,patches:()=>patches,setRemote:raw=>remoteRaw=raw,remote:()=>remoteRaw};
 }
 test('preflight reads only, token stays outside saved state until explicit acceptance',async()=>{
@@ -102,4 +102,16 @@ test('unexpected remote change blocks automatic retries without PATCH',async()=>
 test('an unverified committed transaction stores prepared targets, so reload cannot auto-publish',async()=>{
  let saved;const f=await fixture({store:{commit:async options=>{saved=JSON.parse(options.nextStateRaw);return {status:'unverified',committed:true};}}});await f.check();f.modal().querySelector('#rd-approve').checked=true;f.modal().querySelector('#rd-exclusive').checked=true;f.click('rd-commit');await f.until(()=>f.c.startupPhase==='blocked');
  assert.equal(saved.recoveryDelivery.targets[0].status,'prepared');f.c.S=saved;f.c.startupPhase='ready';assert.equal(f.c.RecoveryDelivery.canPublish('g'),false);assert.equal(f.patches(),0);
+});
+
+test('superseded two-group packet stops before remote reads and token storage',async()=>{
+ const f=await fixture();f.packet.version=1;await f.check();assert.match(f.modal().querySelector('#rd-status').textContent,/旧版/);assert.equal(f.calls.length,0);assert.equal(f.c.S.ghToken,'');assert.equal(f.patches(),0);
+});
+test('missing recovered receipt is distinct from token errors and only exposes the target ordinal',async()=>{
+ const f=await fixture();f.c.S.recoveredShowSources={};await f.check();const text=f.modal().querySelector('#rd-status').textContent;
+ assert.match(text,/公演の対応確認.*接続対象1.*救出情報/);assert(!text.includes('SYNTHETIC_EXISTING_TOKEN'));assert(!text.includes(f.packet.targets[0].sourceSha256));assert.equal(f.calls.length,0);assert.equal(f.c.S.ghToken,'');
+});
+test('legacy saved bindings cannot resume or reconcile a superseded target',async()=>{
+ const f=await fixture();await f.check();f.modal().querySelector('#rd-approve').checked=true;f.modal().querySelector('#rd-exclusive').checked=true;f.click('rd-commit');await f.until(()=>f.calls.some(x=>x.action==='doPush'));
+ f.c.S.recoveryDelivery.version=1;const before=f.calls.length;assert.equal(f.c.RecoveryDelivery.canPublish('g'),false);assert.equal(f.c.RecoveryDelivery.hasResumed(),false);assert.equal(await f.c.RecoveryDelivery.push('g',true),false);await f.c.RecoveryDelivery.reconcile();assert.equal(f.calls.length,before);assert.equal(f.patches(),0);assert.match(f.c.RecoveryDelivery.settingsHTML(),/接続ファイルの更新が必要/);
 });
