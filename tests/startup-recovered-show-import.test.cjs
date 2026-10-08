@@ -154,7 +154,7 @@ function unpacked(f,packed){
 function committedState(f){const hold=f.idb.record(HOLD);return {hold,state:unpacked(f,JSON.parse(f.idb.record('state:'+hold.slot).txt))};}
 function assertCurrentPreserved(before,after){
   const appendedArrays=new Set(['shows','songs','notes','pubNotes','members','groups','folderOrder','groupOrder']);
-  const appendedMaps=new Set(['memos','subs','gsubs','subsMan','seen','rosters']);
+  const appendedMaps=new Set(['memos','subs','gsubs','subsMan','seen','rosters','recoveredShowSources']);
   const displaySelection=new Set(['showId','groupId','viewer','recMode']);
   for(const [key,value] of Object.entries(before)){
     if(displaySelection.has(key))continue;
@@ -163,6 +163,66 @@ function assertCurrentPreserved(before,after){
     else assert.deepEqual(after[key],value,'current '+key+' changed');
   }
 }
+
+async function supersededImportFixture(options={}){
+  const previous=artifact(),addition=clone(previous.addition),publication=clone(previous.publication);
+  publication.version++;addition.version=2;addition.originalText=JSON.stringify(publication);
+  addition.source={...addition.source,at:publication.version,revision:'e'.repeat(40),sha256:sha(addition.originalText)};
+  addition.supersedes=[{sourceSha256:previous.addition.source.sha256,groupName:'合成グループ',
+    sourceShowIds:previous.addition.state.shows.map(show=>show.id)}];
+  const rawText=JSON.stringify(addition);
+  const f=await fixture({...options,editInitial:initial=>{
+    initial.groups[0].name='合成Excel保管';initial.rosters['合成Excel保管']=initial.rosters['合成グループ'];delete initial.rosters['合成グループ'];
+    const prior=require('../startup-recovered-show-addition.js').merge(initial,previous.addition);
+    Object.assign(initial,prior.state);
+    initial.shows.push({id:'PRIVATE_SYNTHETIC_MANUAL_AFTER_RECOVERY',name:'合成の復旧後追加公演',groupId:prior.focusGroupId,hidden:false,nopub:false});
+    initial.notes.push({...clone(initial.notes.at(-1)),id:'PRIVATE_SYNTHETIC_NOTE_AFTER_RECOVERY',memo:'合成の復旧後手入力指摘'});
+    options.editInitial?.(initial,previous.addition.source.sha256);
+  }});
+  return {f,previous,addition,rawText};
+}
+
+test('v2 archives a prior recovery atomically, preserves subsequent notes and manual shows, and reopens the latest canonical group',async()=>{
+  const {f,previous,addition,rawText}=await supersededImportFixture(),beforeEditor=JSON.parse(f.editor);
+  const priorReceipt=beforeEditor.recoveredShowSources[previous.addition.source.sha256],priorGroupId=priorReceipt.focusGroupId;
+  await f.c.recoveryImportShowAddition(rawText,addition);
+  assert.equal(f.calls.reloads,1);assert.equal(f.commits.length,1);assert.equal(f.run('JSON.stringify(S)'),f.editor);
+  const {hold,state}=committedState(f),expected=clone(beforeEditor),archiveName='合成グループ（旧資料）';
+  expected.groups.find(group=>group.id===priorGroupId).name=archiveName;
+  for(const show of expected.shows)if(show.groupId===priorGroupId&&addition.supersedes[0].sourceShowIds.includes(show.recoveredSourceShowId))show.hidden=true;
+  expected.rosters[archiveName]=expected.rosters['合成グループ'];delete expected.rosters['合成グループ'];
+  expected.groupOrder=expected.groupOrder.map(name=>name==='合成グループ'?archiveName:name);
+  assertCurrentPreserved(expected,state);
+  assert.equal(state.shows.find(show=>show.id==='PRIVATE_SYNTHETIC_MANUAL_AFTER_RECOVERY').hidden,false);
+  assert.deepEqual(state.notes.find(note=>note.id==='PRIVATE_SYNTHETIC_NOTE_AFTER_RECOVERY'),beforeEditor.notes.at(-1));
+  assert.equal(state.groups.at(-1).name,'合成グループ');assert.equal(state.groupId,state.groups.at(-1).id);
+  assert.notEqual(state.groupId,priorGroupId);assert.equal(state.shows.find(show=>show.id===state.showId).hidden,false);
+  assert.deepEqual(state.recoveredShowSources[addition.source.sha256].archiveChanges,{groups:1,shows:18,showFlags:17,rosters:1,groupOrder:1});
+  assert.equal(f.idb.record('preserved:editor:v1:'+sha(f.editor)),f.editor);
+  assert.equal(f.idb.record(hold.sourceCopyKey),rawText);assert.deepEqual(f.idb.record(hold.copyKey),saved(f.slots));
+  assert.deepEqual(f.idb.record(f.copyKey),f.originals);
+  const writes=f.idb.events.filter(event=>['put','add','delete'].includes(event.op));
+  assert.equal(new Set(writes.map(event=>event.tx)).size,1);assert(!writes.some(event=>event.op==='delete'));
+  assertNoNetwork(f);await assertClips(f);
+  const reopened=appContext(f.idb,{configure:({c,run})=>{run(actualSaveNow);c.StartupRecoveredShowAddition=require('../startup-recovered-show-addition.js');}});
+  await settle(reopened);assert.equal(reopened.run('startupPhase'),'ready');
+  assert.equal(reopened.run('S.groups.find(g=>g.id===S.groupId).name'),'合成グループ');
+  assert.equal(reopened.run('S.shows.find(h=>h.id==="PRIVATE_SYNTHETIC_MANUAL_AFTER_RECOVERY").hidden'),false);
+  const snapshot=f.idb.snapshot(),writeCount=f.idb.writeCount();
+  await assert.rejects(reopened.c.recoveryImportShowAddition(rawText,addition),/追加済み/);
+  assert.equal(f.idb.writeCount(),writeCount);assert.deepEqual(f.idb.snapshot(),snapshot);assertNoNetwork(reopened);
+});
+test('v2 missing predecessor receipt is rejected before preservation with no archival or storage writes',async()=>{
+  const {f,addition,rawText}=await supersededImportFixture({editInitial:(initial,hash)=>delete initial.recoveredShowSources[hash]});
+  await assert.rejects(f.c.recoveryImportShowAddition(rawText,addition));assert.equal(f.prepares.length,0);await assertStopped(f);
+});
+test('v2 quota failure rolls back archival, latest import and backups together',async()=>{
+  const {f,addition,rawText}=await supersededImportFixture({idb:{failWrite:3}});
+  await assert.rejects(f.c.recoveryImportShowAddition(rawText,addition));
+  assert.equal(f.commits.length,1);assert.equal(f.calls.reloads,0);assert.equal(f.run('startupPhase'),'ready');
+  assert.equal(f.run('JSON.stringify(S)'),f.editor);assert.deepEqual(f.idb.snapshot(),f.before);assertNoNetwork(f);await assertClips(f);
+  assert(f.idb.events.some(event=>event.op==='abort'&&event.mode==='readwrite'));
+});
 
 test('ready held editor adds 18/339/1529/65 history atomically and reopens actual load/migration/render with all current REC work',async()=>{
   let entered=false,release;const gate=new Promise(resolve=>release=resolve);

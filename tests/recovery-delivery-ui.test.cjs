@@ -115,3 +115,23 @@ test('legacy saved bindings cannot resume or reconcile a superseded target',asyn
  const f=await fixture();await f.check();f.modal().querySelector('#rd-approve').checked=true;f.modal().querySelector('#rd-exclusive').checked=true;f.click('rd-commit');await f.until(()=>f.calls.some(x=>x.action==='doPush'));
  f.c.S.recoveryDelivery.version=1;const before=f.calls.length;assert.equal(f.c.RecoveryDelivery.canPublish('g'),false);assert.equal(f.c.RecoveryDelivery.hasResumed(),false);assert.equal(await f.c.RecoveryDelivery.push('g',true),false);await f.c.RecoveryDelivery.reconcile();assert.equal(f.calls.length,before);assert.equal(f.patches(),0);assert.match(f.c.RecoveryDelivery.settingsHTML(),/接続ファイルの更新が必要/);
 });
+
+test('verified matching baseline resumes new live notes through the actual transport ledger',async()=>{
+ const f=await fixture();await f.check();assert.match(f.modal().querySelector('#rd-preview').innerHTML,/新しい指摘/);
+ f.modal().querySelector('#rd-approve').checked=true;f.modal().querySelector('#rd-exclusive').checked=true;f.click('rd-commit');await f.until(()=>f.calls.some(x=>x.action==='doPush'));
+ assert.deepEqual(clone(f.c.S.recoveryDelivery.targets[0].preservedShowIds),[]);assert.equal(await f.c.RecoveryDelivery.push('g',true),'sent');
+ f.c.S.notes.push({id:'new-live-note',songId:'song',showId:'show',lineIdx:0,memberIds:['m'],tags:['fast'],memo:'New live correction'});f.c.save();await f.c.saveNow();
+ assert(f.c.RecoveryDelivery.pending('g'));assert.equal(await f.c.RecoveryDelivery.push('g',false),'sent');
+ const output=JSON.parse(f.remote());assert.equal(output.notes.length,2);assert(output.notes.some(n=>n.memo==='New live correction'));assert.equal(f.patches(),2);assert(!f.c.RecoveryDelivery.pending('g'));
+});
+test('a different remote edit blocks a new local note without dropping either side',async()=>{
+ const f=await fixture();await f.check();f.modal().querySelector('#rd-approve').checked=true;f.modal().querySelector('#rd-exclusive').checked=true;f.click('rd-commit');await f.until(()=>f.calls.some(x=>x.action==='doPush'));await f.c.RecoveryDelivery.push('g',true);
+ f.c.S.notes.push({id:'local-only-note',songId:'song',showId:'show',lineIdx:0,memberIds:['m'],tags:['fast'],memo:'Keep local edit'});f.c.save();await f.c.saveNow();
+ const remote=JSON.parse(f.remote());remote.notes[0].memo='Keep other editor change';f.setRemote(JSON.stringify(remote));await assert.rejects(()=>f.c.RecoveryDelivery.push('g',false),/新しい変更/);
+ assert.equal(f.patches(),1);assert(f.c.S.notes.some(n=>n.memo==='Keep local edit'));assert.equal(JSON.parse(f.remote()).notes[0].memo,'Keep other editor change');assert.equal(f.c.S.recoveryDelivery.targets[0].status,'blocked');
+});
+
+test('reconnection dialog keeps its bottom controls clear of the fixed recovery banner and restores it on close',async()=>{
+ const f=await fixture();const notice=f.c.document.getElementById('recovery-network-notice');notice.hidden=false;f.click('rd-open');assert.equal(notice.hidden,true);f.click('rd-close');assert.equal(notice.hidden,false);
+ notice.hidden=true;f.click('rd-open');f.click('rd-close');assert.equal(notice.hidden,true);
+});

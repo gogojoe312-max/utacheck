@@ -375,3 +375,9 @@ test('invalid options and callback failures expose only fixed reason codes', asy
     const result = await f.commit(); rejected(result); f.safe(result);
   }
 });
+
+test('unpacked editor original above 20 MiB is preserved while packed next-state bound stays 20 MiB',async()=>{
+ const raw=JSON.stringify(state({preservedLarge:'x'.repeat(21*1024*1024)}));const f=fixture({originalStateRaw:raw});const result=await API.commit(f.options);
+ assert.equal(result.status,'committed');assert.equal(f.idb.record(API.PREFIX+'editor:'+sha(raw)),raw);
+ const tooLarge=fixture({nextStateRaw:raw});const before=tooLarge.idb.snapshot();const refused=await API.commit(tooLarge.options);assert.equal(refused.status,'rejected');assert.equal(refused.reason,'candidate-invalid');assert.deepEqual(tooLarge.idb.snapshot(),before);
+});

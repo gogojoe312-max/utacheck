@@ -1,4 +1,4 @@
-/* Append checked publication history without changing existing work or connections. */
+/* Append checked publication history and explicitly archive superseded recoveries. */
 (function(root){
   'use strict';
   const MAX_BYTES=20*1024*1024;
@@ -44,13 +44,80 @@
   }
   function size(value){if(new TextEncoder().encode(JSON.stringify(value)).byteLength>MAX_BYTES)fail('candidate-too-large');}
   function only(value,keys){if(!object(value)||Object.keys(value).some(key=>!keys.has(key)))fail('candidate-invalid');}
+  function archiveSuperseded(next,candidate,entries){
+    const targets=[],receipts=new Set(),destinations=new Set(),showIds=new Set();
+    function index(rows,key){
+      const map=new Map();
+      for(const row of rows||[]){const value=row?.[key];if(!map.has(value))map.set(value,[]);map.get(value).push(row);}
+      return map;
+    }
+    const groupsById=index(next.groups,'id'),groupsByName=index(next.groups,'name'),candidateNames=index(candidate.groups,'name');
+    const showsById=index(next.shows,'id'),showsByGroup=index(next.shows,'groupId');
+    const receiptGroups=index(Object.values(next.recoveredShowSources||{}),'focusGroupId');
+    const receiptSources=index(Object.values(next.recoveredShowSources||{}).map(receipt=>receipt?.source),'sha256');
+    const names=new Set([...(next.groups||[]).map(group=>group?.name),...Object.keys(next.rosters||{}),
+      ...(next.groupOrder||[]),...(candidate.groups||[]).map(group=>group.name)]);
+    for(const entry of entries){
+      only(entry,new Set(['sourceSha256','groupName','sourceShowIds']));
+      if(typeof entry.sourceSha256!=='string'||!/^[a-f0-9]{64}$/.test(entry.sourceSha256)
+        ||typeof entry.groupName!=='string'||!entry.groupName||unsafe.has(entry.groupName)
+        ||!Array.isArray(entry.sourceShowIds)||!entry.sourceShowIds.length
+        ||entry.sourceShowIds.some(id=>!validId(id))||new Set(entry.sourceShowIds).size!==entry.sourceShowIds.length)fail('supersedes-invalid');
+      if(receipts.has(entry.sourceSha256))fail('supersedes-receipt-conflict');
+      receipts.add(entry.sourceSha256);
+      const receipt=next.recoveredShowSources?.[entry.sourceSha256];
+      if(!object(receipt)||!object(receipt.source)||receipt.source.sha256!==entry.sourceSha256||!validId(receipt.focusGroupId))fail('supersedes-receipt-mismatch');
+      const groups=groupsById.get(receipt.focusGroupId)||[];
+      if(groups.length!==1)fail('supersedes-group-identity');
+      const group=groups[0];
+      if(group.name!==entry.groupName)fail('supersedes-group-name');
+      if(destinations.has(group.id))fail('supersedes-receipt-conflict');
+      destinations.add(group.id);
+      // A shared name cannot safely identify which roster/order label to move.
+      if(groupsByName.get(entry.groupName)?.length!==1||candidateNames.get(entry.groupName)?.length!==1)fail('supersedes-group-name');
+      if(receiptGroups.get(group.id)?.length!==1||receiptSources.get(entry.sourceSha256)?.length!==1)fail('supersedes-receipt-conflict');
+      if(group.nopub!==true||['gistId','src','key'].some(field=>group[field]!=null&&group[field]!==''))fail('supersedes-group-connected');
+      const matches=new Map();
+      for(const show of showsByGroup.get(group.id)||[]){
+        // Ownership is explicit. Never infer a prior recovery from a title.
+        if(show?.groupId!==group.id||!own(show,'recoveredSourceShowId'))continue;
+        if(!validId(show.recoveredSourceShowId)||matches.has(show.recoveredSourceShowId))fail('supersedes-show-identity');
+        matches.set(show.recoveredSourceShowId,show);
+      }
+      const shows=entry.sourceShowIds.map(sourceId=>{
+        const show=matches.get(sourceId);
+        if(!show)fail('supersedes-show-missing');
+        if(!validId(show.id)||showsById.get(show.id)?.length!==1||showIds.has(show.id))fail('supersedes-show-identity');
+        showIds.add(show.id);return show;
+      });
+      let name=entry.groupName+'（旧資料）',suffix=2;
+      while(names.has(name))name=entry.groupName+'（旧資料'+(suffix++)+'）';
+      names.add(name);targets.push({group,shows,name});
+    }
+    const changes={groups:0,shows:0,showFlags:0,rosters:0,groupOrder:0};
+    // All archival targets are checked before changing even the current clone.
+    // Only labels and selected visibility flags change; all local work survives.
+    for(const {group,shows,name} of targets){
+      const original=group.name;group.name=name;changes.groups++;
+      for(const show of shows){if(show.hidden!==true)changes.showFlags++;show.hidden=true;changes.shows++;}
+      if(own(next.rosters||{},original)){
+        next.rosters[name]=next.rosters[original];delete next.rosters[original];changes.rosters++;
+      }
+      if(own(next,'groupOrder'))next.groupOrder=next.groupOrder.map(label=>{
+        if(label!==original)return label;changes.groupOrder++;return name;
+      });
+    }
+    return changes;
+  }
   function merge(current,packet,options={}){
     if(!object(current)||!object(packet)||!object(options))fail('candidate-invalid');
     // Current credentials and unknown JSON fields remain solely in the current copy.
     const next=copy(current),input=copy(packet);
     size(next);size(input);
-    only(input,new Set(['app','version','state','source','originalText']));
-    if(input.app!=='utacheck-recovered-shows-addition'||input.version!==1)fail('candidate-invalid');
+    only(input,new Set(['app','version','state','source','originalText','supersedes']));
+    if(input.app!=='utacheck-recovered-shows-addition'||![1,2].includes(input.version))fail('candidate-invalid');
+    if(input.version===1&&own(input,'supersedes'))fail('candidate-invalid');
+    if(input.version===2&&(!Array.isArray(input.supersedes)||!input.supersedes.length))fail('supersedes-invalid');
     if(own(input,'originalText')&&(typeof input.originalText!=='string'||!input.originalText))fail('candidate-invalid');
     only(input.source,new Set(['kind','at','revision','sha256']));
     const source=input.source;
@@ -82,6 +149,7 @@
       const same=object(previous)&&['kind','at','revision','sha256'].every(key=>previous[key]===source[key]);
       fail(same?'source-already-added':'source-receipt-conflict');
     }
+    if(input.version===2&&Object.values(next.recoveredShowSources||{}).some(receipt=>receipt?.source?.sha256===source.sha256))fail('source-receipt-conflict');
     const counts={};
     for(const field of lists){
       if(own(next,field)&&!Array.isArray(next[field]))fail('current-invalid');
@@ -146,6 +214,7 @@
       if(own(row,'deliveryGroupId'))row.deliveryGroupId=ref(row.deliveryGroupId,'groups',true);
       memberFields(row);
     }
+    const archiveChanges=input.version===2?archiveSuperseded(next,candidate,input.supersedes):null;
     const groupNames=new Map(),names=new Set([
       ...(next.groups||[]).map(group=>group?.name),...Object.keys(next.rosters||{}),...(next.groupOrder||[])]);
     for(const group of candidate.groups||[]){
@@ -213,7 +282,11 @@
     const focusShow=candidate.shows.find(show=>show.id===focusShowId);
     const focusGroupId=own(candidate,'groupId')?ref(candidate.groupId,'groups'):(focusShow?.groupId||candidate.groups?.[0]?.id||'');
     if(!own(next,'recoveredShowSources'))next.recoveredShowSources={};
-    next.recoveredShowSources[source.sha256]={version:1,source:copy(source),counts:copy(counts),focusShowId,focusGroupId};
+    next.recoveredShowSources[source.sha256]={version:input.version,source:copy(source),counts:copy(counts),focusShowId,focusGroupId};
+    if(archiveChanges){
+      next.recoveredShowSources[source.sha256].supersedes=copy(input.supersedes);
+      next.recoveredShowSources[source.sha256].archiveChanges=copy(archiveChanges);
+    }
     if(own(options,'packState')){
       if(typeof options.packState!=='function')fail('candidate-invalid');
       let packed;try{packed=copy(options.packState(copy(next)));}catch(_){fail('state-invalid');}
@@ -223,7 +296,7 @@
       if(typeof options.validateState!=='function')fail('candidate-invalid');
       try{if(options.validateState(copy(next))===false)fail('state-invalid');}catch(_){fail('state-invalid');}
     }
-    return {state:next,counts,focusShowId,focusGroupId};
+    return {state:next,counts,focusShowId,focusGroupId,...(archiveChanges?{archiveChanges}:{})};
   }
   const api=Object.freeze({merge,MAX_BYTES});
   if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.StartupRecoveredShowAddition=api;

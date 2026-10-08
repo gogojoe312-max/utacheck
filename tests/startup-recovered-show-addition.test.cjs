@@ -179,3 +179,144 @@ test('browser module touches no storage, network, DOM or shared app state',()=>{
   vm.runInContext(fs.readFileSync(__dirname+'/../startup-recovered-show-addition.js','utf8'),context);
   const result=context.StartupRecoveredShowAddition.merge(current(),packet());assert.equal(result.counts.songs,2);assert.equal(calls,0);
 });
+
+function supersededFixture(){
+  const old=API.merge(current(),packet()).state;
+  old.groups.find(group=>group.id==='G').unknown={laterSetting:[0,false,'keep']};
+  old.groups.find(group=>group.id==='G').src='';old.groups.find(group=>group.id==='G').key=null;
+  old.shows.find(show=>show.id==='H').laterMemo='本人が復旧後に追記したメモ';
+  old.shows.find(show=>show.id==='H2').hidden=true;
+  old.shows.push({id:'LATER_MANUAL_SHOW',name:'初回',groupId:'G',hidden:false,nopub:false,laterMemo:'手動追加の公演'});
+  old.shows.push({id:'LATER_RECOVERED_SHOW',name:'次回',groupId:'G',recoveredSourceShowId:'LATER_SOURCE',hidden:false,nopub:true});
+  old.songs.push({id:'LATER_MANUAL_SONG',showId:'LATER_MANUAL_SHOW',groupId:'G',title:'後日追加曲',xls:1,xlsSourceId:'LOCAL_WORKBOOK',lines:[]});
+  old.notes.push({id:'LATER_RECOVERED_NOTE',showId:'H',songId:'T',memberIds:['M'],tags:[],memo:'復旧後の手入力指摘',unknown:{hand:'keep'}});
+  old.memos['H|T']='復旧後に編集した総括';old.staffMemos['H|T']='後日の非公開メモ';old.draws['H|T']=[{x:2,y:3}];
+  old.recoveredShowSources[source().sha256].unknown={keep:'receipt annotation'};
+  const p=packet();p.version=2;p.source={...p.source,at:p.source.at+1,revision:'e'.repeat(40),sha256:'d'.repeat(64)};
+  p.supersedes=[{sourceSha256:source().sha256,groupName:'復旧対象',sourceShowIds:['H','H2']}];
+  return {old,p};
+}
+function assertSupersededPreserved(before,after,name='復旧対象（旧資料）'){
+  const expected=clone(before),group=expected.groups.find(row=>row.id==='G');group.name=name;
+  for(const show of expected.shows)if(['H','H2'].includes(show.id))show.hidden=true;
+  expected.rosters[name]=expected.rosters['復旧対象'];delete expected.rosters['復旧対象'];
+  expected.groupOrder=expected.groupOrder.map(label=>label==='復旧対象'?name:label);
+  assertPreserved(expected,after);
+}
+test('v2 keeps the latest canonical group and archives only explicitly identified prior recovery shows',()=>{
+  const {old,p}=supersededFixture(),before=clone(old),packetBefore=clone(p),result=API.merge(old,p),state=result.state;
+  assertSupersededPreserved(before,state);assert.deepEqual(old,before);assert.deepEqual(p,packetBefore);
+  assert.equal(state.groups.at(-1).name,'復旧対象');assert.equal(state.groups.at(-1).nopub,true);
+  assert.notEqual(state.groups.at(-1).id,'G');assert.equal(result.focusGroupId,state.groups.at(-1).id);
+  assert.equal(result.focusShowId,state.shows.at(-1).id);assert.equal(state.shows.at(-1).groupId,result.focusGroupId);
+  assert.deepEqual(state.rosters['復旧対象'],p.state.rosters['復旧対象']);
+  assert.deepEqual(result.archiveChanges,{groups:1,shows:2,showFlags:1,rosters:1,groupOrder:1});
+  const receipt=state.recoveredShowSources[p.source.sha256];
+  assert.equal(receipt.version,2);assert.deepEqual(receipt.supersedes,p.supersedes);assert.deepEqual(receipt.archiveChanges,result.archiveChanges);
+  assert.equal(state.shows.find(show=>show.id==='LATER_MANUAL_SHOW').hidden,false);
+  assert.equal(state.shows.find(show=>show.id==='LATER_MANUAL_SHOW').groupId,'G');
+  assert.equal(state.shows.find(show=>show.id==='LATER_RECOVERED_SHOW').hidden,false);
+  for(const field of ['rsongs','recs','rsongId','recMode','plan','staffMemos','draws','ghToken','showId','groupId','unknown'])assert.deepEqual(state[field],before[field],field);
+});
+test('v2 only remaps new identities and keeps old lyrics, materials, original notes and later notes exact',()=>{
+  const {old,p}=supersededFixture(),before=clone(old),result=API.merge(old,p),state=result.state;
+  const [show,show2]=state.shows.slice(-2),[song,song2]=state.songs.slice(-2),note=state.notes.at(-1),[member,member2]=state.members.slice(-2);
+  assertSupersededPreserved(before,state);
+  for(const field of ['members','songs','notes'])assert.deepEqual(state[field].slice(0,before[field].length),before[field],field);
+  for(const [added,prior] of [[show,'H'],[show2,'H2'],[song,'T'],[song2,'T2'],[note,'N'],[member,'M'],[member2,'M2']])assert.notEqual(added.id,prior);
+  assert.equal(show.recoveredSourceShowId,'H');assert.equal(show2.recoveredSourceShowId,'H2');assert.equal(show2.from,show.id);
+  assert.equal(song.showId,show.id);assert.equal(song2.from,song.id);assert.equal(note.songId,song.id);assert.equal(note.showId,show.id);
+  assert.equal(note.memberIds[0],member.id);assert.equal(state.memos[show.id+'|'+song.id],'総括原文');
+});
+test('v2 archive labels avoid every existing group, roster, order and candidate group name without overwriting',()=>{
+  const {old,p}=supersededFixture();
+  old.groups.push({id:'ARCHIVE_LABEL_ONE',name:'復旧対象（旧資料）',untouched:true});
+  old.rosters['復旧対象（旧資料2）']=['保持'];old.groupOrder.push('復旧対象（旧資料3）','復旧対象');
+  p.state.groups.push({id:'CANDIDATE_ARCHIVE_NAME',name:'復旧対象（旧資料4）'});
+  const before=clone(old),result=API.merge(old,p);assertSupersededPreserved(before,result.state,'復旧対象（旧資料5）');
+  assert.deepEqual(result.state.rosters['復旧対象（旧資料2）'],['保持']);
+  assert.equal(result.state.groups.at(-2).name,'復旧対象');assert.equal(result.state.groups.at(-1).name,'復旧対象（旧資料4）');
+  assert.equal(result.archiveChanges.groupOrder,2);
+});
+test('v2 works when the prior group has no roster or groupOrder and preserves absent fields',()=>{
+  const {old,p}=supersededFixture();delete old.rosters;delete old.groupOrder;delete p.state.rosters;delete p.state.groupOrder;
+  const result=API.merge(old,p);assert.equal(result.state.rosters,undefined);assert.equal(result.state.groupOrder,undefined);
+  assert.equal(result.archiveChanges.rosters,0);assert.equal(result.archiveChanges.groupOrder,0);
+  assert.equal(result.state.groups.at(-1).name,'復旧対象');
+});
+test('v2 duplicate import stops without a second archival and conflicting new-source metadata is rejected',()=>{
+  const {old,p}=supersededFixture(),result=API.merge(old,p),before=clone(result.state);
+  fails('source-already-added',()=>API.merge(result.state,p));assert.deepEqual(result.state,before);
+  const conflict=clone(p);conflict.source.at++;
+  fails('source-receipt-conflict',()=>API.merge(result.state,conflict));assert.deepEqual(result.state,before);
+  old.recoveredShowSources['b'.repeat(64)]={source:clone(p.source),focusGroupId:'UNKNOWN_GROUP'};
+  const aliasBefore=clone(old);fails('source-receipt-conflict',()=>API.merge(old,p));assert.deepEqual(old,aliasBefore);
+});
+test('a subsequent v2 recovery archives only its own predecessor and preserves every earlier recovery',()=>{
+  const {old,p}=supersededFixture(),first=API.merge(old,p),before=clone(first.state),firstBefore=clone(first.state),second=clone(p);
+  second.source={...p.source,at:p.source.at+1,revision:'f'.repeat(40),sha256:'f'.repeat(64)};
+  second.supersedes[0].sourceSha256=p.source.sha256;
+  const result=API.merge(first.state,second),previousGroup=before.groups.at(-1).id;
+  for(const show of before.shows)if(show.groupId===previousGroup)show.hidden=true;
+  before.groups.at(-1).name='復旧対象（旧資料2）';
+  before.rosters['復旧対象（旧資料2）']=before.rosters['復旧対象'];delete before.rosters['復旧対象'];
+  before.groupOrder=before.groupOrder.map(label=>label==='復旧対象'?'復旧対象（旧資料2）':label);
+  assertPreserved(before,result.state);assert.equal(result.state.groups.at(-1).name,'復旧対象');
+  assert.deepEqual(first.state,firstBefore);
+});
+test('v2 schema requires explicit nonempty supersedes and v1 cannot opt in accidentally',()=>{
+  const edits=[p=>delete p.supersedes,p=>p.supersedes=[],p=>p.supersedes={},p=>p.supersedes=[null],
+    p=>p.supersedes[0].extra=true,p=>p.supersedes[0].sourceSha256='A'.repeat(64),p=>p.supersedes[0].sourceSha256='a'.repeat(63),
+    p=>p.supersedes[0].groupName='',p=>p.supersedes[0].groupName='constructor',p=>p.supersedes[0].sourceShowIds=[],
+    p=>p.supersedes[0].sourceShowIds=['H','H'],p=>p.supersedes[0].sourceShowIds=['bad|id'],
+    p=>p.supersedes[0].sourceShowIds='H',p=>p.version=1];
+  for(const edit of edits){const {old,p}=supersededFixture();edit(p);const before=clone(old),packetBefore=clone(p);
+    assert.throws(()=>API.merge(old,p));assert.deepEqual(old,before);assert.deepEqual(p,packetBefore);}
+  const result=API.merge(current(),packet());assert.equal(result.archiveChanges,undefined);
+  assert.equal(result.state.recoveredShowSources[source().sha256].version,1);
+  assert.equal(result.state.recoveredShowSources[source().sha256].supersedes,undefined);
+});
+test('missing, stale and mismatched prior receipt metadata never archives another group',()=>{
+  const edits=[old=>delete old.recoveredShowSources,old=>delete old.recoveredShowSources[source().sha256],
+    old=>old.recoveredShowSources[source().sha256].source=null,old=>old.recoveredShowSources[source().sha256].source.sha256='b'.repeat(64),
+    old=>old.recoveredShowSources[source().sha256].focusGroupId='MISSING_GROUP',old=>old.recoveredShowSources[source().sha256].focusGroupId='KEEP_GROUP',
+    old=>old.groups.find(group=>group.id==='G').name='復旧対象（旧資料）'];
+  for(const edit of edits){const {old,p}=supersededFixture();edit(old);const before=clone(old);
+    assert.throws(()=>API.merge(old,p));assert.deepEqual(old,before);}
+});
+test('v2 rejects connected or publishable prior groups without clearing any credentials',()=>{
+  for(const [field,value] of [['gistId','LIVE_GIST'],['src','LIVE_SOURCE'],['key','LIVE_KEY'],['key',false],['nopub',false],['nopub',null]]){
+    const {old,p}=supersededFixture();old.groups.find(group=>group.id==='G')[field]=value;const before=clone(old);
+    fails('supersedes-group-connected',()=>API.merge(old,p));assert.deepEqual(old,before);
+  }
+});
+test('v2 requires unique prior receipt, destination identity and canonical group name',()=>{
+  const edits=[({old,p})=>p.supersedes.push(clone(p.supersedes[0])),
+    ({old})=>old.recoveredShowSources['b'.repeat(64)]={source:{sha256:'b'.repeat(64)},focusGroupId:'G'},
+    ({old})=>old.recoveredShowSources['b'.repeat(64)]={source:{sha256:source().sha256},focusGroupId:'OTHER'},
+    ({old})=>old.groups.push(clone(old.groups.find(group=>group.id==='G'))),
+    ({old})=>old.groups.push({id:'DUPLICATE_CANONICAL',name:'復旧対象'}),
+    ({p})=>p.state.groups[0].name='Different replacement',({p})=>p.state.groups.push({id:'DUPLICATE_NEW',name:'復旧対象'})];
+  for(const edit of edits){const fixture=supersededFixture();edit(fixture);const before=clone(fixture.old),packetBefore=clone(fixture.p);
+    assert.throws(()=>API.merge(fixture.old,fixture.p));assert.deepEqual(fixture.old,before);assert.deepEqual(fixture.p,packetBefore);}
+});
+test('v2 exact recovered locators and explicit group ownership reject missing, duplicate and ambiguous shows',()=>{
+  const edits=[old=>delete old.shows.find(show=>show.id==='H').recoveredSourceShowId,
+    old=>delete old.shows.find(show=>show.id==='H').groupId,
+    old=>old.shows.find(show=>show.id==='H').groupId='KEEP_GROUP',
+    old=>old.shows.find(show=>show.id==='H').recoveredSourceShowId='WRONG_SOURCE',
+    old=>old.shows.push({...old.shows.find(show=>show.id==='H'),id:'DUPLICATE_LOCATOR'}),
+    old=>old.shows.push({id:'H',name:'Unrelated duplicate ID',groupId:'KEEP_GROUP'}),
+    old=>old.shows.find(show=>show.id==='LATER_MANUAL_SHOW').recoveredSourceShowId='H'];
+  for(const edit of edits){const {old,p}=supersededFixture();edit(old);const before=clone(old);
+    assert.throws(()=>API.merge(old,p));assert.deepEqual(old,before);}
+});
+test('v2 validates all archival targets before callbacks and leaves both inputs unchanged on late failure',()=>{
+  const {old,p}=supersededFixture();p.supersedes.push({sourceSha256:'f'.repeat(64),groupName:'Unknown',sourceShowIds:['H']});
+  const before=clone(old),packetBefore=clone(p);let calls=0;
+  assert.throws(()=>API.merge(old,p,{validateState(){calls++;}}));assert.equal(calls,0);assert.deepEqual(old,before);assert.deepEqual(p,packetBefore);
+  const fixture=supersededFixture(),beforeValid=clone(fixture.old);
+  fails('state-invalid',()=>API.merge(fixture.old,fixture.p,{validateState:()=>false}));assert.deepEqual(fixture.old,beforeValid);
+  fixture.p.state.songs[0].showId='MISSING_CANDIDATE_SHOW';
+  fails('candidate-reference',()=>API.merge(fixture.old,fixture.p));assert.deepEqual(fixture.old,beforeValid);
+});

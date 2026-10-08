@@ -4,7 +4,7 @@
   'use strict';
   const HOLD='recovery:network-hold:v1';
   const PREFIX='preserved:delivery-reconnect:v1:';
-  const MAX_BYTES=20*1024*1024;
+  const MAX_BYTES=20*1024*1024,MAX_EDITOR_BYTES=100*1024*1024;
   const unsafe=new Set(['__proto__','prototype','constructor']);
   const object=value=>!!value&&typeof value==='object'&&!Array.isArray(value);
   const own=(value,key)=>Object.prototype.hasOwnProperty.call(value,key);
@@ -14,11 +14,11 @@
     'hold-invalid','hash-invalid','immutable-conflict','preservation-failed','verify-failed']);
   const reason=value=>codes.has(value?.deliveryStoreCode)?value.deliveryStoreCode:'preservation-failed';
   const json=value=>JSON.stringify(value);
-  function bounded(raw){
-    return typeof raw==='string'&&raw.length<=MAX_BYTES&&new TextEncoder().encode(raw).byteLength<=MAX_BYTES;
+  function bounded(raw,limit=MAX_BYTES){
+    return typeof raw==='string'&&raw.length<=limit&&new TextEncoder().encode(raw).byteLength<=limit;
   }
-  function checkedObject(raw,code,checkKeys){
-    if(!bounded(raw))fail(code);
+  function checkedObject(raw,code,checkKeys,limit=MAX_BYTES){
+    if(!bounded(raw,limit))fail(code);
     let value;try{value=JSON.parse(raw);}catch(_){fail(code);}
     if(!object(value))fail(code);
     if(checkKeys){
@@ -77,7 +77,7 @@
         ||(expectedLegacyRaw!==undefined&&expectedLegacyRaw!==null&&typeof expectedLegacyRaw!=='string')
         ||!Array.isArray(options.remoteCopies))fail('candidate-invalid');
       checkedObject(nextStateRaw,'candidate-invalid',true);
-      checkedObject(originalStateRaw,'candidate-invalid',false);
+      checkedObject(originalStateRaw,'candidate-invalid',false,MAX_EDITOR_BYTES);
       checkedHold(expectedHoldRaw);
       const remoteCopies=options.remoteCopies.map(value=>{
         if(!object(value)||typeof value.gistId!=='string'||!/^[a-f0-9]{32}$/i.test(value.gistId)

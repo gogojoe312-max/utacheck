@@ -23,6 +23,7 @@
       'source-receipt-mismatch':'対応する公演の救出情報が、この端末にないか別の版です。先に対応する公演・指摘の救出ファイルを追加してください。トークンの形式エラーではありません。',
       'group-name-mismatch':'復旧したグループ名が接続ファイルと一致しません。別グループには送信していません。',
       'source-show-set-mismatch':'端末の公演の組み合わせが接続ファイルと一致しません。送信せず、元の内容を保持しています。',
+      'data-limit':'元資料も含むデータ量が確認上限を超えたため、削除・送信せず停止しました。',
       'unsafe-data':'保存データまたは接続ファイルの形式を安全に確認できません。送信・設定変更はしていません。',
       'unsafe-key':'接続ファイルに安全に扱えない項目があるため停止しました。送信・設定変更はしていません。',
       'target':'接続ファイルと元の配信先が一致しません。別の配信先には送信していません。',
@@ -70,7 +71,7 @@
     return {raw,data,digest};
   }
   function summaryHTML(plan,payloads,merges){return plan.targets.map((t,i)=>{
-    const p=payloads[i];return '<div class="card"><b>'+h(t.groupName)+'</b><p class="note">既存の配信先：'+h(t.gistId)+'<br>公演'+p.shows.length+'件・曲'+p.songs.length+'件・指摘'+p.notes.length+'件</p><ul style="padding-left:20px">'+p.shows.map(sw=>'<li>'+h(sw.name)+'</li>').join('')+'</ul><p class="note">端末の復旧対象公演の「配信しない」を解除します。スタッフ個人メモ・REC・保管資料は対象外です。</p><p class="note">現配信のまま保持：'+merges[i].preservedShowNames.map(h).join('、')+'。同じ公演の端末版差分は上書きせず保留します。</p></div>';
+    const p=payloads[i],m=merges[i],managed=m.managedLocalShowIds.length;return '<div class="card"><b>'+h(t.groupName)+'</b><p class="note">既存の配信先：'+h(t.gistId)+'<br>公演'+p.shows.length+'件・曲'+p.songs.length+'件・指摘'+p.notes.length+'件</p><ul style="padding-left:20px">'+p.shows.map(sw=>'<li>'+h(sw.name)+'</li>').join('')+'</ul><p class="note">端末の復旧対象公演の「配信しない」を解除します。スタッフ個人メモ・REC・保管資料は対象外です。</p><p class="note">確認後の新しい指摘を反映する公演：'+managed+'件。</p>'+ (m.preservedShowNames.length?'<p class="note">現配信のまま保持：'+m.preservedShowNames.map(h).join('、')+'。同じ公演の端末版差分は上書きせず保留します。</p>':'<p class="note">配信済みの内容と一致しています。確認後の新しい指摘も既存の配信先に反映します。</p>')+'</div>';
   }).join('');}
   function settingsHTML(){
     if(!startupRecoveryNetworkHold||VIEW())return '';
@@ -81,7 +82,7 @@
       (pending&&!legacy?'<button class="ghost" data-act="rd-reconcile">接続・送信結果を確認（再送しない）</button>':'')+'</div>';
   }
   function unlock(){const app=document.getElementById('app');if(app&&typeof recordingInboxCanWrite==='function')app.inert=!recordingInboxCanWrite();}
-  function close(){if(session?.committing)return;turn++;if(session){session.token='';session.prepared=null;const input=session.node.querySelector('#rd-token');if(input)input.value='';session.node.remove();session=null;}unlock();}
+  function close(){if(session?.committing)return;turn++;if(session){session.token='';session.prepared=null;const input=session.node.querySelector('#rd-token');if(input)input.value='';session.node.remove();if(session.notice)session.notice.hidden=session.noticeHidden;session=null;}unlock();}
   function open(){
     if(!ready()||pushing||publishInFlight||saving||REC||(U.sheet&&sheetHasInput())){alert(message({reconnectCode:'not-ready'}));return;}
     close();const id=++turn,node=document.createElement('div');node.className='mask';
@@ -91,7 +92,8 @@
       '<label class="organize-field">既存のGitHubトークン<input id="rd-token" class="field" type="password" autocomplete="off" placeholder="既存トークンをこの欄に入力"></label>'+
       '<p class="note">トークンをチャットに送らないでください。確認中はメモリだけで扱い、閉じると消します。</p>'+
       '<button class="primary" data-act="rd-check">既存の配信先を確認（送信なし）</button><p id="rd-status" class="note" role="status"></p><div id="rd-preview"></div></div>';
-    session={id,node,token:'',prepared:null,busy:false,committing:false};document.body.appendChild(node);document.getElementById('app').inert=true;
+    const notice=document.getElementById('recovery-network-notice');
+    session={id,node,token:'',prepared:null,busy:false,committing:false,notice,noticeHidden:notice?.hidden};if(notice)notice.hidden=true;document.body.appendChild(node);document.getElementById('app').inert=true;
   }
   function status(text){const el=session?.node.querySelector('#rd-status');if(el)el.textContent=text;}
   function controls(disabled){session?.node.querySelectorAll('[data-act="rd-check"],#rd-file,#rd-token').forEach(el=>el.disabled=disabled);}
@@ -132,7 +134,7 @@
       }
       if(!active())fail('local-changed');
       const next=copy(p.plan.state);next.ghToken=s.token;next.autoPub=true;
-      next.recoveryDelivery={version:2,targets:p.plan.targets.map((t,i)=>({...copy(t),preservedShowIds:copy(p.merges[i].preservedShowIds),heldLocalShowIds:copy(p.merges[i].heldLocalShowIds),preservedShowNames:copy(p.merges[i].preservedShowNames),status:'prepared'}))};
+      next.recoveryDelivery={version:2,targets:p.plan.targets.map((t,i)=>({...copy(t),preservedShowIds:copy(p.merges[i].preservedShowIds),heldLocalShowIds:copy(p.merges[i].heldLocalShowIds),managedLocalShowIds:copy(p.merges[i].managedLocalShowIds),preservedShowNames:copy(p.merges[i].preservedShowNames),status:'prepared'}))};
       const nextRaw=JSON.stringify(packState(next));recoveryValidateCloudState(JSON.parse(nextRaw));
       status('端末原本と既存配信を保全しています。');
       const result=await RecoveryDeliveryStore.commit({database:()=>DB,hash:backupDigest,isActive:active,readLegacy:()=>localStorage.getItem(KEY),expectedLegacyRaw:legacy,

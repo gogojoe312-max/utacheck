@@ -10,7 +10,7 @@
     'originalText','recoveredShowSources','recoveredFromOriginalExcel','archive','archived']);
   const HASH=/^[a-f0-9]{64}$/;
   const GIST=/^[a-f0-9]{32}$/;
-  const MAX_DEPTH=128,MAX_NODES=1000000,MAX_STATE_BYTES=100*1024*1024,MAX_PUBLICATION_BYTES=20*1024*1024;
+  const MAX_DEPTH=128,MAX_NODES=1000000,MAX_STATE_NODES=2000000,MAX_STATE_BYTES=100*1024*1024,MAX_PUBLICATION_BYTES=20*1024*1024;
   const failures=new WeakSet();
   // Capture this engine's intrinsic formatting: WebKit uses multiline native bodies.
   const functionSource=Function.prototype.toString;
@@ -33,7 +33,7 @@
     let nodes=0;
     const ancestors=new Set();
     function visit(item,depth){
-      if(++nodes>MAX_NODES||depth>MAX_DEPTH)fail('data-limit');
+      if(++nodes>(mode==='state'?MAX_STATE_NODES:MAX_NODES)||depth>MAX_DEPTH)fail('data-limit');
       if(item===undefined&&mode==='state')return undefined;
       if(item===undefined&&mode==='publication')return null;
       if(item===null||typeof item==='string'||typeof item==='boolean')return item;
@@ -330,6 +330,69 @@
     bytes(prior,MAX_PUBLICATION_BYTES);bytes(next,MAX_PUBLICATION_BYTES);
     return {ok:true,remote:validatePublication(prior,scope,true),payload:validatePublication(next,scope,false)};
   }
+  // Compare validated wire content, not editor IDs, global array indexes or
+  // compact-library layout. Only explicit, known wire defaults are equivalent.
+  // No text trimming, title matching, arbitrary omission or roster sorting is used.
+  function canonicalShows(publication,libraryIdentities){
+    const sources=new Map(publication.shows.map(show=>[show.id,show.recoveredSourceShowId||show.id]));
+    const positions=new Map(),counts=new Map(),songsByShow=new Map(),records=new Map();
+    const stable=value=>{
+      if(Array.isArray(value))return '['+value.map(stable).join(',')+']';
+      if(object(value))return '{'+Object.keys(value).sort().map(key=>JSON.stringify(key)+':'+stable(value[key])).join(',')+'}';
+      return JSON.stringify(value);
+    };
+    const optional=value=>value==null?null:value;
+    const empty=value=>value==null?'':value;
+    const sourceReference=value=>value==null||value===''?null:(sources.get(value)||value);
+    publication.songs.forEach((song,index)=>{
+      const ordinal=counts.get(song.showId)||0;counts.set(song.showId,ordinal+1);
+      positions.set(index,[sources.get(song.showId),ordinal]);
+      if(!songsByShow.has(song.showId))songsByShow.set(song.showId,[]);
+      songsByShow.get(song.showId).push(index);
+      records.set(index,{notes:[],memos:[],subs:[],gsubs:[]});
+    });
+    for(const field of ['notes','memos','subs','gsubs'])for(const row of publication[field]||[]){
+      // showId is a checked, redundant locator and songIdx becomes this bucket.
+      let normalized;
+      if(field==='notes')normalized={lineIdx:row.lineIdx,memberNames:row.memberNames||[],tags:row.tags||[],memo:empty(row.memo),
+        hand:optional(row.hand),pitch:row.pitch||null,lineEnd:optional(row.lineEnd),
+        from:optional(row.from),to:optional(row.to),at:optional(row.at)};
+      else if(field==='memos')normalized={text:row.text};
+      else if(field==='subs')normalized={lineIdx:row.lineIdx,names:row.names};
+      else normalized={block:row.block,names:row.names};
+      records.get(row.songIdx)[field].push(normalized);
+    }
+    for(const rows of records.values()){
+      // These two collections are keyed dictionaries in the editor. Their
+      // iteration order is wire layout; singer order inside each value is not.
+      rows.subs.sort((a,b)=>a.lineIdx-b.lineIdx);
+      rows.gsubs.sort((a,b)=>a.block<b.block?-1:a.block>b.block?1:0);
+    }
+    const libraries=publication.lib.map(entry=>{
+      const content=stable({title:entry.title,credit:empty(entry.credit),
+      // Block insertion order can affect performer ordering, so retain it too.
+      groups:Object.entries(entry.groups||{}),order:entry.order||[],
+      lines:entry.lines.map(row=>Array.from({length:9},(_,index)=>index===1?row[index]:empty(row[index]))),
+      sections:entry.sections||[],groupRows:(entry.groupRows||[]).map(row=>({b:row.b,ncell:empty(row.ncell),lcell:empty(row.lcell)}))});
+      // Intern full strings across both sides, without lossy hashes or expanding
+      // a large aliased library again for every show/song that references it.
+      if(!libraryIdentities.has(content))libraryIdentities.set(content,libraryIdentities.size);
+      return libraryIdentities.get(content);
+    });
+    const result=new Map();
+    for(const show of publication.shows){
+      const content={show:{id:sources.get(show.id),name:show.name,ts:optional(show.ts),folder:empty(show.folder),
+        from:sourceReference(show.from),absent:show.absent||[]},songs:(songsByShow.get(show.id)||[]).map(index=>{
+          const song=publication.songs[index];
+          return {library:libraries[song.libIdx],take:song.take==null?1:song.take,
+            from:song.fromIdx==null?null:positions.get(song.fromIdx),...records.get(index)};
+        })};
+      // The library token identifies its full exact canonical content. Song
+      // and note order stays meaningful, without global wire index coupling.
+      result.set(sources.get(show.id),stable(content));
+    }
+    return result;
+  }
   function implementationMerge(target,remote,local,preservedShowIds){
     const scope=validatedScope(target),prior=copy(remote,'publication'),candidate=copy(local,'publication');
     bytes(prior,MAX_PUBLICATION_BYTES);bytes(candidate,MAX_PUBLICATION_BYTES);
@@ -349,16 +412,41 @@
     validatePublication(prior,snapshotScope(prior),true);
     validatePublication(candidate,scope,false);
     const remoteShows=new Map(prior.shows.map(show=>[show.id,show]));
+    const localSourceMap=new Map(scope.showIds.map((id,i)=>[id,scope.sourceShowIds[i]]));
+    for(const show of candidate.shows)if(sourceId(show)!==localSourceMap.get(show.id))fail('merge-local-source-mismatch');
+    const equivalentIds=new Set();
     let protectedIds;
-    if(preservedShowIds===undefined)protectedIds=prior.shows.map(show=>show.id);
-    else{
+    if(preservedShowIds===undefined){
+      const libraryIdentities=new Map(),remoteContent=canonicalShows(prior,libraryIdentities),localContent=canonicalShows(candidate,libraryIdentities);
+      protectedIds=[];
+      for(const show of prior.shows){
+        const original=sourceId(show);
+        if(localContent.has(original)&&remoteContent.get(original)===localContent.get(original))equivalentIds.add(show.id);
+        else protectedIds.push(show.id);
+      }
+      // Existing protected content must retain its ancestry. The merge cannot
+      // map song links across protected/managed subsets, so hold both ends of
+      // such links; for show links only a protected child's ancestor needs to
+      // stay at its old ID (managed show links can already be mapped safely).
+      const held=new Set(protectedIds),dependencies=[];
+      for(const show of prior.shows)if(remoteShows.has(show.from))dependencies.push([show.id,show.from]);
+      for(const song of prior.songs)if(song.fromIdx!=null){
+        const ancestor=prior.songs[song.fromIdx].showId;
+        if(song.showId!==ancestor){dependencies.push([song.showId,ancestor]);dependencies.push([ancestor,song.showId]);}
+      }
+      const dependents=new Map();
+      for(const [from,to] of dependencies){if(!dependents.has(from))dependents.set(from,[]);dependents.get(from).push(to);}
+      const pending=[...held];
+      for(let at=0;at<pending.length;at++)for(const id of dependents.get(pending[at])||[])if(!held.has(id)){held.add(id);pending.push(id);}
+      protectedIds=prior.shows.filter(show=>held.has(show.id)).map(show=>show.id);
+      for(const id of protectedIds)equivalentIds.delete(id);
+    }else{
       protectedIds=copy(preservedShowIds);
       if(!Array.isArray(protectedIds)||protectedIds.some(id=>!ident(id))||new Set(protectedIds).size!==protectedIds.length)fail('merge-protection-invalid');
       if(protectedIds.some(id=>!remoteShows.has(id)))fail('merge-protected-show-missing');
     }
-    const protectedSet=new Set(protectedIds),localSourceMap=new Map(scope.showIds.map((id,i)=>[id,scope.sourceShowIds[i]]));
-    for(const show of candidate.shows)if(sourceId(show)!==localSourceMap.get(show.id))fail('merge-local-source-mismatch');
-    for(const show of prior.shows)if(!protectedSet.has(show.id)&&localSourceMap.get(show.id)!==sourceId(show))fail('merge-unidentified-remote-show');
+    const protectedSet=new Set(protectedIds);
+    for(const show of prior.shows)if(!protectedSet.has(show.id)&&!equivalentIds.has(show.id)&&localSourceMap.get(show.id)!==sourceId(show))fail('merge-unidentified-remote-show');
     const protectedSources=new Map(prior.shows.filter(show=>protectedSet.has(show.id)).map(show=>[sourceId(show),show.id]));
     const heldSet=new Set(),managedSet=new Set(),localToOutput=new Map();
     for(const show of candidate.shows){
@@ -450,7 +538,8 @@
     else payload.focusShow=payload.shows[0]?.id||'';
     bytes(payload,MAX_PUBLICATION_BYTES);validatePublication(payload,snapshotScope(payload),true);
     return {payload,preservedShowIds:protectedIds.slice(),heldLocalShowIds:scope.showIds.filter(id=>heldSet.has(id)),
-      managedLocalShowIds:scope.showIds.filter(id=>managedSet.has(id)),preservedShowNames:protectedIds.map(id=>remoteShows.get(id).name)};
+      managedLocalShowIds:scope.showIds.filter(id=>managedSet.has(id)),preservedShowNames:protectedIds.map(id=>remoteShows.get(id).name),
+      equivalentRemoteShowIds:[...equivalentIds]};
   }
   function guarded(fn,args){try{return fn(...args);}catch(error){if(failures.has(error))throw error;fail('unsafe-data');}}
   const api=Object.freeze({plan:(...args)=>guarded(implementationPlan,args),verifyPublication:(...args)=>guarded(implementationVerify,args),mergePublication:(...args)=>guarded(implementationMerge,args)});

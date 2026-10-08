@@ -601,3 +601,144 @@ test('old reconnection files stop before target resolution',()=>{
 test('missing recovery receipt reports only a bounded target ordinal',()=>{
   const s=state();s.recoveredShowSources={};assert.throws(()=>API.plan(s,packet()),e=>e.code==='source-receipt-mismatch'&&e.targetNumber===1&&e.message==='source-receipt-mismatch');
 });
+
+function equivalentMergeFixture(){
+  const remote=publication(),local=publication(true);
+  for(const p of [remote,local]){
+    p.lib.push(clone(p.lib[0]));p.songs[1].libIdx=1;p.songs[1].fromIdx=null;
+  }
+  return {target:target(),remote,local};
+}
+test('initial exact shared baselines become managed and later new notes are published',()=>{
+  const f=equivalentMergeFixture(),beforeRemote=clone(f.remote),beforeLocal=clone(f.local);
+  const first=API.mergePublication(frozen(f.target),frozen(f.remote),frozen(f.local));
+  assert.deepEqual(first.preservedShowIds,[]);assert.deepEqual(first.heldLocalShowIds,[]);
+  assert.deepEqual(first.managedLocalShowIds,['LOCAL_TWO','LOCAL_ONE']);
+  assert.deepEqual(first.equivalentRemoteShowIds,['SOURCE_ONE','SOURCE_TWO']);
+  assert.deepEqual(f.remote,beforeRemote);assert.deepEqual(f.local,beforeLocal);
+  const next=clone(f.local);next.notes.push({...next.notes[0],memo:'A new live correction',at:2});
+  const second=API.mergePublication(f.target,first.payload,next,first.preservedShowIds);
+  assert.equal(second.payload.notes.length,2);assert.equal(second.payload.notes[1].memo,'A new live correction');
+  assert.deepEqual(second.preservedShowIds,[]);assert.deepEqual(second.heldLocalShowIds,[]);
+  // Without the persisted ledger, any changed baseline is held conservatively.
+  const noLedger=API.mergePublication(f.target,first.payload,next);
+  assert.deepEqual(noLedger.heldLocalShowIds,['LOCAL_ONE']);assert.equal(noLedger.payload.notes.length,1);
+});
+test('equivalence ignores recovery metadata and explicit empty wire defaults only',()=>{
+  const f=equivalentMergeFixture();
+  f.remote.version=2;f.local.version=3;f.remote.authorId='REMOTE';f.local.authorId='LOCAL';
+  f.remote.focusShow='SOURCE_TWO';f.local.focusShow='LOCAL_ONE';
+  for(const p of [f.remote,f.local]){
+    const lib=p.lib[0];delete lib.credit;delete lib.groups;delete lib.order;delete lib.sections;delete lib.groupRows;
+    lib.lines=[['','Plain fixture lyric']];p.gsubs=[];p.subs=[];
+    p.notes=[{songIdx:0,lineIdx:0}];delete p.shows[0].folder;delete p.shows[0].ts;delete p.shows[0].absent;
+  }
+  f.local.shows[0].hidden=false;f.local.shows[0].recoverySource='checked-publication';f.local.shows[0].absent=[];
+  f.local.shows[0].folder='';f.local.shows[0].ts=null;f.local.shows[0].from='';
+  f.local.lib[0]={...f.local.lib[0],credit:'',groups:{},order:[],sections:[],groupRows:[]};
+  f.local.lib[0].lines=[[null,'Plain fixture lyric','','','','','','','']];
+  f.local.notes[0]={...f.local.notes[0],showId:'LOCAL_ONE',memberNames:[],tags:[],memo:'',hand:null,pitch:null,lineEnd:null,from:null,to:null,at:null};
+  delete f.remote.songs[0].take;delete f.remote.songs[0].fromIdx;
+  const result=API.mergePublication(f.target,f.remote,f.local);
+  assert.deepEqual(result.preservedShowIds,[]);assert.equal(result.managedLocalShowIds.length,2);
+});
+test('equivalence resolves remapped show aliases, split libraries and global song layout',()=>{
+  const remote=publication(),local=publication(true),t=target();
+  remote.shows[0].id='REMOTE_ALIAS';remote.shows[0].recoveredSourceShowId='SOURCE_ONE';remote.focusShow='REMOTE_ALIAS';
+  remote.songs[0].showId='REMOTE_ALIAS';
+  for(const field of ['notes','memos','subs','gsubs'])for(const row of remote[field])row.showId='REMOTE_ALIAS';
+  remote.shows[1].from='REMOTE_ALIAS';local.shows[1].from='LOCAL_ONE';
+  local.lib.push(clone(local.lib[0]));local.songs[1].libIdx=1;
+  const oldSongs=local.songs;local.songs=[{...oldSongs[1],fromIdx:1},oldSongs[0]];
+  for(const field of ['notes','memos','subs','gsubs'])for(const row of local[field])row.songIdx=1;
+  const result=API.mergePublication(t,remote,local);
+  assert.deepEqual(result.preservedShowIds,[]);assert.equal(result.managedLocalShowIds.length,2);
+  assert.deepEqual(result.equivalentRemoteShowIds,['REMOTE_ALIAS','SOURCE_TWO']);
+  assert.equal(result.payload.songs[0].fromIdx,1);assert.equal(result.payload.shows[1].from,'LOCAL_ONE');
+});
+test('remote-only shows stay exact alongside initially equivalent managed shared shows',()=>{
+  const f=equivalentMergeFixture();
+  f.remote.shows.push({id:'REMOTE_ONLY',name:'Remote-only fixture',ts:4,folder:'Remote folder'});
+  f.remote.lib.push(clone(f.remote.lib[0]));f.remote.songs.push({showId:'REMOTE_ONLY',libIdx:2,take:1,fromIdx:null});
+  f.remote.notes.push({showId:'REMOTE_ONLY',songIdx:2,lineIdx:0,memo:'Remote-only note',at:0});
+  const result=API.mergePublication(f.target,f.remote,f.local);
+  assert.deepEqual(result.preservedShowIds,['REMOTE_ONLY']);assert.equal(result.managedLocalShowIds.length,2);
+  assert.deepEqual(result.payload.shows[0],f.remote.shows[2]);assert.deepEqual(result.payload.lib[0],f.remote.lib[2]);
+  assert.deepEqual(result.payload.notes[0],{...f.remote.notes[1],songIdx:0});
+});
+test('every meaningful shared-show content difference retains remote content',()=>{
+  const mutations=[
+    p=>p.shows[0].name='Changed fixture name',p=>p.shows[0].folder='Other fixture folder',p=>p.shows[0].ts=7,
+    p=>p.shows[0].from='LOCAL_TWO',p=>p.shows[0].absent=['Other singer'],
+    p=>p.lib[0].title='Changed fixture title',p=>p.lib[0].credit='Changed credit',
+    p=>p.lib[0].order=['Other singer','Fixture singer'],p=>p.lib[0].groups.A=['Other singer'],
+    p=>p.lib[0].lines[0][1]='Changed fixture lyric',p=>p.lib[0].lines[0][2]='C8',
+    p=>p.lib[0].lines[0].push('cut'),p=>p.lib[0].sections[0].name='Other section',
+    p=>p.lib[0].groupRows[0].ncell='D7',p=>p.songs[0].take=2,
+    p=>p.songs[0].fromIdx=1,p=>p.notes[0].memo='New local note',p=>p.notes.push({...p.notes[0],memo:'Additional note'}),
+    p=>p.notes[0].memberNames=['Other singer'],p=>p.notes[0].tags=['other'],p=>p.notes[0].pitch='up',
+    p=>p.notes[0].hand.text='Different handwriting',p=>p.notes[0].from=1,p=>p.notes[0].to=3,
+    p=>p.notes[0].lineEnd=0,p=>p.notes[0].at=1,p=>p.memos[0].text='New summary',
+    p=>p.subs[0].names=['Other substitute'],p=>p.gsubs[0].names=['Other block singer']
+  ];
+  for(const change of mutations){
+    const f=equivalentMergeFixture();change(f.local);
+    f.local.folderOrder=f.local.shows.map(show=>show.folder).filter(Boolean);
+    const result=API.mergePublication(f.target,f.remote,f.local);
+    assert.deepEqual(result.preservedShowIds,['SOURCE_ONE'],String(change));assert.deepEqual(result.heldLocalShowIds,['LOCAL_ONE']);
+    assert.deepEqual(result.payload.shows[0],f.remote.shows[0]);assert.deepEqual(result.payload.lib[0],f.remote.lib[0]);
+    assert.deepEqual(result.payload.notes,f.remote.notes);assert.deepEqual(result.payload.memos,f.remote.memos);
+  }
+});
+test('performer/block order, song order and note order are never sorted into equivalence',()=>{
+  for(const kind of ['performers','blocks','notes','songs']){
+    const f=equivalentMergeFixture();
+    if(kind==='performers'){
+      f.remote.lib[0].order=['First','Second'];f.local.lib[0].order=['Second','First'];
+    }else if(kind==='blocks'){
+      f.remote.lib[0].groups={A:['First'],B:['Second']};f.local.lib[0].groups={B:['Second'],A:['First']};
+    }else if(kind==='notes'){
+      f.remote.notes.push({...f.remote.notes[0],memo:'Second note'});f.local.notes.push({...f.local.notes[0],memo:'Second note'});f.local.notes.reverse();
+    }else{
+      f.remote.songs.push({...f.remote.songs[0],take:2});f.local.songs.unshift({...f.local.songs[0],take:2});
+      for(const field of ['notes','memos','subs','gsubs'])for(const row of f.local[field])row.songIdx++;
+    }
+    const result=API.mergePublication(f.target,f.remote,f.local);assert.deepEqual(result.heldLocalShowIds,['LOCAL_ONE'],kind);
+  }
+});
+test('initial protected ancestry closes over equivalent show dependencies without dropping links',()=>{
+  for(const kind of ['show','song','reverse-song']){
+    const f=equivalentMergeFixture();f.local.shows[1].name='Changed local second show';
+    if(kind==='show'){f.remote.shows[1].from='SOURCE_ONE';f.local.shows[1].from='LOCAL_ONE';}
+    else if(kind==='song'){f.remote.songs[1].fromIdx=0;f.local.songs[1].fromIdx=0;}
+    else {f.remote.songs[0].fromIdx=1;f.local.songs[0].fromIdx=1;}
+    const result=API.mergePublication(f.target,f.remote,f.local);
+    assert.deepEqual(result.preservedShowIds,['SOURCE_ONE','SOURCE_TWO'],kind);assert.deepEqual(result.managedLocalShowIds,[]);
+    assert.deepEqual(result.payload.shows,f.remote.shows);assert.deepEqual(result.payload.songs,f.remote.songs);
+  }
+});
+test('new equivalence partition still rejects a mixed held/managed local library alias',()=>{
+  const f=equivalentMergeFixture();f.local.shows[0].name='Meaningfully different';
+  f.local.lib.pop();f.local.songs[1].libIdx=0;
+  fails('merge-shared-local-library',()=>API.mergePublication(f.target,f.remote,f.local));
+});
+test('an explicitly empty persisted ledger still rejects unexpected remote additions',()=>{
+  const f=equivalentMergeFixture(),first=API.mergePublication(f.target,f.remote,f.local);
+  assert.deepEqual(first.preservedShowIds,[]);
+  const remote=clone(first.payload);
+  remote.shows.push({id:'UNEXPECTED',name:'Fixture show 0',ts:0});
+  remote.songs.push({showId:'UNEXPECTED',libIdx:0,take:1,fromIdx:null});
+  fails('merge-unidentified-remote-show',()=>API.mergePublication(f.target,remote,f.local,first.preservedShowIds));
+});
+test('canonical comparison preserves full handwriting geometry and does not normalize content strings',()=>{
+  for(const change of [p=>p.notes[0].hand.points[0][0]=1,p=>p.lib[0].lines[0][1]+=' ',p=>p.lib[0].title='Ｆixture song']){
+    const f=equivalentMergeFixture();change(f.local);
+    assert.deepEqual(API.mergePublication(f.target,f.remote,f.local).heldLocalShowIds,['LOCAL_ONE']);
+  }
+});
+
+test('larger preserved editor state has a separate finite node budget from publication data',()=>{
+  const s=state();s.unknown.retained=Array(1100000).fill(0);const planned=API.plan(s,packet());assert.equal(planned.state.unknown.retained.length,1100000);assert.equal(s.groups[0].nopub,true);
+  const pub=publication(true);pub.largeUntrusted=Array(1000001).fill(0);fails('data-limit',()=>API.verifyPublication(target(),publication(),pub));
+  s.unknown.retained=Array(2000001).fill(0);fails('data-limit',()=>API.plan(s,packet()));assert.equal(s.unknown.retained.length,2000001);
+});
