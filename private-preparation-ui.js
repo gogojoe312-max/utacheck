@@ -12,6 +12,7 @@
   if(status.kind==='applied')return '本人用の準備を受信し、この端末への保存を確認しました。';
   if(status.kind==='current')return '本人用の準備は、この端末に反映済みです。';
   if(status.kind==='checking')return '本人用の準備を確認しています…';
+  if(status.kind==='active-plan')return '進行中の枠が残っているため、予定の反映を待っています。実際には未開始なら、その枠の「その他」から開始状態だけ解除できます。';
   if(status.kind==='deferred')return '録音・入力が終わってから、本人用の準備を自動で反映します。';
   if(status.kind==='missing-token')return '本人用の自動受信は未接続です。この端末のGitHub接続を確認する必要があります。';
   if(status.kind==='access')return '本人用の準備をまだ受信できません。既存のGitHub接続では非公開の保存先を確認できませんでした。';
@@ -95,7 +96,7 @@
  }
  async function receive(force=false){
   if(running)return {status:'busy'};
-  if(!ready()){if(force)setStatus({kind:'deferred'});return {status:'deferred'};}
+  if(!ready()){if(force)setStatus({kind:(S.plan?.slots||[]).some(x=>x.a0!=null&&x.a1==null)?'active-plan':'deferred'});return {status:'deferred'};}
   if(!force&&Date.now()-lastAttempt<60000)return {status:'throttled'};
   lastAttempt=Date.now();running=true;const token=S.ghToken;
   try{

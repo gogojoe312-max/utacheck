@@ -113,7 +113,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.53";
+const APP_VER = "16.41.54";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -7807,7 +7807,7 @@ function viewPlan() {
         : !r.done ? `<button class="chip sm rec-primary" data-act="pstart" data-id="${s.id}">${isBreak ? "休憩開始" : "今から開始"}</button>`
         : `<button class="chip sm" data-act="pundo" data-id="${s.id}">戻す</button>`}
       ${!r.done && !r.live && Number.isInteger(s.at) && (s.date || s.day) ? `<details class="plan-more"><summary>時刻を調整</summary><span class="note">この枠以降・同日の未開始枠</span><button data-act="pshift" data-id="${s.id}|-5">5分早める</button><button data-act="pshift" data-id="${s.id}|5">5分遅らせる</button></details>` : ""}
-      ${r.live ? `<details class="plan-more"><summary>その他</summary><button data-act="pretry" data-id="${s.id}">やり直す</button><button data-act="pcancel" data-id="${s.id}">開始を取り消す</button></details>` : ""}
+      ${r.live ? `<details class="plan-more"><summary>その他</summary><button data-act="pretry" data-id="${s.id}">やり直す</button><button data-act="pcancel" data-id="${s.id}">開始状態だけ解除</button></details>` : ""}
     </div>
     ${openSlot === s.id && sectionsOf(s).length ? (() => {
       const sum = secSum(s);
@@ -9484,13 +9484,23 @@ document.addEventListener("click", (e) => {
       save(); render(); break;
     }
     case "pcancel": {
-      // いま動いている枠を、始める前の状態に戻す
+      // Only an explicitly mistaken start may be cleared; retain work records.
+      if (VIEW() || preview || !recordingInboxCanWrite() || REC || recordingStartPending || recordingFinalizePending || pitchStartPending || PT.on || micStream) {
+        alert("録音・マイクの処理中は開始状態を解除できません。"); break;
+      }
       const s2 = S.plan.slots.find((x) => x.id === id);
-      if (!s2) break;
-      if (!confirm(`「${s2.name}」を取り消して、始める前に戻します。\n\n記録した指摘や手書きは残ります。`)) break;
+      if (!s2 || s2.a0 == null || s2.a1 != null) break;
+      if (s2.cancelledStarts != null && !Array.isArray(s2.cancelledStarts)) { alert("既存の開始履歴を確認できないため、変更を止めました。"); break; }
+      const before = JSON.stringify(s2);
+      if (!confirm(`「${s2.name}」は実際には開始していませんか？\n\n開始状態だけを解除し、変更後の予定を受け取れるようにします。録音・指摘・手書き・テイク・区切り記録は残ります。`)) break;
+      if (JSON.stringify(s2) !== before || S.plan.slots.find(x=>x.id===id) !== s2 || REC || recordingStartPending || recordingFinalizePending || pitchStartPending || PT.on || micStream || !recordingInboxCanWrite()) {
+        alert("状態が変わったため、もう一度確認してください。"); break;
+      }
       pushUndo();
+      const cancelled = {at:Date.now(),reason:"not-actually-started"};
+      for (const key of ["a0","a1","startAt","secStart"]) if (Object.prototype.hasOwnProperty.call(s2,key)) cancelled[key]=s2[key];
+      s2.cancelledStarts = [...(Array.isArray(s2.cancelledStarts)?s2.cancelledStarts:[]),cancelled];
       delete s2.a0; delete s2.a1; delete s2.startAt; delete s2.secStart;
-      s2.secLog = {}; s2.takes = {}; s2.secCur = "";
       autoMsg = "";
       save(); render(); break;
     }
