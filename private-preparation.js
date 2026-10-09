@@ -33,7 +33,7 @@
   const manifest=clone(input),seen=new Set();
   for(const op of manifest.operations){
    only(op,['id','type','sha256','packet']);
-   if(!id(op.id)||seen.has(op.id)||!['recording-schedule','recording-addition','live-addition'].includes(op.type)||!/^[a-f0-9]{64}$/.test(op.sha256))fail('INVALID_OPERATION');
+   if(!id(op.id)||seen.has(op.id)||!['recording-schedule','recording-addition','live-addition','live-update'].includes(op.type)||!/^[a-f0-9]{64}$/.test(op.sha256))fail('INVALID_OPERATION');
    seen.add(op.id);safePacket(op.packet);if(await digest(op.packet,cryptoProvider)!==op.sha256)fail('HASH_MISMATCH');
   }
   return manifest;
@@ -66,6 +66,86 @@
   }
   next.groups=[...groups,clone(packet.group)];next.shows=[...shows,{...clone(packet.show),groupId:packet.group.id,nopub:true}];next.songs=[...songs,...added];next.members=[...members,...newMembers];
   return {state:next,songs:added.length,shows:1};
+ }
+ // Existing LIVE material has numeric line addresses, not durable lyric IDs.
+ // Permit explicit permutations and same-index text corrections only. Check the
+ // complete prior material before building a new state; never remap annotations.
+ function mergeLiveUpdate(current,packet){
+  if(!object(packet))fail('INVALID_MANIFEST');
+  safePacket(packet);only(packet,['app','version','groupId','showId'],['order','songs','source']);
+  if(packet.app!=='utacheck-live-update'||packet.version!==1||!id(packet.groupId)||!id(packet.showId)
+   ||!own(packet,'order')&&!own(packet,'songs'))fail('INVALID_OPERATION');
+  const rows=key=>{const value=current[key]===undefined?[]:current[key];if(!Array.isArray(value))fail('LIVE_IDENTITY_CONFLICT');return value;};
+  const groups=rows('groups'),shows=rows('shows'),songs=rows('songs'),rsongs=rows('rsongs');
+  const unique=(list,target)=>{const hits=list.filter(x=>x?.id===target);if(hits.length!==1)fail('LIVE_IDENTITY_CONFLICT');return hits[0];};
+  const group=unique(groups,packet.groupId),show=unique(shows,packet.showId);
+  if(![true,1].includes(group.nopub)||![true,1].includes(show.nopub))fail('LIVE_NOT_PRIVATE');
+  if(show.groupId!==group.id)fail('LIVE_MEMBERSHIP_CONFLICT');
+  const inShow=songs.filter(song=>song?.showId===show.id);
+  if(!inShow.length)fail('LIVE_IDENTITY_CONFLICT');
+  for(const song of inShow){
+   if(!id(song.id)||unique(songs,song.id)!==song||rsongs.some(x=>x?.id===song.id))fail('LIVE_IDENTITY_CONFLICT');
+   if(song.groupId!==group.id)fail('LIVE_MEMBERSHIP_CONFLICT');
+  }
+  const ids=inShow.map(song=>song.id),same=(a,b)=>{
+   if(a===b)return true;
+   if(!a||!b||typeof a!=='object'||typeof b!=='object'||Array.isArray(a)!==Array.isArray(b))return false;
+   const ak=Object.keys(a),bk=Object.keys(b);
+   return ak.length===bk.length&&ak.every(k=>own(b,k)&&same(a[k],b[k]));
+  };
+  let order=ids;
+  if(own(packet,'order')){
+   only(packet.order,['before','after']);
+   const {before,after}=packet.order;
+   for(const value of [before,after])if(!Array.isArray(value)||value.length!==ids.length||value.some(x=>!id(x))||new Set(value).size!==value.length)fail('INVALID_OPERATION');
+   if(!same(before,ids))fail('LIVE_BEFORE_CONFLICT');
+   if(after.some(value=>!ids.includes(value)))fail('LIVE_MEMBERSHIP_CONFLICT');
+   order=after;
+  }
+  const patches=own(packet,'songs')?packet.songs:[];
+  if(!Array.isArray(patches)||own(packet,'songs')&&!patches.length||patches.length>300)fail('INVALID_OPERATION');
+  const seen=new Set(),prepared=new Map();
+  for(const patch of patches){
+   only(patch,['id','expectedTitle','beforeLines','afterText']);
+   if(!id(patch.id)||seen.has(patch.id)||typeof patch.expectedTitle!=='string'||!patch.expectedTitle.trim()
+    ||!Array.isArray(patch.beforeLines)||!patch.beforeLines.length||patch.beforeLines.length>5000
+    ||!Array.isArray(patch.afterText)||patch.afterText.length!==patch.beforeLines.length||patch.afterText.some(t=>typeof t!=='string'))fail('INVALID_OPERATION');
+   seen.add(patch.id);
+   const song=unique(songs,patch.id);
+   if(song.groupId!==group.id||song.showId!==show.id||!ids.includes(song.id))fail('LIVE_MEMBERSHIP_CONFLICT');
+   if(song.title!==patch.expectedTitle||!same(song.lines,patch.beforeLines))fail('LIVE_BEFORE_CONFLICT');
+   const members=rows('members'),refs=value=>{
+    if(!Array.isArray(value)||value.some(mid=>!id(mid)||members.filter(m=>m?.id===mid).length!==1))fail('LIVE_IDENTITY_CONFLICT');
+   };
+   if(own(song,'roster'))refs(song.roster);
+   if(own(song,'blocks')){if(!object(song.blocks))fail('LIVE_IDENTITY_CONFLICT');Object.values(song.blocks).forEach(refs);}
+   const changed=new Set();
+   patch.beforeLines.forEach((line,i)=>{
+    if(!object(line)||typeof line.t!=='string')fail('INVALID_OPERATION');refs(line.parts);
+    for(const key of ['main','extra'])if(own(line,key))refs(line[key]);
+    if(line.t!==patch.afterText[i]){if(line.gap)fail('INVALID_OPERATION');changed.add(i);}
+   });
+   if(!changed.size)continue;
+   for(const note of [...rows('notes'),...rows('pubNotes')]){
+    if(note?.songId!==song.id)continue;
+    const start=note.lineIdx,end=note.lineEnd==null?start:note.lineEnd;
+    if(note.showId!==show.id||!Number.isInteger(start)||!Number.isInteger(end)||start<0||end<start||end>=song.lines.length
+     ||[...changed].some(i=>i>=start&&i<=end))fail('LIVE_ANNOTATION_CONFLICT');
+   }
+   // Handwriting uses pixel positions, so even an unannotated text correction
+   // can move a later stroke. Keep the entire song unchanged in that case.
+   const draws=current.draws===undefined?{}:current.draws;
+   if(!object(draws))fail('LIVE_ANNOTATION_CONFLICT');
+   for(const [key,value]of Object.entries(draws))if(key.split('|')[1]===song.id&&(!Array.isArray(value)||value.length))fail('LIVE_ANNOTATION_CONFLICT');
+   const lines=song.lines.map((line,i)=>changed.has(i)?{...line,t:patch.afterText[i]}:line);
+   // Match app.js songSig exactly so cached previous-song matching stays valid.
+   const body=lines.map(line=>line.gap?'':(line.parts||[]).join(',')+'\u0001'+(line.t||'')).join('\u0002');
+   let sig=0;for(let i=0;i<body.length;i++)sig=(sig*31+body.charCodeAt(i))|0;
+   prepared.set(song.id,{...song,lines,sig});
+  }
+  const byId=new Map(inShow.map(song=>[song.id,prepared.get(song.id)||song]));let index=0;
+  const nextSongs=songs.map(song=>song?.showId===show.id?byId.get(order[index++]):song);
+  return {state:{...current,songs:nextSongs},songs:prepared.size,orderChanged:!same(order,ids)};
  }
  function checkedRecording(packet,current){
   if(!packet||packet.app!=='utacheck-recording-addition'||packet.version!==1||!id(packet.group?.id)||typeof packet.group.name!=='string'||!packet.group.name.trim()||![true,1].includes(packet.group.nopub)
@@ -105,9 +185,11 @@
    // This preparation is personal; all new recording groups must remain private.
    if(result.state.groups.slice((current.groups||[]).length).some(g=>!g.nopub||g.src||g.gistId||g.key))fail('PRIVATE_CONNECTION_FIELD');
   }else if(operation.type==='live-addition')result=mergeLive(current,operation.packet);
+  else if(operation.type==='live-update')result=mergeLiveUpdate(current,operation.packet);
   else fail('INVALID_OPERATION');
   if(!result?.state||result.state===current&&operation.type!=='recording-schedule')fail('INVALID_OPERATION');
   return {...result,status:'applied',state:{...result.state,privatePreparations:{...ledger,[operation.id]:{sha256:operation.sha256,type:operation.type,at:now}}}};
  }
- const api=Object.freeze({validate,apply,digest,mergeLive});if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.PrivatePreparation=api;
+ const api=Object.freeze({validate,apply,digest,mergeLive,mergeLiveUpdate});if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.PrivatePreparation=api;
 })(typeof globalThis!=='undefined'?globalThis:this);
+

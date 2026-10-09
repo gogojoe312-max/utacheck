@@ -9,6 +9,7 @@ function fixture(){
  notes:[{songId:'s1',showId:'day1',memberIds:['a'],lineIdx:1,tags:['音程'],memo:'山田向け'},{songId:'s1',showId:'day1',memberIds:['b'],lineIdx:2,tags:['リズム'],memo:'田中向け'}],
  localStorage:{getItem:k=>stored.get(k),setItem:(k,v)=>stored.set(k,v)},VIEW:()=>true,group:()=>({name:'グループ'}),h:x=>String(x??'').replace(/</g,'&lt;'),render(){},save(){},handHTML:()=>'',noteColor:()=>'',tagName:x=>x,pitchLabel:x=>x,lyricOf:n=>'歌詞'+n.lineIdx,partOf:()=>'',songName:so=>so.title,names:ids=>(ids||[]).join('・')});
  c.NOTES=()=>c.notes;c.songDeliveryGroupId=so=>so.groupId;c.showsNewestFirst=()=>c.S.shows;c.shownNotes=()=>c.notes.filter(n=>c.U.allShows||n.showId===c.S.showId);c.showName=id=>c.S.shows.find(sw=>sw.id===(id||c.S.showId))?.name;c.SONGS=()=>c.S.songs.filter(so=>so.showId===c.S.showId&&so.groupId===c.S.groupId);
+ vm.runInContext(src.slice(src.indexOf('function compactMemberLabel('),src.indexOf('const names = (ids)')),c);
  vm.runInContext(src.slice(src.indexOf('const songMemo ='),src.indexOf('const shownNotes =')),c);
  vm.runInContext(src.slice(src.indexOf('function summaryShows()'),src.indexOf('function viewSummary()')),c);
  return {c,stored,run:code=>vm.runInContext(code,c)};
@@ -163,3 +164,4 @@ test('source section metadata restores on import and older publications remain r
  assert.equal(so.lines[0].sec,'1A');assert.equal(so.lines[1].sec,'2サビ');assert.equal(so.lines.length,3);
  assert.equal(run("buildSong({lines:[['全','古い形式']]}).lines[0].sec"),undefined);
 });
+

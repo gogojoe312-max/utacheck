@@ -161,6 +161,7 @@ test('file/password controls and script cache wiring are minimal and do not adve
  assert.doesNotMatch(local,/復元可能|完全復旧|復元を完了/);
  const html=fs.readFileSync(__dirname+'/../index.html','utf8'),sw=fs.readFileSync(__dirname+'/../sw.js','utf8');
  assert(html.indexOf('startup-file-inspection.js')<html.indexOf('<script src="app.js'));
- assert.match(html,/startup-file-inspection\.js\?v=16\.41\.52/);assert.match(sw,/"\.\/startup-file-inspection\.js"/);assert.match(sw,/if \(url\.origin !== self\.location\.origin\) return;/);
+ assert.match(html,/startup-file-inspection\.js\?v=16\.41\.53/);assert.match(sw,/"\.\/startup-file-inspection\.js"/);assert.match(sw,/if \(url\.origin !== self\.location\.origin\) return;/);
 });
+
 

@@ -77,6 +77,7 @@
    release=recordingInboxAdmitWriter();
    await saveNow();if(saveErr)throw failure('LOCAL_SAVE_UNCONFIRMED');
    const original=JSON.stringify(S),revision=stateRevision,view=JSON.stringify(U);
+   const selectedSongId=!S.recMode && typeof song==='function' ? song()?.id : null;
    const next=PrivatePreparation.apply(S,operation,{schedule:RecordingScheduleUpdate.apply,recording:mergeRecordingAddition}).state;
    const active=()=>startupPhase==='ready'&&recordingInboxCanWrite()&&recordingInboxOwner?.canWrite&&!document.hidden&&S.ghToken===token&&stateRevision===revision&&JSON.stringify(S)===original&&JSON.stringify(U)===view&&!REC&&!recordingStartPending&&!recordingFinalizePending&&!pitchStartPending&&!saving&&!syncing&&!manualSync&&!backupInFlight&&!publishInFlight&&!U.busy&&!U.importing&&!U.sheet&&!U.menu&&!U.showRecovery;
    const slots=await Promise.all([idbGet('state:0'),idbGet('state:1')]),hold=await idbGet('recovery:network-hold:v1'),legacy=localStorage.getItem(KEY);
@@ -87,6 +88,7 @@
    committed=stored.committed===true;
    if(stored.status!=='committed'||!active())throw failure(committed?'SAVE_UNVERIFIED':'LOCAL_SAVE_UNCONFIRMED');
    S=next;saveSeq=stored.seq;stateRevision++;saveDirty=false;savePend=null;
+   if(selectedSongId && typeof SONGS==='function'){const selectedIndex=SONGS().findIndex(x=>x.id===selectedSongId);if(selectedIndex>=0)U.songIdx=selectedIndex;}
    U.recScheduleInputUntil=Date.now()+2000;render();return true;
   }catch(error){if(committed){startupPhase='blocked';setStatus({kind:'unverified'});throw failure('SAVE_UNVERIFIED');}throw error;}
   finally{release?.();releaseGate();applying=false;if(app)app.inert=!recordingInboxCanWrite();}
@@ -123,3 +125,4 @@
  function start(){if(started)return;started=true;setInterval(()=>{void receive();},10000);setTimeout(()=>{void receive();},1200);navigator.serviceWorker?.addEventListener?.('controllerchange',()=>{lastAttempt=0;void receive();});window.addEventListener('online',()=>{lastAttempt=0;void receive();});document.addEventListener('visibilitychange',()=>{if(!document.hidden){lastAttempt=0;void receive();}});}
  root.PrivatePreparationUI=Object.freeze({settingsHTML,receive,start,isApplying:()=>applying,getStatus:()=>({...status})});start();
 })(globalThis);
+

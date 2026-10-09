@@ -113,7 +113,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.52";
+const APP_VER = "16.41.53";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -2371,6 +2371,10 @@ function dupSong(id) {
 }
 const song = () => { if (S.recMode) return recSong(); const a = SONGS(); return a[Math.min(U.songIdx, a.length - 1)] || null; };
 const member = (id) => S.members.find((m) => m.id === id);
+// Display-only abbreviation. Stable member IDs and stored names stay unchanged.
+function compactMemberLabel(value) {
+  return String(value == null ? "" : value).replace(/\s*[（(]OCHA\s*NORMA[）)]\s*$/i, "");
+}
 const names = (ids) => (ids || []).map((i) => (member(i) || {}).name).filter(Boolean).join("・");
 
 function addMember(name) {
@@ -5945,7 +5949,7 @@ function renderSheet() {
       <button data-act="closemenu" style="width:36px;height:36px;border-radius:10px;background:var(--panel2);font-size:17px">✕</button></div>
       <div class="sec"><h4>ブロック ${h(b)} は誰ですか</h4>
         <div class="chips">${songRoster(so).map((mid) => member(mid)).filter(Boolean).map((m) => `<button class="chip sm" data-act="setblock" data-id="${m.id}"
-          style="${cur7.includes(m.id) ? "background:var(--accent);color:#0A0A0A" : ab3.includes(m.id) ? "color:var(--bad);opacity:.5" : ""}">${h(m.name)}</button>`).join("")}</div>
+          style="${cur7.includes(m.id) ? "background:var(--accent);color:#0A0A0A" : ab3.includes(m.id) ? "color:var(--bad);opacity:.5" : ""}">${h(compactMemberLabel(m.name))}</button>`).join("")}</div>
       </div></div>`;
     document.body.appendChild(overlay);
     return;
@@ -5964,7 +5968,7 @@ function renderSheet() {
       <div class="sec"><h4>${h((l && l.label) || "続き")}${(U.menu.idx || []).length > 1 ? `（${U.menu.idx.length}行まとめて）` : ""}</h4>
         <div class="chips">${(so ? songRoster(so) : showRoster()).map((mid) => member(mid)).filter(Boolean)
           .map((m) => `<button class="chip sm" data-act="setassign" data-id="${m.id}"
-          style="${cur5.includes(m.id) ? "background:var(--accent);color:#0A0A0A" : ab2.includes(m.id) ? "color:var(--bad);opacity:.5" : ""}">${h(m.name)}</button>`).join("")}</div>
+          style="${cur5.includes(m.id) ? "background:var(--accent);color:#0A0A0A" : ab2.includes(m.id) ? "color:var(--bad);opacity:.5" : ""}">${h(compactMemberLabel(m.name))}</button>`).join("")}</div>
       </div>
       ${subOf(so.id, U.menu.i) ? `<button class="ghost" data-act="unassign" style="color:var(--dim)">元の歌割に戻す</button>` : ""}
       </div>`;
@@ -6034,7 +6038,7 @@ function renderSheet() {
       ${S.members.length && !S.recMode ? `<div class="sec"><h4>注目するメンバー</h4><div class="chips">
         <button class="chip sm" data-act="focus" data-id="" style="${!U.focus ? "background:var(--accent);color:#0A0A0A" : ""}">なし</button>
         ${focusList().map((m) => `<button class="chip sm" data-act="focus" data-id="${m.id}"
-            style="${U.focus === m.id ? "background:#4C9BFF;color:#0A0A0A" : ""}">${h(m.name)}</button>`).join("")}
+            style="${U.focus === m.id ? "background:#4C9BFF;color:#0A0A0A" : ""}">${h(compactMemberLabel(m.name))}</button>`).join("")}
       </div></div>` : ""}
     </div>`;
     document.body.appendChild(overlay);
@@ -6084,7 +6088,7 @@ ${shows}</div>
       ${S.members.length && !S.recMode ? `<div class="sec"><h4>注目するメンバー</h4><div class="chips">
         <button class="chip sm" data-act="focus" data-id="" style="${!U.focus ? "background:var(--accent);color:#0A0A0A" : ""}">なし</button>
         ${focusList().map((m) => `<button class="chip sm" data-act="focus" data-id="${m.id}"
-            style="${U.focus === m.id ? "background:#4C9BFF;color:#0A0A0A" : ""}">${h(m.name)}</button>`).join("")}
+            style="${U.focus === m.id ? "background:#4C9BFF;color:#0A0A0A" : ""}">${h(compactMemberLabel(m.name))}</button>`).join("")}
       </div></div>` : ""}
       </div>`;
     document.body.appendChild(overlay);
@@ -6292,8 +6296,8 @@ function viewerSummaryBody() {
   const ns = byMember && selected ? all.filter(n => !(n.memberIds || []).length || n.memberIds.includes(selected.id)) : all;
   const picker = byMember ? `<label class="summary-show-picker member-picker"><span>メンバー</span>
     <select id="summary-member" aria-label="メンバー"><option value="">全員</option>
-    ${viewerMembers().map(m => `<option value="${h(m.id)}" ${selected && selected.id === m.id ? "selected" : ""}>${h(m.name)}</option>`).join("")}</select></label>
-    <p class="member-hint">${selected ? h(selected.name) + "さんへの指摘と、全員共通の指摘・総括を表示しています。" : "名前を選ぶと、自分への指摘を表示します。"}</p>` : "";
+    ${viewerMembers().map(m => `<option value="${h(m.id)}" ${selected && selected.id === m.id ? "selected" : ""}>${h(compactMemberLabel(m.name))}</option>`).join("")}</select></label>
+    <p class="member-hint">${selected ? h(compactMemberLabel(selected.name)) + "さんへの指摘と、全員共通の指摘・総括を表示しています。" : "名前を選ぶと、自分への指摘を表示します。"}</p>` : "";
   const cards = summarySongs().map(so => {
     const notes = ns.filter(n => n.songId === so.id && n.showId === so.showId).sort((a,b) => a.lineIdx - b.lineIdx);
     const memo = summaryMemo(so);
@@ -6301,12 +6305,12 @@ function viewerSummaryBody() {
     return `<section class="card member-song">
       <div class="member-song-head"><div class="grow">${U.allShows ? `<div class="member-caption">${h(showName(so.showId))}</div>` : ""}<h3>${h(songName(so))}</h3></div></div>
       ${memo ? `<div class="song-summary"><h4>総括 <span>全員共通</span></h4><div>${h(memo)}</div></div>` : ""}
-      ${notes.length ? `<h4 class="member-notes-title">${byMember && selected ? h(selected.name) + "さんへの指摘" : "指摘"}<span>${notes.length}件</span></h4>
+      ${notes.length ? `<h4 class="member-notes-title">${byMember && selected ? h(compactMemberLabel(selected.name)) + "さんへの指摘" : "指摘"}<span>${notes.length}件</span></h4>
         ${notes.map(n => `<button class="member-note member-note-link" data-act="summary-note" data-id="${h(so.id)}" data-i="${n.lineIdx}" data-note="${h(n.id || "")}"><span class="member-note-arrow" aria-hidden="true">›</span>${memberNoteBody(n, !byMember || !selected || !(n.memberIds || []).length)}<span class="sr-only">歌詞で見る</span></button>`).join("")}`
-        : `<p class="member-hint">${byMember && selected ? h(selected.name) + "さんへの個別の指摘はありません。" : "個別の指摘はありません。"}</p>`}
+        : `<p class="member-hint">${byMember && selected ? h(compactMemberLabel(selected.name)) + "さんへの個別の指摘はありません。" : "個別の指摘はありません。"}</p>`}
     </section>`;
   }).join("");
-  return picker + (cards || `<p class="member-empty">${byMember && selected ? h(selected.name) + "さんへの指摘・曲の総括は" : "指摘・曲の総括は"}${U.allShows ? "まだ" : "この公演には"}ありません。</p>`);
+  return picker + (cards || `<p class="member-empty">${byMember && selected ? h(compactMemberLabel(selected.name)) + "さんへの指摘・曲の総括は" : "指摘・曲の総括は"}${U.allShows ? "まだ" : "この公演には"}ありません。</p>`);
 }
 function viewerBackButton() {
   return VIEW() ? '<button class="member-back" data-act="summary-back" aria-label="指摘に戻る"><span aria-hidden="true">‹</span> 戻る</button>' : "";
@@ -6437,7 +6441,7 @@ function viewSummary() {
       const counts = TAGS.map((t) => ({ l: t.l, id: t.id, n: ns.filter((x) => x.tags.includes(t.id)).length })).filter((c) => c.n);
       return `<div class="card" style="padding:${open ? "12px" : "2px 12px"};margin-bottom:6px">
         <button class="row" style="width:100%;padding:10px 0" data-act="sumopen" data-id="${m.id}">
-          <b class="grow" style="text-align:left;${open ? "color:var(--accent)" : ""}">${h(m.name)}</b>
+          <b class="grow" style="text-align:left;${open ? "color:var(--accent)" : ""}">${h(compactMemberLabel(m.name))}</b>
           <span style="color:var(--dim);font-size:13px">${ns.length}件</span>
           <span style="color:var(--dim);font-size:12px;margin-left:10px">${open ? "▾" : "▸"}</span>
         </button>
@@ -6838,7 +6842,7 @@ function viewAbsent() {
   const ab = absentIds();
   const chips = VIEW() ? "" : showRoster().map((mid) => member(mid)).filter(Boolean)
     .map((m) => `<button class="chip sm" data-act="toggleabsent" data-id="${m.id}"
-      style="${ab.includes(m.id) ? "background:var(--bad);color:#0A0A0A" : ""}">${h(m.name)}</button>`).join("");
+      style="${ab.includes(m.id) ? "background:var(--bad);color:#0A0A0A" : ""}">${h(compactMemberLabel(m.name))}</button>`).join("");
 
   const body = !ab.length ? `<p style="padding:40px;text-align:center;color:var(--dim);font-size:14px">${VIEW() ? "歌割の変更はありません" : "上から欠席者を選んでください"}</p>`
     : SONGS().map((so) => {
@@ -7067,11 +7071,13 @@ function viewSetupRec() {
   <div class="scroll pad">
     ${lyricDisplaySettings()}
     ${recMemberSelector()}
+    <details class="card" data-settings-panel="rec-materials"><summary>録音曲・資料を管理</summary>
     <h4 class="head">曲</h4>
     <div class="organize-create"><button class="chip" data-act="newfolder" data-rec="1">＋ フォルダを作成</button></div>
     ${list || `<p class="note">曲がありません</p>`}
     <div class="card"><button class="primary" data-act="rpick">歌詞のWord / PDF / Excelを読み込む（複数可）</button></div>
 
+    </details>
     <h4 class="head">操作パネル</h4>
     <div class="card"><button class="primary" data-act="pt-settings">Pro Tools操作・表示設定</button></div>
 
@@ -7096,7 +7102,7 @@ function recWho() {
   if (!S.recMode) return "";
   const r = focusRow();
   if (!r || r.s.kind === "break") return "";
-  return `<span style="color:var(--accent);font-weight:700">　${h(r.s.name)}</span>`;
+  return `<span style="color:var(--accent);font-weight:700">　${h(compactMemberLabel(r.s.name))}</span>`;
 }
 
 // 歌詞画面の下に、今の枠と残り時間を出す
@@ -7162,8 +7168,8 @@ function recMemberSelector() {
   const missing = recSong() ? recSong().lines.filter(l => !l.gap && !l.cut && !(l.parts || []).length).length : 0;
   return `<div class="rec-member-focus"><span>歌割を確認する人</span><div class="chips">
     <button class="chip sm" data-act="recfocus" data-id="" aria-pressed="${!U.recFocusId}">進行表の人</button>
-    ${candidates.map(m => `<button class="chip sm" data-act="recfocus" data-id="${h(m.id)}" aria-pressed="${selected && selected.id === m.id}">${h(m.name)}</button>`).join("")}
-    </div><p class="note">${!assigned ? "この曲の歌割が未登録です。資料の担当を確認してから登録してください。" : (selected ? h(selected.name) + "の担当を強調しています。" : "進行表の人を選ぶか、メンバーを選んでください。") + (missing ? " 担当未登録が" + missing + "行あります。" : "")}</p></div>`;
+    ${candidates.map(m => `<button class="chip sm" data-act="recfocus" data-id="${h(m.id)}" aria-pressed="${selected && selected.id === m.id}">${h(compactMemberLabel(m.name))}</button>`).join("")}
+    </div><p class="note">${!assigned ? "この曲の歌割が未登録です。資料の担当を確認してから登録してください。" : (selected ? h(compactMemberLabel(selected.name)) + "の担当を強調しています。" : "進行表の人を選ぶか、メンバーを選んでください。") + (missing ? " 担当未登録が" + missing + "行あります。" : "")}</p></div>`;
 }
 
 function recBar() {
@@ -7609,6 +7615,27 @@ const nowMin = () => { const d = new Date(); return d.getHours() * 60 + d.getMin
 const dmin = (v) => (v > 0 ? "+" + v : String(v)) + "分";
 
 // 予定と、実際の進み具合から見込みを出す
+// Shift only explicitly selected, unstarted slots; never alter actual takes/timing.
+function shiftedPlanSlots(slots, targetId, delta) {
+  if (!Array.isArray(slots) || !Number.isInteger(delta) || ![-5,5].includes(delta)) throw Error("時刻変更が不正です。");
+  const hits = slots.filter(x => x.id === targetId), ids = new Set(slots.map(x => x.id));
+  if (hits.length !== 1 || ids.size !== slots.length) throw Error("対象の枠を一意に確認できません。");
+  const target = hits[0], day = target.date || target.day;
+  if (!day || !Number.isInteger(target.at) || target.a0 != null || target.a1 != null || target.scheduleTimeUnconfirmed) throw Error("確定した未開始の枠を選んでください。");
+  const selected = new Set(slots.filter(x => (x.date || x.day) === day && x.at >= target.at && x.a0 == null && x.a1 == null).map(x => x.id));
+  const next = slots.map(x => {
+    if (!selected.has(x.id)) return x;
+    if (x.scheduleTimeUnconfirmed || !Number.isInteger(x.at) || !Number.isInteger(x.min) || x.min <= 0 || x.at+delta < 0 || x.at+delta+x.min > 2880) throw Error("未確定または日付をまたぐ時刻は変更できません。");
+    return {...x, at:x.at+delta};
+  });
+  for (const a of next.filter(x => selected.has(x.id))) for (const b of next) {
+    if (a.id === b.id || (b.date || b.day) !== day) continue;
+    const start = b.a0 != null ? b.a0 : b.at, end = b.a1 != null ? b.a1 : start + b.min;
+    if (!Number.isFinite(start) || !Number.isFinite(end)) throw Error("同日の枠の時刻を確認してください。");
+    if (Math.max(a.at,start) < Math.min(a.at+a.min,end)) throw Error("別の枠と時間が重なるため変更していません。");
+  }
+  return next;
+}
 function planRows() {
   const p = S.plan || { slots: [] };
   const slots = p.slots || [];
@@ -7764,7 +7791,7 @@ function viewPlan() {
       <button class="grow" style="text-align:left;min-width:0" data-act="psecgo" data-id="${s.id}">
         <div class="row" style="gap:8px;min-width:0">
           <span style="font-size:12px;color:var(--dim);font-variant-numeric:tabular-nums;flex:0 0 auto">${min2hm(r.aS)}–${min2hm(r.aE)}</span>
-          <span class="trunc" style="color:${col};font-weight:${r.live ? 700 : 400}">${h(s.name || (isBreak ? "休憩" : "—"))}</span>
+          <span class="trunc" style="color:${col};font-weight:${r.live ? 700 : 400}">${h(compactMemberLabel(s.name || (isBreak ? "休憩" : "—")))}</span>
         </div>
         <div style="font-size:11px;color:var(--dim);margin-top:2px">
           ${s.min}分${s.scheduleTimeUnconfirmed ? "　時刻未確認・自動切替対象外" : ""}
@@ -7777,8 +7804,9 @@ function viewPlan() {
         style="${openSlot === s.id ? "background:var(--panel2);color:var(--accent);border:1px solid var(--accent)" : "color:var(--dim)"}">配分</button>`}
       ${isBreak ? `<button class="chip sm" data-act="peditbreak" data-id="${s.id}">時間</button>` : ""}
       ${r.live ? `<button class="chip sm rec-primary" data-act="pnext" data-id="${s.id}">${isBreak ? "休憩終了" : "終了"}</button>`
-        : !r.done ? `<button class="chip sm rec-primary" data-act="pstart" data-id="${s.id}">${isBreak ? "休憩開始" : "開始"}</button>`
+        : !r.done ? `<button class="chip sm rec-primary" data-act="pstart" data-id="${s.id}">${isBreak ? "休憩開始" : "今から開始"}</button>`
         : `<button class="chip sm" data-act="pundo" data-id="${s.id}">戻す</button>`}
+      ${!r.done && !r.live && Number.isInteger(s.at) && (s.date || s.day) ? `<details class="plan-more"><summary>時刻を調整</summary><span class="note">この枠以降・同日の未開始枠</span><button data-act="pshift" data-id="${s.id}|-5">5分早める</button><button data-act="pshift" data-id="${s.id}|5">5分遅らせる</button></details>` : ""}
       ${r.live ? `<details class="plan-more"><summary>その他</summary><button data-act="pretry" data-id="${s.id}">やり直す</button><button data-act="pcancel" data-id="${s.id}">開始を取り消す</button></details>` : ""}
     </div>
     ${openSlot === s.id && sectionsOf(s).length ? (() => {
@@ -7866,7 +7894,8 @@ function viewPlan() {
       ${last ? (gap ? dmin(gap) : "予定どおり") : ""}</span></div>
   <div class="scroll pad">
     <div class="plan-song">${h((recSong() || {}).title || "曲を選択してください")}</div>
-    <button class="ghost" data-act="recording-schedule-update">時間割の変更ファイルを適用</button>
+    ${typeof PrivatePreparationUI!=="undefined" ? PrivatePreparationUI.settingsHTML() : ""}
+    ${U.planShiftUndo ? '<button class="ghost" data-act="pshiftundo">直前の時刻調整を戻す</button>' : ""}
     ${dayBar}${list || `<p class="note">予定はまだありません</p>`}
     <details class="plan-settings"><summary>進行表を編集</summary>
     <div class="card">
@@ -8354,6 +8383,7 @@ function viewSetup() {
     ${memberPreviewSettings()}
     ${lyricDisplaySettings()}
     <h4 class="head">指摘</h4><div class="card"><button class="primary" data-act="go-summary">指摘の集計を見る</button></div>
+    <details class="card" data-settings-panel="live-materials"><summary>公演・セットリストを管理</summary>
     <h4 class="head">公演</h4>
     <div class="organize-create"><button class="primary" data-act="newshow">＋ 公演を追加</button><button class="chip" data-act="newfolder">＋ フォルダ</button></div>
     ${S.shows.some(sw => !sw.hidden && sw.deliveryMode !== "song" && !showDeliveryGroupId(sw)) ? `<button class="ghost" data-act="showfilter" data-id="__unassigned__" style="color:var(--bad);margin-bottom:12px">グループ未設定の公演を確認</button>` : ""}
@@ -8373,6 +8403,7 @@ function viewSetup() {
       <div style="font-size:11px;color:var(--dim);margin-top:6px">取り込み先：${h(activeShow.name)} ・ ${h(group().name || "")}</div>
     </div>`}
 
+    </details>
     <h4 class="head">配信設定</h4>
     ${typeof RecoveryDelivery!=="undefined" ? RecoveryDelivery.settingsHTML() : ""}
     ${startupRecoveryNetworkHold ? `<p class="note" role="status">${S.recoveryDelivery?.version===2&&S.recoveryDelivery?.targets?.some(t=>t.status==='ready')?"確認した既存先だけ配信を再開しています。バックアップ・他端末の自動同期は停止中です。":"復旧した公演の配信は再接続待ちです。"}${!S.ghToken ? "この端末に配信の認証情報がありません。" : "元の配信先と公開範囲の確認が必要です。"}元の保存先と接続を確認してから再開します。</p>` : ""}
@@ -9525,6 +9556,26 @@ document.addEventListener("click", (e) => {
     case "pbreak":
       S.plan.slots.push({ id: uid(), name: "休憩", min: 30, kind: "break" });
       save(); render(); break;
+    case "pshiftundo": {
+      if (VIEW() || preview || !recordingInboxCanWrite() || REC || recordingStartPending || recordingFinalizePending) break;
+      const prior=U.planShiftUndo;
+      if (!prior || JSON.stringify(S.plan.slots)!==prior.after) { alert("調整後に記録が変わったため、一括では戻していません。"); break; }
+      pushUndo(); S.plan.slots=JSON.parse(prior.before); U.planShiftUndo=null; pauseRecSchedule(); save(); render(); break;
+    }
+    case "pshift": {
+      if (VIEW() || preview || !recordingInboxCanWrite() || REC || recordingStartPending || recordingFinalizePending) break;
+      const cut = id.lastIndexOf("|"), targetId = id.slice(0,cut), delta = Number(id.slice(cut+1));
+      try {
+        const before = JSON.stringify(S.plan.slots), next = shiftedPlanSlots(S.plan.slots,targetId,delta);
+        const changed = next.filter((x,i)=>x.at!==S.plan.slots[i].at);
+        const previewText = changed.map(x=>`${x.day || x.date} ${compactMemberLabel(x.name || "休憩")} ${min2hm(x.at)}〜${min2hm(x.at+x.min)}`).join("\n");
+        if (!confirm(previewText+"\n\n同日のこの枠以降を"+(delta<0?"5分早めます。":"5分遅らせます。"))) break;
+        if (JSON.stringify(S.plan.slots)!==before) { alert("予定が変わったため、もう一度確認してください。"); break; }
+        pushUndo(); S.plan.slots=next; U.planShiftUndo={before,after:JSON.stringify(next)}; pauseRecSchedule(); save(); render();
+      }
+      catch (error) { alert(error.message); }
+      break;
+    }
     case "pstart": {
       const s2 = S.plan.slots.find((x) => x.id === id);
       if (s2) { pushUndo(); startSlot(s2); S.planFocus = s2.id; save(); render(); }
@@ -13209,3 +13260,4 @@ async function initializeRecordingInboxOwner() {
   } catch (_) { recordingInboxStale = true; recordingInboxOwnerUI(); recordingInboxResolveBoot(false); }
 }
 void initializeRecordingInboxOwner();
+

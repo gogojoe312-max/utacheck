@@ -104,3 +104,10 @@ test('second service-worker check interruption requires reload and keeps editing
 test('second service-worker response timeout requires reload without leaving an unexplained frozen editor',async()=>{
  const f=await setup({owner:false});serviceWorkerFixture(f,[true,true]);f.c.setTimeout=(fn,ms)=>ms===5000?setTimeout(fn,5):0;const original=f.c.navigator.serviceWorker.controller.postMessage;let count=0;f.c.navigator.serviceWorker.controller.postMessage=(...args)=>{if(++count!==2)return original(...args);};const db=f.idb.snapshot();assert.equal((await f.c.PrivatePreparationUI.receive(true)).status,'owner-required');assert.equal(f.run('recordingInboxCanWrite()'),false);assert(f.elements.has('recording-inbox-readonly'));assert.deepEqual(f.idb.snapshot(),db);
 });
+
+test('private LIVE reorder keeps selected song identity and original annotations',async()=>{
+ const f=await setup();f.run("S.groups[0].nopub=true;S.shows[0].nopub=true;S.songs.push({...JSON.parse(JSON.stringify(S.songs[0])),id:'second',title:'Second'});S.recMode=false;U.songIdx=0");
+ const packet={app:'utacheck-live-update',version:1,groupId:'original-group',showId:'show',order:{before:['song','second'],after:['second','song']}};
+ const op={id:'live-reorder',type:'live-update',packet,sha256:await Preparation.digest(packet,webcrypto)};f.manifest.operations=[op];
+ const before=clone(f.run('S.notes')),result=await f.c.PrivatePreparationUI.receive(true);assert.equal(result.status,'applied',JSON.stringify(result));assert.equal(f.run('song().id'),'song');assert.equal(f.run('U.songIdx'),1);assert.deepEqual(clone(f.run('S.notes')),before);
+});
