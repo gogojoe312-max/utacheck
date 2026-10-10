@@ -113,7 +113,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.54.3";
+const APP_VER = "16.41.54.4";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -11552,7 +11552,7 @@ async function doPush(silent) {
   if(typeof startupCanCommunicate==='function'&&!startupCanCommunicate()
     &&!(typeof RecoveryDelivery!=='undefined'&&RecoveryDelivery.hasResumed()))return false;
   // Timer requests coalesce; explicit sends wait their turn and build fresh data.
-  if (silent === true && publishInFlight) return;
+  if (silent === true && (publishInFlight || (typeof previewLoading!=='undefined' && previewLoading && S.autoPub))) return;
   return queuePublication(() => publishGroups(silent));
 }
 async function publishGroups(silent) {
@@ -11629,7 +11629,7 @@ function hasPending() {
 
 // アプリを開いている間、自動でやりとりする
 setInterval(() => {
-  if (!recordingInboxCanWrite() || document.hidden || preview || renderPointers.size || Date.now() < scrollingUntil || typingNow()) return;
+  if (!recordingInboxCanWrite() || document.hidden || preview || (typeof previewLoading!=='undefined' && previewLoading) || renderPointers.size || Date.now() < scrollingUntil || typingNow()) return;
   if (S.ghToken && S.groups.some((g) => g.gistId)) {
     if (S.autoPub && !publishInFlight && !pushTimer && Date.now() - lastPushAt >= 8000 && hasPending()) doPush(true);
   } else if (S.src) {
@@ -12791,12 +12791,28 @@ async function startPreview(src, key) {
   let recoveredPreview=null;
   if(startupRecoveryNetworkHold){
     previewLoading=true;
-    try{recoveredPreview=await RecoveryDelivery.readPreview(src);}
+    try{
+      // Let an already admitted publication finish; never start another send here.
+      // The normal silent-publish path pauses only while this preview is opening.
+      const viewAtRequest=JSON.stringify(U);
+      if(publishInFlight){
+        let timeout;
+        try{
+          await Promise.race([publicationQueue,new Promise((_,reject)=>{timeout=setTimeout(()=>{
+            const error=new Error('publication-busy');error.reconnectCode='publication-busy';reject(error);
+          },35000);})]);
+        }finally{clearTimeout(timeout);}
+      }
+      if(document.hidden||JSON.stringify(U)!==viewAtRequest)return;
+      if(publishInFlight){const error=new Error('publication-busy');error.reconnectCode='publication-busy';throw error;}
+      recoveredPreview=await RecoveryDelivery.readPreview(src);
+    }
     catch(e){
       const messages={
         'local-changed':'確認中に端末の内容が変わりました。入力が終わってからメンバー画面を開いてください。',
         'target':'このグループの配信先と接続記録を照合できないため、メンバー画面を開けません。手元の歌詞・指摘は保持しています。',
         'encrypted':'配信内容が暗号化されているため、このプレビューでは開けません。手元の歌詞・指摘は保持しています。',
+        'publication-busy':'配信処理の完了を待っています。送信をやり直さず、少し待ってからメンバー画面を開いてください。',
         'not-ready':'録音・入力・保存が終わってからメンバー画面を開いてください。'
       };
       alert(messages[e?.reconnectCode]||'配信内容の読み取りに失敗しました。手元の歌詞・指摘は保持しています。通信が戻ってからメンバー画面を開き直してください。再送は不要です。');
