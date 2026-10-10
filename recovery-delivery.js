@@ -87,6 +87,62 @@
     }catch(e){if(e.reconnectCode)throw e;fail('remote');}
     finally{clearTimeout(timer);}
   }
+  // Read-only summaries contain names, counts and categories, never source URLs or credentials.
+  function heldDifferenceSummary(target,remote,local){
+    const stable=value=>JSON.stringify(value,(_,v)=>v&&typeof v==='object'&&!Array.isArray(v)?Object.fromEntries(Object.keys(v).sort().map(k=>[k,v[k]])):v);
+    const source=show=>show.recoveredSourceShowId||show.id;
+    const records=(data,field,indexes)=>(data[field]||[]).filter(row=>indexes.includes(row.songIdx)).map(row=>{
+      const next={...row,songIdx:indexes.indexOf(row.songIdx)};delete next.showId;return next;
+    });
+    const details=(data,show)=>{
+      const indexes=[];data.songs.forEach((song,i)=>{if(song.showId===show.id)indexes.push(i);});
+      const entries=indexes.map(i=>data.lib?.[data.songs[i].libIdx]);
+      if(entries.some(entry=>!entry||!Array.isArray(entry.lines)))return null;
+      return {titles:entries.map(entry=>entry.title),lyrics:entries.map(entry=>entry.lines.map(row=>row[1])),
+        parts:entries.map(entry=>({groups:entry.groups||{},order:entry.order||[],sections:entry.sections||[],groupRows:entry.groupRows||[],lines:entry.lines.map(row=>row.map((cell,i)=>i===1?null:cell))})),
+        notes:records(data,'notes',indexes),memos:records(data,'memos',indexes),subs:records(data,'subs',indexes),gsubs:records(data,'gsubs',indexes)};
+    };
+    return (target.heldLocalShowIds||[]).map(id=>{
+      const own=local.shows.filter(show=>show.id===id),base=S.shows.find(show=>show.id===id);
+      const label=String(own[0]?.name||base?.name||'名称未確認').slice(0,160);
+      if(own.length!==1||local.shows.filter(show=>source(show)===source(own[0])).length!==1)return {name:label,status:'照合できません（端末の配信対象外または公演対応未確定）'};
+      const matches=remote.shows.filter(show=>source(show)===source(own[0]));
+      if(matches.length!==1)return {name:label,status:'照合できません（配信済み公演の対応が一意ではありません）'};
+      const left=details(local,own[0]),right=details(remote,matches[0]);
+      if(!left||!right)return {name:label,status:'照合できません（曲の参照情報が不足しています）'};
+      const changed=[];const sameOrder=stable(left.titles)===stable(right.titles)&&new Set(left.titles).size===left.titles.length;
+      if(!sameOrder)changed.push('曲数・曲順・曲名');
+      else {
+        if(stable(left.lyrics)!==stable(right.lyrics))changed.push('歌詞');
+        if(stable(left.parts)!==stable(right.parts)||stable(left.subs)!==stable(right.subs)||stable(left.gsubs)!==stable(right.gsubs))changed.push('歌割・区切り');
+        if(stable(left.notes)!==stable(right.notes))changed.push('指摘');
+        if(stable(left.memos)!==stable(right.memos))changed.push('総括');
+      }
+      const metadata=show=>({name:show.name,folder:show.folder||'',absent:show.absent||[],ts:show.ts??null});
+      if(stable(metadata(own[0]))!==stable(metadata(matches[0])))changed.push('公演情報');
+      return {name:label,status:changed.length?'相違：'+changed.join('・'):'表示対象の比較項目は一致。曲情報・引継ぎなど他の設定差分は未比較（保留は解除していません）',
+        counts:'手元：'+left.titles.length+'曲・指摘'+left.notes.length+'件 ／ 配信済み：'+right.titles.length+'曲・指摘'+right.notes.length+'件',
+        note:sameOrder?'':'曲対応が未確定のため、歌詞・指摘などの個別比較は保留しています。'};
+    });
+  }
+  let differenceBusy=false;
+  async function inspectHeldDifferences(gid){
+    if(differenceBusy)return;
+    const el=document.getElementById('rd-difference-'+gid),button=document.getElementById('rd-difference-button-'+gid);
+    if(!el)return;differenceBusy=true;if(button)button.disabled=true;
+    const before=JSON.stringify(S),viewBefore=JSON.stringify(U);
+    const target=currentBinding(gid),g=S.groups.find(item=>item.id===gid);
+    try{
+      if(!target||!g||!target.heldLocalShowIds?.length)fail('target');
+      el.textContent='配信済みの内容と手元を比較しています…';
+      const remote=await readPreview(g.src);
+      if(JSON.stringify(S)!==before||JSON.stringify(U)!==viewBefore)fail('local-changed');
+      const local=payloadFor(copy(S),gid),rows=heldDifferenceSummary(target,remote,local);
+      el.textContent=rows.map(row=>row.name+'\n'+row.status+(row.counts?'\n'+row.counts:'')+(row.note?'\n'+row.note:'')).join('\n\n')+'\n\n読取のみです。変更の採用・送信・保留解除はしていません。';
+      return rows;
+    }catch(error){el.textContent=error?.reconnectCode==='local-changed'?'確認中に手元の内容が変わりました。入力後にもう一度確認してください。':'差分を読み取れませんでした。手元の歌詞・指摘と現在の配信は変更していません。';}
+    finally{differenceBusy=false;if(button)button.disabled=false;}
+  }
   function pending(gid){if(!canPublish(gid))return false;const g=S.groups.find(g=>g.id===gid);try{return g.publishKeyPending||payloadKey(payloadFor(S,gid))!==g.lastKey;}catch(_){return true;}}
   function hasResumed(){return ready()&&!session&&(S.recoveryDelivery?.targets||[]).some(t=>canPublish(t.groupId));}
   function packetForBindings(){return {app:'utacheck-existing-delivery',version:2,targets:S.recoveryDelivery.targets.map(t=>{
@@ -130,7 +186,7 @@
     const targets=S.recoveryDelivery?.targets||[],legacy=S.recoveryDelivery?.version!==2,pending=targets.some(t=>t.status!=='ready');
     return '<div class="card"><b>既存の配信先に再接続</b><p class="note">元の配信先と対象公演を確認して再開します。新しい配信先は作りません。</p>'+
       '<button class="primary" data-act="rd-open">既存の配信先に再接続</button>'+
-      (targets.length?'<p class="note">'+targets.map(t=>h(t.groupName)+'：'+(legacy?'接続ファイルの更新が必要':t.status==='ready'?'既存先の配信を再開済み':['blocked','prepared'].includes(t.status)?'再接続の確認が必要':'送信結果の確認待ち')).join('<br>')+'</p><p class="note">'+targets.filter(t=>t.heldLocalShowIds?.length).map(t=>h(t.groupName)+'：現配信の公演を保持し、同じ公演の端末版差分は保留しています。').join('<br>')+'</p>':'')+
+      (targets.length?'<p class="note">'+targets.map(t=>h(t.groupName)+'：'+(legacy?'接続ファイルの更新が必要':t.status==='ready'?'既存先の配信を再開済み':['blocked','prepared'].includes(t.status)?'再接続の確認が必要':'送信結果の確認待ち')).join('<br>')+'</p>'+targets.filter(t=>t.heldLocalShowIds?.length).map(t=>'<p class="note">'+h(t.groupName)+'：'+t.heldLocalShowIds.length+'公演の端末版差分を保留中</p><button class="ghost" id="rd-difference-button-'+h(t.groupId)+'" data-act="rd-differences" data-id="'+h(t.groupId)+'">保留中の公演と差分を見る</button><p class="note" style="white-space:pre-wrap" id="rd-difference-'+h(t.groupId)+'" role="status"></p>').join(''):'')+
       (pending&&!legacy?'<button class="ghost" data-act="rd-reconcile">接続・送信結果を確認（再送しない）</button>':'')+'</div>';
   }
   function unlock(){const app=document.getElementById('app');if(app&&typeof recordingInboxCanWrite==='function')app.inert=!recordingInboxCanWrite();}
@@ -260,10 +316,10 @@
     }catch(e){alert(message(e));}finally{release?.();pushing=false;}
   }
   document.addEventListener('click',e=>{const b=e.target.closest?.('[data-act^="rd-"]');if(!b)return;e.preventDefault();e.stopImmediatePropagation();
-    const action=b.dataset.act;if(action==='rd-open')open();if(action==='rd-close')close();if(action==='rd-check')void check();if(action==='rd-commit')void commit();if(action==='rd-reconcile')void reconcile();},true);
+    const action=b.dataset.act;if(action==='rd-differences')void inspectHeldDifferences(b.dataset.id);if(action==='rd-open')open();if(action==='rd-close')close();if(action==='rd-check')void check();if(action==='rd-commit')void commit();if(action==='rd-reconcile')void reconcile();},true);
   document.addEventListener('input',e=>{if(session&&!session.busy&&['rd-file','rd-token'].includes(e.target.id)){session.prepared=null;session.token='';session.node.querySelector('#rd-preview').innerHTML='';status('入力が変わりました。もう一度接続先を確認してください。');}},true);
   document.addEventListener('change',e=>{if(session&&!session.busy&&e.target.id==='rd-file'){session.prepared=null;session.token='';session.node.querySelector('#rd-preview').innerHTML='';status('ファイルが変わりました。もう一度接続先を確認してください。');}},true);
   document.addEventListener('visibilitychange',()=>{if(document.hidden&&!session?.committing)close();});
-  root.RecoveryDelivery=Object.freeze({settingsHTML,open,close,canPublish,hasResumed,pending,push,reconcile,readPreview});
+  root.RecoveryDelivery=Object.freeze({settingsHTML,open,close,canPublish,hasResumed,pending,push,reconcile,readPreview,inspectHeldDifferences});
 })(globalThis);
 

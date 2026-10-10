@@ -113,7 +113,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.54.1";
+const APP_VER = "16.41.54.2";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1673,7 +1673,10 @@ function setShowFilter(id) {
   rememberViewSelection();
   render(); if (U.picker) renderSheet();
 }
-const showsNewestFirst = () => S.shows.slice().sort((a, b) => (b.ts || 0) - (a.ts || 0));
+const showsNewestFirst = () => S.shows.map((show,index)=>({show,index})).sort((a,b)=>{
+  const time=value=>{const n=Number(value);return Number.isFinite(n)&&n>0?n:0;};
+  return time(b.show.ts)-time(a.show.ts)||b.index-a.index;
+}).map(row=>row.show);
 const showName = (id) => (S.shows.find((x) => x.id === (id || S.showId)) || {}).name || "";
 function memberViewNotes(notes) {
   if (!VIEW()) return notes;
@@ -6046,15 +6049,13 @@ function renderSheet() {
   }
 
   if (U.picker) {
-    const gfil = liveGroups().length > 1 || U.showFilter === "__archive__" ? `<div class="chips" style="margin-bottom:8px">
+    const gfil = liveGroups().length > 1 || !!U.showFilter ? `<div class="chips" style="margin-bottom:8px">
         <button class="chip sm" data-act="showfilter" data-id="" style="${!U.showFilter ? "background:var(--accent);color:#0A0A0A" : ""}">全公演を表示</button>
         ${liveGroups().map((g) => `<button class="chip sm" data-act="showfilter" data-id="${g.id}"
           style="${U.showFilter === g.id ? "background:var(--accent);color:#0A0A0A" : ""}">${h(g.name)}</button>`).join("")}
       </div>` : "";
-    const shows = groupShows(showsFor()).map(([fname, list]) => `
-      ${fname ? `<div style="font-size:10px;color:var(--dim);width:100%;margin:6px 0 2px">${h(fname)}</div>` : ""}
-      ${list.map((sw) => `<button class="chip sm" data-act="jumpshow" data-id="${sw.id}"
-        style="${sw.id === S.showId ? "background:var(--accent);color:#0A0A0A" : ""}">${h(sw.name)}</button>`).join("")}`).join("");
+    const shows = showsFor().map((sw) => `<button class="chip sm" data-act="jumpshow" data-id="${sw.id}"
+        style="${sw.id === S.showId ? "background:var(--accent);color:#0A0A0A" : ""}">${h(sw.name)}${folderOf(sw) ? `<span style="opacity:.6;font-size:10px"> · ${h(folderOf(sw))}</span>` : ""}</button>`).join("");
     const list = SONGS().map((x, i) => {
       const gn = (S.groups.find((g) => g.id === x.groupId) || {}).name || "";
       const cnt = NOTES().filter((n) => n.songId === x.id && n.showId === S.showId).length;
@@ -6189,8 +6190,9 @@ const songTitle = (n) => { const so = S.songs.find((x) => x.id === n.songId); re
 
 
 function summaryShows() {
-  return showsNewestFirst().filter(sw => !sw.hidden && S.songs.some(so =>
-    so.showId === sw.id && (!S.groupId || !so.groupId || (VIEW() ? so.groupId : songDeliveryGroupId(so)) === S.groupId)));
+  return showsNewestFirst().filter(sw => !sw.hidden && (
+    S.songs.some(so => so.showId === sw.id && (!S.groupId || !so.groupId || (VIEW() ? so.groupId : songDeliveryGroupId(so)) === S.groupId))
+    || !VIEW() && sw.recoverySource !== "original-workbooks" && !S.songs.some(so => so.showId === sw.id) && (!S.groupId || showGroupIds(sw).includes(S.groupId) || sw.deliveryMode === "song" && sw.groupId === S.groupId)));
 }
 function summaryShowPicker() {
   if (S.recMode) return "";
@@ -8270,7 +8272,7 @@ function viewPrint() {
 /* ---- setup ---- */
 function viewSetup() {
   if (VIEW()) {
-    // 公演の並びはJoe側と同じにする（フォルダごとにまとめ、新しい順、箱に入っていない分は下）
+    // 公演選択は編集側と同じ最新順。フォルダの開閉で公演を隠さない。
     const allShows = showsFor();
     const curFolder = folderOf(S.shows.find((x) => x.id === S.showId));
     const unreadIn = (sid) => S.songs.filter((x) => x.showId === sid && isUnread(x)).length;
@@ -8279,24 +8281,12 @@ function viewSetup() {
       return `<div class="row card" style="margin-bottom:8px;padding:12px;${sw.id === S.showId ? "outline:1px solid var(--accent)" : ""}">
       <button class="grow" style="text-align:left;min-width:0" data-act="useshow" data-id="${sw.id}">
         <div class="clamp2" style="${sw.id === S.showId ? "color:var(--accent)" : ""}">${h(sw.name)}</div>
+        ${folderOf(sw) ? `<div style="font-size:10px;color:var(--dim)">${h(folderOf(sw))}</div>` : ""}
         <div style="font-size:11px;color:var(--dim)">${S.songs.filter((x) => x.showId === sw.id).length}曲 ・ ${NOTES().filter((n) => n.showId === sw.id).length}件</div>
       </button>
       ${un ? `<span style="font-size:11px;color:var(--accent);font-weight:700">未読${un}</span>` : ""}</div>`;
     };
-    const list = groupShows(allShows).map(([fname, rows]) => {
-      if (!fname) return rows.map(showRow).join("");
-      const open = S.folders[fname] !== false || fname === curFolder;
-      const un = rows.reduce((a, sw) => a + unreadIn(sw.id), 0);
-      return `<div class="row card" style="margin-bottom:8px;padding:8px 12px">
-        <button class="grow row" data-act="folder" data-id="${h(fname)}" style="text-align:left;min-width:0">
-          <span style="width:18px;color:var(--dim)">${open ? "▾" : "▸"}</span>
-          <span class="grow trunc">${h(fname)}</span>
-          ${un ? `<span style="font-size:11px;color:var(--accent);font-weight:700;margin-right:8px">未読${un}</span>` : ""}
-          <span style="font-size:11px;color:var(--dim)">${rows.length}公演</span>
-        </button>
-      </div>
-      ${open ? `<div style="margin-left:14px">${rows.map(showRow).join("")}</div>` : ""}`;
-    }).join("");
+    const list = allShows.map(showRow).join("");
     return `
     <div class="hd"><button class="ic" data-act="go-live">‹</button><b>設定</b>
       <span class="grow"></span>
@@ -8324,24 +8314,12 @@ function viewSetup() {
       <span class="grip" data-drag="show:${sw.id}">⣿</span>
       <button class="grow" style="text-align:left;min-width:0" data-act="useshow" data-id="${sw.id}">
         <div class="clamp2" style="${sw.id === S.showId ? "color:var(--accent)" : ""}">${h(sw.name)}</div>
+        ${folderOf(sw) ? `<div style="font-size:10px;color:var(--dim)">${h(folderOf(sw))}</div>` : ""}
         <div style="font-size:11px;color:var(--dim)">${S.songs.filter((x) => x.showId === sw.id).length}曲 ・ ${NOTES().filter((n) => n.showId === sw.id).length}件${sw.id === S.showId ? " ・ 記録中" : ""} ・ 配信先：${h(showDeliveryLabel(sw))}</div>
       </button>
       <button class="organize-more" data-act="show-actions" data-id="${sw.id}" aria-label="${h(sw.name)}の操作">⋯</button>
     </div>`;
-  const shows = groupShows(allShows).map(([fname, list]) => {
-    if (!fname) return list.map(showRow).join("");
-    const open = S.folders[fname] !== false || fname === curFolder;
-    return `<div class="row card" data-drop="f:${h(fname)}" style="margin-bottom:8px;padding:8px 12px">
-        <button class="grow row" data-act="folder" data-id="${h(fname)}" style="text-align:left;min-width:0">
-          <span style="width:18px;color:var(--dim)">${open ? "▾" : "▸"}</span>
-          <span class="grow trunc">${h(fname)}</span>
-          <span style="font-size:11px;color:var(--dim)">${list.length}公演</span>
-        </button>
-        <button class="chip sm" data-act="newshow" data-folder="${h(fname)}">＋公演</button>
-        <button class="organize-more" data-act="frename" data-id="${h(fname)}" aria-label="${h(fname)}の名前を変更">⋯</button>
-      </div>
-      ${open ? `<div style="margin-left:14px">${list.map(showRow).join("")}</div>` : ""}`;
-  }).join("");
+  const shows = allShows.map(showRow).join("");
 
   const activeShow = allShows.find(sw => sw.id === S.showId);
   const all2 = activeShow ? SONGS() : [];
@@ -8387,12 +8365,13 @@ function viewSetup() {
     <h4 class="head">公演</h4>
     <div class="organize-create"><button class="primary" data-act="newshow">＋ 公演を追加</button><button class="chip" data-act="newfolder">＋ フォルダ</button></div>
     ${S.shows.some(sw => !sw.hidden && sw.deliveryMode !== "song" && !showDeliveryGroupId(sw)) ? `<button class="ghost" data-act="showfilter" data-id="__unassigned__" style="color:var(--bad);margin-bottom:12px">グループ未設定の公演を確認</button>` : ""}
-    ${liveGroups().length > 1 ? `<div class="chips" style="margin-bottom:10px">
+    ${liveGroups().length > 1 || !!U.showFilter ? `<div class="chips" style="margin-bottom:10px">
       <button class="chip sm" data-act="showfilter" data-id="" style="${!U.showFilter ? "background:var(--accent);color:#0A0A0A" : ""}">全公演を表示</button>
       ${liveGroups().map((g) => `<button class="chip sm" data-act="showfilter" data-id="${g.id}"
         style="${U.showFilter === g.id ? "background:var(--accent);color:#0A0A0A" : ""}">${h(g.name)}</button>`).join("")}
     </div>` : ""}
     ${shows}
+    ${folderNames().length ? `<details><summary>フォルダを管理</summary>${folderNames().map(name=>`<div class="row card" data-drop="f:${h(name)}"><span class="grow">${h(name)}</span><button class="chip sm" data-act="newshow" data-folder="${h(name)}">＋公演</button><button class="organize-more" data-act="frename" data-id="${h(name)}" aria-label="${h(name)}の名前を変更">⋯</button></div>`).join("")}</details>` : ""}
     ${U.showFilter === "__archive__" ? '<button class="ghost" data-act="showfilter" data-id="">通常の公演に戻る</button>' : ''}
 
     <h4 class="head">セットリスト</h4>

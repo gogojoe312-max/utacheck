@@ -209,3 +209,36 @@ test('held or uncertain delivery remains read-only previewable without enabling 
  const d=await f.c.RecoveryDelivery.readPreview(src);assert.equal(d.songs.length,1);assert.equal(f.c.RecoveryDelivery.canPublish('g'),false);
  assert.equal(JSON.stringify(f.c.S),before);assert.deepEqual(f.idb.snapshot(),db);assert.equal(f.patches(),0);}
 });
+
+test('held difference view reads once and shows only public show names, categories and counts',async()=>{
+ const f=await fixture(),src=enablePreviewBinding(f);f.c.S.groups[0].nopub=false;f.c.S.shows[0].nopub=false;
+ Object.assign(f.c.S.recoveryDelivery.targets[0],{status:'blocked',heldLocalShowIds:['show']});f.c.S.ghToken='SECRET_TOKEN';
+ f.c.S.notes[0].memo='NEW_PRIVATE_CORRECTION';const before=JSON.stringify(f.c.S),db=f.idb.snapshot();let reads=0;
+ f.c.fetch=async()=>{reads++;return {ok:true,text:async()=>f.remote()};};
+ const rows=await f.c.RecoveryDelivery.inspectHeldDifferences('g');
+ assert.equal(rows.length,1);assert.equal(rows[0].name,'Performance');assert.match(rows[0].status,/指摘/);
+ const output=f.c.document.getElementById('rd-difference-g').textContent;
+ assert.match(output,/手元：1曲・指摘1件/);assert.match(output,/保留解除はしていません/);
+ for(const secret of ['SECRET_TOKEN','NEW_PRIVATE_CORRECTION','PRIVATE','https:',src,f.packet.targets[0].gistId])assert(!output.includes(secret));
+ assert.equal(reads,1);assert.equal(JSON.stringify(f.c.S),before);assert.deepEqual(f.idb.snapshot(),db);assert.equal(f.patches(),0);
+ assert.match(f.c.RecoveryDelivery.settingsHTML(),/保留中の公演と差分を見る/);
+});
+test('held difference view rejects ambiguous show mapping and does not choose a side',async()=>{
+ const f=await fixture(),src=enablePreviewBinding(f);f.c.S.shows[0].nopub=false;Object.assign(f.c.S.recoveryDelivery.targets[0],{status:'blocked',heldLocalShowIds:['show']});
+ const remote=JSON.parse(f.remote());remote.shows.push({...remote.shows[0],id:'duplicate',recoveredSourceShowId:'show'});
+ f.c.fetch=async()=>({ok:true,text:async()=>JSON.stringify(remote)});const before=JSON.stringify(f.c.S);
+ const rows=await f.c.RecoveryDelivery.inspectHeldDifferences('g');assert.match(rows[0].status,/一意ではありません/);assert.equal(JSON.stringify(f.c.S),before);assert.equal(f.patches(),0);
+});
+test('held difference view keeps newer input when an edit arrives during the read',async()=>{
+ const f=await fixture(),src=enablePreviewBinding(f);f.c.S.shows[0].nopub=false;Object.assign(f.c.S.recoveryDelivery.targets[0],{status:'blocked',heldLocalShowIds:['show']});
+ f.c.fetch=async()=>{f.c.S.notes[0].memo='newer edit';return {ok:true,text:async()=>f.remote()};};
+ await f.c.RecoveryDelivery.inspectHeldDifferences('g');assert.equal(f.c.S.notes[0].memo,'newer edit');assert.match(f.c.document.getElementById('rd-difference-g').textContent,/手元の内容が変わりました/);assert.equal(f.patches(),0);
+});
+test('held difference view identifies section metadata and refuses duplicate local source identities',async()=>{
+ const f=await fixture(),src=enablePreviewBinding(f);f.c.S.shows[0].nopub=false;Object.assign(f.c.S.recoveryDelivery.targets[0],{status:'blocked',heldLocalShowIds:['show']});
+ const remote=JSON.parse(f.remote());remote.lib[0].sections=[{name:'different section'}];f.c.fetch=async()=>({ok:true,text:async()=>JSON.stringify(remote)});
+ let rows=await f.c.RecoveryDelivery.inspectHeldDifferences('g');assert.match(rows[0].status,/歌割・区切り/);
+ f.c.S.shows.push({...f.c.S.shows[0],id:'duplicate',recoveredSourceShowId:'show'});
+ f.c.S.songs.push({...f.c.S.songs[0],id:'duplicate-song',showId:'duplicate'});
+ rows=await f.c.RecoveryDelivery.inspectHeldDifferences('g');assert.match(rows[0].status,/照合できません/);assert.equal(f.patches(),0);
+});
