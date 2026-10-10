@@ -273,7 +273,8 @@
     const active=()=>ready()&&!session&&currentBinding(gid)===binding&&S.ghToken===token&&S.groups.find(g=>g.id===gid)===group&&!group.nopub&&group.gistId===binding.gistId&&group.src===binding.src&&JSON.stringify({...S,recoveryDelivery:undefined})===contentSnapshot;
     try{
       release=recordingInboxAdmitWriter();
-      const plan=RecoveryDeliveryScope.plan(S,packetForBindings()),target=plan.targets.find(t=>t.groupId===gid);if(!target)fail('target');
+      const plan=RecoveryDeliveryScope.plan(S,packetForBindings()),originalTarget=plan.targets.find(t=>t.groupId===gid);if(!originalTarget)fail('target');
+      const target=RecoveryDeliveryScope.extendForOwnedShows(S,originalTarget);
       const localPayload=payloadFor(S,gid),key=payloadKey(localPayload);
       if(!force&&!group.publishKeyPending&&group.lastKey===key)return 'same';
       const remote=await readTarget(target,token,active);

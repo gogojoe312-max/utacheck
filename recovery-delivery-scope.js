@@ -322,6 +322,33 @@
     if(scope.showIds.length!==scope.sourceShowIds.length)fail('target-invalid');
     return scope;
   }
+  // Normal owner-created performances may extend an already bound group's payload.
+  // Existing recovered identities, destinations and held remote content stay fixed.
+  function implementationExtend(state,target){
+    const next=copy(state,'state'),scope=validatedScope(target);
+    bytes(next,MAX_STATE_BYTES);
+    const claimed=new Set(),groups=index(next.groups,claimed),shows=index(next.shows,claimed),songs=index(next.songs,claimed);
+    const group=groups.get(scope.groupId);
+    if(!group||group.nopub||group.name!==scope.groupName||group.gistId!==scope.gistId||group.src!==scope.src)fail('existing-destination-conflict');
+    const existing=new Set(scope.showIds),byShow=new Map();
+    for(const song of songs.values()){if(!byShow.has(song.showId))byShow.set(song.showId,[]);byShow.get(song.showId).push(song);}
+    for(const show of shows.values()){
+      if(existing.has(show.id)||excluded(show)||show.nopub||show.recoveredSourceShowId||show.recoverySource||show.groupId!==scope.groupId)continue;
+      if(show.deliveryMode&&show.deliveryMode!=='show')continue;
+      if(own(show,'deliveryGroupId')&&show.deliveryGroupId!=null&&show.deliveryGroupId!==scope.groupId)continue;
+      const rows=byShow.get(show.id)||[];
+      if(!rows.length)continue;
+      for(const song of rows){
+        if(excluded(song)||song.recoveredFromOriginalExcel)fail('song-not-public');
+        if(song.deliveryMode&&song.deliveryMode!=='show')fail('song-delivery-conflict');
+        if(own(song,'deliveryGroupId')&&song.deliveryGroupId!=null&&song.deliveryGroupId!==scope.groupId)fail('song-delivery-conflict');
+        if(song.groupId&&(!groups.has(song.groupId)||groups.get(song.groupId).nopub))fail('song-group-unresolved');
+      }
+      scope.showIds.push(show.id);scope.sourceShowIds.push(show.id);existing.add(show.id);
+    }
+    // Revalidate uniqueness and bounds; no credential or settings changes occur.
+    return validatedScope(scope);
+  }
   // This is a shape/scope check, not an authenticity or freshness check.
   // The transport must hash the exact fetched bytes against expectedRemoteSha256
   // and check that same version again immediately before writing.
@@ -542,7 +569,8 @@
       equivalentRemoteShowIds:[...equivalentIds]};
   }
   function guarded(fn,args){try{return fn(...args);}catch(error){if(failures.has(error))throw error;fail('unsafe-data');}}
-  const api=Object.freeze({plan:(...args)=>guarded(implementationPlan,args),verifyPublication:(...args)=>guarded(implementationVerify,args),mergePublication:(...args)=>guarded(implementationMerge,args)});
+  const api=Object.freeze({plan:(...args)=>guarded(implementationPlan,args),extendForOwnedShows:(...args)=>guarded(implementationExtend,args),verifyPublication:(...args)=>guarded(implementationVerify,args),mergePublication:(...args)=>guarded(implementationMerge,args)});
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
   root.RecoveryDeliveryScope=api;
 })(typeof globalThis!=='undefined'?globalThis:this);
+

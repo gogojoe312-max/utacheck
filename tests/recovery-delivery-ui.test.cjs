@@ -249,3 +249,35 @@ test('duplicate matching song titles are unresolved rather than falsely reported
  f.c.fetch=async()=>({ok:true,text:async()=>JSON.stringify(remote)});
  const rows=await f.c.RecoveryDelivery.inspectHeldDifferences('g');assert.match(rows[0].status,/一意に照合できません/);assert(!rows[0].status.includes('相違：'));assert.equal(f.patches(),0);
 });
+
+test('a newly authored same-group performance extends only the existing bound payload and preserves held remote shows',async()=>{
+ const f=await fixture();const plan=Scope.plan(f.c.S,f.packet);f.c.S=plan.state;
+ const target={...clone(plan.targets[0]),status:'ready',preservedShowIds:['show'],heldLocalShowIds:['show'],managedLocalShowIds:[]};
+ f.c.S.recoveryDelivery={version:2,targets:[target]};f.c.S.ghToken='SYNTHETIC_EXISTING_TOKEN';
+ f.c.S.shows.push({id:'new-reny',name:'10/10 新宿ReNY',groupId:'g',ts:1791590400000,from:'show'});
+ f.c.S.songs.push({...clone(f.c.S.songs[0]),id:'new-song',showId:'new-reny'});
+ f.c.S.notes.push({...clone(f.c.S.notes[0]),id:'new-note',showId:'new-reny',songId:'new-song',memo:'new note'});
+ const originalRemote=JSON.parse(f.remote()),before=JSON.stringify([f.c.S.shows,f.c.S.songs,f.c.S.notes]);
+ assert.throws(()=>Scope.mergePublication(plan.targets[0],originalRemote,f.c.publicationData('g',undefined,true)),e=>e.code==='payload-show-out-of-scope');
+ const extended=Scope.extendForOwnedShows(f.c.S,plan.targets[0]);assert.deepEqual(extended.showIds,['show','new-reny']);assert.equal(extended.gistId,plan.targets[0].gistId);
+ assert.equal(await f.c.RecoveryDelivery.push('g',true),'sent');const delivered=JSON.parse(f.remote());
+ assert.deepEqual(delivered.shows.find(show=>show.id==='show'),originalRemote.shows[0]);
+ assert.equal(delivered.shows.find(show=>show.id==='new-reny').name,'10/10 新宿ReNY');
+ assert(delivered.notes.some(note=>note.memo==='new note'));assert(delivered.notes.some(note=>note.memo==='Correction'));
+ assert.equal(JSON.stringify([f.c.S.shows,f.c.S.songs,f.c.S.notes]),before);assert.equal(f.c.S.recoveryDelivery.targets[0].status,'ready');
+ assert.equal(await f.c.RecoveryDelivery.push('g',true),'sent');assert.equal(JSON.parse(f.remote()).shows.filter(show=>show.id==='new-reny').length,1);
+});
+test('new-performance scope rejects private, other-group, recovered, hidden, rerouted and ambiguous material',async()=>{
+ for(const variant of ['private','other','recovered','hidden','mixed','rerouted','private-song','destination','duplicate']){
+  const f=await fixture(),plan=Scope.plan(f.c.S,f.packet);f.c.S=plan.state;
+  const show={id:'new-reny',name:'New',groupId:'g'},song={...clone(f.c.S.songs[0]),id:'new-song',showId:'new-reny'};
+  f.c.S.shows.push(show);f.c.S.songs.push(song);
+  f.c.S.groups.push({id:'other',name:'Other'},{id:'private',name:'Private',nopub:true});
+  if(variant==='private')show.nopub=true;if(variant==='other')show.groupId='other';if(variant==='recovered')show.recoveredSourceShowId='another-source';if(variant==='hidden')show.hidden=true;
+  if(variant==='mixed')show.deliveryMode='song';if(variant==='rerouted')show.deliveryGroupId='other';if(variant==='private-song')song.groupId='private';if(variant==='destination')f.c.S.groups[0].gistId='c'.repeat(32);if(variant==='duplicate')show.id='show';
+  const before=JSON.stringify(f.c.S);
+  if(['private-song','destination','duplicate'].includes(variant))assert.throws(()=>Scope.extendForOwnedShows(f.c.S,plan.targets[0]));
+  else assert.deepEqual(Scope.extendForOwnedShows(f.c.S,plan.targets[0]).showIds,['show']);
+  assert.equal(JSON.stringify(f.c.S),before);assert.equal(f.patches(),0);
+ }
+});
