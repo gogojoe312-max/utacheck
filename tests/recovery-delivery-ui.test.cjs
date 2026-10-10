@@ -242,3 +242,10 @@ test('held difference view identifies section metadata and refuses duplicate loc
  f.c.S.songs.push({...f.c.S.songs[0],id:'duplicate-song',showId:'duplicate'});
  rows=await f.c.RecoveryDelivery.inspectHeldDifferences('g');assert.match(rows[0].status,/照合できません/);assert.equal(f.patches(),0);
 });
+
+test('duplicate matching song titles are unresolved rather than falsely reported as a changed setlist',async()=>{
+ const f=await fixture(),src=enablePreviewBinding(f);f.c.S.shows[0].nopub=false;Object.assign(f.c.S.recoveryDelivery.targets[0],{status:'blocked',heldLocalShowIds:['show']});
+ f.c.S.songs.push({...f.c.S.songs[0],id:'second'});const remote=JSON.parse(f.remote());remote.songs.push({...remote.songs[0]});
+ f.c.fetch=async()=>({ok:true,text:async()=>JSON.stringify(remote)});
+ const rows=await f.c.RecoveryDelivery.inspectHeldDifferences('g');assert.match(rows[0].status,/一意に照合できません/);assert(!rows[0].status.includes('相違：'));assert.equal(f.patches(),0);
+});

@@ -110,9 +110,9 @@
       if(matches.length!==1)return {name:label,status:'照合できません（配信済み公演の対応が一意ではありません）'};
       const left=details(local,own[0]),right=details(remote,matches[0]);
       if(!left||!right)return {name:label,status:'照合できません（曲の参照情報が不足しています）'};
-      const changed=[];const sameOrder=stable(left.titles)===stable(right.titles)&&new Set(left.titles).size===left.titles.length;
-      if(!sameOrder)changed.push('曲数・曲順・曲名');
-      else {
+      const changed=[];const sameSequence=stable(left.titles)===stable(right.titles),sameOrder=sameSequence&&new Set(left.titles).size===left.titles.length;
+      if(!sameSequence)changed.push('曲数・曲順・曲名');
+      if(sameOrder) {
         if(stable(left.lyrics)!==stable(right.lyrics))changed.push('歌詞');
         if(stable(left.parts)!==stable(right.parts)||stable(left.subs)!==stable(right.subs)||stable(left.gsubs)!==stable(right.gsubs))changed.push('歌割・区切り');
         if(stable(left.notes)!==stable(right.notes))changed.push('指摘');
@@ -120,7 +120,7 @@
       }
       const metadata=show=>({name:show.name,folder:show.folder||'',absent:show.absent||[],ts:show.ts??null});
       if(stable(metadata(own[0]))!==stable(metadata(matches[0])))changed.push('公演情報');
-      return {name:label,status:changed.length?'相違：'+changed.join('・'):'表示対象の比較項目は一致。曲情報・引継ぎなど他の設定差分は未比較（保留は解除していません）',
+      return {name:label,status:changed.length?'相違：'+changed.join('・'):!sameOrder?'曲対応を一意に照合できません（同名曲を含むため個別比較は保留）':'表示対象の比較項目は一致。曲情報・引継ぎなど他の設定差分は未比較（保留は解除していません）',
         counts:'手元：'+left.titles.length+'曲・指摘'+left.notes.length+'件 ／ 配信済み：'+right.titles.length+'曲・指摘'+right.notes.length+'件',
         note:sameOrder?'':'曲対応が未確定のため、歌詞・指摘などの個別比較は保留しています。'};
     });
