@@ -35,22 +35,49 @@
   function ready(){return typeof S!=='undefined'&&startupRecoveryNetworkHold&&recordingInboxCanWrite()&&!VIEW()&&!preview&&!document.hidden;}
   function currentBinding(gid){return S.recoveryDelivery?.version===2&&Array.isArray(S.recoveryDelivery.targets)?S.recoveryDelivery.targets.find(t=>t.groupId===gid):null;}
   function canPublish(gid){const b=currentBinding(gid),g=S.groups.find(g=>g.id===gid);return ready()&&!session&&!!S.ghToken&&!!b&&b.status==='ready'&&!!g&&!g.nopub&&g.gistId===b.gistId&&g.src===b.src;}
-  // Preview is a token-free read of an already approved, ready destination.
+  // Preview is a token-free read of an already bound destination, even while sending is held.
   // It never clears the recovery hold or uses the publication transport.
   async function readPreview(src){
     if(!ready()||session||pushing||publishInFlight||REC||(typeof recordingFinalizePending!=='undefined'&&recordingFinalizePending)||(typeof recordingStartPending!=='undefined'&&recordingStartPending)||(typeof pitchStartPending!=='undefined'&&pitchStartPending)||(typeof PT!=='undefined'&&PT.on)||(typeof micStream!=='undefined'&&micStream))fail('not-ready');
     const canonical=gistRawSource(src);
-    const matches=(S.recoveryDelivery?.version===2?S.recoveryDelivery.targets:[]).filter(t=>t.src===src&&t.status==='ready');
+    const matches=(S.recoveryDelivery?.version===2?S.recoveryDelivery.targets:[]).filter(t=>t.src===src);
     if(!canonical||canonical.url!==src||matches.length!==1)fail('target');
     const target=matches[0],g=S.groups.find(g=>g.id===target.groupId);
     if(!g||g.src!==src||g.gistId!==target.gistId||canonical.id!==target.gistId)fail('target');
     const snapshot=JSON.stringify(S),viewSnapshot=JSON.stringify(U),active=()=>ready()&&!session&&!pushing&&!publishInFlight&&!REC&&!(typeof recordingFinalizePending!=='undefined'&&recordingFinalizePending)&&!(typeof recordingStartPending!=='undefined'&&recordingStartPending)&&!(typeof pitchStartPending!=='undefined'&&pitchStartPending)&&!(typeof PT!=='undefined'&&PT.on)&&!(typeof micStream!=='undefined'&&micStream)&&JSON.stringify(S)===snapshot&&JSON.stringify(U)===viewSnapshot;
     const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),30000);
     try{
-      const response=await fetch(src,{method:'GET',headers:{},cache:'no-store',credentials:'omit',redirect:'error',referrerPolicy:'no-referrer',signal:controller.signal});
-      if(!active())fail('local-changed');
-      if(!response.ok)fail('remote');
-      const raw=await response.text();
+      const options={method:'GET',headers:{},cache:'no-store',credentials:'omit',redirect:'error',referrerPolicy:'no-referrer',signal:controller.signal};
+      let raw;
+      try {
+        const response=await fetch(src,options);
+        if(!active())fail('local-changed');
+        if(!response.ok)fail('remote');
+        raw=await response.text();
+      } catch(error) {
+        // Latest raw Gist URLs can redirect. Resolve only this already-bound Gist,
+        // without credentials; never follow an arbitrary redirect or retry a denial.
+        if(error.reconnectCode||controller.signal.aborted)throw error;
+        if(!active())fail('local-changed');
+        const response=await fetch('https://api.github.com/gists/'+canonical.id,options);
+        if(!active())fail('local-changed');
+        if(!response.ok)fail('remote');
+        const metadataRaw=await response.text();
+        if(!active())fail('local-changed');
+        if(new TextEncoder().encode(metadataRaw).length>MAX*2)fail('remote');
+        const metadata=JSON.parse(metadataRaw),file=metadata?.files?.['utacheck.json'];
+        const resolved=gistRawSource(file?.raw_url);
+        if(metadata?.id!==canonical.id||!resolved||resolved.url!==canonical.url)fail('target');
+        if(!file.truncated&&typeof file.content==='string')raw=file.content;
+        else {
+          const pinned=new URL(file.raw_url);
+          if(pinned.search||pinned.hash||!/^\/[A-Za-z0-9_-]+\/[a-f0-9]{5,40}\/raw\/[a-f0-9]{40}\/utacheck\.json$/i.test(pinned.pathname))fail('target');
+          const dataResponse=await fetch(pinned.href,options);
+          if(!active())fail('local-changed');
+          if(!dataResponse.ok)fail('remote');
+          raw=await dataResponse.text();
+        }
+      }
       if(!active())fail('local-changed');
       if(new TextEncoder().encode(raw).length>MAX)fail('remote');
       const data=JSON.parse(raw);
@@ -239,3 +266,4 @@
   document.addEventListener('visibilitychange',()=>{if(document.hidden&&!session?.committing)close();});
   root.RecoveryDelivery=Object.freeze({settingsHTML,open,close,canPublish,hasResumed,pending,push,reconcile,readPreview});
 })(globalThis);
+

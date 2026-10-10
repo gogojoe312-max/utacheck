@@ -113,7 +113,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.54";
+const APP_VER = "16.41.54.1";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -12814,8 +12814,13 @@ async function startPreview(src, key) {
     previewLoading=true;
     try{recoveredPreview=await RecoveryDelivery.readPreview(src);}
     catch(e){
-      alert(e?.reconnectCode==='local-changed' ? "確認中に端末の内容が変わりました。入力が終わってからメンバー画面を開いてください。"
-        : "接続済みの配信内容を読み取れませんでした。送信し直さず、接続状態と通信を確認してください。");
+      const messages={
+        'local-changed':'確認中に端末の内容が変わりました。入力が終わってからメンバー画面を開いてください。',
+        'target':'このグループの配信先と接続記録を照合できないため、メンバー画面を開けません。手元の歌詞・指摘は保持しています。',
+        'encrypted':'配信内容が暗号化されているため、このプレビューでは開けません。手元の歌詞・指摘は保持しています。',
+        'not-ready':'録音・入力・保存が終わってからメンバー画面を開いてください。'
+      };
+      alert(messages[e?.reconnectCode]||'配信内容の読み取りに失敗しました。手元の歌詞・指摘は保持しています。通信が戻ってからメンバー画面を開き直してください。再送は不要です。');
       return;
     }finally{previewLoading=false;}
   }

@@ -150,7 +150,7 @@ test('reconnected member preview reads exact approved raw source without tokens 
  assert.equal(JSON.stringify(f.c.S),before);assert.deepEqual(f.idb.snapshot(),db);assert.equal(f.c.startupRecoveryNetworkHold,true);assert.equal(f.patches(),0);
 });
 test('preview rejects unbound, ambiguous, stale, and changed bindings without widening recovery transport',async()=>{
- for(const kind of ['wrong-source','missing','pending','duplicate','mismatch','legacy']){
+ for(const kind of ['wrong-source','missing','duplicate','mismatch','legacy']){
   const f=await fixture(),src=enablePreviewBinding(f);let n=0;f.c.fetch=async()=>{n++;throw Error('must not fetch');};
   let input=src;if(kind==='wrong-source')input+='?x=1';if(kind==='missing')f.c.S.recoveryDelivery.targets=[];
   if(kind==='pending')f.c.S.recoveryDelivery.targets[0].status='sending';
@@ -185,4 +185,27 @@ test('preview rejects recording, pending microphone starts and navigation during
   await assert.rejects(f.c.RecoveryDelivery.readPreview(src),e=>e.reconnectCode==='local-changed');
   assert.equal(JSON.stringify(f.c.S),before);assert.equal(f.patches(),0);
  }
+});
+
+
+test('preview resolves a blocked latest-raw redirect through the same Gist without credentials or sends',async()=>{
+ const f=await fixture(),src=enablePreviewBinding(f),before=JSON.stringify(f.c.S);const calls=[];
+ f.c.fetch=async(url,opts)=>{calls.push({url,opts});if(url===src)throw new TypeError('redirect blocked');return {ok:true,text:async()=>JSON.stringify({id:f.packet.targets[0].gistId,files:{'utacheck.json':{raw_url:src,content:f.remote()}}})};};
+ const data=await f.c.RecoveryDelivery.readPreview(src);assert.equal(data.songs.length,1);assert.equal(calls.length,2);
+ assert.equal(calls[1].url,'https://api.github.com/gists/'+f.packet.targets[0].gistId);
+ for(const c of calls){assert.equal(c.opts.method,'GET');assert.equal(c.opts.redirect,'error');assert.equal(c.opts.headers.Authorization,undefined);}
+ assert.equal(JSON.stringify(f.c.S),before);assert.equal(f.patches(),0);
+});
+test('preview does not retry HTTP denials and rejects a mismatched fallback Gist',async()=>{
+ for(const mode of ['denied','mismatch']){const f=await fixture(),src=enablePreviewBinding(f);let calls=0;
+ f.c.fetch=async(url)=>{calls++;if(mode==='denied')return {ok:false,status:403};if(url===src)throw new TypeError('redirect');return {ok:true,text:async()=>JSON.stringify({id:'c'.repeat(32),files:{'utacheck.json':{raw_url:src,content:f.remote()}}})};};
+ await assert.rejects(f.c.RecoveryDelivery.readPreview(src));assert.equal(calls,mode==='denied'?1:2);assert.equal(f.patches(),0);}
+});
+
+test('held or uncertain delivery remains read-only previewable without enabling publication',async()=>{
+ for(const status of ['blocked','prepared','sending','uncertain']){
+ const f=await fixture(),src=enablePreviewBinding(f);f.c.S.recoveryDelivery.targets[0].status=status;f.c.S.ghToken='SYNTHETIC_STORED_TOKEN';
+ const before=JSON.stringify(f.c.S),db=f.idb.snapshot();f.c.fetch=async()=>({ok:true,text:async()=>f.remote()});
+ const d=await f.c.RecoveryDelivery.readPreview(src);assert.equal(d.songs.length,1);assert.equal(f.c.RecoveryDelivery.canPublish('g'),false);
+ assert.equal(JSON.stringify(f.c.S),before);assert.deepEqual(f.idb.snapshot(),db);assert.equal(f.patches(),0);}
 });
