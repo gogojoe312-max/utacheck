@@ -150,11 +150,12 @@ test('automatic sending fetches missing previous publication and then patches th
  c.S.shows.push({id:'new',name:'今日',groupId:'ocha'});c.S.songs.push({id:'new-song',title:'新曲',showId:'new',groupId:'ocha',lines:[],blocks:{}});
  const calls=[];c.gh=async(path,opts)=>{calls.push({path,opts});return {files:{'utacheck.json':{content:JSON.stringify(old)}}};};c.wrap=async d=>d;
  vm.runInContext(block('function gistRawSource(', '// 入れたトークン'),c);
+ vm.runInContext(block('async function verifyPublicationSnapshot(', 'function payloadKey('),c);
  vm.runInContext(block('function payloadKey(', '// 送りすぎるとGitHub'),c);
- assert.equal(await run("gistPush('ocha')"),'sent');assert.equal(calls.length,2);
- const d=JSON.parse(JSON.parse(calls[1].opts.body).files['utacheck.json'].content);
+ assert.equal(await run("gistPush('ocha')"),'sent');assert.equal(calls.length,3);
+ const d=JSON.parse(JSON.parse(calls[2].opts.body).files['utacheck.json'].content);
  assert.deepEqual(d.shows.map(x=>x.id),['new','o']);assert.match(c.S.groups[0].publishWarning,/9\/23/);
- assert.equal(await run("gistPush('ocha')"),'same');assert.equal(calls.length,2);
+ assert.equal(await run("gistPush('ocha')"),'same');assert.equal(calls.length,3);
 });
 test('large destination publication retains old permitted shows and their notes',()=>{
  const {c,run}=setup();c.S.shows[0].name='最新公演';c.S.shows.push({id:'older-permitted',name:'保存済みの古い公演',groupId:'ocha',ts:0});

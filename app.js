@@ -113,7 +113,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.56.2";
+const APP_VER = "16.41.56.3";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -11366,6 +11366,34 @@ async function inspectPublication(gid) {
 }
 
 // version は毎回変わるので、それ以外が同じなら送る必要はない
+async function verifyPublicationSnapshot(g, candidate, checkTarget) {
+  const remote = await gh('/gists/' + g.gistId);
+  checkTarget();
+  const file = remote?.files?.['utacheck.json'];
+  if (!file) throw new Error('現在の配信内容を確認できないため送信を止めました。既存の公演・指摘は変更していません。');
+  let content = file.content;
+  if (file.truncated || typeof content !== 'string') {
+    const parsed = gistRawSource(file.raw_url);
+    if (!parsed || parsed.id !== String(g.gistId).toLowerCase()) throw new Error('既存配信の取得先を照合できないため送信を止めました。');
+    content = await boundedPublicationRequest(file.raw_url, {}, async response => {
+      if (!response.ok) throw new Error('既存配信の確認に失敗しました。送信はしていません。');
+      return response.text();
+    });
+  }
+  let previous = JSON.parse(content);
+  if (previous?.enc) previous = await openJSON(previous, g.key || S.key);
+  checkTarget();
+  if (!previous || !Array.isArray(previous.songs)) throw new Error('既存配信の形式を確認できないため送信を止めました。');
+  const known = new Set((S.shows || []).map(sw => sw.id));
+  const incoming = new Set([...(previous.shows || []).map(sw => sw.id), ...previous.songs.map(so => so.showId)].filter(Boolean));
+  const missing = [...incoming].filter(id => !known.has(id));
+  if (missing.length) {
+    const error = new Error('この端末にない配信済み公演が'+missing.length+'件あります。古い保存内容で置き換えないため送信を止めました。正本端末・保存履歴との照合が必要です。');
+    error.code = 'PUBLICATION_SOURCE_INCOMPLETE';
+    throw error;
+  }
+  return previous;
+}
 function payloadKey(d) {
   const c = Object.assign({}, d); delete c.version; delete c.focusShow; return JSON.stringify(c);
 }
@@ -11426,6 +11454,9 @@ async function gistPush(gid, force) {
   g.publishWarning = held.length ? held.map(sw => `「${sw.name}」`).join("、") + "：グループ未設定のため、この公演の更新のみ保留。設定で公演のグループを選択してください。" : "";
   const key = payloadKey(d);
   if (!force && !g.publishKeyPending && samePublicationKey(g.lastKey, key)) return "same";
+  // A stale second device must never prune performances authored elsewhere.
+  // Explicit sends and encryption-key changes must pass the same preservation check.
+  await verifyPublicationSnapshot(g, d, checkTarget);
   const body = JSON.stringify({ files: { "utacheck.json": { content: JSON.stringify(await wrap(d, g)) } } });
   checkTarget();
   try {

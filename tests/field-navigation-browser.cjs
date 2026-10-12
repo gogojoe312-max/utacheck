@@ -28,6 +28,15 @@ function seed(){
   await page.locator('[data-act="rec-group-filter"][data-id="o"]').tap();assert.equal(await page.evaluate(()=>S.rsongId),'oa');assert.equal(await page.locator('[data-act="ruse"][data-id="ra"]').count(),0);
   await page.locator('[data-act="ruse"][data-id="oa"]').tap();assert.equal(await page.evaluate(()=>U.view),'live');await page.locator('[data-act="go-setup"]').tap();
   await page.locator('[data-act="recon"]').tap();assert.equal(await page.evaluate(()=>S.showId),'day');assert.equal(await page.evaluate(()=>S.groupId),'r');assert.equal(await snapshot(),before);
+  const guard=await page.evaluate(async()=>{
+   const oldGh=gh,oldToken=S.ghToken,oldHold=startupRecoveryNetworkHold,g=S.groups.find(x=>x.id==='r'),oldGroup=structuredClone(g),requests=[];
+   try{
+    startupRecoveryNetworkHold=false;S.ghToken='synthetic-only';g.gistId='a'.repeat(32);g.src='https://gist.githubusercontent.com/synthetic/'+g.gistId+'/raw/utacheck.json';g.lastKey='unmatched';
+    gh=async(path,opts)=>{requests.push({path,method:opts?.method||'GET'});return {files:{'utacheck.json':{content:JSON.stringify({shows:[{id:'phone-only'}],songs:[{showId:'phone-only'}]})}}};};
+    const codes=[];for(const force of [false,true])try{await gistPush('r',force);}catch(e){codes.push(e.code);}
+    return {codes,reads:requests.filter(x=>x.method==='GET').length,writes:requests.filter(x=>x.method!=='GET').length};
+   }finally{gh=oldGh;S.ghToken=oldToken;startupRecoveryNetworkHold=oldHold;Object.keys(g).forEach(k=>delete g[k]);Object.assign(g,oldGroup);}
+  });assert.deepEqual(guard,{codes:['PUBLICATION_SOURCE_INCOMPLETE','PUBLICATION_SOURCE_INCOMPLETE'],reads:2,writes:0});assert.equal(await snapshot(),before);
   assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));assert.deepEqual(errors,[]);assert.deepEqual(remote,[]);results.push({...viewport,dataPreserved:true,remoteRequests:0});await context.close();
  }
  console.log(JSON.stringify({results,userProfileUsed:false}));

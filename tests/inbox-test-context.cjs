@@ -8,6 +8,9 @@ module.exports = function createUnenrolledContext(sandbox = {}, options) {
     recordingInboxBeforeBoot: async () => true,
     recordingInboxAdmitWriter: () => () => {},
     enterRecordingInboxEditor: () => () => {},
+    // Transport-only extracted functions mock the independent read preflight.
+    // publication-preservation.test.cjs and full browser tests use its real body.
+    verifyPublicationSnapshot: async () => {},
     ...sandbox,
   };
   if (!('recordingInboxStorageSet' in context)) context.recordingInboxStorageSet = (key, value) => context.localStorage.setItem(key, value);
