@@ -94,13 +94,13 @@ test('a release event follows its actual destination and never the stale import 
  run("setShowFilter('rose')");assert(!run('showsFor()').some(sw=>sw.name==='リリイベ'));
  run("setShowFilter('ocha')");assert(run('showsFor()').some(sw=>sw.name==='リリイベ'));
 });
-test('show filters never change the current performance or publish; all reveals every folder and ignores stale saved filters',()=>{
+test('group navigation opens its latest performance without publishing; All opens folders and ignores stale saved filters',()=>{
  const {c,run,pushes}=setup();c.S.showFilter='ocha';c.S.folders={ロージー:false};c.S.shows[1].folder='ロージー';
  assert.equal(run('showsFor().length'),2);
  for(let i=0;i<20;i++)c.S.shows.push({id:'old'+i,name:'古い公演'+i});
  const before=JSON.stringify([c.S.shows,c.S.songs,c.S.notes,c.S.memos]),current=c.S.showId,group=c.S.groupId;
  run("setShowFilter('ocha');setShowFilter('')");assert.equal(run('showsFor().length'),22);assert.equal(c.S.folders.ロージー,true);
- assert.equal(c.S.showId,current);assert.equal(c.S.groupId,group);assert.equal(pushes(),0);assert.equal(JSON.stringify([c.S.shows,c.S.songs,c.S.notes,c.S.memos]),before);
+ assert.equal(c.S.showId,'o');assert.equal(c.S.groupId,'ocha');assert.equal(pushes(),0);assert.equal(JSON.stringify([c.S.shows,c.S.songs,c.S.notes,c.S.memos]),before);
  assert(!src.includes('allShows.slice(0, 12)'));
 });
 

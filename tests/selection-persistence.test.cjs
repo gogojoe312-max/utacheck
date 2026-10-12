@@ -95,8 +95,8 @@ test('automatic cloud refresh keeps local navigation and establishes a clean bac
 });
 test('boot restores selection before first render, without replacing the state persistence path',()=>{
   const boot=block('/* ---------------- boot ---------------- */', '// 指摘の画面');
-  assert(boot.indexOf('await load()') < boot.indexOf('restoreViewSelection()'));
-  assert(boot.indexOf('restoreViewSelection()') < boot.indexOf('render()'));
+  assert(boot.indexOf('await load()') < boot.indexOf('restoreViewSelection(S.showId, true)'));
+  assert(boot.indexOf('restoreViewSelection(S.showId, true)') < boot.indexOf('render()'));
   assert(source.includes('savePend = JSON.stringify(packState(preview ? JSON.parse(preview) : S))'));
 });
 test('legacy saved selection is seeded before cloud synchronization on the first upgraded boot',async()=>{

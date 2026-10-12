@@ -21,30 +21,29 @@ function fixture(options={}){
  for(const name of ['recoveryMaterialShow','storageSettingsHTML','practiceToolsSettingsHTML','backupSettingsHTML'])vm.runInContext(read(name),c);
  return {c,values,html:()=>c.backupSettingsHTML(),snapshot:()=>JSON.stringify({state:S,local:[...values]})};
 }
-test('normal settings keep backup visible and recovery, old materials and manual REC inputs closed',()=>{
+test('normal settings keep backup visible and remove routine recovery and manual REC controls',()=>{
  const f=fixture(),before=f.snapshot(),html=f.html(),shown=visible(html);
  assert.match(shown,/data-act="bkfile"/);
  for(const action of ['backup-file-restore','show-recovery','recording-schedule-update','recording-addition','recording-inbox-enroll']){
-  assert.match(html,new RegExp('data-act="'+action+'"'));
-  assert.doesNotMatch(shown,new RegExp('data-act="'+action+'"'));
+  assert.doesNotMatch(html,new RegExp('data-act="'+action+'"'));
  }
- assert.match(html,/data-id="__archive__"/);assert.doesNotMatch(shown,/data-id="__archive__"/);
+ assert.doesNotMatch(html,/data-id="__archive__"/);
  assert.equal(f.snapshot(),before);
 });
 test('recovery hold uses the existing file backup action even with saved cloud credentials',()=>{
  const f=fixture({state:{ghToken:'synthetic-token',bkGistId:'synthetic-id',bkAt:123,bkHash:7}});f.c.startupRecoveryNetworkHold=true;
  const html=f.html(),shown=visible(html);
  assert.match(shown,/クラウド保存・他端末との同期は停止中/);assert.match(shown,/data-act="bkfile"/);assert.doesNotMatch(html,/data-act="bknow"/);
- assert.match(html,/recovery-original-backup-check/);assert.match(html,/data-act="backup-restore"/);
+ assert.match(html,/recovery-original-backup-check/);assert.doesNotMatch(html,/data-act="backup-restore"/);
  assert.doesNotMatch(html,/synthetic-token|synthetic-id/);
 });
 test('ordinary connected backup preserves cloud and file actions',()=>{
  const f=fixture({state:{ghToken:'synthetic-token',bkAt:123,bkHash:7}}),shown=visible(f.html());
  assert.match(shown,/data-act="bknow"/);assert.match(shown,/data-act="bkfile"/);
 });
-test('REC retains maintenance restore and manual additions without exposing LIVE archive navigation',()=>{
+test('REC omits routine maintenance markup while restoration implementations remain available',()=>{
  const f=fixture({state:{recMode:true}}),before=f.snapshot(),html=f.html();
- assert.match(html,/data-act="backup-file-restore"/);assert.match(html,/data-act="recording-addition"/);
+ assert.doesNotMatch(html,/data-act="backup-file-restore"|data-act="recording-addition"/);assert.match(src,/async function restoreBackup/);assert.match(src,/function mergeRecordingAddition/);
  assert.doesNotMatch(html,/data-act="show-recovery"|data-id="__archive__"/);assert.equal(f.snapshot(),before);
 });
 test('cloud conflict and failed save status stay visible instead of being collapsed',()=>{

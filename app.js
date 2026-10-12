@@ -113,7 +113,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.55.1";
+const APP_VER = "16.41.56";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1609,7 +1609,7 @@ function rememberViewSelection() {
     recordingInboxStorageSet(viewSelectionKey(), JSON.stringify(saved));
   } catch (_) { /* The normal state save remains available when storage is blocked. */ }
 }
-function restoreViewSelection(previousShowId = S.showId) {
+function restoreViewSelection(previousShowId = S.showId, initial = false) {
   if (preview || S.recMode) return false;
   const saved = readViewSelection();
   if (!saved) return false;
@@ -1621,6 +1621,10 @@ function restoreViewSelection(previousShowId = S.showId) {
   const selected = available.find(sw => sw.id === saved.showId);
   const fallback = available.find(sw => sw.id === S.showId) || available[0];
   S.showId = (selected || fallback || {}).id || "";
+  if (initial) {
+    const latest = latestPerformance(U.showFilter || (!VIEW() && selected && showDeliveryGroupId(selected)) || S.groupId);
+    if (latest) S.showId = latest.id;
+  }
   if (!VIEW()) {
     if (selected && validGroup(saved.groupId)) S.groupId = saved.groupId;
     else if (!validGroup(S.groupId)) S.groupId = (S.groups[0] || {}).id || "";
@@ -1665,8 +1669,19 @@ function showsFor() {
   return regular.filter(sw => showGroupIds(sw).includes(gid)
     || (sw.deliveryMode === "song" && sw.groupId === gid));
 }
+function latestPerformance(groupId) {
+  const list = showsNewestFirst().filter(sw => !sw.hidden && !recoveryMaterialShow(sw)
+    && (!groupId || showGroupIds(sw).includes(groupId) || sw.deliveryMode === "song" && sw.groupId === groupId));
+  const actual = list.filter(sw => !/リハ|通し|ゲネ|rehearsal|(?:^|\s)(?:GP|RH)(?:\s|$)/i.test(sw.name || ""));
+  return actual[0] || list[0] || null;
+}
 function setShowFilter(id) {
+  const previous = U.showFilter;
   U.showFilter = id === "__unassigned__" || id === "__archive__" && !VIEW() || liveGroups().some(g => g.id === id) ? id : "";
+  if (id && id !== previous && liveGroups().some(g => g.id === id)) {
+    const latest = latestPerformance(id);
+    if (latest) { S.showId = latest.id; U.songIdx = 0; syncShowGroup(); }
+  }
   // Browsing never changes the current performance or its publication destination.
   // "All" also opens folders so a saved performance can always be found.
   if (!U.showFilter) S.shows.forEach(sw => { if (sw.folder) S.folders[sw.folder] = true; });
@@ -6020,7 +6035,7 @@ function renderSheet() {
       <button data-act="close" style="width:36px;height:36px;border-radius:10px;background:var(--panel2);font-size:17px">✕</button></div>
 
       <div class="sec"><h4>曲</h4>
-        ${groupRSongs(SONGS()).map(([fname, songs2]) => {
+        ${groupRSongs(recordingSelectionSongs()).map(([fname, songs2]) => {
           const rows = songs2.map((x) => {
             const i = SONGS().findIndex((y) => y.id === x.id);
             return `<button class="ghost" data-act="ruse" data-id="${x.id}"
@@ -7000,21 +7015,7 @@ function backupSettingsHTML() {
       <button class="ghost" data-act="bkfile">この端末をファイルに保存</button>
       <button class="ghost" data-act="backup-check">クラウドをもう一度確認</button></div>` : ''}
   </div>
-  <details class="practice-tools card" data-settings-panel="recovery"><summary>復元・旧資料</summary>
-    ${recoveryOriginalBackupHTML()}
-    ${S.ghToken ? '<button class="ghost" data-act="backup-restore">クラウドから復元</button>' : ""}
-    <button class="ghost" data-act="backup-file-restore">${startupRecoveryNetworkHold?'公演・指摘の救出ファイルを追加':'ファイルから復元'}</button>
-    ${startupRecoveryNetworkHold?'<p class="note">救出用の追加ファイルは現在の資料・REC・追加指摘を保持して取り込みます。自動送受信は停止したままです。</p>':''}
-    ${!S.recMode ? '<button class="ghost" data-act="show-recovery">公演を探す・復元</button>' : ''}
-    ${!S.recMode && S.shows.some(recoveryMaterialShow) ? `<p class="note">救出した元資料・過去の配信履歴を保持しています。</p><button class="ghost" data-act="showfilter" data-id="__archive__">保管資料を見る</button>` : ''}
-    ${S.ghToken && S.bkGistId ? '<button class="ghost" data-act="backup-inspect">クラウドを確認（送信・復元しない）</button>' : ''}
-    ${syncReadReport ? `<p class="note" role="status" style="white-space:pre-wrap">${h(syncReadReport)}</p>` : ''}
-  </details>
-  <details class="practice-tools card" data-settings-panel="recording-import"><summary>REC資料の手動取り込み・接続</summary>
-    <button class="ghost" data-act="recording-schedule-update">REC時間割の変更ファイルを適用</button>
-    <button class="ghost" data-act="recording-addition">録音曲・時間割を追加用ファイルから追加</button>
-    ${recordingInboxSettingsHTML()}
-  </details>
+  ${startupRecoveryNetworkHold ? recoveryOriginalBackupHTML() : ""}
   ${storageSettingsHTML()}`;
 }
 
@@ -7032,12 +7033,11 @@ function memberPreviewSettings() {
   return `<h4 class="head">メンバー画面</h4><div class="card">
     ${groups.length ? groups.map(g => `<button class="ghost member-preview-link" data-act="pvnow" data-id="${h(g.id)}">${h(g.name)}のメンバー画面を見る</button>`).join("")
       : '<p class="note">グループの自動公開を始めると、配信したメンバー画面を確認できます。</p>'}
-    ${liveGroups().filter(g => !g.nopub).map(g => `<button class="ghost" data-act="publication-inspect" data-id="${h(g.id)}">${h(g.name)}の配信状況を確認（送信なし）</button>`).join("")}
   </div>`;
 }
 
 function viewSetupRec() {
-  const cur = SONGS();
+  const cur = recordingSelectionSongs();
   const songRow = (x) => `<div class="row card" data-drop="r:${x.id}" style="margin-bottom:8px;padding:10px 12px;${x.id === S.rsongId ? "outline:1px solid var(--accent)" : ""}">
       <span class="grip" data-drag="rec:${x.id}">⣿</span>
       <button class="grow" style="text-align:left;min-width:0" data-act="ruse" data-id="${x.id}">
@@ -7071,15 +7071,16 @@ function viewSetupRec() {
     ${U.busy ? `<span style="font-size:12px;color:var(--accent)">${h(U.busy)}</span>`
              : `<button data-act="recon" class="chip sm" style="color:var(--accent)">レコーディングモード ⇄</button>`}</div>
   <div class="scroll pad">
-    ${lyricDisplaySettings()}
-    ${recMemberSelector()}
-    <details class="card" data-settings-panel="rec-materials"><summary>録音曲・資料を管理</summary>
+    <section data-settings-panel="rec-materials">
+    ${recordingGroupSelector()}
     <h4 class="head">曲</h4>
     <div class="organize-create"><button class="chip" data-act="newfolder" data-rec="1">＋ フォルダを作成</button></div>
     ${list || `<p class="note">曲がありません</p>`}
     <div class="card"><button class="primary" data-act="rpick">歌詞のWord / PDF / Excelを読み込む（複数可）</button></div>
 
-    </details>
+    </section>
+    ${recMemberSelector()}
+    ${lyricDisplaySettings()}
     <h4 class="head">操作パネル</h4>
     <div class="card"><button class="primary" data-act="pt-settings">Pro Tools操作・表示設定</button></div>
 
@@ -7097,6 +7098,26 @@ function viewSetupRec() {
     ${footerHTML()}
     <div style="height:40px"></div>
   </div>`;
+}
+
+function recordingSelectionSongs() {
+  const selected = U.recGroupFilter === undefined ? (S.rsongs.find(x => x.id === S.rsongId)?.groupId || "") : U.recGroupFilter;
+  return selected && S.rsongs.some(x => x.groupId === selected) ? S.rsongs.filter(x => x.groupId === selected) : S.rsongs.slice();
+}
+function recordingGroupSelector() {
+  const groups = S.groups.filter(g => S.rsongs.some(x => x.groupId === g.id));
+  const selected = U.recGroupFilter === undefined ? (S.rsongs.find(x => x.id === S.rsongId)?.groupId || "") : U.recGroupFilter;
+  return '<div class="chips"><button class="chip sm" data-act="rec-group-filter" data-id="" aria-pressed="'+!selected+'">全曲</button>'+groups.map(g => '<button class="chip sm" data-act="rec-group-filter" data-id="'+h(g.id)+'" aria-pressed="'+(selected===g.id)+'">'+h(g.name)+'</button>').join('')+'</div>';
+}
+function selectRecordingGroup(id) {
+  if (VIEW() || id && !S.groups.some(g => g.id === id)) return;
+  U.recGroupFilter = id;
+  const list = recordingSelectionSongs();
+  if (!list.some(x => x.id === S.rsongId) && list.length) {
+    const latest = list.slice().sort((a,b) => Number(b.at || 0)-Number(a.at || 0))[0];
+    S.rsongId = latest.id; U.songIdx = SONGS().findIndex(x => x.id === latest.id); U.secView = "";
+  }
+  render(); if (U.picker) renderSheet();
 }
 
 // いま録っている人（進行で開いた人があればその人）。曲名と同じ大きさで出す。
@@ -8358,22 +8379,15 @@ function viewSetup() {
     ${U.busy ? `<span style="font-size:12px;color:var(--accent)">${h(U.busy)}</span>`
              : `<button data-act="recon" class="chip sm" style="color:var(--accent)">ライブモード ⇄</button>`}</div>
   <div class="scroll pad">
-    ${memberPreviewSettings()}
-    ${lyricDisplaySettings()}
-    <h4 class="head">指摘</h4><div class="card"><button class="primary" data-act="go-summary">指摘の集計を見る</button></div>
-    <details class="card" data-settings-panel="live-materials"><summary>公演・セットリストを管理</summary>
-    <h4 class="head">公演</h4>
-    <div class="organize-create"><button class="primary" data-act="newshow">＋ 公演を追加</button><button class="chip" data-act="newfolder">＋ フォルダ</button></div>
+    <section data-settings-panel="live-materials">
+    <p class="note">本人の保存内容です。メンバー画面には配信済みの内容が表示されます。</p>
     ${S.shows.some(sw => !sw.hidden && sw.deliveryMode !== "song" && !showDeliveryGroupId(sw)) ? `<button class="ghost" data-act="showfilter" data-id="__unassigned__" style="color:var(--bad);margin-bottom:12px">グループ未設定の公演を確認</button>` : ""}
     ${liveGroups().length > 1 || !!U.showFilter ? `<div class="chips" style="margin-bottom:10px">
       <button class="chip sm" data-act="showfilter" data-id="" style="${!U.showFilter ? "background:var(--accent);color:#0A0A0A" : ""}">全公演を表示</button>
       ${liveGroups().map((g) => `<button class="chip sm" data-act="showfilter" data-id="${g.id}"
         style="${U.showFilter === g.id ? "background:var(--accent);color:#0A0A0A" : ""}">${h(g.name)}</button>`).join("")}
     </div>` : ""}
-    ${shows}
-    ${folderNames().length ? `<details><summary>フォルダを管理</summary>${folderNames().map(name=>`<div class="row card" data-drop="f:${h(name)}"><span class="grow">${h(name)}</span><button class="chip sm" data-act="newshow" data-folder="${h(name)}">＋公演</button><button class="organize-more" data-act="frename" data-id="${h(name)}" aria-label="${h(name)}の名前を変更">⋯</button></div>`).join("")}</details>` : ""}
-    ${U.showFilter === "__archive__" ? '<button class="ghost" data-act="showfilter" data-id="">通常の公演に戻る</button>' : ''}
-
+    <h4 class="head">${h(activeShow?.name || "公演を選択")}</h4>
     <h4 class="head">セットリスト</h4>
     ${cur.length ? bar : ""}
     ${songs}
@@ -8382,34 +8396,17 @@ function viewSetup() {
       <div style="font-size:11px;color:var(--dim);margin-top:6px">取り込み先：${h(activeShow.name)} ・ ${h(group().name || "")}</div>
     </div>`}
 
-    </details>
-    <h4 class="head">配信設定</h4>
-    ${typeof RecoveryDelivery!=="undefined" ? RecoveryDelivery.settingsHTML() : ""}
-    ${startupRecoveryNetworkHold ? `<p class="note" role="status">${S.recoveryDelivery?.version===2&&S.recoveryDelivery?.targets?.some(t=>t.status==='ready')?"確認した既存先だけ配信を再開しています。バックアップ・他端末の自動同期は停止中です。":"復旧した公演の配信は再接続待ちです。"}${!S.ghToken ? "この端末に配信の認証情報がありません。" : "元の配信先と公開範囲の確認が必要です。"}元の保存先と接続を確認してから再開します。</p>` : ""}
-    <details class="card"><summary>接続・グループを管理</summary>
-    ${liveGroups().map((g) => {
-      const n = SONGS().filter((x) => songDeliveryGroupId(x) === g.id).length;
-      const cur = g.id === S.groupId;
-      return `<div class="row card" style="padding:9px 12px;margin-bottom:6px;${cur ? "outline:1px solid var(--accent)" : ""}">
-        <button class="grow" style="text-align:left;min-width:0" data-act="usegroup" data-id="${g.id}" ${!activeShow ? "disabled" : ""}>
-          <div class="trunc" style="font-size:14px;${cur ? "color:var(--accent)" : ""}">${h(g.name)}</div>
-          <div style="font-size:11px;color:var(--dim)">${n}曲 ・ ${g.nopub ? "配信しない" : g.gistId ? (g.key ? "配信中・合言葉あり" : "配信中") : "未接続"}${cur ? (S.shows.find(sw => sw.id === S.showId)?.deliveryMode === "song" ? " ・ 取り込み先（曲ごとに配信）" : " ・ この公演の配信先・取り込み先") : ""}</div>
-        </button>
-        <button data-act="gmenu" data-id="${g.id}" style="padding:6px 10px;color:var(--dim);font-size:17px">⋯</button>
-      </div>`;
-    }).join("")}
-    ${S.groups.some(g => !liveGroups().includes(g)) ? `<details><summary>REC・保管用グループ</summary>
-      ${S.groups.filter(g => !liveGroups().includes(g)).map(g => `<div class="row card"><span class="grow">${h(g.name)}</span><button class="chip" data-act="gmenu" data-id="${h(g.id)}">設定</button></div>`).join("")}
-    </details>` : ""}
-    <div class="row" style="margin-bottom:22px">
-      <input class="field grow" id="newgroup" placeholder="グループ名">
-      <button class="chip" data-act="addgroup">追加</button>
-    </div>
-    <div class="row" style="margin-top:8px">
-      ${S.groups.some((g) => g.nopub) ? "" : `<button class="chip sm" data-act="addnopub">「配信しない」グループを作る</button>`}
-    </div>
+    <details class="card"><summary>公演を選ぶ・追加</summary>
+    <h4 class="head">公演</h4>
+    <div class="organize-create"><button class="primary" data-act="newshow">＋ 公演を追加</button><button class="chip" data-act="newfolder">＋ フォルダ</button></div>
+    ${shows}
+    ${folderNames().length ? `<details><summary>フォルダを管理</summary>${folderNames().map(name=>`<div class="row card" data-drop="f:${h(name)}"><span class="grow">${h(name)}</span><button class="chip sm" data-act="newshow" data-folder="${h(name)}">＋公演</button><button class="organize-more" data-act="frename" data-id="${h(name)}" aria-label="${h(name)}の名前を変更">⋯</button></div>`).join("")}</details>` : ""}
+    ${U.showFilter === "__archive__" ? '<button class="ghost" data-act="showfilter" data-id="">通常の公演に戻る</button>' : ''}
 
     </details>
+    </section>
+    ${memberPreviewSettings()}
+    ${lyricDisplaySettings()}
     ${(() => { const gg = group(); return !startupRecoveryNetworkHold && gg && gg.gistId && !gg.nopub && !showNoPub(); })() ? `
     <h4 class="head">ライブ中のお知らせ</h4>
     <div class="card" style="margin-bottom:22px">
@@ -8461,48 +8458,6 @@ function viewSetup() {
 
     <h4 class="head">歌割をPDFにする</h4>
     <div class="card"><button class="primary" data-act="gopdf">PDFにする</button></div>
-
-    <h4 class="head">自動公開</h4>
-    <details class="practice-tools card" data-settings-panel="publication" ${publishIssues.length ? "open" : ""}><summary>自動公開の接続設定</summary>
-      ${startupRecoveryNetworkHold ? `<p class="note">復旧中は上の「既存の配信先に再接続」を使ってください。通常の新規公開は停止しています。</p>` : S.ghToken ? `<div class="row" style="margin-bottom:10px">
-          <span class="grow" style="font-size:13px">トークン設定済み　<span style="color:var(--dim)">${h(pushState || "待機中")}</span></span>
-          <button class="chip sm" data-act="autopub" style="${S.autoPub ? "background:var(--accent);color:#0A0A0A" : ""}">自動${S.autoPub ? "オン" : "オフ"}</button>
-        </div>
-        ${publishIssues.length ? `<div role="status" style="color:var(--bad);font-size:13px;white-space:pre-wrap;margin-bottom:12px">${publishIssues.map(h).join("<br>")}</div><button class="ghost" data-act="showfilter" data-id="__unassigned__">グループ未設定の公演を確認</button>` : ""}
-        <button class="ghost" data-act="ghpush" style="margin-bottom:8px">今すぐ送信</button>
-        <button class="ghost" data-act="ghverify" style="margin-bottom:8px">トークンを確認する</button>
-        <button class="ghost" data-act="ghclear" style="color:var(--bad)">トークンを入れ直す</button>
-        `
-        : `<div class="row" style="margin-bottom:8px">
-            <input class="field grow" id="ghtoken" type="password" placeholder="ghp_ で始まる文字列" value="">
-            <button class="chip" data-act="ghtoken">確認して保存</button>
-          </div>
-          <div style="font-size:11px;color:var(--dim);margin-top:6px">Tokens (classic) / gist</div>`}
-    </details>
-
-    <h4 class="head">ほかの端末と揃える</h4>
-    <details class="practice-tools card" data-settings-panel="sync"><summary>端末間の同期・接続先</summary>
-      ${(() => {
-        const linked = !!(S.ghToken && S.bkGistId);
-        if (startupRecoveryNetworkHold) return '<p class="note">復旧保護中のため、他端末との同期は停止しています。現在の内容はバックアップの「ファイルに保存」から保管できます。</p>';
-        return `<div class="row" style="margin-bottom:8px">
-          <span class="grow" style="font-size:13px">${linked ? "つながっています" : "つながっていません"}</span>
-          <span style="font-size:11px;color:${linked ? "var(--good)" : "var(--bad)"};font-weight:700">${linked ? "同期あり" : "同期なし"}</span>
-        </div>
-        <div style="font-size:11px;color:var(--dim);line-height:1.7;margin-bottom:8px">
-          ${linked
-            ? `つなぎ先 ${h(String(S.bkGistId).slice(0, 7))}…<br>
-               最後のやりとり ${S.bkAt ? new Date(S.bkAt).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "まだありません"}<br>
-               この端末の内容は ${bkSignature() === S.bkHash ? "送信済みです" : "<b style=\"color:var(--accent)\">まだ送っていません</b>"}`
-            : `${S.ghToken ? "つなぎ先が決まっていません。" : "GitHubのトークンが入っていません。"}
-               MacとiPhoneで同じつなぎ先にすると、公演も曲も揃います。`}
-        </div>
-        <button class="primary" data-act="syncnow" style="margin-bottom:8px">今すぐ揃える</button>
-        <button class="ghost" data-act="bkpick" style="margin-bottom:8px">つなぎ先を変える</button>
-        <div style="font-size:11px;color:var(--dim)">つなぎ先がずれていると、片方の内容はもう片方に出てきません。<br>
-          両方の端末でこの番号が同じか確かめてください。</div>`;
-      })()}
-    </details>
 
     ${backupSettingsHTML()}
 
@@ -9643,6 +9598,7 @@ document.addEventListener("click", (e) => {
       U.menu = null; save(); renderSheet(); render(); break;
     }
     case "rlist": U.menu = { kind: "rlist" }; renderSheet(); break;
+    case "rec-group-filter": selectRecordingGroup(id); break;
     case "ruse": {
       U.secView = "";
       S.rsongId = id;
@@ -12593,6 +12549,8 @@ function resetForNewSource() {
 
 function applySetlist(d) {
   if (!VIEW()) return;
+  const initialSource = !S.songs.length || !!(d.groupName && S.srcGroup && d.groupName !== S.srcGroup);
+  const currentSelection = S.showId;
   const summaryContext = VIEW() && U.view === "summary" && S.songs.length
     && (!d.groupName || !S.srcGroup || d.groupName === S.srcGroup)
     ? {showId:S.showId, memberName:(member(U.sumOpen) || {}).name} : null;
@@ -12685,11 +12643,13 @@ function applySetlist(d) {
       const nid = uid();
       S.shows = [{ id: nid, name: todayLabel(), ts: Date.now() }];
     }
-    const focus = d.focusShow && S.shows.some((x) => x.id === d.focusShow)
+    const newest = initialSource && latestPerformance(S.groupId);
+    const focus = newest ? newest.id : d.focusShow && S.shows.some((x) => x.id === d.focusShow)
       ? d.focusShow
       : ((showsNewestFirst().filter((x) => !x.hidden)[0] || {}).id || "");
-    const keepShow = summaryContext && S.shows.some(sw => sw.id === summaryContext.showId);
-    if (keepShow) S.showId = summaryContext.showId;
+    const keepShow = summaryContext && S.shows.some(sw => sw.id === summaryContext.showId)
+      || !initialSource && S.shows.some(sw => sw.id === currentSelection);
+    if (keepShow) S.showId = summaryContext ? summaryContext.showId : currentSelection;
     else if (focus) S.showId = focus;
     // メンバー別の確認中は、公演と開いている人を更新後も保持する。
     U.view = summaryContext ? "summary" : "live";
@@ -12701,7 +12661,7 @@ function applySetlist(d) {
     U.picker = false;
   }
   U.songIdx = 0;
-  if (!U.summaryReturn) restoreViewSelection();
+  if (!U.summaryReturn) restoreViewSelection(S.showId, initialSource);
   save(); render();
 }
 
@@ -13089,7 +13049,7 @@ function copyText(t, msg) {
   if (await load() === false) return;
   booted = true;
   if(startupRecoveryRestoredView){U.view='setup';U.showFilter='';U.songIdx=0;rememberViewSelection();}
-  else{restoreViewSelection();if (!readViewSelection()) rememberViewSelection();}
+  else{restoreViewSelection(S.showId, true);if (!readViewSelection()) rememberViewSelection();}
   if (VIEW() || /^#g=/.test(location.hash)) { U.view = "summary"; U.mode = "member"; }
   if (VIEW()) restoreViewerMember();
   // Keep the original localStorage copy for recovery after a successful import.

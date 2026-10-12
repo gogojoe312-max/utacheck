@@ -25,9 +25,9 @@ test('archived show edit keeps its existing selected group option',()=>{
  assert.match(c.organizeSheetHTML({mode:'show',id:'archiveShow'}),/<option value="archive" selected>/);
 });
 test('member preview diagnostics omit empty and REC-only groups',()=>{
- const c=fixture();c.S.groups.forEach(g=>g.nopub=false);c.h=String;
+ const c=fixture();c.S.groups.forEach(g=>g.nopub=false);c.S.groups.find(g=>g.id==='live').src='https://example.invalid/read-only';c.h=String;
  vm.runInContext(read('memberPreviewSettings'),c);const html=c.memberPreviewSettings();
- assert(!html.includes('グループ1'));assert(!html.includes('10/8'));assert(!html.includes('元Excel'));assert(html.includes('復旧グループ'));
+ assert(!html.includes('グループ1'));assert(!html.includes('10/8'));assert(!html.includes('元Excel'));assert(html.includes('復旧グループ'));assert(!html.includes('publication-inspect'));
 });
 test('opening the main picker leaves archive browsing and exposes normal shows',()=>{
  const c=fixture();c.U.showFilter='__archive__';let rendered=false;c.renderSheet=()=>{rendered=true;};
