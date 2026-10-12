@@ -113,7 +113,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.56";
+const APP_VER = "16.41.56.1";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1670,8 +1670,11 @@ function showsFor() {
     || (sw.deliveryMode === "song" && sw.groupId === gid));
 }
 function latestPerformance(groupId) {
-  const list = showsNewestFirst().filter(sw => !sw.hidden && !recoveryMaterialShow(sw)
-    && (!groupId || showGroupIds(sw).includes(groupId) || sw.deliveryMode === "song" && sw.groupId === groupId));
+  // Received shows can retain the editor's old group/archive metadata. Their
+  // already received songs, scoped to this source, define viewer navigation.
+  const list = showsNewestFirst().filter(sw => !sw.hidden && (VIEW()
+    ? S.songs.some(so => so.showId === sw.id && (!groupId || !so.groupId || so.groupId === groupId))
+    : !recoveryMaterialShow(sw) && (!groupId || showGroupIds(sw).includes(groupId) || sw.deliveryMode === "song" && sw.groupId === groupId)));
   const actual = list.filter(sw => !/リハ|通し|ゲネ|rehearsal|(?:^|\s)(?:GP|RH)(?:\s|$)/i.test(sw.name || ""));
   return actual[0] || list[0] || null;
 }

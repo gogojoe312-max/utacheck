@@ -74,6 +74,12 @@ test('first source opens latest actual show instead of published rehearsal focus
  assert.equal(S.showId,'night');assert.equal(S.shows.length,2);assert(!S.shows.some(sw=>/ReNY/.test(sw.name)));
  S.showId='rh';c.applySetlist(wire);assert.equal(S.showId,'rh');assert.equal(S.shows.length,2);
 });
+test('received-source latest show uses permitted songs rather than stale editor group and recovered-material metadata',()=>{
+ const {c,S}=setup();S.groups=[{id:'member',name:'Group'}];S.groupId='member';
+ S.shows=[{id:'rh',name:'通しリハ',ts:100,groupId:'old'},{id:'night',name:'10/4 熊谷夜公演',ts:90,groupId:'old',recoverySource:'original-workbooks'},{id:'bookmark',name:'ブックマーク',ts:1,groupId:'member'},{id:'foreign',name:'別グループ最新公演',ts:200}];
+ S.songs=[{showId:'rh',groupId:'member'},{showId:'night',groupId:'member'},{showId:'bookmark',groupId:'member'},{showId:'foreign',groupId:'other'}];
+ const before=JSON.stringify(S);assert.equal(c.latestPerformance('member').id,'night');assert.equal(JSON.stringify(S),before);
+});
 test('recovery trusts matching metadata instead of embedded source and rejects mismatched metadata before mutation',()=>{
  const {c,S}=setup();vm.runInContext(block('function mergeDelivery(', 'async function restoreFromId('),c);
  const d={groupName:'Group',src:raw(other),songs:[],shows:[]};
