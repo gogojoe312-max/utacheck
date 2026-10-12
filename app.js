@@ -113,7 +113,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.2";
+const APP_VER = "16.41.58.3";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -11034,7 +11034,7 @@ function publicationData(gid, previous, isolatedLibraries = false) {
       alert: (S.alertMsg && (!(S.alertMsg.to || []).length || S.alertMsg.to.includes(g.id)))
         ? S.alertMsg : null,                                      // ライブ中のお知らせ（相手を絞れる）
       groupOrder: g.name ? [g.name] : [],                        // 配信先だけ
-      folderOrder: (S.folderOrder || []).slice(),                 // 公演の箱の並び
+      folderOrder: (S.folderOrder || []).filter(name => S.shows.some(sw => showIds.includes(sw.id) && sw.folder === name)),                 // 公演の箱の並び
       lib,
       songs: songs.map((x) => ({
         showId: x.showId, libIdx: entry(x), take: x.take || 1,
@@ -11074,7 +11074,7 @@ function publicationData(gid, previous, isolatedLibraries = false) {
         });
         return arr;
       })(),
-      notes: S.notes.filter((n) => idx.has(n.songId)).map((n) => ({
+      notes: S.notes.filter((n) => idx.has(n.songId) && songs.some(so => so.id === n.songId && so.showId === n.showId)).map((n) => ({
         songIdx: idx.get(n.songId), lineIdx: n.lineIdx,
         memberNames: n.memberIds.map((mid) => (member(mid) || {}).name).filter(Boolean),
         tags: n.tags, memo: n.memo, ...(n.hand ? {hand:JSON.parse(JSON.stringify(n.hand))} : {}), pitch: n.pitch || null, lineEnd: n.lineEnd || null,
@@ -11082,7 +11082,7 @@ function publicationData(gid, previous, isolatedLibraries = false) {
       })),
       memos: Object.entries(S.memos || {}).map(([k, v]) => {
         const [sid, sgid] = k.split("|");
-        return idx.has(sgid) ? { showId: sid, songIdx: idx.get(sgid), text: v } : null;
+        return idx.has(sgid) && songs.some(so => so.id === sgid && so.showId === sid) ? { showId: sid, songIdx: idx.get(sgid), text: v } : null;
       }).filter((x) => x && x.text),
     };
   };
@@ -11128,8 +11128,10 @@ function retainUnresolvedPublication(current, previous, unresolved, g) {
     current.songs.push({...so, libIdx, fromIdx:map.has(so.fromIdx) ? map.get(so.fromIdx) : null});
   }
   current.shows.push(...kept);
+  const visibleFolders=new Set(current.shows.map(sw=>sw.folder).filter(Boolean));
+  current.folderOrder=[...new Set([...(current.folderOrder||[]),...(previous.folderOrder||[])])].filter(name=>visibleFolders.has(name));
   for (const field of ["notes", "memos", "subs", "gsubs"]) {
-    current[field].push(...(previous[field] || []).filter(x => map.has(x.songIdx))
+    current[field].push(...(previous[field] || []).filter(x => map.has(x.songIdx) && (!x.showId || x.showId === previous.songs[x.songIdx]?.showId))
       .map(x => ({...x, songIdx:map.get(x.songIdx)})));
   }
   const names = new Set(current.members.map(m => m.name));

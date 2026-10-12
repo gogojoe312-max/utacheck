@@ -29,6 +29,16 @@ function seed(){
   await page.locator('[data-act="rec-group-filter"][data-id="o"]').tap();assert.equal(await page.evaluate(()=>S.rsongId),'oa');assert.equal(await page.locator('[data-act="ruse"][data-id="ra"]').count(),0);
   await page.locator('[data-act="ruse"][data-id="oa"]').tap();assert.equal(await page.evaluate(()=>U.view),'live');await page.locator('[data-act="go-setup"]').tap();
   await page.locator('[data-act="recon"]').tap();assert.equal(await page.evaluate(()=>S.showId),'day');assert.equal(await page.evaluate(()=>S.groupId),'r');assert.equal(await snapshot(),before);
+  const privateBoundary=await page.evaluate(()=>{
+    const original=JSON.stringify(S);
+    S.groups.push({id:'off-boundary',name:'配信しない',nopub:true});
+    S.shows.push({id:'private-boundary',groupId:'off-boundary',nopub:true,name:'private',folder:'PRIVATE FOLDER'});
+    S.folderOrder=['PRIVATE FOLDER','秋ツアー'];
+    S.notes.push({id:'private-note',songId:'n',showId:'private-boundary',memberIds:[],tags:[],lineIdx:0,memo:'PRIVATE NOTE'});
+    S.memos['private-boundary|n']='PRIVATE MEMO';
+    const before=JSON.stringify(S),payload=publicationData('r');
+    const result={excluded:!JSON.stringify(payload).includes('PRIVATE'),preserved:JSON.stringify(S)===before,folders:payload.folderOrder};S=JSON.parse(original);return result;
+  });assert.equal(privateBoundary.excluded,true);assert.equal(privateBoundary.preserved,true);assert.deepEqual(privateBoundary.folders,['秋ツアー']);
   const guard=await page.evaluate(async()=>{
    const oldGh=gh,oldToken=S.ghToken,oldHold=startupRecoveryNetworkHold,g=S.groups.find(x=>x.id==='r'),oldGroup=structuredClone(g),requests=[];
    try{

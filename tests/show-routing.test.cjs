@@ -184,3 +184,8 @@ test('legacy private overrides survive whole-show group changes and clearing a p
  run("setShowDelivery('o','ocha')");assert.equal(c.S.songs[0].deliveryGroupId,'off');
  const before=JSON.stringify(c.S.songs);run("setSongDelivery(['a'],'')");assert.equal(JSON.stringify(c.S.songs),before);
 });
+test('private folder metadata and mismatched private-show annotations never enter a public payload',()=>{
+ const {c,run}=setup();c.S.shows[0].folder='public folder';c.S.shows.push({id:'private-show',name:'private show',groupId:'off',nopub:true,folder:'PRIVATE FOLDER'});c.S.folderOrder=['PRIVATE FOLDER','public folder'];
+ c.S.notes.push({songId:'a',showId:'private-show',memberIds:[],tags:[],lineIdx:0,memo:'PRIVATE NOTE'});c.S.memos['private-show|a']='PRIVATE MEMO';const before=JSON.stringify(c.S);
+ const payload=run("publicationData('ocha')");assert.deepEqual(Array.from(payload.folderOrder),['public folder']);assert(!JSON.stringify(payload).includes('PRIVATE'));assert.equal(JSON.stringify(c.S),before);
+});
