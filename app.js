@@ -113,7 +113,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58";
+const APP_VER = "16.41.58.1";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -2092,24 +2092,14 @@ const changedCount = () => SONGS().reduce((a, so) => a
   + so.lines.filter((l, i) => lineStatus(so, i) === "changed" && !blockOf(so, i)).length
   + blocksOf(so).filter((b) => blockStatus(so, b) === "changed").length, 0);
 
-// 録音は30日で自動的に消す（容量を食うため）
+// 録音と救出用の原本は自動削除しない。
 const REC_DAYS = 30;
 function purgeRecs() {
-  if(typeof startupRecoveryNetworkHold!=='undefined'&&startupRecoveryNetworkHold)return 0;
-  const lim = Date.now() - REC_DAYS * 86400000;
-  const keep = trashClips();
-  let n = 0;
-  Object.keys(S.recs || {}).forEach((k) => {
-    const r = S.recs[k];
-    if (!r || !r.ts || r.ts >= lim) return;
-    if (keep.indexOf(k) >= 0) return;          // ゴミ箱にある分は残す
-    delClip(k); delete S.recs[k]; n++;
-  });
-  if (n) save();
-  return n;
+  // A date or quota cannot authorize deletion of an original recording.
+  return 0;
 }
 
-/* ---- ゴミ箱（30日は戻せる） ---- */
+/* ---- ゴミ箱（本人が確認するまで原本保持） ---- */
 const TRASH_DAYS = 30;
 const trashClips = () => {
   const out = [];
@@ -2117,14 +2107,8 @@ const trashClips = () => {
   return out;
 };
 function purgeTrash() {
-  if(typeof startupRecoveryNetworkHold!=='undefined'&&startupRecoveryNetworkHold)return;
-  const lim = Date.now() - TRASH_DAYS * 86400000;
-  const keep = [], gone = [];
-  (S.trash || []).forEach((t) => (t.at < lim ? gone.push(t) : keep.push(t)));
-  if (!gone.length) return;
-  gone.forEach((t) => (t.clips || []).forEach((k) => delClip(k)));
-  S.trash = keep;
-  save();
+  // Retain original notes, songs and clip references until explicit review.
+  return;
 }
 // 消す前に、戻せるように控えておく
 function toTrash(kind, label, songs, shows) {
@@ -2195,24 +2179,9 @@ function orderTakes() {
 
 // 曲や公演を消したときに残る、行き場のないデータを片付ける
 function sweep() {
-  if(typeof startupRecoveryNetworkHold!=='undefined'&&startupRecoveryNetworkHold)return;
-  // レコーディングの曲は S.songs に居ない。ここに入れ忘れると、
-  // その曲に付けた手書き・メモ・録音・指摘が起動のたびに消える。
-  const songIds = S.songs.map((x) => x.id).concat((S.rsongs || []).map((x) => x.id));
-  const showIds = S.shows.map((x) => x.id);
-  const alive = (k) => {
-    const p = String(k).split("|");
-    return showIds.includes(p[0]) && (p.length < 2 || songIds.includes(p[1]));
-  };
-  ["subs", "subsMan", "gsubs", "memos", "staffMemos", "draws"].forEach((name) => {
-    Object.keys(S[name] || {}).forEach((k) => { if (!alive(k)) delete S[name][k]; });
-  });
-  const keepClips = trashClips();
-  Object.keys(S.recs || {}).forEach((k) => {
-    if (!alive(k)) { if (!keepClips.includes(k)) delClip(k); delete S.recs[k]; }
-  });
-  songIds.forEach(() => {});
-  S.notes = S.notes.filter((n) => songIds.includes(n.songId) && showIds.includes(n.showId));
+  // Missing IDs may mean a partial device/recovery source, not unwanted data.
+  // Soft-deleted material is already captured by toTrash; restoration dedupes IDs.
+  return;
 }
 
 const covers = (n, i) => i >= n.lineIdx && i <= (n.lineEnd != null ? n.lineEnd : n.lineIdx);
@@ -5885,7 +5854,7 @@ function renderSheet() {
           return `<div class="row card" style="margin-bottom:8px;padding:10px 12px">
             <div class="grow" style="min-width:0">
               <div class="trunc">${h(t.label || "（名前なし）")}</div>
-              <div style="font-size:11px;color:var(--dim)">${kindName[t.kind] || ""}　${new Date(t.at).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}　あと${days}日</div>
+              <div style="font-size:11px;color:var(--dim)">${kindName[t.kind] || ""}　${new Date(t.at).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}　原本保持</div>
             </div>
             <button class="chip sm" data-act="trashback" data-id="${t.id}" style="background:var(--accent);color:#0A0A0A">戻す</button>
             <button data-act="trashdrop" data-id="${t.id}" style="padding:4px 6px;color:var(--bad)">✕</button>
@@ -8495,7 +8464,7 @@ function viewSetup() {
       </div>
     </div>
     <div class="card">
-      <div style="font-size:11px;color:var(--dim);margin-bottom:8px">録音は${REC_DAYS}日で自動的に消えます。</div>
+      <div style="font-size:11px;color:var(--dim);margin-bottom:8px">録音は自動削除しません。</div>
       ${(() => {
         const ks = Object.keys(S.recs || {});
         if (!ks.length) return `<p class="note">録音なし</p>`;
@@ -8520,7 +8489,7 @@ function viewSetup() {
 
     ${(S.trash || []).length ? `<h4 class="head">ゴミ箱</h4>
     <div class="card"><button class="primary" data-act="gotrash">ゴミ箱（${S.trash.length}件）</button>
-      <div style="font-size:11px;color:var(--dim);margin-top:8px">${TRASH_DAYS}日を過ぎたものから順に消えます</div>
+      <div style="font-size:11px;color:var(--dim);margin-top:8px">自動削除はしません</div>
     </div>` : ""}
 
 
@@ -8836,7 +8805,7 @@ document.addEventListener("click", async (e) => {
     case "m-del": {
       const x = S.songs.find((y) => y.id === U.menu.id);
       U.menu = null;
-      if (x && confirm(`「${songName(x)}」を削除しますか？\nゴミ箱から${TRASH_DAYS}日以内なら戻せます。`)) {
+      if (x && confirm(`「${songName(x)}」を削除しますか？\nゴミ箱から戻せます。`)) {
         toTrash("song", songName(x), [x]);
         S.songs = S.songs.filter((y) => y.id !== x.id);
         sweep(); save(); schedulePush();
@@ -9721,7 +9690,7 @@ document.addEventListener("click", async (e) => {
       save(); render(); break;
     }
     case "rdel": {
-      if (confirm(`この曲を消しますか？\nゴミ箱から${TRASH_DAYS}日以内なら戻せます。`)) {
+      if (confirm(`この曲を消しますか？\nゴミ箱から戻せます。`)) {
         const rs = S.rsongs.find((x) => x.id === id);
         if (rs) toTrash("rec", rs.title, [rs]);
         S.rsongs = S.rsongs.filter((x) => x.id !== id);
@@ -9952,7 +9921,7 @@ document.addEventListener("click", async (e) => {
       const sw = S.shows.find((x) => x.id === id);
       const cnt = S.notes.filter((n) => n.showId === id).length;
       const scnt = S.songs.filter((x) => x.showId === id).length;
-      if (confirm(`「${sw.name}」を削除しますか？\nこの公演の ${scnt}曲 と 記録 ${cnt}件 が消えます。\nゴミ箱から${TRASH_DAYS}日以内なら戻せます。`)) {
+      if (confirm(`「${sw.name}」を削除しますか？\nこの公演の ${scnt}曲 と 記録 ${cnt}件 が消えます。\nゴミ箱から戻せます。`)) {
         const sw2 = S.shows.find((x) => x.id === id);
         toTrash("show", (sw2 || {}).name || "公演", S.songs.filter((x) => x.showId === id), sw2 ? [sw2] : []);
         S.songs = S.songs.filter((x) => x.showId !== id);
