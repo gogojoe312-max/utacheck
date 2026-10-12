@@ -33,7 +33,7 @@
   const manifest=clone(input),seen=new Set();
   for(const op of manifest.operations){
    only(op,['id','type','sha256','packet']);
-   if(!id(op.id)||seen.has(op.id)||!['recording-schedule','recording-addition','live-addition','live-update','material-update'].includes(op.type)||!/^[a-f0-9]{64}$/.test(op.sha256))fail('INVALID_OPERATION');
+   if(!id(op.id)||seen.has(op.id)||!['recording-song','recording-schedule','recording-addition','live-addition','live-update','material-update'].includes(op.type)||!/^[a-f0-9]{64}$/.test(op.sha256))fail('INVALID_OPERATION');
    seen.add(op.id);safePacket(op.packet);if(await digest(op.packet,cryptoProvider)!==op.sha256)fail('HASH_MISMATCH');
   }
   return manifest;
@@ -205,11 +205,29 @@
     ||!Number.isInteger(slot.at)||slot.at<0||slot.at>=2880||!Number.isInteger(slot.min)||slot.min<=0||slot.min>1440||slot.at+slot.min>2880)fail('INVALID_OPERATION');slotIds.add(slot.id);
   }
  }
+ function mergeRecordingSong(current,packet){
+  safePacket(packet);only(packet,['app','version','group','song','source']);
+  if(packet.app!=='utacheck-recording-song'||packet.version!==1)fail('INVALID_OPERATION');
+  only(packet.group,['id','name','nopub']);
+  if(!id(packet.group.id)||packet.group.name!=='配信しない'||packet.group.nopub!==true)fail('INVALID_OPERATION');
+  only(packet.song,['id','title','artist','credit','lines']);
+  const so=packet.song;
+  if(!id(so.id)||typeof so.title!=='string'||!so.title.trim()||typeof so.artist!=='string'||typeof so.credit!=='string'||!Array.isArray(so.lines)||!so.lines.length||so.lines.length>5000)fail('INVALID_OPERATION');
+  for(const line of so.lines){only(line,['t','parts']);if(typeof line.t!=='string'||!Array.isArray(line.parts)||line.parts.length)fail('INVALID_OPERATION');}
+  const groups=current.groups||[],matches=groups.filter(g=>g.name==='配信しない');
+  if(matches.length>1||matches.length&&(!matches[0].nopub||matches[0].src||matches[0].gistId||matches[0].key))fail('ADDITION_CONFLICT');
+  if((current.rsongs||[]).some(s=>s.id===so.id)||(current.songs||[]).some(s=>s.id===so.id))fail('ADDITION_CONFLICT');
+  if(!matches.length&&groups.some(g=>g.id===packet.group.id))fail('ADDITION_CONFLICT');
+  const group=matches[0]||clone(packet.group);
+  const song={...clone(so),groupId:group.id,roster:[],blocks:{},source:clone(packet.source)};
+  return {state:{...current,groups:matches.length?groups:[...groups,group],rsongs:[...(current.rsongs||[]),song]},songs:1,slots:0};
+ }
  function apply(current,operation,adapters={},now=Date.now()){
   const ledger=current.privatePreparations||{};if(!object(ledger))fail('INVALID_RECEIPTS');
   if(own(ledger,operation.id)){const old=ledger[operation.id];if(old?.sha256!==operation.sha256||old?.type!==operation.type)fail('OPERATION_ID_REUSED');return {state:current,status:'already-applied'};}
   let result;
-  if(operation.type==='recording-schedule'){
+  if(operation.type==='recording-song')result=mergeRecordingSong(current,operation.packet);
+  else if(operation.type==='recording-schedule'){
    result=adapters.schedule(current,operation.packet);
    if(result.skipped?.length)fail('SCHEDULE_TARGET_MISSING');
   }else if(operation.type==='recording-addition'){
@@ -229,6 +247,6 @@
   if(!result?.state||result.state===current&&operation.type!=='recording-schedule')fail('INVALID_OPERATION');
   return {...result,status:'applied',state:{...result.state,privatePreparations:{...ledger,[operation.id]:{sha256:operation.sha256,type:operation.type,at:now}}}};
  }
- const api=Object.freeze({validate,apply,digest,mergeLive,mergeLiveUpdate,mergeMaterialUpdate});if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.PrivatePreparation=api;
+ const api=Object.freeze({validate,apply,digest,mergeLive,mergeLiveUpdate,mergeMaterialUpdate,mergeRecordingSong});if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.PrivatePreparation=api;
 })(typeof globalThis!=='undefined'?globalThis:this);
 

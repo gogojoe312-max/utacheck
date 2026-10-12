@@ -31,9 +31,17 @@ for(const hold of [true,false])test('private schedule automatic atomic save work
 });
 test('missing auth never reads and does not create credentials or alter state',async()=>{const f=await setup({token:''}),before=f.run('JSON.stringify(S)'),db=f.idb.snapshot();assert.equal((await f.c.PrivatePreparationUI.receive(true)).status,'missing-token');assert.equal(f.reads,0);assert.equal(f.run('JSON.stringify(S)'),before);assert.deepEqual(f.idb.snapshot(),db);assert.equal(f.localWrites.length,0);});
 test('active/pending recordings, sheet input, preview and live slot defer before network',async()=>{
- for(const guard of ['REC={}','recordingStartPending=true','recordingFinalizePending=true','pitchStartPending=true','U.sheet={}','preview="{}"','S.plan.slots[0].a1=null','syncing=true','manualSync=true','backupInFlight=true','publishInFlight=true','micStream={}','PT.on=true']){
+ for(const guard of ['REC={}','recordingStartPending=true','recordingFinalizePending=true','pitchStartPending=true','U.sheet={}','preview="{}"','syncing=true','manualSync=true','backupInFlight=true','publishInFlight=true','micStream={}','PT.on=true']){
   const f=await setup();f.run(guard);const before=f.run('JSON.stringify(S)'),db=f.idb.snapshot();assert.equal((await f.c.PrivatePreparationUI.receive(true)).status,'deferred',guard);assert.equal(f.reads,0);assert.equal(f.run('JSON.stringify(S)'),before);assert.deepEqual(f.idb.snapshot(),db);
  }
+});
+test('active plan still defers schedule, but lyrics-only addition commits without modifying plan or clips',async()=>{
+ const f=await setup();f.run('S.plan.slots[0].a1=null');const before=clone(f.run('S')),clips=f.idb.snapshot().clips;
+ assert.equal((await f.c.PrivatePreparationUI.receive(true)).status,'deferred');assert.equal(f.reads,1);assert.deepEqual(clone(f.run('S')),before);
+ const packet={app:'utacheck-recording-song',version:1,group:{id:'private-rec',name:'配信しない',nopub:true},song:{id:'new-song',title:'Synthetic',artist:'Synthetic',credit:'Synthetic',lines:[{t:'Synthetic lyric',parts:[]}]},source:{file:'synthetic.docx'}};
+ f.manifest.operations.push({id:'new-song-op',type:'recording-song',packet,sha256:await Preparation.digest(packet,webcrypto)});
+ const result=await f.c.PrivatePreparationUI.receive(true);assert.equal(result.status,'applied',JSON.stringify(result));assert.equal(result.count,1);
+ const next=clone(f.run('S'));for(const k of Object.keys(before).filter(k=>!['groups','rsongs','privatePreparations'].includes(k)))assert.deepEqual(next[k],before[k],k);assert.equal(next.rsongs.at(-1).id,'new-song');assert.deepEqual(f.idb.snapshot().clips,clips);assert.equal(next.privatePreparations['schedule-example'],undefined);assert.equal(f.reads,3);
 });
 test('network/auth failure never falls back to public/member sources or changes state',async()=>{
  for(const code of ['HTTP_401','HTTP_403','HTTP_404','REPOSITORY_NOT_PRIVATE','FETCH_FAILED']){const f=await setup({source:async()=>({status:'unavailable',code})}),before=f.run('JSON.stringify(S)'),db=f.idb.snapshot();const result=await f.c.PrivatePreparationUI.receive(true);assert(['access','offline'].includes(result.status));assert.equal(f.run('JSON.stringify(S)'),before);assert.deepEqual(f.idb.snapshot(),db);assert.equal(f.calls.network.length,0);}

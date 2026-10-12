@@ -5,7 +5,7 @@
  let running=false,applying=false,lastAttempt=0,status={kind:'waiting'},started=false;
  const failure=code=>Object.assign(new Error(code),{preparationCode:code});
  function ready(){return typeof S!=='undefined'&&startupPhase==='ready'&&booted&&!bootErr&&recordingInboxCanWrite()&&!document.hidden&&!VIEW()&&!preview&&!previewLoading&&!REC&&!recordingStartPending&&!recordingFinalizePending&&!pitchStartPending&&!PT.on&&!micStream
-  &&!(S.plan?.slots||[]).some(x=>x.a0!=null&&x.a1==null)&&!saving&&!syncing&&!manualSync&&!backupInFlight&&!publishInFlight&&!recordingInboxWriters&&!U.busy&&!U.importing&&!U.sheet&&!U.menu&&!U.showRecovery&&!typingNow()&&!renderPointers.size&&Date.now()>=scrollingUntil
+  &&!saving&&!syncing&&!manualSync&&!backupInFlight&&!publishInFlight&&!recordingInboxWriters&&!U.busy&&!U.importing&&!U.sheet&&!U.menu&&!U.showRecovery&&!typingNow()&&!renderPointers.size&&Date.now()>=scrollingUntil
   &&!(recordingInboxIntegration?.gate?.activeEditors||recordingInboxIntegration?.gate?.applying)
   &&!(typeof RecordingScheduleUI!=='undefined'&&RecordingScheduleUI.isApplying());}
  function statusText(){
@@ -50,7 +50,8 @@
   const prior=await Promise.all([idbGet('state:0'),idbGet('state:1')]);
   if(!ready()||JSON.stringify(S)!==original||Math.max(...prior.map(x=>x?.seq||0))>saveSeq)throw failure('LOCAL_SAVE_UNCONFIRMED');
   await saveNow();
-  if(saveErr||!ready()||JSON.stringify(S)!==original||await loadRaw()!==packed)throw failure('LOCAL_SAVE_UNCONFIRMED');
+  const durableBefore=await loadRaw();
+  if(saveErr||!ready()||JSON.stringify(S)!==original||typeof durableBefore!=='string')throw failure('LOCAL_SAVE_UNCONFIRMED');
   if(!ready()||JSON.stringify(S)!==original)throw failure('DEFERRED');
   const app=document.getElementById('app');if(app)app.inert=true;
   // Existing tabs already understand this durable writer marker and deny writes
@@ -61,6 +62,15 @@
    if(!await singleEditorClient())throw failure('MULTIPLE_WINDOWS');
    await initializeRecordingInboxOwner();
    if(!recordingInboxOwner?.canWrite)throw failure('OWNER_REQUIRED');
+   if(await loadRaw()!==durableBefore||JSON.stringify(S)!==original)throw failure('LOCAL_SAVE_UNCONFIRMED');
+   if(durableBefore!==packed){
+    // Boot may add defaults to an older state. Persist them only after acquiring
+    // the exclusive writer and verifying a recoverable pre-edit checkpoint.
+    if(!await automaticBackupBeforeEdit('private-preparation-owner'))throw failure('LOCAL_SAVE_UNCONFIRMED');
+    if(!ready()||JSON.stringify(S)!==original)throw failure('DEFERRED');
+    save();await saveNow();
+    if(saveErr||JSON.stringify(S)!==original||await loadRaw()!==packed)throw failure('LOCAL_SAVE_UNCONFIRMED');
+   }
    return true;
   }catch(error){
    if(marked&&!recordingInboxOwner?.canWrite){recordingInboxStale=true;recordingInboxOwnerUI();if(error.preparationCode!=='MULTIPLE_WINDOWS')throw failure('OWNER_REQUIRED');}
@@ -83,7 +93,7 @@
    const active=()=>startupPhase==='ready'&&recordingInboxCanWrite()&&recordingInboxOwner?.canWrite&&!document.hidden&&S.ghToken===token&&stateRevision===revision&&JSON.stringify(S)===original&&JSON.stringify(U)===view&&!REC&&!recordingStartPending&&!recordingFinalizePending&&!pitchStartPending&&!saving&&!syncing&&!manualSync&&!backupInFlight&&!publishInFlight&&!U.busy&&!U.importing&&!U.sheet&&!U.menu&&!U.showRecovery;
    const slots=await Promise.all([idbGet('state:0'),idbGet('state:1')]),hold=await idbGet('recovery:network-hold:v1'),legacy=localStorage.getItem(KEY);
    if(!active())throw failure('DEFERRED');
-   if(operation.type==='material-update'){
+   if(operation.type==='material-update'||operation.type==='recording-song'){
     const fresh=await PrivatePreparationSource.read({...config,token,isActive:active});
     if(fresh.status!=='ready'||fresh.sourceSha!==sourceSha)throw failure('PREPARATION_SOURCE_CHANGED');
     await PrivatePreparation.validate(fresh.manifest,config.owner);
@@ -115,7 +125,14 @@
    }
    const manifest=await PrivatePreparation.validate(source.manifest,config.owner);
    if(!ready()||S.ghToken!==token)throw failure('DEFERRED');
-   const pending=manifest.operations.filter(op=>!S.privatePreparations?.[op.id]||S.privatePreparations[op.id].sha256!==op.sha256||S.privatePreparations[op.id].type!==op.type);
+   const activePlan=(S.plan?.slots||[]).some(x=>x.a0!=null&&x.a1==null);
+   const unapplied=manifest.operations.filter(op=>!S.privatePreparations?.[op.id]||S.privatePreparations[op.id].sha256!==op.sha256||S.privatePreparations[op.id].type!==op.type);
+   // Lyrics-only additions preserve the active plan, selected song and recordings.
+   // All older operations retain their existing active-plan deferral.
+   const eligible=unapplied.filter(op=>!activePlan||op.type==='recording-song');
+   const additions=eligible.filter(op=>op.type==='recording-song');
+   const pending=additions.length?additions:eligible;
+   if(unapplied.length&&!pending.length){setStatus({kind:'active-plan'});return {status:'deferred'};}
    if(!pending.length){setStatus({kind:'current',sourceSha:source.sourceSha});return {status:'current'};}
    await establishOwner();if(S.ghToken!==token)throw failure('DEFERRED');
    let count=0;
