@@ -113,7 +113,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.1";
+const APP_VER = "16.41.58.2";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -6092,7 +6092,7 @@ function renderSheet() {
   }
 
   if (U.picker) {
-    const gfil = liveGroups().length > 1 || !!U.showFilter ? `<div class="chips" style="margin-bottom:8px">
+    const gfil = liveGroups().length > 1 || !!U.showFilter || (!VIEW() && liveGroups().some(privateDeliveryGroup)) ? `<div class="chips" style="margin-bottom:8px">
         <button class="chip sm" data-act="showfilter" data-id="" style="${!U.showFilter ? "background:var(--accent);color:#0A0A0A" : ""}">全公演を表示</button>
         ${liveGroups().map((g) => `<button class="chip sm" data-act="showfilter" data-id="${g.id}"
           style="${U.showFilter === g.id ? "background:var(--accent);color:#0A0A0A" : ""}">${h(groupDisplayName(g))}</button>`).join("")}
@@ -8408,7 +8408,7 @@ function viewSetup() {
     <button class="primary" data-act="picker" style="margin-bottom:12px">公演を選ぶ · ${h(activeShow?.name || '未選択')}</button>
     <p class="note">本人の保存内容です。メンバー画面には配信済みの内容が表示されます。</p>
     ${S.shows.some(sw => !sw.hidden && sw.deliveryMode !== "song" && !showDeliveryGroupId(sw)) ? `<button class="ghost" data-act="showfilter" data-id="__unassigned__" style="color:var(--bad);margin-bottom:12px">グループ未設定の公演を確認</button>` : ""}
-    ${liveGroups().length > 1 || !!U.showFilter ? `<div class="chips" style="margin-bottom:10px">
+    ${liveGroups().length > 1 || !!U.showFilter || (!VIEW() && liveGroups().some(privateDeliveryGroup)) ? `<div class="chips" style="margin-bottom:10px">
       <button class="chip sm" data-act="showfilter" data-id="" style="${!U.showFilter ? "background:var(--accent);color:#0A0A0A" : ""}">全公演を表示</button>
       ${liveGroups().map((g) => `<button class="chip sm" data-act="showfilter" data-id="${g.id}"
         style="${U.showFilter === g.id ? "background:var(--accent);color:#0A0A0A" : ""}">${h(groupDisplayName(g))}</button>`).join("")}
@@ -11485,6 +11485,10 @@ async function verifyPublicationSnapshot(g, candidate, checkTarget) {
     const error = new Error('この端末にない配信済み公演が'+missing.length+'件あります。古い保存内容で置き換えないため送信を止めました。正本端末・保存履歴との照合が必要です。');
     error.code = 'PUBLICATION_SOURCE_INCOMPLETE';
     throw error;
+  }
+  if (typeof g.lastKey === 'string' && g.lastKey && !samePublicationKey(payloadKey(previous), g.lastKey)) {
+    const error = new Error('配信先がこの端末の最終送信後に更新されています。ほかの端末の内容を上書きしないため送信を止めました。');
+    error.code = 'PUBLICATION_SOURCE_CHANGED'; throw error;
   }
   return previous;
 }

@@ -5,7 +5,7 @@ const a=source.indexOf('async function verifyPublicationSnapshot('),b=source.ind
 function fixture(previous){
  const requests=[],state={shows:[{id:'old'}],songs:[{id:'song',showId:'old'}],notes:[{id:'note',memo:'本人編集'}],recs:{audio:{size:123}},key:''};
  const c=vm.createContext({S:state,JSON,Set,Error,gh:async(path,opts)=>{requests.push({path,opts});return {files:{'utacheck.json':{content:JSON.stringify(previous)}}};},gistRawSource:()=>null,boundedPublicationRequest:()=>{throw Error('unexpected raw');},openJSON:()=>{throw Error('unexpected decrypt');}});
- vm.runInContext(source.slice(a,b),c);return {c,state,requests,g:{gistId:'a'.repeat(32)},run:()=>c.verifyPublicationSnapshot({gistId:'a'.repeat(32)},{songs:[]},()=>{})};
+ vm.runInContext(source.slice(a,b),c);vm.runInContext(source.slice(b,source.indexOf('async function gistPush(',b)),c);return {c,state,requests,g:{gistId:'a'.repeat(32)},run:()=>c.verifyPublicationSnapshot({gistId:'a'.repeat(32)},{songs:[]},()=>{})};
 }
 test('a stale device cannot replace published shows missing from its local state; annotations and audio stay untouched',async()=>{
  const f=fixture({shows:[{id:'old'},{id:'new-phone-show'}],songs:[{showId:'old'},{showId:'new-phone-show'}]}),before=JSON.stringify(f.state);
@@ -25,4 +25,9 @@ test('explicit sends use the same preservation preflight before constructing a P
  const start=source.indexOf('async function gistPush('),end=source.indexOf('// 送りすぎるとGitHub',start),body=source.slice(start,end);
  assert(body.indexOf('await verifyPublicationSnapshot(g, d, checkTarget)')<body.indexOf('const body = JSON.stringify'));
  assert(!body.includes('force && verifyPublicationSnapshot'));
+});
+test('a known stale publication baseline stops even when every remote show ID exists locally',async()=>{
+ const remote={version:2,shows:[{id:'old'}],songs:[{showId:'old'}],notes:[{memo:'other device edit'}]},f=fixture(remote),before=JSON.stringify(f.state);
+ await assert.rejects(f.c.verifyPublicationSnapshot({...f.g,lastKey:JSON.stringify({...remote,notes:[{memo:'older'}]})},{},()=>{}),e=>e.code==='PUBLICATION_SOURCE_CHANGED');assert.equal(JSON.stringify(f.state),before);assert.equal(f.requests.length,1);assert.equal(f.requests[0].opts,undefined);
+ const same=fixture(remote);await same.c.verifyPublicationSnapshot({...same.g,lastKey:JSON.stringify({...remote,version:1,focusShow:'previous selection'})},{},()=>{});
 });

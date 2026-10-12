@@ -2,6 +2,10 @@
 const {chromium}=require('playwright'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),http=require('node:http');
 const root=path.resolve(__dirname,'..'),server=http.createServer((req,res)=>{const f=path.join(root,new URL(req.url,'http://localhost').pathname==='/'?'index.html':new URL(req.url,'http://localhost').pathname);try{res.end(fs.readFileSync(f));}catch{res.writeHead(404).end();}});
 (async()=>{let browser;try{await new Promise(r=>server.listen(0,'127.0.0.1',r));const origin='http://127.0.0.1:'+server.address().port;browser=await chromium.launch({headless:true,executablePath:process.env.CHROMIUM_PATH,args:['--no-sandbox']});const context=await browser.newContext({serviceWorkers:'block'}),page=await context.newPage(),errors=[],remote=[];page.on('pageerror',e=>errors.push(e.message));page.on('dialog',dialog=>dialog.dismiss());await page.route('**/*',r=>r.request().url().startsWith(origin)?r.continue():(remote.push(r.request().url()),r.abort()));await page.goto(origin);await page.waitForFunction(()=>typeof normalStartupInitialized!=='undefined'&&normalStartupInitialized);
+ await page.locator('[data-act="picker"]').first().click();
+ const bootPrivateID=await page.evaluate(()=>S.groups.find(g=>g.name==='配信しない').id);
+ if(!await page.locator('[data-act="showfilter"][data-id="'+bootPrivateID+'"]').isVisible())throw Error('private group not selectable before settings');
+ await page.locator('.sheet [data-act="cancel"]').click();
  const result=await page.evaluate(async()=>{
   const initial=S.groups.filter(g=>g.name==='配信しない');if(initial.length!==1)throw Error('private group missing on ordinary boot');
   const id=initial[0].id;ensurePersonalPrivateGroup();if(S.groups.filter(g=>g.name==='配信しない').length!==1||initial[0].id!==id)throw Error('private identity changed');
@@ -18,7 +22,7 @@ const root=path.resolve(__dirname,'..'),server=http.createServer((req,res)=>{con
   const workbook=XLSX.utils.book_new();XLSX.utils.book_append_sheet(workbook,XLSX.utils.aoa_to_sheet([['本人','private recording lyric']]),'歌割');const buffer=XLSX.write(workbook,{type:'array'});
   await loadRecDocs([{name:'private.xlsx',arrayBuffer:async()=>buffer}]);
   if(S.rsongs.length!==1||S.rsongs[0].groupId!=='stable-private'||S.groupId!=='public'||S.notes[0].memo!=='original note'||S.recs['show|song'].dur!==30)throw Error('private REC import boundary failed');
-  return {privateRecordingImportVerified:true,privateGroupReadyOnBoot:true,privateGroupIDReused:true,encryptedRestorePointVerified:true,quotaStopsBeforeImport:true,dataPreserved:true};
+  return {privateRecordingImportVerified:true,privateGroupSelectableBeforeSettings:true,privateGroupReadyOnBoot:true,privateGroupIDReused:true,encryptedRestorePointVerified:true,quotaStopsBeforeImport:true,dataPreserved:true};
  });
  await page.evaluate(()=>{const checkbox=document.createElement('input');checkbox.type='checkbox';checkbox.id='verified-checkbox';checkbox.addEventListener('change',()=>{S.syntheticCheckbox=checkbox.checked;});document.body.appendChild(checkbox);const select=document.createElement('select');select.id='verified-select';select.innerHTML='<option value="old">old</option><option value="new">new</option>';select.addEventListener('input',()=>{S.syntheticInput=select.value;});select.addEventListener('change',()=>{S.syntheticSelect=select.value;});document.body.appendChild(select);});
  await page.locator('#verified-checkbox').click();await page.waitForFunction(()=>S.syntheticCheckbox===true,{},{timeout:3000}).catch(async e=>{console.error(await page.evaluate(()=>({checked:document.getElementById('verified-checkbox').checked,value:S.syntheticCheckbox,code:U.backupFailureCode,changed:U.backupChangedFields,backup:backupInFlight,syncing,publish:publishInFlight,view:VIEW(),preview:!!preview})));throw e;});
