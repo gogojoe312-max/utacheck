@@ -4,6 +4,14 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('nod
 const src=fs.readFileSync(__dirname+'/../app.js','utf8');
 const block=(a,b)=>src.slice(src.indexOf(a),src.indexOf(b,src.indexOf(a)));
 const tick=()=>new Promise(r=>setImmediate(r));
+test('navigation-only changes and legacy focus signatures never schedule a new publication',()=>{
+ const s=setup();s.c.stateRevision=1;vm.runInContext(block('let pendingCheck = null;', '// アプリを開いている間'),s.c);s.c.publicationData=id=>({version:2,groupName:id,shows:[],songs:[],focusShow:'latest'});
+ for(const g of s.groups)g.lastKey=JSON.stringify({version:1,groupName:g.id,shows:[],songs:[],focusShow:'old-rehearsal'});
+ assert.equal(s.c.hasPending(),false);
+ assert.equal(s.c.samePublicationKey(s.groups[0].lastKey,s.c.payloadKey(s.c.publicationData('one'))),true);
+ s.c.publicationData=id=>({version:2,groupName:id,shows:[],songs:[{title:'actual new content'}],focusShow:'latest'});
+ s.c.stateRevision++;assert.equal(s.c.hasPending(),true);
+});
 function setup(){
  const calls=[],alerts=[],timers=new Map();let timerId=0;
  const groups=['one','two'].map(id=>({id,name:id,gistId:'synthetic-'+id,key:'old'}));

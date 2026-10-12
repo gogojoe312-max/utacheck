@@ -112,7 +112,7 @@ test('slow background publication does not start overlapping sends',async()=>{
 });
 
 test('unchanged publications reuse their check, but new notes and completed sends invalidate it',()=>{
- let reads=0;const c=testContext({stateRevision:1,S:{groups:[{id:'a',gistId:'g',lastKey:'same'}]},publicationData(){reads++;return 'same';},payloadKey:x=>x});
+ let reads=0;const c=testContext({stateRevision:1,S:{groups:[{id:'a',gistId:'g',lastKey:'same'}]},publicationData(){reads++;return 'same';},payloadKey:x=>x,samePublicationKey:(a,b)=>a===b});
  vm.runInContext(block('let pendingCheck = null;', '// アプリを開いている間'),c);
  for(let i=0;i<100;i++)assert.equal(vm.runInContext('hasPending()',c),false);assert.equal(reads,1);
  c.stateRevision++;vm.runInContext('hasPending()',c);assert.equal(reads,2);

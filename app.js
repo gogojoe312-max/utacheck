@@ -113,7 +113,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.56.1";
+const APP_VER = "16.41.56.2";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -11367,7 +11367,14 @@ async function inspectPublication(gid) {
 
 // version は毎回変わるので、それ以外が同じなら送る必要はない
 function payloadKey(d) {
-  const c = Object.assign({}, d); delete c.version; return JSON.stringify(c);
+  const c = Object.assign({}, d); delete c.version; delete c.focusShow; return JSON.stringify(c);
+}
+function samePublicationKey(a, b) {
+  if (a === b) return true;
+  // Existing signatures contain focusShow. Normalize them without issuing a
+  // migration publication; navigation cannot become a content change.
+  try { return payloadKey(JSON.parse(a)) === payloadKey(JSON.parse(b)); }
+  catch (_) { return false; }
 }
 
 async function gistPush(gid, force) {
@@ -11418,7 +11425,7 @@ async function gistPush(gid, force) {
   const held = unresolvedPublicationShows(g.id);
   g.publishWarning = held.length ? held.map(sw => `「${sw.name}」`).join("、") + "：グループ未設定のため、この公演の更新のみ保留。設定で公演のグループを選択してください。" : "";
   const key = payloadKey(d);
-  if (!force && !g.publishKeyPending && g.lastKey === key) return "same";
+  if (!force && !g.publishKeyPending && samePublicationKey(g.lastKey, key)) return "same";
   const body = JSON.stringify({ files: { "utacheck.json": { content: JSON.stringify(await wrap(d, g)) } } });
   checkTarget();
   try {
@@ -11583,7 +11590,7 @@ function hasPending() {
   const result = S.groups.some((g) => {
     if(typeof startupRecoveryNetworkHold!=='undefined'&&startupRecoveryNetworkHold&&typeof RecoveryDelivery!=='undefined')return RecoveryDelivery.pending(g.id);
     if (!g.gistId || g.nopub) return false;
-    try { return g.publishKeyPending || payloadKey(publicationData(g.id)) !== g.lastKey; } catch (e) { return true; }
+    try { return g.publishKeyPending || !samePublicationKey(payloadKey(publicationData(g.id)), g.lastKey); } catch (e) { return true; }
   });
   pendingCheck = { revision:stateRevision, keys, result };
   return result;
