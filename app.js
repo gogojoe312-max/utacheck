@@ -113,7 +113,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.54.4";
+const APP_VER = "16.41.55.1";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -9129,6 +9129,9 @@ document.addEventListener("click", (e) => {
       } else {
         S.recMode = false;
         S.showId = S.liveShow || (showsNewestFirst().find((x) => x.id !== REC_SHOW) || {}).id || "";
+        // REC selection must not become the live performance's import group.
+        // Resolve the saved live destination without rewriting any ownership.
+        syncShowGroup(); rememberViewSelection();
       }
       U.songIdx = 0; U.view = "setup"; save(); render();
       break;
