@@ -3,7 +3,7 @@ const src=fs.readFileSync(require('node:path').join(__dirname,'..','app.js'),'ut
 const block=(a,b)=>src.slice(src.indexOf(a),src.indexOf(b,src.indexOf(a)));
 function setup(){
  let pushes=0;
- const c=vm.createContext({recordingInboxCanWrite:()=>true,preview:null,S:{groupId:'rose',showId:'r',groups:[{id:'ocha',name:'OCHA NORMA'},{id:'rose',name:'ロージークロニクル'},{id:'off',name:'配信しない',nopub:true}],
+ const c=require('./inbox-test-context.cjs')({recordingInboxCanWrite:()=>true,preview:null,S:{groupId:'rose',showId:'r',groups:[{id:'ocha',name:'OCHA NORMA'},{id:'rose',name:'ロージークロニクル'},{id:'off',name:'配信しない',nopub:true}],
  shows:[{id:'o',name:'OCHA 公演',ts:2},{id:'r',name:'ロージークロニクル 公演',ts:1}],songs:[{id:'a',title:'曲A',showId:'o',groupId:'ocha',lines:[],blocks:{}},{id:'b',title:'曲B',showId:'r',groupId:'rose',lines:[],blocks:{}}],notes:[{songId:'a',showId:'o',memberIds:[],tags:['fast'],lineIdx:0,memo:'指摘A'}],memos:{'o|a':'総括A'},gsubs:{},subs:{}},U:{},VIEW:()=>false,save(){},render(){},schedulePush(){pushes++;},member:()=>null});
  c.group=id=>c.S.groups.find(g=>g.id===id);c.showsNewestFirst=()=>c.S.shows;
  vm.runInContext(block('function autoShowGroupId(', 'function showsFor()'),c);
@@ -163,4 +163,18 @@ test('large destination publication retains old permitted shows and their notes'
  c.S.notes[0].memo='synthetic-size-fixture'.repeat(40000);c.S.notes.push({songId:'older-song',showId:'older-permitted',memberIds:[],tags:[],lineIdx:0,memo:'old correction'});
  const before=JSON.stringify(c.S);const p=run("publicationData('ocha')");
  assert(p.shows.some(sw=>sw.id==='older-permitted'));assert(p.notes.some(n=>n.memo==='old correction'));assert(!p.shows.some(sw=>sw.id==='r'));assert.equal(JSON.stringify(c.S),before);
+});
+test('legacy private name blocks a public override in a mixed show and preserves original data',()=>{
+ const {c,run}=setup();c.S.groups[2].nopub=false;c.S.songs[0].groupId='off';c.S.songs[0].deliveryGroupId='rose';c.S.shows[0].groupId='ocha';c.S.shows[0].deliveryMode='song';const before=JSON.stringify(c.S);
+ assert.equal(run('songDeliveryGroupId(S.songs[0])'),'off');assert.equal(run("publicationData('rose').songs.length"),1);
+ assert.throws(()=>run("publicationData('off')"),e=>e.code==='PRIVATE_PUBLICATION_BLOCKED');
+ run("setSongDelivery(['a'],'rose')");assert.equal(JSON.stringify(c.S),before);
+});
+test('private show cannot escape through group switch, whole-show override or mixed-song mode',()=>{
+ const {c,run}=setup();c.S.shows[0].groupId='off';c.S.shows[0].deliveryGroupId='ocha';c.S.showId='o';
+ for(const code of ["setShowDelivery('o','rose')","setShowDelivery('o','__songs__')","setCurrentShowGroup('rose')"]){run(code);assert.equal(c.S.shows[0].groupId,'off');assert.equal(run("publicationData('ocha').songs.length"),0);assert.equal(run('songDeliveryGroupId(S.songs[0])'),'off');}
+});
+test('navigation group order and Rosy display preserve stored names and IDs',()=>{
+ const {c,run}=setup();c.S.groups.reverse();c.S.groups.find(g=>g.id==='rose').name='Rosie';const before=JSON.stringify(c.S);
+ assert.deepEqual(Array.from(run('liveGroups()'),g=>g.id),['ocha','rose','off']);assert.equal(run("groupDisplayName(S.groups.find(g=>g.id==='rose'))"),'Rosy');assert.equal(JSON.stringify(c.S),before);
 });

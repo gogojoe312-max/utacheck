@@ -19,7 +19,7 @@ async function fixture(options={}){
  const hold={v:1,seq:1,slot:1,copyKey:'preserved:recovery:v1:'+sha('old'),sourceKind:'cloud-publication'};
  const initial=JSON.stringify(state),idb=indexedFixture({state:{'state:0':{seq:2,at:1,txt:initial},'state:1':{seq:1,at:1,txt:initial},'recovery:network-hold:v1':hold},clips:{'xls:song':new Blob(['ORIGINAL'])}});
  let remoteRaw='',patches=0;
- const c=vm.createContext({S:clone(state),U:{sheet:null},DB:idb.database,KEY:'utacheck.v1',stateRevision:0,saveSeq:2,saveDirty:false,savePend:null,saveErr:false,
+ const c=require('./inbox-test-context.cjs')({S:clone(state),U:{sheet:null},DB:idb.database,KEY:'utacheck.v1',stateRevision:0,saveSeq:2,saveDirty:false,savePend:null,saveErr:false,
  startupPhase:'ready',startupRecoveryNetworkHold:true,recordingInboxCanWrite:()=>true,recordingInboxAdmitWriter:()=>()=>{},VIEW:()=>false,preview:null,document,publishInFlight:false,saving:false,REC:null,
  RecoveryDeliveryScope:Scope,RecoveryDeliveryStore:options.store||Store,TextEncoder,URL,AbortController,setTimeout,clearTimeout,Map,
  h:s=>String(s??''),alert:s=>alerts.push(s),render(){},sheetHasInput:()=>false,recoveryValidateCloudState:()=>true,packState:clone,

@@ -6,7 +6,7 @@ function fixture(){const S={groups:[{id:'empty',name:'グループ1'},{id:'archi
  shows:[{id:'archiveShow',name:'元Excelから復旧した資料',groupId:'archive',recoverySource:'original-workbooks',nopub:true},{id:'show',name:'本公演',groupId:'live',nopub:true,recoveredSourceShowId:'source-show'}],
  songs:[{id:'original',showId:'archiveShow',groupId:'archive',recoveredFromOriginalExcel:true,lines:[{t:'保持する歌詞'}]},{id:'song',showId:'show',groupId:'live',lines:[]}],
  rsongs:[{id:'rec-song',groupId:'rec',lines:[{t:'REC歌詞'}]}],notes:[{id:'note',songId:'song',showId:'show',memo:'保持'}],plan:{slots:[{id:'slot',songId:'rec-song'}]},folders:{},staffMemos:{'show|song':'PRIVATE'},ghToken:''};
- const c=vm.createContext({S,U:{showFilter:''},VIEW:()=>false,showsNewestFirst:()=>S.shows,rememberViewSelection(){},render(){},renderSheet(){}});
+ const c=require('./inbox-test-context.cjs')({S,U:{showFilter:''},VIEW:()=>false,showsNewestFirst:()=>S.shows,rememberViewSelection(){},render(){},renderSheet(){}});
  for(const name of ['autoShowGroupId','recoveryMaterialShow','liveGroups','showDeliveryGroupId','songDeliveryGroupId','showGroupIds','showsFor','setShowFilter','showDeliveryLabel'])vm.runInContext(read(name),c);
  return c;
 }

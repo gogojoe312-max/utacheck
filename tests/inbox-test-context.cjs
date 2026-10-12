@@ -15,5 +15,11 @@ module.exports = function createUnenrolledContext(sandbox = {}, options) {
   };
   if (!('recordingInboxStorageSet' in context)) context.recordingInboxStorageSet = (key, value) => context.localStorage.setItem(key, value);
   if (!('recordingInboxStorageRemove' in context)) context.recordingInboxStorageRemove = key => context.localStorage.removeItem(key);
-  return vm.createContext(context, options);
+  const result = vm.createContext(context, options);
+  const source = require('node:fs').readFileSync(__dirname + '/../app.js','utf8');
+  for (const name of ['groupDisplayName','privateDeliveryGroup','groupedPerformanceHTML']) {
+    const start = source.indexOf('function ' + name + '(');
+    vm.runInContext(source.slice(start, source.indexOf('\n}',start)+2), result);
+  }
+  return result;
 };

@@ -320,7 +320,7 @@ function actualPublicationFixture(){
   initial.songs[1].lines=[{t:'Another fixture lyric',parts:[],cont:true,extra:['MEMBER']}];
   for(const song of initial.songs.slice(0,2)){song.blocks={A:['MEMBER']};song.roster=['MEMBER'];song.blockRows=[{b:'A'}];}
   const result=API.plan(initial,packet()),S=result.state;
-  const c=vm.createContext({S,Date,JSON,Map,Set,group:id=>S.groups.find(g=>g.id===id),member:id=>S.members.find(m=>m.id===id),showsNewestFirst:()=>S.shows});
+  const c=require('./inbox-test-context.cjs')({S,Date,JSON,Map,Set,group:id=>S.groups.find(g=>g.id===id),member:id=>S.members.find(m=>m.id===id),showsNewestFirst:()=>S.shows});
   const app=fs.readFileSync(__dirname+'/../app.js','utf8');
   for(const [start,end] of [['function autoShowGroupId(','function setCurrentShowGroup('],['function publicationData(','async function gh(']]){
     const a=app.indexOf(start),b=app.indexOf(end,a);assert(a>=0&&b>a);vm.runInContext(app.slice(a,b),c);
@@ -582,7 +582,7 @@ test('independent but identical local library objects remain safe across held an
 });
 
 test('WebKit multiline native formatting accepts ordinary state without weakening prototype checks',()=>{
-  const c=vm.createContext({TextEncoder,URL});
+  const c=require('./inbox-test-context.cjs')({TextEncoder,URL});
   vm.runInContext(`const intrinsic=Function.prototype.toString;
     Function.prototype.toString=function(){return intrinsic.call(this).replace(/ \\{ \\[native code\\] \\}$/, ' {\\n    [native code]\\n}');};`,c);
   vm.runInContext(fs.readFileSync(__dirname+'/../recovery-delivery-scope.js','utf8'),c);

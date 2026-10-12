@@ -113,7 +113,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.56.3";
+const APP_VER = "16.41.57";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1477,6 +1477,26 @@ function groupShows(list) {
   return keys.map((k) => [k, map.get(k)]);
 }
 
+// Navigation labels and order are derived; stored IDs, names and sync keys stay intact.
+function groupDisplayName(g) {
+  return /^(rosie|rosy)$/i.test(String(g && g.name || '').trim()) ? 'Rosy' : String(g && g.name || '');
+}
+function privateDeliveryGroup(g) {
+  return !!g && (!!g.nopub || String(g.name || '').normalize('NFKC').replace(/\s/g,'') === '配信しない');
+}
+function ensurePersonalPrivateGroup() {
+  if (VIEW() || !recordingInboxCanWrite() || startupRecoveryNetworkHold) return false;
+  const existing = S.groups.find(g => String(g.name || '').normalize('NFKC').replace(/\s/g,'') === '配信しない');
+  if (existing) return false;
+  S.groups.push({id:uid(),name:'配信しない',nopub:true,gistId:'',src:'',key:'',keyInLink:true});
+  save(); return true;
+}
+function groupedPerformanceHTML(list, row) {
+  return groupShows(list).map(([name, shows]) => name
+    ? `<details class="card" ${shows.some(sw => sw.id === S.showId) ? 'open' : ''}><summary>${h(name)} · ${shows.length}公演</summary>${shows.map(row).join('')}</details>`
+    : shows.map(row).join('')).join('');
+}
+
 // Each show owns its default delivery group. A manual override affects delivery only.
 function autoShowGroupId(sw) {
   if (!sw) return "";
@@ -1509,16 +1529,23 @@ function liveGroups() {
     if ((S.rsongs || []).some(so => so.groupId === g.id)) return false;
     // A deliberately named or connected empty group remains available.
     return !!(g.gistId || g.src || !/^グループ[0-9０-９]+$/.test(String(g.name || "").trim()));
+  }).sort((a,b) => {
+    const rank = g => /^OCHA/i.test(g.name || '') ? 0 : /ロージー|rosie|rosy/i.test(g.name || '') ? 1 : privateDeliveryGroup(g) ? 2 : 3;
+    return rank(a) - rank(b);
   });
 }
 function showDeliveryGroupId(sw) {
-  if (!sw || sw.deliveryMode === "song") return "";
+  if (!sw) return "";
+  const privateId = [sw.groupId, sw.deliveryGroupId].find(id => privateDeliveryGroup(S.groups.find(g => g.id === id)));
+  if (privateId) return privateId;
+  if (sw.deliveryMode === "song") return "";
   return S.groups.some(g => g.id === sw.deliveryGroupId) ? sw.deliveryGroupId : autoShowGroupId(sw);
 }
 function songDeliveryGroupId(so) {
   if (so.deliveryGroupId === "") return "";
-  if (S.groups.some(g => g.id === so.groupId && g.nopub)) return so.groupId;
   const sw = S.shows.find(sw => sw.id === so.showId);
+  const privateId = [so.groupId, so.deliveryGroupId, sw && sw.groupId, sw && sw.deliveryGroupId].find(id => privateDeliveryGroup(S.groups.find(g => g.id === id)));
+  if (privateId) return privateId;
   // A normal show has one destination. Old song import groups cannot override it.
   const showGroup = showDeliveryGroupId(sw);
   if (showGroup) return showGroup;
@@ -1537,6 +1564,7 @@ function setCurrentShowGroup(groupId) {
   S.groupId = groupId;
   if (!S.recMode) {
     const sw = S.shows.find(x => x.id === S.showId);
+    if (sw && privateDeliveryGroup(S.groups.find(g => g.id === showDeliveryGroupId(sw))) && !privateDeliveryGroup(S.groups.find(g => g.id === groupId))) { render(); return; }
     if (sw && sw.deliveryMode !== "song") {
       sw.groupId = groupId; delete sw.deliveryGroupId; delete sw.deliveryMode;
       S.songs.filter(so => so.showId === sw.id).forEach(so => {
@@ -1551,6 +1579,7 @@ function setSongDelivery(ids, groupId) {
   ids.forEach(id => {
     const so = S.songs.find(x => x.id === id);
     if (so) {
+      if (privateDeliveryGroup(S.groups.find(g => g.id === songDeliveryGroupId(so))) && groupId && !privateDeliveryGroup(S.groups.find(g => g.id === groupId))) return;
       const sw = S.shows.find(x => x.id === so.showId);
       // Choosing a different song destination is an explicit opt-in to mixed delivery.
       if (sw && groupId && groupId !== showDeliveryGroupId(sw)) {
@@ -1646,6 +1675,7 @@ function selectShow(id) {
 function setShowDelivery(id, groupId) {
   if (VIEW() || (groupId && groupId !== "__songs__" && !S.groups.some(g => g.id === groupId))) return;
   const sw = S.shows.find(sw => sw.id === id); if (!sw) return;
+  if (privateDeliveryGroup(S.groups.find(g => g.id === showDeliveryGroupId(sw))) && groupId && !privateDeliveryGroup(S.groups.find(g => g.id === groupId))) return;
   if (groupId === "__songs__") {
     sw.deliveryMode = "song"; delete sw.deliveryGroupId;
   } else {
@@ -1858,6 +1888,7 @@ function labelOf(so, i) {
   // 続きの行（結合セルの2行目以降）は、元と同じで名前を出さない。
   // ここで名前を出すと、ひとまとまりの歌割が行ごとに分かれて見える。
   if (l.cont) return l.label || "";
+  if (/^全/.test(l.labelRaw || l.raw || l.label || '')) return l.labelRaw || l.raw || l.label;
   if (subOf(so.id, i)) {
     const sp = splitAssign(so, i);
     return (names(sp.main) || "—") + (sp.extra.length ? "　ハモ " + names(sp.extra) : "");
@@ -5621,7 +5652,7 @@ function organizeSheetHTML(m) {
     }
     if (m.mode === "show") {
       const selected = item ? showDeliveryGroupId(item) || autoShowGroupId(item) : S.groups.some(g => g.id === U.showFilter) ? U.showFilter : autoShowGroupId({name:"",folder}) || S.groupId;
-      body += `<label class="organize-field">公演のグループ<select class="field" id="org-group"><option value="">未設定</option>${S.groups.filter(g => g.id === selected || liveGroups().includes(g)).map(g => `<option value="${h(g.id)}" ${selected === g.id ? "selected" : ""}>${h(g.name)}</option>`).join("")}</select></label>
+      body += `<label class="organize-field">公演のグループ<select class="field" id="org-group"><option value="">未設定</option>${S.groups.filter(g => g.id === selected || liveGroups().includes(g)).map(g => `<option value="${h(g.id)}" ${selected === g.id ? "selected" : ""}>${h(groupDisplayName(g))}</option>`).join("")}</select></label>
         <label class="organize-field">配信方法<select class="field" id="org-delivery"><option value="show">公演のグループに配信</option><option value="song" ${item?.deliveryMode === "song" ? "selected" : ""}>曲ごとに配信先を分ける（ハロコンなど）</option></select></label>`;
     }
     body += `<p id="org-error" role="alert" class="organize-error" hidden></p><button class="primary" type="submit">${m.mode === "move" ? "ここに移動" : m.mode === "show" && !item ? "公演を作成" : m.mode === "folder" && !m.id ? "フォルダを作成" : "保存"}</button></form>`;
@@ -6004,7 +6035,7 @@ function renderSheet() {
     const inner = U.menu.kind === "group"
       ? `<div class="sec"><h4>どのグループにしますか</h4>
           ${liveGroups().map((g) => `<button class="ghost" data-act="m-setgroup" data-id="${g.id}"
-            style="text-align:left;margin-bottom:8px;${!many && x && songDeliveryGroupId(x) === g.id ? "background:var(--accent);color:#0A0A0A" : ""}">${h(g.name)}</button>`).join("")}
+            style="text-align:left;margin-bottom:8px;${!many && x && songDeliveryGroupId(x) === g.id ? "background:var(--accent);color:#0A0A0A" : ""}">${h(groupDisplayName(g))}</button>`).join("")}
           <button class="ghost" data-act="m-setgroup" data-id="" style="text-align:left;color:var(--dim);${!many && x && !songDeliveryGroupId(x) ? "background:var(--accent);color:#0A0A0A" : ""}">なし（配信しない）</button></div>`
       : `<div class="sec">
           ${B("m-mark", (many ? "印を付ける／外す" : ((S.songs.find((y) => y.id === U.menu.id) || {}).mark ? "★ 印を外す" : "★ 印を付ける")))}
@@ -6070,10 +6101,10 @@ function renderSheet() {
     const gfil = liveGroups().length > 1 || !!U.showFilter ? `<div class="chips" style="margin-bottom:8px">
         <button class="chip sm" data-act="showfilter" data-id="" style="${!U.showFilter ? "background:var(--accent);color:#0A0A0A" : ""}">全公演を表示</button>
         ${liveGroups().map((g) => `<button class="chip sm" data-act="showfilter" data-id="${g.id}"
-          style="${U.showFilter === g.id ? "background:var(--accent);color:#0A0A0A" : ""}">${h(g.name)}</button>`).join("")}
+          style="${U.showFilter === g.id ? "background:var(--accent);color:#0A0A0A" : ""}">${h(groupDisplayName(g))}</button>`).join("")}
       </div>` : "";
-    const shows = showsFor().map((sw) => `<button class="chip sm" data-act="jumpshow" data-id="${sw.id}"
-        style="${sw.id === S.showId ? "background:var(--accent);color:#0A0A0A" : ""}">${h(sw.name)}${folderOf(sw) ? `<span style="opacity:.6;font-size:10px"> · ${h(folderOf(sw))}</span>` : ""}</button>`).join("");
+    const shows = groupedPerformanceHTML(showsFor(), (sw) => `<button class="chip sm" data-act="jumpshow" data-id="${sw.id}"
+        style="${sw.id === S.showId ? "background:var(--accent);color:#0A0A0A" : ""}">${h(sw.name)}${folderOf(sw) ? `<span style="opacity:.6;font-size:10px"> · ${h(folderOf(sw))}</span>` : ""}</button>`);
     const list = SONGS().map((x, i) => {
       const gn = (S.groups.find((g) => g.id === x.groupId) || {}).name || "";
       const cnt = NOTES().filter((n) => n.songId === x.id && n.showId === S.showId).length;
@@ -7034,7 +7065,7 @@ function lyricDisplaySettings() {
 function memberPreviewSettings() {
   const groups = liveGroups().filter(g => !g.nopub && g.src);
   return `<h4 class="head">メンバー画面</h4><div class="card">
-    ${groups.length ? groups.map(g => `<button class="ghost member-preview-link" data-act="pvnow" data-id="${h(g.id)}">${h(g.name)}のメンバー画面を見る</button>`).join("")
+    ${groups.length ? groups.map(g => `<button class="ghost member-preview-link" data-act="pvnow" data-id="${h(g.id)}">${h(groupDisplayName(g))}のメンバー画面を見る</button>`).join("")
       : '<p class="note">グループの自動公開を始めると、配信したメンバー画面を確認できます。</p>'}
   </div>`;
 }
@@ -7110,7 +7141,7 @@ function recordingSelectionSongs() {
 function recordingGroupSelector() {
   const groups = S.groups.filter(g => S.rsongs.some(x => x.groupId === g.id));
   const selected = U.recGroupFilter === undefined ? (S.rsongs.find(x => x.id === S.rsongId)?.groupId || "") : U.recGroupFilter;
-  return '<div class="chips"><button class="chip sm" data-act="rec-group-filter" data-id="" aria-pressed="'+!selected+'">全曲</button>'+groups.map(g => '<button class="chip sm" data-act="rec-group-filter" data-id="'+h(g.id)+'" aria-pressed="'+(selected===g.id)+'">'+h(g.name)+'</button>').join('')+'</div>';
+  return '<div class="chips"><button class="chip sm" data-act="rec-group-filter" data-id="" aria-pressed="'+!selected+'">全曲</button>'+groups.map(g => '<button class="chip sm" data-act="rec-group-filter" data-id="'+h(g.id)+'" aria-pressed="'+(selected===g.id)+'">'+h(groupDisplayName(g))+'</button>').join('')+'</div>';
 }
 function selectRecordingGroup(id) {
   if (VIEW() || id && !S.groups.some(g => g.id === id)) return;
@@ -8343,7 +8374,7 @@ function viewSetup() {
       </button>
       <button class="organize-more" data-act="show-actions" data-id="${sw.id}" aria-label="${h(sw.name)}の操作">⋯</button>
     </div>`;
-  const shows = allShows.map(showRow).join("");
+  const shows = groupedPerformanceHTML(allShows, showRow);
 
   const activeShow = allShows.find(sw => sw.id === S.showId);
   const all2 = activeShow ? SONGS() : [];
@@ -8383,12 +8414,13 @@ function viewSetup() {
              : `<button data-act="recon" class="chip sm" style="color:var(--accent)">ライブモード ⇄</button>`}</div>
   <div class="scroll pad">
     <section data-settings-panel="live-materials">
+    <button class="primary" data-act="picker" style="margin-bottom:12px">公演を選ぶ · ${h(activeShow?.name || '未選択')}</button>
     <p class="note">本人の保存内容です。メンバー画面には配信済みの内容が表示されます。</p>
     ${S.shows.some(sw => !sw.hidden && sw.deliveryMode !== "song" && !showDeliveryGroupId(sw)) ? `<button class="ghost" data-act="showfilter" data-id="__unassigned__" style="color:var(--bad);margin-bottom:12px">グループ未設定の公演を確認</button>` : ""}
     ${liveGroups().length > 1 || !!U.showFilter ? `<div class="chips" style="margin-bottom:10px">
       <button class="chip sm" data-act="showfilter" data-id="" style="${!U.showFilter ? "background:var(--accent);color:#0A0A0A" : ""}">全公演を表示</button>
       ${liveGroups().map((g) => `<button class="chip sm" data-act="showfilter" data-id="${g.id}"
-        style="${U.showFilter === g.id ? "background:var(--accent);color:#0A0A0A" : ""}">${h(g.name)}</button>`).join("")}
+        style="${U.showFilter === g.id ? "background:var(--accent);color:#0A0A0A" : ""}">${h(groupDisplayName(g))}</button>`).join("")}
     </div>` : ""}
     <h4 class="head">${h(activeShow?.name || "公演を選択")}</h4>
     <h4 class="head">セットリスト</h4>
@@ -8550,7 +8582,7 @@ document.addEventListener("click", (e) => {
     case "summary-back": backToSummary(); break;
     case "go-summary": commitFields(); U.view = "summary"; render(); break;
     case "pt-settings": if (window.PTLink) window.PTLink.open(); break;
-    case "go-setup": commitFields(); U.view = "setup"; render(); break;
+    case "go-setup": commitFields(); ensurePersonalPrivateGroup(); U.view = "setup"; render(); break;
     case "go-live": commitFields(); U.view = "live"; render(); break;
     case "note": openSheet(i, null, null, e.detail ? {x:e.clientX, y:e.clientY} : null); break;
     case "assignline": {
@@ -9808,7 +9840,7 @@ document.addEventListener("click", (e) => {
       break;
     }
     case "addnopub": {
-      if (S.groups.some((g) => g.nopub)) break;
+      if (S.groups.some((g) => String(g.name || '').normalize('NFKC').replace(/\s/g,'') === '配信しない')) break;
       const ngid = uid();
       S.groups.push({ id: ngid, name: "配信しない", gistId: "", src: "", key: "", keyInLink: true, nopub: true });
       save(); render();
@@ -10892,6 +10924,9 @@ async function wrap(obj, g) {
 /* ---- GitHub Gist：グループごとに配信する ---- */
 function publicationData(gid, previous, isolatedLibraries = false) {
   const g = group(gid);
+  if (privateDeliveryGroup(g)) {
+    const e = new Error('配信しないグループは送信できません。'); e.code = 'PRIVATE_PUBLICATION_BLOCKED'; throw e;
+  }
   const unresolved = unresolvedPublicationShows(gid);
   if (unresolved.length && previous === undefined) {
     try { previous = JSON.parse(g.lastKey || "null"); } catch (_) { previous = null; }
@@ -11022,6 +11057,9 @@ function retainUnresolvedPublication(current, previous, unresolved, g) {
   if (!previous || previous.groupName !== g.name || !Array.isArray(previous.lib)
       || !Array.isArray(previous.shows) || !Array.isArray(previous.songs)) {
     throw new Error("配信済みデータのグループまたは形式を確認できません。既存データを保持して送信を止めました。");
+  }
+  if (unresolved.some(sw => S.songs.some(so => so.showId === sw.id && privateDeliveryGroup(S.groups.find(g => g.id === songDeliveryGroupId(so)))))) {
+    throw new Error('非公開の曲を含む未設定公演の再配信は停止しました。');
   }
   const ids = new Set(unresolved.map(sw => sw.id));
   const kept = previous.shows.filter(sw => ids.has(sw.id));
@@ -11155,6 +11193,7 @@ async function gistStart(gid) {
   if (!recordingInboxRelease) return false;
   try {
   const g = group(gid);
+  if (privateDeliveryGroup(g)) return false;
   if (!S.ghToken) { alert("先にアクセストークンを入れてください。"); return; }
   U.busy = `${g.name} のGistを作成中…`; render();
   try {
@@ -11410,7 +11449,7 @@ async function gistPush(gid, force) {
   if(typeof startupCanCommunicate==='function'&&!startupCanCommunicate())return false;
   if (!recordingInboxCanWrite()) return false;
   const g = S.groups.find(x => x.id === gid);
-  if (!g || !g.gistId || g.nopub || !S.ghToken) return "skip";
+  if (!g || !g.gistId || privateDeliveryGroup(g) || !S.ghToken) return "skip";
   const destination = g.gistId, token = S.ghToken, encryptionKey = g.key;
   const source = gistRawSource(g.src);
   let githubRawHost = false;
@@ -11423,7 +11462,7 @@ async function gistPush(gid, force) {
   }
   if (source) g.src = source.url;
   const selectedSource = g.src;
-  const targetUnchanged = () => S.groups.find(x => x.id === gid) === g && !g.nopub
+  const targetUnchanged = () => S.groups.find(x => x.id === gid) === g && !privateDeliveryGroup(g)
     && g.gistId === destination && S.ghToken === token && g.key === encryptionKey && g.src === selectedSource;
   const checkTarget = () => {
     if (!targetUnchanged()) throw new Error("配信先または接続設定が変わったため送信を止めました。設定を確認して再送信してください。");
@@ -11557,7 +11596,7 @@ async function doPush(silent) {
 }
 async function publishGroups(silent) {
   if (!recordingInboxCanWrite()) return false;
-  const live = S.groups.filter((g) => g.gistId && !g.nopub
+  const live = S.groups.filter((g) => g.gistId && !privateDeliveryGroup(g)
     &&(typeof startupRecoveryNetworkHold==='undefined'||!startupRecoveryNetworkHold||typeof RecoveryDelivery!=='undefined'&&RecoveryDelivery.canPublish(g.id)));
   if (!S.ghToken || !live.length) return;
   pushState = "送信中"; renderPublishStatus();

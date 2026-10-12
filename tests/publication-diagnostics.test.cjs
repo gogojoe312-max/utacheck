@@ -13,7 +13,7 @@ function fixture({viewer=false,linked=true,backup=false}={}) {
   notes:[{id:'note',showId:'show',songId:'song',memberIds:[],tags:[],memo:'PRIVATE_MEMO'}],pubNotes:[],members:[],gsubs:{},subs:{},memos:{},
   trash:[{kind:'rec',at:1,songs:[{id:'deleted',title:'PRIVATE_DELETED'}]}],staffMemos:{private:'PRIVATE_STAFF'},draws:{line:[1,2]},offlineField:{input:'PRIVATE_OFFLINE'},plan:{slots:[{id:'old',a0:1,secLog:{old:1}}]}};
  let published,memberPayload,cloud,fetchOverride;
- const c=vm.createContext({S:state,U:{},preview:null,URL,Date,JSON,Object,Array,Set,Number,SyntaxError,Error,TextEncoder,TextDecoder,Uint8Array,crypto:webcrypto,
+ const c=require('./inbox-test-context.cjs')({S:state,U:{},preview:null,URL,Date,JSON,Object,Array,Set,Number,SyntaxError,Error,TextEncoder,TextDecoder,Uint8Array,crypto:webcrypto,
   VIEW:()=>viewer,typingNow:()=>false,enterRecordingInboxEditor:()=>()=>{},group:gid=>state.groups.find(g=>g.id===gid),member:()=>null,showsNewestFirst:()=>state.shows,
   packState:clone,hash32:s=>{let n=0;for(const ch of s)n=Math.imul(31,n)+ch.charCodeAt(0)|0;return String(n);},
   b64e:bytes=>Buffer.from(bytes).toString('base64url'),b64d:text=>new Uint8Array(Buffer.from(text,'base64url')),squeeze:async()=>null,
