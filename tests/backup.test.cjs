@@ -6,10 +6,10 @@ const src=fs.readFileSync(require('node:path').join(__dirname,'..','app.js'),'ut
 const block=(a,b)=>src.slice(src.indexOf(a),src.indexOf(b,src.indexOf(a)));
 function setup(gh) {
  const alerts=[],uploads=[];
- const server={files:{'utacheck-backup.json':{content:'{"bk":1,"data":"previous"}'}}};
+ const server={public:false,files:{'utacheck-backup.json':{content:'{"bk":1,"data":"previous"}'}}};
  let revision=0;
  const rawFiles=new Map();
- const copy=()=>JSON.parse(JSON.stringify({id:'target',files:server.files}));
+ const copy=()=>JSON.parse(JSON.stringify({id:'target',public:server.public,files:server.files}));
  const c=testContext({S:{ghToken:'secret',bkGistId:'target',bkAt:10,bkSeen:10,bkHash:0,shows:[{id:'show'}],songs:[{id:'song'}],notes:[{memo:'original'}],draws:{line:[1,2]}},U:{view:'live'},preview:null,VIEW:()=>false,
   APP_VER:"test",crypto:require("node:crypto").webcrypto,URL,Date,AbortSignal,TextEncoder,TextDecoder,Response,Uint8Array,CompressionStream,JSON,Promise,
   startupRecoveryNetworkHold:false,restoreViewSelection(){},packState:x=>x,unpackState:x=>x,save(){},render(){},commitFields(){},alert:x=>alerts.push(x),
@@ -105,7 +105,7 @@ test('multi-megabyte backups stage small requests, commit the index last and rou
  assert.equal(s.c.S.bkPendingParts,undefined);
  assert.equal(s.c.S.bkHash,s.run('bkSignature()'));
 });
-test('interrupted uploads leave the prior backup usable, and retry cleans only this device leftovers',async()=>{
+test('interrupted uploads leave the prior backup usable, and retry retains every previous and interrupted generation',async()=>{
  let fail=true,n=0;
  const s=setup(async()=>{if(fail && ++n===2)throw new Error('connection lost');});
  const original=await s.read(s.server.files);
@@ -116,11 +116,11 @@ test('interrupted uploads leave the prior backup usable, and retry cleans only t
  const stale=Object.keys(s.server.files).filter(k=>k.endsWith('.txt'));assert.equal(stale.length,1);
  const foreign='utacheck-backup-part-'+ 'f'.repeat(32)+'-0001.txt';s.server.files[foreign]={content:'other device upload'};
  fail=false;assert.equal(await s.run('doBackup(true)'),true);
- assert(stale.every(k=>!s.server.files[k]));assert(s.server.files[foreign]);
+ assert(stale.every(k=>s.server.files[k]));assert(s.server.files[foreign]);
  const good=await s.read(s.server.files);assert.equal(good.data.length,1800000);
  s.c.packBackup=async()=>({bk:1,data:'small'});assert.equal(await s.run('doBackup(true)'),true);
  assert.equal((await s.read(s.server.files)).data,'small');
- assert.deepEqual(Object.keys(s.server.files).sort(),['utacheck-backup.json',foreign].sort());
+ assert(stale.every(k=>s.server.files[k]));assert(s.server.files[foreign]);assert(s.server.files['utacheck-backup.json']);
 });
 test('truncated or omitted API file contents use versioned raw URLs, without forwarding tokens',async()=>{
  const s=setup();s.c.packBackup=async()=>({enc:1,data:'z'.repeat(1000000)});
@@ -162,4 +162,7 @@ test('encrypted large backup restores through both cloud restore and automatic d
  c.readSyncBackup=s.realReadSyncBackup;
  c.S.notes=[];c.S.bkHash=s.run('bkSignature()');c.S.bkSeen=0;
  await s.run('checkOther()');assert.equal(JSON.stringify(c.S.notes),expected);
+});
+test('automatic backup rejects a public existing target before PATCH and keeps old data',async()=>{
+ const f=setup();f.server.public=true;const before=JSON.stringify(f.server.files);assert.equal(await f.run('doBackup(true)'),false);assert.equal(f.uploads.length,0);assert.equal(JSON.stringify(f.server.files),before);
 });

@@ -34,12 +34,12 @@ test('recovery hold uses the existing file backup action even with saved cloud c
  const f=fixture({state:{ghToken:'synthetic-token',bkGistId:'synthetic-id',bkAt:123,bkHash:7}});f.c.startupRecoveryNetworkHold=true;
  const html=f.html(),shown=visible(html);
  assert.match(shown,/クラウド保存・他端末との同期は停止中/);assert.match(shown,/data-act="bkfile"/);assert.doesNotMatch(html,/data-act="bknow"/);
- assert.match(html,/recovery-original-backup-check/);assert.doesNotMatch(html,/data-act="backup-restore"/);
+ assert.doesNotMatch(html,/recovery-original-backup-check/);assert.doesNotMatch(html,/data-act="backup-restore"/);
  assert.doesNotMatch(html,/synthetic-token|synthetic-id/);
 });
-test('ordinary connected backup preserves cloud and file actions',()=>{
+test('ordinary connected backup is automatic and keeps only file export',()=>{
  const f=fixture({state:{ghToken:'synthetic-token',bkAt:123,bkHash:7}}),shown=visible(f.html());
- assert.match(shown,/data-act="bknow"/);assert.match(shown,/data-act="bkfile"/);
+ assert.doesNotMatch(shown,/data-act="bknow"/);assert.match(shown,/data-act="bkfile"/);
 });
 test('REC omits routine maintenance markup while restoration implementations remain available',()=>{
  const f=fixture({state:{recMode:true}}),before=f.snapshot(),html=f.html();
@@ -70,8 +70,8 @@ test('all three modes use one practice renderer and both editors use one storage
  assert.match(html,/data-settings-panel="practice"><summary>/);assert.match(html,/鍵盤/);assert.match(html,/pitch-start/);assert.match(html,/metro-start/);
 });
 
-test('private preparation status is rendered once outside closed maintenance panels',()=>{
+test('automatic private preparation has no routine management control',()=>{
  const f=fixture();f.c.PrivatePreparationUI={settingsHTML:()=>'<p data-private-preparation-status role="status">本人用準備</p><button data-act="private-preparation-check">今確認</button>'};
  const html=f.html(),shown=visible(html);
- assert.equal((html.match(/data-private-preparation-status/g)||[]).length,1);assert.match(shown,/data-private-preparation-status/);assert.match(shown,/data-act="private-preparation-check"/);
+ assert.equal((html.match(/data-private-preparation-status/g)||[]).length,0);assert.doesNotMatch(shown,/data-act="private-preparation-check"/);
 });

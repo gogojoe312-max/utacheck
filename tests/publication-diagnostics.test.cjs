@@ -143,7 +143,7 @@ test('preview and input-in-progress do not pretend to inspect a real member or c
 test('actual click dispatch bypasses the generic commit/blur path for diagnostics',async()=>{
  const f=fixture();let handler;f.c.document={addEventListener:(name,fn)=>handler=fn,activeElement:{blur(){throw Error('unexpected blur');}}};
  f.c.typingNow=()=>true;f.c.commitFields=()=>{throw Error('unexpected commit');};f.c.song=()=>{throw Error('unexpected selection');};
- const start=src.indexOf('document.addEventListener("click", (e) => {\n  const b = e.target.closest("[data-act]");');let end=src.indexOf('\n});',start);
+ const start=src.indexOf('document.addEventListener("click", async (e) => {\n  const b = e.target.closest("[data-act]");');let end=src.indexOf('\n});',start);
  while(end>=0){try{new vm.Script(src.slice(start,end+4));break;}catch(_){end=src.indexOf('\n});',end+1);}}
  assert(end>=0);vm.runInContext(src.slice(start,end+4),f.c);
  const button={dataset:{act:'publication-inspect',id:'g'},tagName:'BUTTON'};

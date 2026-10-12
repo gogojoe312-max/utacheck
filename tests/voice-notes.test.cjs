@@ -24,7 +24,7 @@ function setup() {
  });
  vm.runInContext(appSrc.slice(appSrc.indexOf('const KEY ='),appSrc.indexOf('/* ---------------- state')),c);
  // Use the real application click handler first: on iPhone it must blur fields before saving.
- const start=appSrc.indexOf('document.addEventListener("click", (e) => {');
+ const start=appSrc.indexOf('document.addEventListener("click", async (e) => {');
  vm.runInContext(appSrc.slice(start,appSrc.indexOf('\n});',start)+4),c);
  vm.runInContext(voiceSrc,c);
  const run=code=>vm.runInContext(code,c);

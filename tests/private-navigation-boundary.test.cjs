@@ -5,7 +5,8 @@ const read=name=>{const a=source.indexOf('function '+name+'(');return source.sli
 test('an absent member and a prior substitution never expand the original 全 label',()=>{
  const c=vm.createContext({S:{recMode:false},subOf:()=>['present'],splitAssign:()=>{throw Error('全 must never expand');}});vm.runInContext(read('labelOf'),c);
  const so={id:'stable-song',lines:[{label:'全',labelRaw:'全',t:'original',parts:['absent','present']}]},before=JSON.stringify(so);
- assert.equal(c.labelOf(so,0),'全');assert.equal(JSON.stringify(so),before);
+ assert.equal(c.labelOf(so,0),'全');
+ const roman={id:'stable-roman',lines:[{label:'zenn',labelRaw:'zenn',t:'original',parts:['absent','present']}]};assert.equal(c.labelOf(roman,0),'zenn');assert.equal(JSON.stringify(so),before);
 });
 test('the private group is reused by name and only a missing group creates one without moving data',()=>{
  const c=vm.createContext({S:{groups:[{id:'existing',name:'配信しない',nopub:false}],songs:[{id:'original',groupId:'public'}]},VIEW:()=>false,recordingInboxCanWrite:()=>true,startupRecoveryNetworkHold:false,uid:()=> 'new-private',save(){}});vm.runInContext(read('ensurePersonalPrivateGroup'),c);

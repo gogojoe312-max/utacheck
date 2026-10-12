@@ -33,7 +33,7 @@
   const manifest=clone(input),seen=new Set();
   for(const op of manifest.operations){
    only(op,['id','type','sha256','packet']);
-   if(!id(op.id)||seen.has(op.id)||!['recording-schedule','recording-addition','live-addition','live-update'].includes(op.type)||!/^[a-f0-9]{64}$/.test(op.sha256))fail('INVALID_OPERATION');
+   if(!id(op.id)||seen.has(op.id)||!['recording-schedule','recording-addition','live-addition','live-update','material-update'].includes(op.type)||!/^[a-f0-9]{64}$/.test(op.sha256))fail('INVALID_OPERATION');
    seen.add(op.id);safePacket(op.packet);if(await digest(op.packet,cryptoProvider)!==op.sha256)fail('HASH_MISMATCH');
   }
   return manifest;
@@ -147,6 +147,44 @@
   const nextSongs=songs.map(song=>song?.showId===show.id?byId.get(order[index++]):song);
   return {state:{...current,songs:nextSongs},songs:prepared.size,orderChanged:!same(order,ids)};
  }
+ function mergeMaterialUpdate(current,packet){
+  safePacket(packet);only(packet,['app','version','scope','groupId','songId','expectedTitle','beforeLines','afterLines','source'],['showId']);
+  if(packet.app!=='utacheck-material-update'||packet.version!==1||!['live','recording'].includes(packet.scope)||!id(packet.groupId)||!id(packet.songId))fail('INVALID_OPERATION');
+  only(packet.source,['revision','files']);
+  if(typeof packet.source.revision!=='string'||!packet.source.revision.trim()||!Array.isArray(packet.source.files)||!packet.source.files.length)fail('SOURCE_REQUIRED');
+  for(const f of packet.source.files){only(f,['name','sha256']);if(typeof f.name!=='string'||!f.name.trim()||!/^[a-f0-9]{64}$/.test(f.sha256))fail('SOURCE_REQUIRED');}
+  const groups=current.groups||[],members=current.members||[],key=packet.scope==='live'?'songs':'rsongs',list=current[key]||[];
+  const hits=list.filter(song=>song.id===packet.songId),group=groups.filter(g=>g.id===packet.groupId);
+  if(hits.length!==1||group.length!==1||!([true,1].includes(group[0].nopub)||String(group[0].name||'').normalize('NFKC').replace(/\s/g,'')==='配信しない'))fail('MATERIAL_IDENTITY_CONFLICT');
+  const song=hits[0],same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
+  if(song.groupId!==packet.groupId||song.title!==packet.expectedTitle||!same(song.lines,packet.beforeLines))fail('MATERIAL_BEFORE_CONFLICT');
+  if(packet.scope==='live'){
+   const shows=(current.shows||[]).filter(sw=>sw.id===packet.showId);
+   if(shows.length!==1||shows[0].groupId!==packet.groupId||![true,1].includes(shows[0].nopub)||song.showId!==packet.showId)fail('MATERIAL_NOT_PRIVATE');
+  }else if(own(packet,'showId'))fail('INVALID_OPERATION');
+  if(!Array.isArray(packet.afterLines)||!packet.afterLines.length||packet.afterLines.length!==song.lines.length)fail('MATERIAL_LINE_IDENTITY_CONFLICT');
+  const roster=new Set(song.roster||song.lines.flatMap(line=>line.parts||[]));
+  const editable=new Set(['t','parts','main','extra','label','labelRaw','raw','extraRaw']);
+  const changed=[];
+  packet.afterLines.forEach((line,i)=>{
+   const before=song.lines[i];if(!object(line)||typeof line.t!=='string'||!same(line.id,before.id)||before.gap&&line.t!==before.t)fail('MATERIAL_LINE_IDENTITY_CONFLICT');
+   for(const k of new Set([...Object.keys(before),...Object.keys(line)]))if(!editable.has(k)&&!same(before[k],line[k]))fail('MATERIAL_LINE_IDENTITY_CONFLICT');
+   for(const k of ['parts','main','extra'])if(own(line,k)&&(!Array.isArray(line[k])||line[k].some(mid=>members.filter(m=>m.id===mid).length!==1||!roster.has(mid))))fail('UNKNOWN_MEMBER');
+   for(const k of ['label','labelRaw','raw','extraRaw'])if(own(line,k)&&typeof line[k]!=='string')fail('INVALID_OPERATION');
+   if(!same(line,before))changed.push(i);
+  });
+  if(changed.length){
+   for(const note of [...(current.notes||[]),...(current.pubNotes||[])])if(note.songId===song.id){
+    const end=note.lineEnd==null?note.lineIdx:note.lineEnd;
+    if(!Number.isInteger(note.lineIdx)||!Number.isInteger(end)||changed.some(i=>i>=note.lineIdx&&i<=end))fail('MATERIAL_ANNOTATION_CONFLICT');
+   }
+   for(const [name,value]of Object.entries(current.recs||{}))if(name.split('|').includes(song.id)||value?.songId===song.id)fail('MATERIAL_RECORDING_CONFLICT');
+   for(const store of ['draws','subs','subsMan','gsubs'])for(const [name,value]of Object.entries(current[store]||{}))if(name.split('|').includes(song.id)&&JSON.stringify(value)!=='[]'&&JSON.stringify(value)!=='{}')fail('MATERIAL_ANNOTATION_CONFLICT');
+  }
+  const next={...song,lines:clone(packet.afterLines)};
+  if(own(song,'sig'))delete next.sig;
+  return {state:{...current,[key]:list.map(x=>x.id===song.id?next:x)},songs:changed.length?1:0};
+ }
  function checkedRecording(packet,current){
   if(!packet||packet.app!=='utacheck-recording-addition'||packet.version!==1||!id(packet.group?.id)||typeof packet.group.name!=='string'||!packet.group.name.trim()||![true,1].includes(packet.group.nopub)
    ||!Array.isArray(packet.members)||packet.members.length>500||!Array.isArray(packet.roster)||packet.roster.some(x=>typeof x!=='string')
@@ -186,10 +224,11 @@
    if(result.state.groups.slice((current.groups||[]).length).some(g=>!g.nopub||g.src||g.gistId||g.key))fail('PRIVATE_CONNECTION_FIELD');
   }else if(operation.type==='live-addition')result=mergeLive(current,operation.packet);
   else if(operation.type==='live-update')result=mergeLiveUpdate(current,operation.packet);
+  else if(operation.type==='material-update')result=mergeMaterialUpdate(current,operation.packet);
   else fail('INVALID_OPERATION');
   if(!result?.state||result.state===current&&operation.type!=='recording-schedule')fail('INVALID_OPERATION');
   return {...result,status:'applied',state:{...result.state,privatePreparations:{...ledger,[operation.id]:{sha256:operation.sha256,type:operation.type,at:now}}}};
  }
- const api=Object.freeze({validate,apply,digest,mergeLive,mergeLiveUpdate});if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.PrivatePreparation=api;
+ const api=Object.freeze({validate,apply,digest,mergeLive,mergeLiveUpdate,mergeMaterialUpdate});if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.PrivatePreparation=api;
 })(typeof globalThis!=='undefined'?globalThis:this);
 

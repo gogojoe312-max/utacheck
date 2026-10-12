@@ -33,3 +33,8 @@ test('setlist and REC materials precede optional controls and routine management
  const backup=read('backupSettingsHTML');assert.doesNotMatch(backup,/data-settings-panel="recovery"|data-settings-panel="recording-import"/);
  assert.match(source,/function applySetlist/);assert.match(source,/async function restoreBackup/);assert.match(source,/async function syncNow/);
 });
+test('the reserved private group stays selectable with only REC material; empty REC filter never exposes other groups',()=>{
+ const f=fixture();f.c.S.groups.push({id:'off',name:'配信しない',nopub:true});f.c.S.rsongs.push({id:'private-rec',groupId:'off',lines:[]});
+ assert(f.run('liveGroups().some(g=>g.id==="off")'));const original=JSON.stringify(f.c.S);f.run("U.recGroupFilter='off'");assert.deepEqual(Array.from(f.run('recordingSelectionSongs()'),x=>x.id),['private-rec']);
+ f.c.S.rsongs=f.c.S.rsongs.filter(x=>x.id!=='private-rec');assert.equal(f.run('recordingSelectionSongs().length'),0);assert.equal(f.c.S.groupId,'r');
+});

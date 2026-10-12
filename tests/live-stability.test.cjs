@@ -79,7 +79,7 @@ test('note undo does not copy recording lyrics or erase recording state when res
  const c=testContext({S:{notes:[{id:'before'}],rsongs:songs,plan},undoStack:[],U:{},song:()=>({}),clearTimeout(){},save(){},schedulePush(){},render(){},document:{addEventListener(name,fn){c.click=fn;}}});
  vm.runInContext(block('function pushUndo(', 'let saveErr'),c);vm.runInContext('pushUndo(null,true)',c);
  assert(!c.undoStack[0].includes('recording'));c.S.notes.push({id:'after'});
- const start=src.indexOf('document.addEventListener("click", (e) => {');vm.runInContext(src.slice(start,src.indexOf('\n});',start)+4),c);
+ const start=src.indexOf('document.addEventListener("click", async (e) => {');vm.runInContext(src.slice(start,src.indexOf('\n});',start)+4),c);
  c.click({target:{closest:sel=>sel==='[data-act]'?{dataset:{act:'undo'}}:null}});
  assert.equal(c.S.notes.length,1);assert.equal(c.S.rsongs,songs);assert.equal(c.S.plan,plan);
 });
@@ -133,7 +133,7 @@ test('close remains usable when a mobile browser keeps focus in the memo input',
  const document={activeElement:{tagName:'TEXTAREA',value:'入力した指示',blur(){document.activeElement=null;}},addEventListener(name,fn){c.click=fn;}};
  const c=testContext({U:{sheet},document,sheetTimer:null,clearTimeout(){},song:()=>({}),typingNow:()=>!!document.activeElement,
   commitFields(){sheet.memo=document.activeElement.value;},sheetHasInput:()=>!!sheet.memo,commitNote(){assert.equal(document.activeElement,null);committed=sheet.memo;c.U.sheet=null;closed=true;},renderSheet(){closed=true;}});
- const start=src.indexOf('document.addEventListener("click", (e) => {');vm.runInContext(src.slice(start,src.indexOf('\n});',start)+4),c);
+ const start=src.indexOf('document.addEventListener("click", async (e) => {');vm.runInContext(src.slice(start,src.indexOf('\n});',start)+4),c);
  c.click({target:{closest:sel=>sel==='[data-act]'?{tagName:'BUTTON',dataset:{act:'cancel'}}:null}});
  assert.equal(committed,'入力した指示');assert.equal(closed,true);assert.equal(c.U.sheet,null);
 });

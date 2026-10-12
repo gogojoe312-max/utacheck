@@ -111,3 +111,17 @@ test('private LIVE reorder keeps selected song identity and original annotations
  const op={id:'live-reorder',type:'live-update',packet,sha256:await Preparation.digest(packet,webcrypto)};f.manifest.operations=[op];
  const before=clone(f.run('S.notes')),result=await f.c.PrivatePreparationUI.receive(true);assert.equal(result.status,'applied',JSON.stringify(result));assert.equal(f.run('song().id'),'song');assert.equal(f.run('U.songIdx'),1);assert.deepEqual(clone(f.run('S.notes')),before);
 });
+for(const changed of [false,true])test('material operation rechecks prepared source SHA before any atomic replacement: changed='+changed,async()=>{
+ let reads=0,baseline;
+ const f=await setup({hold:false,source:async({f,manifest})=>{
+  reads++;if(reads===1){const s=f.run('S');s.groups[0].nopub=true;s.shows[0].nopub=true;baseline=clone(s);
+   const packet={app:'utacheck-material-update',version:1,scope:'live',groupId:s.groups[0].id,showId:s.shows[0].id,songId:s.songs[0].id,expectedTitle:s.songs[0].title,beforeLines:clone(s.songs[0].lines),afterLines:clone(s.songs[0].lines),source:{revision:'original-file-version',files:[{name:'original.xlsx',sha256:'b'.repeat(64)}]}};
+   manifest.operations=[{id:'new-material',type:'material-update',sha256:await Preparation.digest(packet,webcrypto),packet}];
+  }
+  return {status:'ready',manifest,sourceSha:(changed&&reads>1?'b':'a').repeat(40)};
+ }});
+ const clips=f.idb.snapshot().clips,result=await f.c.PrivatePreparationUI.receive(true);
+ assert.equal(reads,2);assert.deepEqual(f.idb.snapshot().clips,clips);
+ if(changed){assert.equal(result.status,'conflict');assert.equal(result.code,'PREPARATION_SOURCE_CHANGED');assert.deepEqual(clone(f.run('S')),baseline);}
+ else{assert.equal(result.status,'applied');assert.equal(f.run("S.privatePreparations['new-material'].type"),'material-update');}
+});

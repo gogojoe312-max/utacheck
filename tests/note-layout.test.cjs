@@ -12,7 +12,7 @@ function sheet(){
   commitFields(){if(c.U.sheet?.detail)c.U.sheet.memo=memo;}});
  vm.runInContext(src.slice(src.indexOf('const KEY ='),src.indexOf('/* ---------------- state')),c);
  vm.runInContext(src.slice(src.indexOf('function renderSheet()'),src.indexOf('/* ---- summary ---- */')),c);
- const start=src.indexOf('document.addEventListener("click", (e) => {');vm.runInContext(src.slice(start,src.indexOf('\n});',start)+4),c);
+ const start=src.indexOf('document.addEventListener("click", async (e) => {');vm.runInContext(src.slice(start,src.indexOf('\n});',start)+4),c);
  const render=()=>{vm.runInContext('renderSheet()',c);return html;};
  function act(action,id=''){const button={dataset:{act:action,id}};click({target:{closest:sel=>sel==='[data-act]'?button:null},detail:1});return html;}
  return {c,render,act,memo:value=>{memo=value;},commits,run:code=>vm.runInContext(code,c)};

@@ -113,7 +113,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.57.1";
+const APP_VER = "16.41.58";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1200,6 +1200,7 @@ async function loadRaw() {
   } catch (e) { idbOK = false; }
   try { return localStorage.getItem(KEY); } catch (e) { return null; }
 }
+let normalStartupInitialized = false;
 let booted = false;      // 起動の読み込みが済んだか
 let touched = false;     // 読み込みの前に、こちらで何か触ったか
 async function load() {
@@ -1380,10 +1381,10 @@ function migrate({preserve = false,keepPublicationBindings = false} = {}) {
   S.songs.forEach((x) => { if (!x.showId) x.showId = S.showId; });
   syncShowGroup();
   // 「全（データ）」等が人名として登録されてしまった分を掃除し、全員扱いに直す
-  const zen = S.members.filter((m) => /^全/.test(m.name));
+  const zen = S.members.filter((m) => /^(?:全|zenn\b)/i.test(m.name));
   if (zen.length&&!keepPublicationBindings) {
     const zids = zen.map((m) => m.id);
-    S.members = S.members.filter((m) => !/^全/.test(m.name));
+    S.members = S.members.filter((m) => !/^(?:全|zenn\b)/i.test(m.name));
     const all = S.members.map((m) => m.id);
     S.songs.forEach((sg) => sg.lines.forEach((l) => {
       if (l.parts && l.parts.some((x) => zids.includes(x))) l.parts = all.slice();
@@ -1425,7 +1426,7 @@ function songRoster(so) {
   if (so.roster && so.roster.length) return so.roster;
   const out = [];
   so.lines.forEach((l) => {
-    if (/^全/.test(l.label || "")) return;      // 「全」の行は全員が入っているので数えない
+    if (/^(?:全|zenn\b)/i.test(l.label || "")) return;      // 「全」の行は全員が入っているので数えない
     (l.parts || []).forEach((p) => { if (!out.includes(p)) out.push(p); });
   });
   return out;
@@ -1484,6 +1485,29 @@ function groupDisplayName(g) {
 function privateDeliveryGroup(g) {
   return !!g && (!!g.nopub || String(g.name || '').normalize('NFKC').replace(/\s/g,'') === '配信しない');
 }
+let verifiedEditBackup = null;
+async function automaticBackupBeforeEdit(reason) {
+  if (VIEW() || preview) return false;
+  if (typeof VerifiedEditBackup === 'undefined') { alert('保存の保護を読み込めません。入力せず、画面を開き直してください。'); return false; }
+  verifiedEditBackup ||= VerifiedEditBackup.create({
+    active:()=>recordingInboxCanWrite() && booted && !bootErr && !preview && !VIEW() && !syncing && !manualSync && !backupInFlight && !publishInFlight,
+    snapshot:()=>JSON.stringify(backupState()), hash:backupDigest,
+    encode:async raw=>packBackup(JSON.parse(raw)),
+    decode:async backup=>JSON.stringify((await unpackBackup(backup)).state),
+    read:idbGet,
+    add:async (key,value)=>{
+      const release=recordingInboxAdmitWriter();
+      try { const database=await db(); await new Promise((resolve,reject)=>{
+        const tx=database.transaction('state','readwrite');tx.objectStore('state').add(value,key);
+        tx.oncomplete=resolve;tx.onerror=tx.onabort=()=>reject(tx.error||new Error('復元点を保存できません。'));
+      }); } finally { release(); }
+    }
+  });
+  const checkpointSnapshot=backupState();
+  try { await verifiedEditBackup.checkpoint(reason); U.backupError=''; U.backupFailureCode=''; return true; }
+  catch(error) { const after=backupState();U.backupChangedFields=Object.keys({...checkpointSnapshot,...after}).filter(k=>JSON.stringify(checkpointSnapshot[k])!==JSON.stringify(after[k])); U.backupFailureCode=error.backupCode||error.name||'BACKUP_FAILED'; U.backupError='編集前の保存を確認できないため、変更を止めました。空き容量・ほかの画面の編集中の状態を確認し、画面を開き直してください。'; alert(U.backupError); return false; }
+}
+
 function ensurePersonalPrivateGroup() {
   if (VIEW() || !recordingInboxCanWrite() || startupRecoveryNetworkHold) return false;
   const existing = S.groups.find(g => String(g.name || '').normalize('NFKC').replace(/\s/g,'') === '配信しない');
@@ -1520,6 +1544,7 @@ function recoveryMaterialShow(sw) {
 }
 function liveGroups() {
   return S.groups.filter(g => {
+    if (String(g.name || '').normalize('NFKC').replace(/\s/g,'') === '配信しない') return true;
     const liveSongs = (S.songs || []).filter(so => so.groupId === g.id || so.deliveryGroupId === g.id);
     const liveShows = (S.shows || []).filter(sw => sw.groupId === g.id || sw.deliveryGroupId === g.id);
     const normalSongs = liveSongs.some(so => !recoveryMaterialShow(S.shows.find(sw => sw.id === so.showId)));
@@ -1888,7 +1913,7 @@ function labelOf(so, i) {
   // 続きの行（結合セルの2行目以降）は、元と同じで名前を出さない。
   // ここで名前を出すと、ひとまとまりの歌割が行ごとに分かれて見える。
   if (l.cont) return l.label || "";
-  if (/^全/.test(l.labelRaw || l.raw || l.label || '')) return l.labelRaw || l.raw || l.label;
+  if (/^(?:全|zenn\b)/i.test(l.labelRaw || l.raw || l.label || '')) return l.labelRaw || l.raw || l.label;
   if (subOf(so.id, i)) {
     const sp = splitAssign(so, i);
     return (names(sp.main) || "—") + (sp.extra.length ? "　ハモ " + names(sp.extra) : "");
@@ -1900,7 +1925,7 @@ function labelOf(so, i) {
 function lineStatus(so, i) {
   const l = so.lines[i] || {};
   if (l.gap || l.cut) return "";                            // カット（グレー）の行は歌わないので触らない
-  if (/^全/.test(l.labelRaw || l.label || "")) return "";   // 「全」は見れば分かるので触らない
+  if (/^(?:全|zenn\b)/i.test(l.labelRaw || l.label || "")) return "";   // 「全」は見れば分かるので触らない
   // 歌割が書かれていない行（カットした所など）は触らない
   if (!(l.parts || []).length && !(l.labelRaw || l.label)) return "";
   if (subOf(so.id, i)) return "changed";
@@ -1964,7 +1989,7 @@ function autoSubs() {
     });
     so.lines.forEach((l, i) => {
       if (l.gap || l.cut || !l.parts || !l.parts.length) return;
-      if (/^全/.test(l.labelRaw || l.label || "")) return;   // 「全」は触らない
+      if (/^(?:全|zenn\b)/i.test(l.labelRaw || l.label || "")) return;   // 「全」は触らない
       if (blockOf(so, i)) return;              // ブロックの行はブロック側で扱う
       if (S.subs[k] && S.subs[k][i]) return;
       if (!l.parts.some((p) => ab.includes(p))) return;
@@ -2449,7 +2474,7 @@ function buildSong(parsed, local) {
   Object.keys(groups).forEach((k) => groups[k].forEach(put));
   (parsed.lines || []).forEach((r) => {
     const label = (r[0] || "").trim();
-    if (!label || label === "→" || /^全/.test(label)) return;
+    if (!label || label === "→" || /^(?:全|zenn\b)/i.test(label)) return;
     splitNames(label).forEach((k) => { if (!groups[k]) put(addName(k).id); });
   });
 
@@ -2470,7 +2495,7 @@ function buildSong(parsed, local) {
         cut: r[8] === "cut" ? 1 : undefined };
     }
     let parts = [];
-    if (/^全/.test(label)) {
+    if (/^(?:全|zenn\b)/i.test(label)) {
       parts = roster.slice();
       // 「全（広本以外）」のような書き方は、その人を外す
       const ex = label.match(/[（(]([^）)]*)以外[）)]/);
@@ -2479,7 +2504,7 @@ function buildSong(parsed, local) {
         parts = parts.filter((p) => !out2.includes(p));
       }
       // 「全（広本以外）・広本」のように後ろに名前が続く場合（ハモなど）は足す
-      splitNames(label).filter((n) => !/^全/.test(n)).forEach((k) => {
+      splitNames(label).filter((n) => !/^(?:全|zenn\b)/i.test(n)).forEach((k) => {
         (groups[k] || [addName(k).id]).forEach((n) => { if (!parts.includes(n)) parts.push(n); });
       });
     }
@@ -3054,7 +3079,7 @@ function nameScore(v) {
   let sum = 0;
   for (const t of toks) {
     if (t.length > 4) return 0;
-    if (/^全/.test(t) || /^[A-Za-z]$/.test(t) || /^[㐀-䶿一-鿿豈-﫿々〆]+$/.test(t)) sum += 1;
+    if (/^(?:全|zenn\b)/i.test(t) || /^[A-Za-z]$/.test(t) || /^[㐀-䶿一-鿿豈-﫿々〆]+$/.test(t)) sum += 1;
     else if (/[぀-ヿ㐀-䶿一-鿿豈-﫿]/.test(t) || /^[A-Za-z]+$/.test(t)) sum += 0.4;
     else return 0;                                   // 記号や数字だけ
   }
@@ -3798,7 +3823,7 @@ function finalize(title, credit, rows) {
   const order = [];
   Object.values(groups).forEach((g) => g.forEach((n) => order.includes(n) || order.push(n)));
   rows.forEach((r) => {
-    if (/^全/.test(r[0]) || r[0] === "→") return;
+    if (/^(?:全|zenn\b)/i.test(r[0]) || r[0] === "→") return;
     splitNames(r[0]).forEach((t) => {
       if (!groups[t] && !order.includes(t)) order.push(t);
     });
@@ -6709,7 +6734,7 @@ function absentEdits(so) {
     // 名前は先頭の行にだけ書く。
     if (l.cont) return;
     // 「全」はそのまま。欠席がいても書き換えない。
-    if (/^全/.test(l.labelRaw || l.label || "")) return;
+    if (/^(?:全|zenn\b)/i.test(l.labelRaw || l.label || "")) return;
     // 歌割が書かれていない行（ワンハーフでカットした所など）は、誰の名前も入れない
     if (!(l.main || l.parts || []).length && !(l.labelRaw || l.label)) return;
     const sub = subOf(so.id, i);
@@ -7038,18 +7063,13 @@ function backupSettingsHTML() {
     : "クラウドにはまだ保存されていません";
   const fileOnly = startupRecoveryNetworkHold || !S.ghToken;
   return `<h4 class="head">バックアップ</h4><div class="card">
-    ${typeof PrivatePreparationUI!=="undefined" ? PrivatePreparationUI.settingsHTML() : ""}
     <p class="note" role="status" ${S.bkError ? 'style="color:var(--bad)"' : ""}>${h(status)}</p>
-    ${S.bkFileAt ? `<p class="note">ファイル作成：${new Date(S.bkFileAt).toLocaleString("ja-JP")}</p>` : ""}
-    <button class="primary" data-act="${fileOnly ? "bkfile" : "bknow"}" ${backupInFlight ? "disabled" : ""}>${backupInFlight ? "保存中…" : fileOnly ? "ファイルに保存" : "バックアップする"}</button>
-    ${!fileOnly ? '<button class="ghost" data-act="bkfile">ファイルに保存</button>' : ""}
-    <p class="note">歌割・指摘・手書き・設定を保存します。録音音声は含みません。</p>
+    <button class="ghost" data-act="bkfile" ${backupInFlight ? "disabled" : ""}>ファイルに保存</button>
     ${otherAt ? `<div role="status" class="card"><b>クラウドとこの端末に違いがあります</b><p class="note">クラウドへの送信は止めています。両方のファイルを保管し、残す内容を確認してください。</p>
       ${syncComparison ? `<p class="note">この端末の公演：${syncComparison.localShows.map(h).join('、')}<br>クラウドの公演：${syncComparison.cloudShows.map(h).join('、')}</p>` : ''}
       <button class="ghost" data-act="bkfile">この端末をファイルに保存</button>
       <button class="ghost" data-act="backup-check">クラウドをもう一度確認</button></div>` : ''}
   </div>
-  ${startupRecoveryNetworkHold ? recoveryOriginalBackupHTML() : ""}
   ${storageSettingsHTML()}`;
 }
 
@@ -7136,10 +7156,13 @@ function viewSetupRec() {
 
 function recordingSelectionSongs() {
   const selected = U.recGroupFilter === undefined ? (S.rsongs.find(x => x.id === S.rsongId)?.groupId || "") : U.recGroupFilter;
-  return selected && S.rsongs.some(x => x.groupId === selected) ? S.rsongs.filter(x => x.groupId === selected) : S.rsongs.slice();
+  return selected && S.groups.some(g => g.id === selected) ? S.rsongs.filter(x => x.groupId === selected) : S.rsongs.slice();
 }
 function recordingGroupSelector() {
-  const groups = S.groups.filter(g => S.rsongs.some(x => x.groupId === g.id));
+  const groups = S.groups.filter(g => S.rsongs.some(x => x.groupId === g.id) || String(g.name || '').normalize('NFKC').replace(/\s/g,'') === '配信しない').sort((a,b)=>{
+    const rank=g=>/^OCHA/i.test(g.name||'')?0:/ロージー|rosie|rosy/i.test(g.name||'')?1:privateDeliveryGroup(g)?2:3;
+    return rank(a)-rank(b);
+  });
   const selected = U.recGroupFilter === undefined ? (S.rsongs.find(x => x.id === S.rsongId)?.groupId || "") : U.recGroupFilter;
   return '<div class="chips"><button class="chip sm" data-act="rec-group-filter" data-id="" aria-pressed="'+!selected+'">全曲</button>'+groups.map(g => '<button class="chip sm" data-act="rec-group-filter" data-id="'+h(g.id)+'" aria-pressed="'+(selected===g.id)+'">'+h(groupDisplayName(g))+'</button>').join('')+'</div>';
 }
@@ -7951,7 +7974,6 @@ function viewPlan() {
       ${last ? (gap ? dmin(gap) : "予定どおり") : ""}</span></div>
   <div class="scroll pad">
     <div class="plan-song">${h((recSong() || {}).title || "曲を選択してください")}</div>
-    ${typeof PrivatePreparationUI!=="undefined" ? PrivatePreparationUI.settingsHTML() : ""}
     ${U.planShiftUndo ? '<button class="ghost" data-act="pshiftundo">直前の時刻調整を戻す</button>' : ""}
     ${dayBar}${list || `<p class="note">予定はまだありません</p>`}
     <details class="plan-settings"><summary>進行表を編集</summary>
@@ -8508,6 +8530,44 @@ function viewSetup() {
 }
 
 /* ---------------- events ---------------- */
+// Hold editable fields until the pre-edit restore point has been verified.
+document.addEventListener('focusin', async event => {
+  const field=event.target;
+  if (VIEW() || preview || !field || !/^(INPUT|TEXTAREA)$/.test(field.tagName) || field.type==='file' || field.readOnly || field.disabled || ['checkbox','radio','button','submit'].includes(field.type)) return;
+  field.readOnly=true;
+  if (await automaticBackupBeforeEdit('text-edit') && field.isConnected) field.readOnly=false;
+});
+
+// Native checkboxes and select changes bypass data-act buttons. Preserve their
+// original state before replaying the existing application change handlers.
+const verifiedBackupWidgetReplay = new WeakSet();
+document.addEventListener('click', async event => {
+  const field=event.target;
+  if (!field || field.tagName!=='INPUT' || !['checkbox','radio'].includes(field.type) || VIEW() || preview || verifiedBackupWidgetReplay.has(field)) return;
+  event.preventDefault();event.stopImmediatePropagation();
+  if (!await automaticBackupBeforeEdit('option-edit') || !field.isConnected) return;
+  verifiedBackupWidgetReplay.add(field);try { field.click(); } finally { verifiedBackupWidgetReplay.delete(field); }
+},true);
+const verifiedBackupSelectPending = new WeakMap();
+function preserveNativeSelection(event) {
+  const field=event.target;
+  if (!field || field.tagName!=='SELECT' || VIEW() || preview || verifiedBackupWidgetReplay.has(field)) return;
+  event.stopImmediatePropagation();
+  const existing=verifiedBackupSelectPending.get(field);
+  if(existing){existing.types.add(event.type);return;}
+  const pending={types:new Set([event.type]),disabled:field.disabled};verifiedBackupSelectPending.set(field,pending);field.disabled=true;
+  void (async()=>{
+    try {
+      if(!await automaticBackupBeforeEdit('selection-edit') || !field.isConnected) return;
+      field.disabled=pending.disabled;verifiedBackupWidgetReplay.add(field);
+      try { for(const type of ['input','change'])if(pending.types.has(type))field.dispatchEvent(new Event(type,{bubbles:true})); }
+      finally { verifiedBackupWidgetReplay.delete(field); }
+    } finally { field.disabled=pending.disabled;verifiedBackupSelectPending.delete(field); }
+  })();
+}
+document.addEventListener('input',preserveNativeSelection,true);
+document.addEventListener('change',preserveNativeSelection,true);
+
 function commitFields() {
   const memo = document.getElementById("memo");
   if (memo && U.sheet) U.sheet.memo = memo.value;
@@ -8532,7 +8592,7 @@ function commitFields() {
   }
 }
 
-document.addEventListener("click", (e) => {
+document.addEventListener("click", async (e) => {
   const b = e.target.closest("[data-act]");
   // 範囲指定（シート内の文字タップ）
   if (e.target.closest("[data-r]") && U.sheet) return;   // 文字の選択はなぞりで扱う
@@ -8540,6 +8600,10 @@ document.addEventListener("click", (e) => {
   const a = b.dataset.act, i = +b.dataset.i, id = b.dataset.id;
   // Diagnostics must not commit or blur unsaved input through the generic button path.
   if (a === 'publication-inspect') { void inspectPublication(id); return; }
+  if (new Set(['note','draw','word','up','down','toggleabsent','resetsubs','setblock','unassign','setassign','goabsent','assignline','assignblock','assign','absent','absent-clear','newshow','dupshow','newfolder','frename','set-show-delivery','usegroup','m-setgroup','pickgroup','delpicked','deletesong','deleteshow','wordedit','word-save']).has(a) && !VIEW() && !preview) {
+    if (!await automaticBackupBeforeEdit(a)) return;
+    if (!b.isConnected) return;
+  }
   // iPhoneではボタンを押しても入力欄からフォーカスが移らないことがある。
   // 明示的なボタン操作は、内容を確保して入力を終え、描画待ちで止まらないようにする。
   if (b.tagName === "BUTTON" && typingNow()) {
@@ -9762,7 +9826,8 @@ document.addEventListener("click", (e) => {
       try { o = unpackState(JSON.parse(localStorage.getItem(id) || "")); } catch (e) { alert("読み取れませんでした。"); break; }
       if (!o) { alert("読み取れませんでした。"); break; }
       if (!confirm(`この取り残しに戻します。\n公演${(o.shows || []).length}件・曲${(o.songs || []).length}件・記録${(o.notes || []).length}件\n\n今の内容は置き換わります。よろしいですか？`)) break;
-      const tk = S.ghToken, bk = S.bkGistId, bkk = S.bkKey;
+      if (!await automaticBackupBeforeEdit('cloud-restore')) return false;
+    const tk = S.ghToken, bk = S.bkGistId, bkk = S.bkKey;
       Object.keys(S).forEach((k) => { delete S[k]; });
       Object.assign(S, o);
       S.ghToken = tk || S.ghToken; if (bk) S.bkGistId = bk; if (bkk) S.bkKey = bkk;
@@ -10612,6 +10677,7 @@ async function swapSong(songId, file) {
   try {
   const so = S.songs.find((x) => x.id === songId);
   if (!so || VIEW()) return;
+  if (!await automaticBackupBeforeEdit('lyric-replacement')) return false;
   const ext = (file.name.split(".").pop() || "").toLowerCase();
   let buf = null, parsed = null;
   U.busy = `${file.name} を読んでいます…`; render();
@@ -10785,6 +10851,8 @@ async function loadRecDocs(picked) {
   try {
   let last = null;
   const list = captureImportFiles(picked), failed = [], succeeded = [];
+  if (!await automaticBackupBeforeEdit('recording-lyric-import')) return false;
+  const targetGroupId = S.groups.some(g => g.id === U.recGroupFilter) ? U.recGroupFilter : recSong()?.groupId || S.groupId;
   for (let i = 0; i < list.length; i++) {
     const item = list[i];
     U.busy = `${i + 1}/${list.length} ${item.name}`; render();
@@ -10799,8 +10867,9 @@ async function loadRecDocs(picked) {
       const so = parsed ? {id:uid(),title:parsed.title,credit:parsed.credit,intro:8,
         lines:parsed.lines.map(r => r[1] ? {t:r[1],bars:4} : {gap:true,t:""}),cols:1,colBreaks:[],at:Date.now()}
         : await parseDocx(f);
+      so.groupId = targetGroupId;
       const near = recSong();
-      if (near && near.folder) so.folder = near.folder;
+      if (near && near.groupId === targetGroupId && near.folder) so.folder = near.folder;
       S.rsongs.push(so); S.rsongId = so.id; last = so; save(); succeeded.push(item.name);
     } catch (e) { failed.push(item.name + "（取り込み）\n" + fileFailureReason(e)); }
   }
@@ -10815,6 +10884,22 @@ async function loadRecDocs(picked) {
   } finally { recordingInboxRelease(); }
 }
 
+// Existing parsers are reused without buildSong/addMember or state mutation.
+async function preparePrivateMaterialFile(file,binding,sourceRevision,expectedSourceSha) {
+  if (typeof PrivateMaterialInput === 'undefined' || typeof PrivatePreparation === 'undefined') throw new Error('本人用入力の対応コードを読み込めません。');
+  const parse=async input=>{
+    const ext=input.name.split('.').pop().toLowerCase();
+    if(ext==='pdf')return parsePDF(input);
+    if(['doc','docx','docm'].includes(ext))return parseWordSong(input);
+    if(['xlsx','xlsm','xlsb','xls','csv'].includes(ext))return parseXLSX(input,await input.arrayBuffer());
+    throw new Error('Word / PDF / Excel の入力を選んでください。');
+  };
+  const result=await PrivateMaterialInput.prepare({current:S,file,binding,parse,digest:PrivatePreparation.digest,sourceRevision,expectedSourceSha});
+  // Validate against the current canonical IDs before returning a candidate.
+  PrivatePreparation.mergeMaterialUpdate(S,result.operation.packet);
+  return result;
+}
+
 async function handleFiles(files) {
   const recordingInboxRelease = enterRecordingInboxEditor();
   if (!recordingInboxRelease) return false;
@@ -10823,6 +10908,7 @@ async function handleFiles(files) {
     alert("取り込み先の公演を選択してからファイルを選んでください。"); return;
   }
   const list = captureImportFiles(files), failed = [], archiveFailed = [], archives = [], copies = [], succeeded = [];
+  if (!await automaticBackupBeforeEdit('lyric-import')) return false;
   const showId = S.showId;
   const groupId = showDeliveryGroupId(S.shows.find(sw => sw.id === showId)) || S.groupId;
   let imported = null, count = 0;
@@ -12187,6 +12273,7 @@ function privatePreparationReceiptsMatch(incoming) {
 async function uploadCloudBackup(content) {
   const personal = privatePreparationBackupRequired(), target = S.bkGistId, key = S.bkKey, token = S.ghToken;
   const guard = () => {
+    if (target && (S.bkGistId !== target || S.bkKey !== key || S.ghToken !== token)) throw new Error('バックアップ先が変わったため保存を止めました。');
     if (personal && (!privatePreparationBackupReady() || typeof token !== 'string' || !token.trim()
         || S.bkGistId !== target || S.bkKey !== key || S.ghToken !== token))
       throw new Error(PRIVATE_PREPARATION_BACKUP_MESSAGE);
@@ -12210,10 +12297,10 @@ async function uploadCloudBackup(content) {
     try {
       const prior = await gh("/gists/" + S.bkGistId, {signal:AbortSignal.timeout(60000)});
       guard();
-      if (personal && (prior.public !== false || prior.id !== target)) throw new Error(PRIVATE_PREPARATION_BACKUP_MESSAGE);
+      if (prior.public !== false || prior.id !== target) throw new Error('既存の非公開バックアップ先を確認できません。');
       previous = prior.files || {};
     }
-    catch (e) { if (personal) throw new Error(PRIVATE_PREPARATION_BACKUP_MESSAGE); if (e.status === 404) S.bkGistId = ""; else throw e; }
+    catch (e) { if (personal) throw new Error(PRIVATE_PREPARATION_BACKUP_MESSAGE); throw e; }
   }
   const oldIndexFile = backupIndexFile(previous);
   const oldIndex = oldIndexFile ? JSON.parse(await backupFileText(oldIndexFile)) : null;
@@ -12232,7 +12319,7 @@ async function uploadCloudBackup(content) {
     return result;
   };
   // 削除対象は前回成功分と、この端末の中断分だけ。他端末の送信中断片には触れない。
-  const discard = Object.fromEntries([...new Set([...oldParts, ...pending.filter(name => previous[name])])].filter(backupPartName).map(name => [name,null]));
+  const discard = {};
   let saved;
   if (content.length <= BACKUP_PART_SIZE) {
     saved = await write({...discard, [BACKUP_FILE]:{content}});
@@ -12243,11 +12330,7 @@ async function uploadCloudBackup(content) {
     const parts = Array.from({length:count}, (_,i) => ({name:`utacheck-backup-part-${generation}-${String(i+1).padStart(4,"0")}.txt`}));
     const index = {bk:2,format:"utacheck-parts",length:content.length,sha256:await backupDigest(content),parts};
     // 前回の中断ファイルだけ先に片付け、失敗を繰り返しても不要な断片が増えないようにする。
-    const abandoned = Object.fromEntries(pending.filter(name => backupPartName(name) && !oldParts.includes(name) && previous[name]).map(name => [name,null]));
-    if (Object.keys(abandoned).length) {
-      await write(abandoned);
-      Object.keys(abandoned).forEach(name => delete discard[name]);
-    }
+    // Previous and interrupted generations remain available for recovery.
     S.bkPendingParts = {gistId:S.bkGistId,names:parts.map(p=>p.name)}; save();
     for (let i=0;i<count;i++) {
       const part = parts[i];
@@ -12316,6 +12399,7 @@ async function doBackup(silent) {
     return false;
   }
   if (!S.ghToken) { if (!silent) return backupToFile(); return false; }
+  if (silent && !S.bkGistId) return false;
   backupInFlight = true;
   S.bkError = ""; renderBackupStatus();
   try {
@@ -12569,6 +12653,7 @@ async function restoreBackupFile(file) {
     const st = fromBackup(obj.state);
     if (!Array.isArray(st.songs) || !Array.isArray(st.notes)) throw new Error("バックアップの中身が不正です。");
     if (!confirm(`このファイルから復元します。公演${(st.shows || []).length}件・曲${st.songs.length}件・指摘${st.notes.length}件。\n現在の内容を置き換えますか？`)) return;
+    if (!await automaticBackupBeforeEdit('file-restore')) return false;
     const token = S.ghToken, target = S.bkGistId, pass = S.bkKey;
     Object.keys(S).forEach(k => delete S[k]); Object.assign(S, st);
     S.ghToken = token; S.bkGistId = target; S.bkKey = pass;
@@ -12651,12 +12736,12 @@ function applySetlist(d) {
     const used = [];
     Object.keys(o.blocks || {}).forEach((b) => (o.blocks[b] || []).forEach((x) => { if (!used.includes(x)) used.push(x); }));
     o.lines.forEach((l) => {
-      if (/^全/.test(l.label || "")) return;
+      if (/^(?:全|zenn\b)/i.test(l.label || "")) return;
       (l.parts || []).forEach((x) => { if (!used.includes(x)) used.push(x); });
     });
     if (!used.length || used.length >= (o.roster || []).length) return;
     o.roster = used;
-    o.lines.forEach((l) => { if (/^全/.test(l.label || "")) l.parts = used.slice(); });
+    o.lines.forEach((l) => { if (/^(?:全|zenn\b)/i.test(l.label || "")) l.parts = used.slice(); });
     o.sig = songSig(o);
   };
 
@@ -13127,13 +13212,18 @@ function copyText(t, msg) {
 (async () => {
   if (!await recordingInboxBeforeBoot()) return;
   if (await load() === false) return;
+  if (document.readyState === 'loading') await new Promise(resolve=>document.addEventListener('DOMContentLoaded',resolve,{once:true}));
+  if (typeof window.PTLink?.cfg === 'function') window.PTLink.cfg();
   booted = true;
+  if (typeof VerifiedEditBackup !== 'undefined' && !VIEW() && !preview && !startupRecoveryNetworkHold && !S.groups.some(g => String(g.name || '').normalize('NFKC').replace(/\s/g,'') === '配信しない')) {
+    if (await automaticBackupBeforeEdit('private-group-initialization')) ensurePersonalPrivateGroup();
+  }
   if(startupRecoveryRestoredView){U.view='setup';U.showFilter='';U.songIdx=0;rememberViewSelection();}
   else{restoreViewSelection(S.showId, true);if (!readViewSelection()) rememberViewSelection();}
   if (VIEW() || /^#g=/.test(location.hash)) { U.view = "summary"; U.mode = "member"; }
   if (VIEW()) restoreViewerMember();
   // Keep the original localStorage copy for recovery after a successful import.
-  render();
+  render(); normalStartupInitialized = true;
   if(startupRecoveryNetworkHold&&startupRecoverySourceKind==='local-excel')void recoveryInspectOriginalBackup();
   if(startupRecoveryNetworkHold){const notice=document.createElement('div');notice.id='recovery-network-notice';notice.textContent=S.recoveryDelivery?.version===2&&S.recoveryDelivery?.targets?.length?'確認した既存先のみ配信を再開できます。原本保持・バックアップと他端末同期は停止中です。':startupRecoverySourceKind==='cloud-backup'?'元のGitHubバックアップから公演・曲・指摘を再開しました。現在の作業と原ファイルを保全し、自動送受信は停止中です。':startupRecoverySourceKind==='local-excel'?'元Excel救出'+(startupRecoveryExcelSummary?' '+startupRecoveryExcelSummary.read+' / '+startupRecoveryExcelSummary.total+'資料':'')+'。元公演との対応・過去の指摘や管理メモ等は未回復です。原本保持・同期停止中です。':['local-publication','cloud-publication'].includes(startupRecoverySourceKind)?'配信コピーから公演・曲・指摘などを部分復旧しました。配信外の管理メモ・録音管理などは未回復です。元ファイルを保持し、自動送受信は停止中です。':'端末内の復元内容で再開しました。自動送受信は停止中です。';notice.hidden=true;notice.setAttribute('role','status');notice.style.cssText='position:fixed;bottom:0;left:0;right:0;z-index:99999;background:#283A52;color:white;padding:10px;text-align:center;font-size:12px;pointer-events:none';document.body.appendChild(notice);}
   if(!startupRecoveryNetworkHold){importFromLink();syncSetlist(false);}

@@ -67,7 +67,7 @@
    throw error;
   }finally{if(app)app.inert=!recordingInboxCanWrite();}
  }
- async function applyOne(operation,token){
+ async function applyOne(operation,token,sourceSha){
   if(!ready()||S.ghToken!==token)throw failure('DEFERRED');
   const receipt=S.privatePreparations?.[operation.id];
   if(receipt){if(receipt.sha256!==operation.sha256||receipt.type!==operation.type)throw failure('OPERATION_ID_REUSED');return false;}
@@ -83,6 +83,12 @@
    const active=()=>startupPhase==='ready'&&recordingInboxCanWrite()&&recordingInboxOwner?.canWrite&&!document.hidden&&S.ghToken===token&&stateRevision===revision&&JSON.stringify(S)===original&&JSON.stringify(U)===view&&!REC&&!recordingStartPending&&!recordingFinalizePending&&!pitchStartPending&&!saving&&!syncing&&!manualSync&&!backupInFlight&&!publishInFlight&&!U.busy&&!U.importing&&!U.sheet&&!U.menu&&!U.showRecovery;
    const slots=await Promise.all([idbGet('state:0'),idbGet('state:1')]),hold=await idbGet('recovery:network-hold:v1'),legacy=localStorage.getItem(KEY);
    if(!active())throw failure('DEFERRED');
+   if(operation.type==='material-update'){
+    const fresh=await PrivatePreparationSource.read({...config,token,isActive:active});
+    if(fresh.status!=='ready'||fresh.sourceSha!==sourceSha)throw failure('PREPARATION_SOURCE_CHANGED');
+    await PrivatePreparation.validate(fresh.manifest,config.owner);
+    if(!active())throw failure('DEFERRED');
+   }
    const nextRaw=JSON.stringify(packState(next));recoveryValidateCloudState(JSON.parse(nextRaw));
    const stored=await RecoveryDeliveryStore.commit({database:()=>DB,hash:backupDigest,isActive:active,readLegacy:()=>localStorage.getItem(KEY),expectedLegacyRaw:legacy,
     expectedSlotsRaw:JSON.stringify(slots),expectedHoldRaw:JSON.stringify(hold),allowMissingHold:true,originalStateRaw:original,nextStateRaw:nextRaw,remoteCopies:[]});
@@ -113,7 +119,7 @@
    if(!pending.length){setStatus({kind:'current',sourceSha:source.sourceSha});return {status:'current'};}
    await establishOwner();if(S.ghToken!==token)throw failure('DEFERRED');
    let count=0;
-   for(const operation of pending){if(await applyOne(operation,token))count++;}
+   for(const operation of pending){if(await applyOne(operation,token,source.sourceSha))count++;}
    setStatus({kind:count?'applied':'current',count,sourceSha:source.sourceSha});return {status:status.kind,count};
   }catch(error){const code=error.preparationCode||error.code||'PREPARATION_CONFLICT';
    setStatus({kind:code==='DEFERRED'?'deferred':code==='MULTIPLE_WINDOWS'?'multiple-windows':code==='OWNER_REQUIRED'?'owner-required':code==='UNSUPPORTED'?'unsupported':code==='SAVE_UNVERIFIED'?'unverified':'conflict',code});return {status:status.kind,code};
