@@ -178,3 +178,9 @@ test('navigation group order and Rosy display preserve stored names and IDs',()=
  const {c,run}=setup();c.S.groups.reverse();c.S.groups.find(g=>g.id==='rose').name='Rosie';const before=JSON.stringify(c.S);
  assert.deepEqual(Array.from(run('liveGroups()'),g=>g.id),['ocha','rose','off']);assert.equal(run("groupDisplayName(S.groups.find(g=>g.id==='rose'))"),'Rosy');assert.equal(JSON.stringify(c.S),before);
 });
+test('legacy private overrides survive whole-show group changes and clearing a private song target',()=>{
+ const {c,run}=setup();c.S.groups[2].nopub=false;c.S.showId='o';c.S.shows[0].groupId='ocha';c.S.songs[0].deliveryGroupId='off';
+ run("setCurrentShowGroup('rose')");assert.equal(c.S.songs[0].deliveryGroupId,'off');assert.equal(run("publicationData('rose').songs.length"),1);
+ run("setShowDelivery('o','ocha')");assert.equal(c.S.songs[0].deliveryGroupId,'off');
+ const before=JSON.stringify(c.S.songs);run("setSongDelivery(['a'],'')");assert.equal(JSON.stringify(c.S.songs),before);
+});

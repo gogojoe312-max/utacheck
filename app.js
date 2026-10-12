@@ -113,7 +113,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.57";
+const APP_VER = "16.41.57.1";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1568,7 +1568,7 @@ function setCurrentShowGroup(groupId) {
     if (sw && sw.deliveryMode !== "song") {
       sw.groupId = groupId; delete sw.deliveryGroupId; delete sw.deliveryMode;
       S.songs.filter(so => so.showId === sw.id).forEach(so => {
-        if (so.deliveryGroupId !== "" && !S.groups.some(g => g.id === so.deliveryGroupId && g.nopub)) delete so.deliveryGroupId;
+        if (so.deliveryGroupId !== "" && !S.groups.some(g => g.id === so.deliveryGroupId && privateDeliveryGroup(g))) delete so.deliveryGroupId;
       });
     }
   }
@@ -1579,13 +1579,13 @@ function setSongDelivery(ids, groupId) {
   ids.forEach(id => {
     const so = S.songs.find(x => x.id === id);
     if (so) {
-      if (privateDeliveryGroup(S.groups.find(g => g.id === songDeliveryGroupId(so))) && groupId && !privateDeliveryGroup(S.groups.find(g => g.id === groupId))) return;
+      if (privateDeliveryGroup(S.groups.find(g => g.id === songDeliveryGroupId(so))) && !privateDeliveryGroup(S.groups.find(g => g.id === groupId))) return;
       const sw = S.shows.find(x => x.id === so.showId);
       // Choosing a different song destination is an explicit opt-in to mixed delivery.
       if (sw && groupId && groupId !== showDeliveryGroupId(sw)) {
         const previous = showDeliveryGroupId(sw);
         if (previous) S.songs.filter(x => x.showId === sw.id).forEach(x => {
-          if (x.deliveryGroupId !== "" && !S.groups.some(g => g.id === x.groupId && g.nopub)) x.deliveryGroupId = previous;
+          if (x.deliveryGroupId !== "" && !S.groups.some(g => g.id === x.groupId && privateDeliveryGroup(g))) x.deliveryGroupId = previous;
         });
         sw.deliveryMode = "song";
       }
@@ -1683,7 +1683,7 @@ function setShowDelivery(id, groupId) {
     if (groupId) sw.deliveryGroupId = groupId;
     else delete sw.deliveryGroupId;
     S.songs.filter(so => so.showId === id).forEach(so => {
-      if (so.deliveryGroupId !== "" && !S.groups.some(g => g.id === so.deliveryGroupId && g.nopub)) delete so.deliveryGroupId;
+      if (so.deliveryGroupId !== "" && !S.groups.some(g => g.id === so.deliveryGroupId && privateDeliveryGroup(g))) delete so.deliveryGroupId;
     });
   }
   syncShowGroup(); rememberViewSelection(); U.menu = null; save(); schedulePush(); render();
