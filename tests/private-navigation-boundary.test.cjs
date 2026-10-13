@@ -12,4 +12,5 @@ test('the private group is reused by name and only a missing group creates one w
  const c=vm.createContext({S:{groups:[{id:'existing',name:'配信しない',nopub:false}],songs:[{id:'original',groupId:'public'}]},VIEW:()=>false,recordingInboxCanWrite:()=>true,startupRecoveryNetworkHold:false,uid:()=> 'new-private',save(){}});vm.runInContext(read('ensurePersonalPrivateGroup'),c);
  const before=JSON.stringify(c.S);assert.equal(c.ensurePersonalPrivateGroup(),false);assert.equal(JSON.stringify(c.S),before);
  c.S.groups=[];assert.equal(c.ensurePersonalPrivateGroup(),true);assert.equal(c.S.groups[0].nopub,true);assert.equal(c.S.songs[0].groupId,'public');assert.equal(c.ensurePersonalPrivateGroup(),false);
+ c.S.groups=[];c.startupRecoveryNetworkHold=true;assert.equal(c.ensurePersonalPrivateGroup(),true);assert.equal(c.startupRecoveryNetworkHold,true);assert.equal(c.S.groups[0].nopub,true);assert.equal(c.S.songs[0].groupId,'public');
 });

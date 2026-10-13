@@ -113,7 +113,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.4";
+const APP_VER = "16.41.58.5";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1380,19 +1380,7 @@ function migrate({preserve = false,keepPublicationBindings = false} = {}) {
   // 曲は公演ごとに持つ。旧データは今の公演に入れる。
   S.songs.forEach((x) => { if (!x.showId) x.showId = S.showId; });
   syncShowGroup();
-  // 「全（データ）」等が人名として登録されてしまった分を掃除し、全員扱いに直す
-  const zen = S.members.filter((m) => /^(?:全|zenn\b)/i.test(m.name));
-  if (zen.length&&!keepPublicationBindings) {
-    const zids = zen.map((m) => m.id);
-    S.members = S.members.filter((m) => !/^(?:全|zenn\b)/i.test(m.name));
-    const all = S.members.map((m) => m.id);
-    S.songs.forEach((sg) => sg.lines.forEach((l) => {
-      if (l.parts && l.parts.some((x) => zids.includes(x))) l.parts = all.slice();
-    }));
-    const strip = (n) => { n.memberIds = (n.memberIds || []).filter((x) => !zids.includes(x)); };
-    S.notes.forEach(strip);
-    (S.pubNotes || []).forEach(strip);
-  }
+  // 原文の「全」等は歌割ラベル。保存済みID・担当・指摘を全グループへ展開しない。
   if (!Array.isArray(S.pubNotes)) S.pubNotes = [];
   delete S.show;
 }
@@ -1509,7 +1497,7 @@ async function automaticBackupBeforeEdit(reason) {
 }
 
 function ensurePersonalPrivateGroup() {
-  if (VIEW() || !recordingInboxCanWrite() || startupRecoveryNetworkHold) return false;
+  if (VIEW() || !recordingInboxCanWrite()) return false;
   const existing = S.groups.find(g => String(g.name || '').normalize('NFKC').replace(/\s/g,'') === '配信しない');
   if (existing) return false;
   S.groups.push({id:uid(),name:'配信しない',nopub:true,gistId:'',src:'',key:'',keyInLink:true});
@@ -3925,7 +3913,36 @@ const footerHTML = () => `
     <div style="text-align:center;color:var(--dim);font-size:11px;letter-spacing:.04em;margin:26px 0 4px">
       Created by Joe Takasaki
     </div>
-    <div style="text-align:center;color:var(--dim);font-size:10px;opacity:.6;margin-bottom:10px">${APP_VER}</div>`;
+    <div style="text-align:center;color:var(--dim);font-size:10px;opacity:.6;margin-bottom:10px">${APP_VER}</div>
+    ${!VIEW() ? `<div class="card"><button class="ghost" data-act="app-update-check">アプリの更新を確認</button>
+      ${U.appUpdateText ? `<p class="note" role="status">${h(U.appUpdateText)}</p>` : ''}
+      ${U.appUpdateVersion && U.appUpdateVersion !== APP_VER ? '<button class="primary" data-act="app-update-reload">保存して開き直す</button>' : ''}</div>` : ''}`;
+
+async function checkAppUpdate() {
+  try {
+    const url = new URL('./index.html', location.href); url.searchParams.set('app-update-check', Date.now());
+    const response = await fetch(url.href, {cache:'no-store'});
+    if (!response.ok || response.url !== url.href) throw new Error('offline');
+    const match = (await response.text()).match(/app\.js\?v=([0-9]+(?:\.[0-9]+)+)/);
+    if (!match) throw new Error('invalid-version');
+    U.appUpdateVersion = match[1];
+    if ('serviceWorker' in navigator) { const registration = await navigator.serviceWorker.getRegistration(); if (registration) await registration.update(); }
+    U.appUpdateText = match[1] === APP_VER ? 'この画面は公開版 ' + APP_VER + ' を読み込んでいます。'
+      : 'この画面は ' + APP_VER + '、公開版は ' + match[1] + ' です。録音・入力を終えてから開き直してください。';
+  } catch (_) { U.appUpdateVersion = ''; U.appUpdateText = '公開版を確認できませんでした。オンラインで再確認してください。この画面は ' + APP_VER + ' です。'; }
+  render();
+}
+async function reloadForAppUpdate() {
+  if (!recordingInboxCanWrite() || VIEW() || preview || typingNow() || U.sheet || U.menu || U.busy || U.importing || REC || recordingStartPending || recordingFinalizePending || pitchStartPending || PT.on || micStream || saving || syncing || manualSync || publishInFlight || backupInFlight) {
+    alert('録音・入力・保存が終わってから開き直してください。'); return false;
+  }
+  if (!await automaticBackupBeforeEdit('app-code-update')) return false;
+  const expected = JSON.stringify(packState(S)); save(); await saveNow();
+  if (saveErr || await loadRaw() !== expected || JSON.stringify(packState(S)) !== expected) {
+    alert('保存の確認が終わっていないため、開き直していません。'); return false;
+  }
+  location.reload(); return true;
+}
 
 function pianoHTML(sel) {
   const W = ["C", "D", "E", "F", "G", "A", "B"], B = ["C", "D", "F", "G", "A"];
@@ -8413,6 +8430,14 @@ function viewSetup() {
       ${liveGroups().map((g) => `<button class="chip sm" data-act="showfilter" data-id="${g.id}"
         style="${U.showFilter === g.id ? "background:var(--accent);color:#0A0A0A" : ""}">${h(groupDisplayName(g))}</button>`).join("")}
     </div>` : ""}
+    <details class="card" data-performance-selector open><summary>公演を選ぶ・追加</summary>
+    <h4 class="head">公演</h4>
+    <div class="organize-create"><button class="primary" data-act="newshow">＋ 公演を追加</button><button class="chip" data-act="newfolder">＋ フォルダ</button></div>
+    ${shows}
+    ${folderNames().length ? `<details><summary>フォルダを管理</summary>${folderNames().map(name=>`<div class="row card" data-drop="f:${h(name)}"><span class="grow">${h(name)}</span><button class="chip sm" data-act="newshow" data-folder="${h(name)}">＋公演</button><button class="organize-more" data-act="frename" data-id="${h(name)}" aria-label="${h(name)}の名前を変更">⋯</button></div>`).join("")}</details>` : ""}
+    ${U.showFilter === "__archive__" ? '<button class="ghost" data-act="showfilter" data-id="">通常の公演に戻る</button>' : ''}
+
+    </details>
     <h4 class="head">${h(activeShow?.name || "公演を選択")}</h4>
     <h4 class="head">セットリスト</h4>
     ${cur.length ? bar : ""}
@@ -8422,14 +8447,7 @@ function viewSetup() {
       <div style="font-size:11px;color:var(--dim);margin-top:6px">取り込み先：${h(activeShow.name)} ・ ${h(group().name || "")}</div>
     </div>`}
 
-    <details class="card"><summary>公演を選ぶ・追加</summary>
-    <h4 class="head">公演</h4>
-    <div class="organize-create"><button class="primary" data-act="newshow">＋ 公演を追加</button><button class="chip" data-act="newfolder">＋ フォルダ</button></div>
-    ${shows}
-    ${folderNames().length ? `<details><summary>フォルダを管理</summary>${folderNames().map(name=>`<div class="row card" data-drop="f:${h(name)}"><span class="grow">${h(name)}</span><button class="chip sm" data-act="newshow" data-folder="${h(name)}">＋公演</button><button class="organize-more" data-act="frename" data-id="${h(name)}" aria-label="${h(name)}の名前を変更">⋯</button></div>`).join("")}</details>` : ""}
-    ${U.showFilter === "__archive__" ? '<button class="ghost" data-act="showfilter" data-id="">通常の公演に戻る</button>' : ''}
 
-    </details>
     </section>
     ${memberPreviewSettings()}
     ${lyricDisplaySettings()}
@@ -8569,6 +8587,8 @@ document.addEventListener("click", async (e) => {
   const a = b.dataset.act, i = +b.dataset.i, id = b.dataset.id;
   // Diagnostics must not commit or blur unsaved input through the generic button path.
   if (a === 'publication-inspect') { void inspectPublication(id); return; }
+  if (a === 'app-update-check') { void checkAppUpdate(); return; }
+  if (a === 'app-update-reload') { void reloadForAppUpdate(); return; }
   if (new Set(['note','draw','word','up','down','toggleabsent','resetsubs','setblock','unassign','setassign','goabsent','assignline','assignblock','assign','absent','absent-clear','newshow','dupshow','newfolder','frename','set-show-delivery','usegroup','m-setgroup','pickgroup','delpicked','deletesong','deleteshow','wordedit','word-save']).has(a) && !VIEW() && !preview) {
     if (!await automaticBackupBeforeEdit(a)) return;
     if (!b.isConnected) return;
@@ -8615,7 +8635,11 @@ document.addEventListener("click", async (e) => {
     case "summary-back": backToSummary(); break;
     case "go-summary": commitFields(); U.view = "summary"; render(); break;
     case "pt-settings": if (window.PTLink) window.PTLink.open(); break;
-    case "go-setup": commitFields(); ensurePersonalPrivateGroup(); U.view = "setup"; render(); break;
+    case "go-setup":
+      commitFields();
+      U.view = "setup"; render();
+      if (typeof VerifiedEditBackup !== 'undefined' && !S.groups.some(g => String(g.name || '').normalize('NFKC').replace(/\s/g,'') === '配信しない') && await automaticBackupBeforeEdit('private-group-initialization')) { ensurePersonalPrivateGroup(); render(); }
+      break;
     case "go-live": commitFields(); U.view = "live"; render(); break;
     case "note": openSheet(i, null, null, e.detail ? {x:e.clientX, y:e.clientY} : null); break;
     case "assignline": {
@@ -13190,7 +13214,7 @@ function copyText(t, msg) {
   if (document.readyState === 'loading') await new Promise(resolve=>document.addEventListener('DOMContentLoaded',resolve,{once:true}));
   if (typeof window.PTLink?.cfg === 'function') window.PTLink.cfg();
   booted = true;
-  if (typeof VerifiedEditBackup !== 'undefined' && !VIEW() && !preview && !startupRecoveryNetworkHold && !S.groups.some(g => String(g.name || '').normalize('NFKC').replace(/\s/g,'') === '配信しない')) {
+  if (typeof VerifiedEditBackup !== 'undefined' && !VIEW() && !preview && !S.groups.some(g => String(g.name || '').normalize('NFKC').replace(/\s/g,'') === '配信しない')) {
     if (await automaticBackupBeforeEdit('private-group-initialization')) ensurePersonalPrivateGroup();
   }
   if(startupRecoveryRestoredView){U.view='setup';U.showFilter='';U.songIdx=0;rememberViewSelection();}

@@ -27,7 +27,7 @@ test('REC group navigation opens the matching song and preserves LIVE group, rec
 });
 test('setlist and REC materials precede optional controls and routine management markup is removed',()=>{
  const live=source.slice(source.indexOf('function viewSetup()'),source.indexOf('/* ---------------- events ---------------- */'));const owner=live.slice(live.indexOf('if (S.recMode) return viewSetupRec()'));
- assert(owner.indexOf('セットリスト')<owner.indexOf('公演を選ぶ・追加'));assert(owner.indexOf('data-settings-panel="live-materials"')<owner.indexOf('${lyricDisplaySettings()}'));
+ assert(owner.indexOf('公演を選ぶ・追加')<owner.indexOf('セットリスト'));assert(owner.indexOf('data-settings-panel="live-materials"')<owner.indexOf('${lyricDisplaySettings()}'));
  assert.doesNotMatch(owner,/配信設定|接続・グループを管理|自動公開の接続設定|端末間の同期・接続先|指摘の集計を見る/);
  const rec=read('viewSetupRec');assert(rec.indexOf('${list')<rec.indexOf('${lyricDisplaySettings()}'));assert.match(rec,/<section data-settings-panel="rec-materials">/);
  const backup=read('backupSettingsHTML');assert.doesNotMatch(backup,/data-settings-panel="recovery"|data-settings-panel="recording-import"/);
