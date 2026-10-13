@@ -25,7 +25,7 @@
   return '本人用の準備を、録音・入力をしていないときに自動で確認します。';
  }
  function setStatus(value){status=value;document.querySelectorAll?.('[data-private-preparation-status]').forEach(el=>el.textContent=statusText());}
- function settingsHTML(){return '<p class="note" data-private-preparation-status role="status">'+h(statusText())+'</p><button class="ghost" data-act="private-preparation-check">本人用の準備を確認</button>';}
+ function settingsHTML(){return '<p class="note" data-private-preparation-status role="status">'+h(statusText())+'</p><button class="ghost" data-act="private-preparation-check">本人用の準備を確認</button><button class="ghost" data-act="private-preparation-file">REC準備ファイルから曲を追加</button><p class="note">本人用の準備JSONからREC曲だけを追加します。端末内で確認し、ファイルを送信しません。</p>';}
  async function singleEditorClient(){
   const controller=navigator.serviceWorker?.controller;
   if(!controller||typeof MessageChannel!=='function')throw failure('DEFERRED');
@@ -77,7 +77,7 @@
    throw error;
   }finally{if(app)app.inert=!recordingInboxCanWrite();}
  }
- async function applyOne(operation,token,sourceSha){
+ async function applyOne(operation,token,sourceSha,localSource){
   if(!ready()||S.ghToken!==token)throw failure('DEFERRED');
   const receipt=S.privatePreparations?.[operation.id];
   if(receipt){if(receipt.sha256!==operation.sha256||receipt.type!==operation.type)throw failure('OPERATION_ID_REUSED');return false;}
@@ -93,7 +93,15 @@
    const active=()=>startupPhase==='ready'&&recordingInboxCanWrite()&&recordingInboxOwner?.canWrite&&!document.hidden&&S.ghToken===token&&stateRevision===revision&&JSON.stringify(S)===original&&JSON.stringify(U)===view&&!REC&&!recordingStartPending&&!recordingFinalizePending&&!pitchStartPending&&!saving&&!syncing&&!manualSync&&!backupInFlight&&!publishInFlight&&!U.busy&&!U.importing&&!U.sheet&&!U.menu&&!U.showRecovery;
    const slots=await Promise.all([idbGet('state:0'),idbGet('state:1')]),hold=await idbGet('recovery:network-hold:v1'),legacy=localStorage.getItem(KEY);
    if(!active())throw failure('DEFERRED');
-   if(operation.type==='material-update'||operation.type==='recording-song'){
+   if(localSource){
+    // Keep the immutable, selected bytes as the source of truth. Never read a
+    // remote source or acquire credentials for an explicitly local import.
+    if(operation.type!=='recording-song'||await PrivatePreparation.digest(localSource.raw)!==localSource.sha256)throw failure('PREPARATION_SOURCE_CHANGED');
+    const fresh=await PrivatePreparation.validate(JSON.parse(localSource.raw),config.owner);
+    const matched=fresh.operations.find(op=>op.id===operation.id);
+    if(!matched||JSON.stringify(matched)!==JSON.stringify(operation))throw failure('PREPARATION_SOURCE_CHANGED');
+    if(!active())throw failure('DEFERRED');
+   }else if(operation.type==='material-update'||operation.type==='recording-song'){
     const fresh=await PrivatePreparationSource.read({...config,token,isActive:active});
     if(fresh.status!=='ready'||fresh.sourceSha!==sourceSha)throw failure('PREPARATION_SOURCE_CHANGED');
     await PrivatePreparation.validate(fresh.manifest,config.owner);
@@ -142,11 +150,48 @@
    setStatus({kind:code==='DEFERRED'?'deferred':code==='MULTIPLE_WINDOWS'?'multiple-windows':code==='OWNER_REQUIRED'?'owner-required':code==='UNSUPPORTED'?'unsupported':code==='SAVE_UNVERIFIED'?'unverified':'conflict',code});return {status:status.kind,code};
   }finally{running=false;}
  }
+ async function importFile(file){
+  if(running)return {status:'busy'};
+  if(!ready()){setStatus({kind:'deferred'});return {status:'deferred'};}
+  running=true;const token=S.ghToken;
+  try{
+   if(!file||typeof file.text!=='function'||!Number.isSafeInteger(file.size)||file.size<1||file.size>20*1024*1024)throw failure('INVALID_MANIFEST');
+   const raw=await file.text();
+   if(typeof raw!=='string'||new TextEncoder().encode(raw).byteLength>20*1024*1024)throw failure('INVALID_MANIFEST');
+   const manifest=await PrivatePreparation.validate(JSON.parse(raw),config.owner);
+   // This entry point is deliberately lyrics-only: old schedules and LIVE
+   // operations in an exported manifest must not run as a side effect.
+   const operations=manifest.operations.filter(op=>op.type==='recording-song');
+   if(!operations.length)throw failure('NO_RECORDING_SONGS');
+   if(!ready()||S.ghToken!==token)throw failure('DEFERRED');
+   let candidate=S;const pending=[];
+   for(const op of operations){const result=PrivatePreparation.apply(candidate,op);candidate=result.state;if(result.status!=='already-applied')pending.push(op);}
+   if(!pending.length){setStatus({kind:'current'});return {status:'current'};}
+   const titles=pending.map(op=>op.packet.song.title).join('、');
+   if(!root.confirm('REC曲 '+pending.length+'曲（'+titles+'）をこの端末に追加します。\n既存の曲・録音・予定は保持し、ファイルは送信しません。\n追加しますか？'))return {status:'cancelled'};
+   if(!ready()||S.ghToken!==token)throw failure('DEFERRED');
+   const localSource=Object.freeze({raw,sha256:await PrivatePreparation.digest(raw)});
+   await establishOwner();if(!ready()||S.ghToken!==token)throw failure('DEFERRED');
+   let count=0;for(const op of pending)if(await applyOne(op,token,null,localSource))count++;
+   // Reveal newly added artists without changing the current song or take.
+   U.recArtistFilter='';render();
+   setStatus({kind:'applied',count});return {status:'applied',count};
+  }catch(error){const code=error.preparationCode||error.code||'PREPARATION_CONFLICT';
+   setStatus({kind:code==='DEFERRED'?'deferred':code==='MULTIPLE_WINDOWS'?'multiple-windows':code==='OWNER_REQUIRED'?'owner-required':code==='UNSUPPORTED'?'unsupported':code==='SAVE_UNVERIFIED'?'unverified':'conflict',code});return {status:status.kind,code};
+  }finally{running=false;}
+ }
+ function chooseFile(){
+  if(running)return;
+  const input=document.createElement('input');input.type='file';input.accept='.json,application/json';
+  input.onchange=()=>{if(input.files?.[0])void importFile(input.files[0]);};input.click();
+ }
  // Inert blocks ordinary input; the capture guard also covers programmatic
  // clicks during the short state-only transaction without altering app handlers.
  for(const name of ['click','input','change','keydown','submit','pointerdown','drop'])document.addEventListener(name,event=>{if(applying){event.preventDefault();event.stopImmediatePropagation();}},true);
  document.addEventListener('click',event=>{if(!event.target.closest?.('[data-act="private-preparation-check"]'))return;event.preventDefault();event.stopImmediatePropagation();void receive(true);},true);
+ document.addEventListener('click',event=>{if(!event.target.closest?.('[data-act="private-preparation-file"]'))return;event.preventDefault();event.stopImmediatePropagation();chooseFile();},true);
  function start(){if(started)return;started=true;setInterval(()=>{void receive();},10000);setTimeout(()=>{void receive();},1200);navigator.serviceWorker?.addEventListener?.('controllerchange',()=>{lastAttempt=0;void receive();});window.addEventListener('online',()=>{lastAttempt=0;void receive();});document.addEventListener('visibilitychange',()=>{if(!document.hidden){lastAttempt=0;void receive();}});}
- root.PrivatePreparationUI=Object.freeze({settingsHTML,receive,start,isApplying:()=>applying,getStatus:()=>({...status})});start();
+ root.PrivatePreparationUI=Object.freeze({settingsHTML,receive,importFile,start,isApplying:()=>applying,getStatus:()=>({...status})});start();
 })(globalThis);
+
 

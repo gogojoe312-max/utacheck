@@ -106,3 +106,13 @@ test('empty preparation receipts preserve ordinary existing backup behavior',asy
  const f=fixture({state:{privatePreparations:{},bkKey:''}});assert.equal(await f.c.doBackup(true),true);assert.equal(f.calls.at(-1).init.method,'PATCH');
  const content=JSON.parse(f.server.files['utacheck-backup.json'].content);assert.equal(content.bk,1);assert.equal(content.enc,undefined);
 });
+
+
+test('every current preparation receipt survives matching backup checks after serialization',()=>{
+ for(const type of ['recording-song','material-update','live-update','recording-schedule','recording-addition','live-addition']){
+  const f=fixture({state:{privatePreparations:{prepared:{type,sha256:'c'.repeat(64),at:1}}}});
+  const reopened=JSON.parse(JSON.stringify(f.c.S));
+  assert.equal(f.c.privatePreparationReceiptsMatch(reopened),true,type);
+  reopened.privatePreparations.prepared.sha256='d'.repeat(64);assert.equal(f.c.privatePreparationReceiptsMatch(reopened),false,type);
+ }
+});

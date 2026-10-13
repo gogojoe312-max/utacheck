@@ -113,7 +113,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.5";
+const APP_VER = "16.41.58.6";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -6080,19 +6080,8 @@ function renderSheet() {
       <button data-act="close" style="width:36px;height:36px;border-radius:10px;background:var(--panel2);font-size:17px">✕</button></div>
 
       <div class="sec"><h4>曲</h4>
-        ${groupRSongs(recordingSelectionSongs()).map(([fname, songs2]) => {
-          const rows = songs2.map((x) => {
-            const i = SONGS().findIndex((y) => y.id === x.id);
-            return `<button class="ghost" data-act="ruse" data-id="${x.id}"
-              style="text-align:left;margin-bottom:6px;${i === U.songIdx ? "background:var(--accent);color:#0A0A0A" : ""}">${h(x.title)}</button>`;
-          }).join("");
-          if (!fname) return rows;
-          const open = S.rfolders[fname] === true || fname === folderOf(recSong());
-          return `<button class="ghost row" data-act="rfolder" data-id="${h(fname)}" style="text-align:left;margin-bottom:6px;color:var(--dim)">
-              <span style="width:16px">${open ? "▾" : "▸"}</span><span class="grow trunc">${h(fname)}</span>
-              <span style="font-size:11px">${songs2.length}曲</span></button>
-            ${open ? `<div style="margin-left:12px">${rows}</div>` : ""}`;
-        }).join("") || `<p class="note">曲がありません</p>`}
+        ${recordingGroupSelector()}
+        ${recordingLibraryHTML(recordingSelectionSongs(), x => `<button class="ghost" data-act="ruse" data-id="${h(x.id)}" style="text-align:left;margin-bottom:6px;${x.id === S.rsongId ? "background:var(--accent);color:#0A0A0A" : ""}">${h(x.title)}</button>`) || `<p class="note">曲がありません</p>`}
       </div>
       <div class="sec"><button class="primary" data-act="goplan">進行表</button></div>
       ${VIEW() && unreadSongs().length ? `<div class="sec">
@@ -7085,25 +7074,11 @@ function viewSetupRec() {
         <div class="trunc" style="font-size:11px;color:var(--dim)">${x.lines.filter((l) => !l.gap).length}行${x.cols > 1 ? ` ・ ${x.cols}段` : ""}</div>
       </button>
       <button data-act="rpdf" data-id="${x.id}" style="padding:4px 7px;color:var(--dim);font-size:12px">PDF</button>
+      <button data-act="rec-classify" data-id="${x.id}" style="padding:4px 7px;font-size:12px">分類</button>
       <button data-act="rfset" data-id="${x.id}" style="padding:4px 7px;color:var(--dim);font-size:12px">フォルダ</button>
       <button data-act="rdel" data-id="${x.id}" style="padding:4px 6px;color:var(--bad)">✕</button>
     </div>`;
-  const curFolder = folderOf(recSong());
-  const list = groupRSongs(cur).map(([fname, songs2]) => {
-    if (!fname) return songs2.map(songRow).join("");
-    const open = S.rfolders[fname] === true || fname === curFolder;
-    return `<div class="row card" data-drop="rf:${h(fname)}" style="margin-bottom:8px;padding:8px 12px">
-        <button class="grow row" data-act="rfolder" data-id="${h(fname)}" style="text-align:left;min-width:0">
-          <span style="width:18px;color:var(--dim)">${open ? "▾" : "▸"}</span>
-          <span class="grow trunc">${h(fname)}</span>
-          <span style="font-size:11px;color:var(--dim)">${songs2.length}曲</span>
-        </button>
-        <button data-act="rfup" data-id="${h(fname)}" style="padding:4px 6px;color:var(--dim)">↑</button>
-        <button data-act="rfdown" data-id="${h(fname)}" style="padding:4px 6px;color:var(--dim)">↓</button>
-        <button data-act="rfrename" data-id="${h(fname)}" style="padding:4px 6px;color:var(--dim);font-size:12px">名前</button>
-      </div>
-      ${open ? `<div style="margin-left:14px">${songs2.map(songRow).join("")}</div>` : ""}`;
-  }).join("");
+  const list = recordingLibraryHTML(cur, songRow);
 
   return `
   <div class="hd"><button class="ic" data-act="go-live">‹</button><b>設定</b>
@@ -7113,6 +7088,7 @@ function viewSetupRec() {
   <div class="scroll pad">
     <section data-settings-panel="rec-materials">
     ${recordingGroupSelector()}
+    ${typeof PrivatePreparationUI !== "undefined" ? PrivatePreparationUI.settingsHTML() : ""}
     <h4 class="head">曲</h4>
     <div class="organize-create"><button class="chip" data-act="newfolder" data-rec="1">＋ フォルダを作成</button></div>
     ${list || `<p class="note">曲がありません</p>`}
@@ -7140,27 +7116,64 @@ function viewSetupRec() {
   </div>`;
 }
 
+// REC browsing is personal and independent of LIVE delivery destinations.
+// Existing IDs, folders and group membership are retained; dates are never
+// inferred from file creation times, nearby sessions, or title suffixes.
+function recordingClassification(so) {
+  const folder = String(so.folder || "").trim();
+  const g = S.groups.find(x => x.id === so.groupId);
+  const groupName = String(g?.name || "").trim();
+  const datedFolder = folder.match(/^(.*?)\s+((?:20\d{2}[年\/.-])?\d{1,2}[月\/]\d{1,2}.*)$/);
+  const recGroup = groupName.match(/^(.*?)\s*[（(]([^）)]*REC[^）)]*)[）)]$/i);
+  const artist = String(so.recArtist || so.artist || datedFolder?.[1] || recGroup?.[1] || "").trim() || "アーティスト未設定";
+  const explicit = so.recSession && typeof so.recSession === 'object' ? so.recSession : null;
+  const label = String(explicit?.label || datedFolder?.[2] || recGroup?.[2] || "").trim() || "日付未設定";
+  // Only a shared explicit session or an existing shared folder proves grouping.
+  const session = explicit?.id ? "session:" + explicit.id : datedFolder ? "folder:" + so.groupId + ":" + folder : recGroup ? "group:" + so.groupId : "song:" + so.id;
+  return {artist, session, label};
+}
 function recordingSelectionSongs() {
-  const selected = U.recGroupFilter === undefined ? (S.rsongs.find(x => x.id === S.rsongId)?.groupId || "") : U.recGroupFilter;
-  return selected && S.groups.some(g => g.id === selected) ? S.rsongs.filter(x => x.groupId === selected) : S.rsongs.slice();
+  const selected = U.recArtistFilter || "";
+  return S.rsongs.filter(x => !selected || recordingClassification(x).artist === selected);
+}
+function recordingLibraryHTML(list, row) {
+  const artists = new Map();
+  list.forEach(so => {
+    const info = recordingClassification(so);
+    if (!artists.has(info.artist)) artists.set(info.artist, new Map());
+    const sessions = artists.get(info.artist);
+    if (!sessions.has(info.session)) sessions.set(info.session, {label:info.label,songs:[]});
+    sessions.get(info.session).songs.push(so);
+  });
+  return [...artists].map(([artist,sessions]) => '<section class="rec-artist"><h4 class="head">'+h(artist)+'</h4>'+[...sessions.values()].map(session => '<div class="rec-session"><div class="note" style="margin:8px 0">'+h(session.label)+' ・ '+session.songs.length+'曲</div>'+session.songs.map(row).join('')+'</div>').join('')+'</section>').join('');
 }
 function recordingGroupSelector() {
-  const groups = S.groups.filter(g => S.rsongs.some(x => x.groupId === g.id) || String(g.name || '').normalize('NFKC').replace(/\s/g,'') === '配信しない').sort((a,b)=>{
-    const rank=g=>/^OCHA/i.test(g.name||'')?0:/ロージー|rosie|rosy/i.test(g.name||'')?1:privateDeliveryGroup(g)?2:3;
-    return rank(a)-rank(b);
-  });
-  const selected = U.recGroupFilter === undefined ? (S.rsongs.find(x => x.id === S.rsongId)?.groupId || "") : U.recGroupFilter;
-  return '<div class="chips"><button class="chip sm" data-act="rec-group-filter" data-id="" aria-pressed="'+!selected+'">全曲</button>'+groups.map(g => '<button class="chip sm" data-act="rec-group-filter" data-id="'+h(g.id)+'" aria-pressed="'+(selected===g.id)+'">'+h(groupDisplayName(g))+'</button>').join('')+'</div>';
+  const artists = [...new Set(S.rsongs.map(x => recordingClassification(x).artist))];
+  const selected = U.recArtistFilter || "";
+  return '<p class="note">RECはすべて本人用です。アーティスト → セッション日付 → 曲で表示します。</p><div class="chips"><button class="chip sm" data-act="rec-artist-filter" data-id="" aria-pressed="'+!selected+'">すべてのアーティスト</button>'+artists.map(artist => '<button class="chip sm" data-act="rec-artist-filter" data-id="'+h(artist)+'" aria-pressed="'+(selected===artist)+'">'+h(artist)+'</button>').join('')+'</div>';
 }
 function selectRecordingGroup(id) {
-  if (VIEW() || id && !S.groups.some(g => g.id === id)) return;
-  U.recGroupFilter = id;
+  if (VIEW()) return;
+  U.recArtistFilter = id;
   const list = recordingSelectionSongs();
   if (!list.some(x => x.id === S.rsongId) && list.length) {
-    const latest = list.slice().sort((a,b) => Number(b.at || 0)-Number(a.at || 0))[0];
-    S.rsongId = latest.id; U.songIdx = SONGS().findIndex(x => x.id === latest.id); U.secView = "";
+    S.rsongId = list[0].id; U.songIdx = SONGS().findIndex(x => x.id === S.rsongId); U.secView = "";
   }
   render(); if (U.picker) renderSheet();
+}
+async function editRecordingClassification(id) {
+  if (VIEW()) return;
+  const so = S.rsongs.find(x => x.id === id); if (!so) return;
+  const info = recordingClassification(so);
+  const artist = prompt('アーティスト名', info.artist === 'アーティスト未設定' ? '' : info.artist);
+  if (artist === null || !artist.trim()) return;
+  const label = prompt('このセッションの日付・期間（例：2026/10/8・9）\n同じセッションの曲は、同じ表記にしてください。未確定なら空欄。', info.label === '日付未設定' ? '' : info.label);
+  if (label === null) return;
+  if (!await automaticBackupBeforeEdit('recording-classification')) return;
+  if (S.rsongs.find(x => x.id === id) !== so) return;
+  so.recArtist = artist.trim();
+  so.recSession = {id: label.trim() ? artist.trim() + ':' + label.trim() : 'undated:' + so.id, label:label.trim() || '日付未設定'};
+  U.recArtistFilter = ''; save(); render();
 }
 
 // いま録っている人（進行で開いた人があればその人）。曲名と同じ大きさで出す。
@@ -9690,7 +9703,8 @@ document.addEventListener("click", async (e) => {
       U.menu = null; save(); renderSheet(); render(); break;
     }
     case "rlist": U.menu = { kind: "rlist" }; renderSheet(); break;
-    case "rec-group-filter": selectRecordingGroup(id); break;
+    case "rec-artist-filter": selectRecordingGroup(id); break;
+    case "rec-classify": void editRecordingClassification(id); break;
     case "ruse": {
       U.secView = "";
       S.rsongId = id;
@@ -10845,7 +10859,9 @@ async function loadRecDocs(picked) {
   let last = null;
   const list = captureImportFiles(picked), failed = [], succeeded = [];
   if (!await automaticBackupBeforeEdit('recording-lyric-import')) return false;
-  const targetGroupId = S.groups.some(g => g.id === U.recGroupFilter) ? U.recGroupFilter : recSong()?.groupId || S.groupId;
+  ensurePersonalPrivateGroup();
+  const targetGroupId = S.groups.find(g => String(g.name || '').normalize('NFKC').replace(/\s/g,'') === '配信しない')?.id;
+  if (!targetGroupId) return false;
   for (let i = 0; i < list.length; i++) {
     const item = list[i];
     U.busy = `${i + 1}/${list.length} ${item.name}`; render();
@@ -10861,8 +10877,7 @@ async function loadRecDocs(picked) {
         lines:parsed.lines.map(r => r[1] ? {t:r[1],bars:4} : {gap:true,t:""}),cols:1,colBreaks:[],at:Date.now()}
         : await parseDocx(f);
       so.groupId = targetGroupId;
-      const near = recSong();
-      if (near && near.groupId === targetGroupId && near.folder) so.folder = near.folder;
+      if (U.recArtistFilter) so.recArtist = U.recArtistFilter;
       S.rsongs.push(so); S.rsongId = so.id; last = so; save(); succeeded.push(item.name);
     } catch (e) { failed.push(item.name + "（取り込み）\n" + fileFailureReason(e)); }
   }
@@ -12264,7 +12279,7 @@ function privatePreparationReceiptsMatch(incoming) {
     const receipt = local[id];
     return receipt && typeof receipt === 'object' && !Array.isArray(receipt)
       && /^[a-f0-9]{64}$/.test(receipt.sha256 || '')
-      && ['recording-schedule', 'recording-addition', 'live-addition'].includes(receipt.type)
+      && ['recording-schedule', 'recording-addition', 'live-addition', 'recording-song', 'material-update', 'live-update'].includes(receipt.type)
       && Object.prototype.hasOwnProperty.call(remote, id)
       && remote[id]?.sha256 === receipt.sha256 && remote[id]?.type === receipt.type;
   });
@@ -13402,4 +13417,5 @@ async function initializeRecordingInboxOwner() {
   } catch (_) { recordingInboxStale = true; recordingInboxOwnerUI(); recordingInboxResolveBoot(false); }
 }
 void initializeRecordingInboxOwner();
+
 

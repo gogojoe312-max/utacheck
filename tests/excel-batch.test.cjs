@@ -10,13 +10,13 @@ function setup(overrides={}){
  const c=testContext({XLSX,Uint8Array,TextDecoder,Blob,Date,Promise,clearTimeout,
   setTimeout:(f,ms)=>setTimeout(f,ms>=5000?25:ms),
   uid:()=>String(++id),recSong:()=>null,S:{rsongs:[],songs:[],notes:[],groups:[],rosters:{},groupId:'group',showId:'show',shows:[]},U:{view:'setup'},
-  rememberViewSelection(){},render(){},save(){},autoSubs(){},showDeliveryGroupId:()=>'',alert:m=>alerts.push(m),confirm:()=>false,
+  VIEW:()=>false,rememberViewSelection(){},render(){},save(){},autoSubs(){},showDeliveryGroupId:()=>'',alert:m=>alerts.push(m),confirm:()=>false,
   sigOf:s=>s.title,songName:s=>s.title,copyRecords:()=>({lost:0}),
   addMember:n=>({name:n,id:n}),buildSong:p=>({...p,id:String(++id)}),
   putClip:async(key,blob)=>captures.push({key,blob}),...overrides});
  vm.runInContext(source.match(/^const NAMESEP = .+$/m)[0]+source.match(/^const HAMO_RE = .+$/m)[0]+source.match(/^const cleanName = .+$/m)[0],c);
  vm.runInContext('const looksName = v => nameScore(v) >= 0.6; const SONGS=()=>S.recMode ? S.rsongs : S.songs.filter(s=>s.showId===S.showId);',c);
- for(const n of ['fileFailureReason','showFileReport','cleanText','softText','stripParens','splitNames','nameScore','pickSheet','readBubbles','trimExcelRange','parseXLSX','finalize','compareSongTitles','sortSongsByTitle','importTimeout','captureImportFiles','handleFiles','loadRecDocs','importSelection']) vm.runInContext(fn(n),c);
+ for(const n of ['ensurePersonalPrivateGroup','fileFailureReason','showFileReport','cleanText','softText','stripParens','splitNames','nameScore','pickSheet','readBubbles','trimExcelRange','parseXLSX','finalize','compareSongTitles','sortSongsByTitle','importTimeout','captureImportFiles','handleFiles','loadRecDocs','importSelection']) vm.runInContext(fn(n),c);
  return {c,alerts,captures};
 }
 function workbook(n,type='xlsx'){
@@ -96,3 +96,4 @@ test('error explanations retain details and separate known capacity errors from 
  const {c}=setup();assert.match(c.fileFailureReason(Object.assign(new Error('Quota exceeded'),{name:'QuotaExceededError'})),/容量が不足/);
  assert.match(c.fileFailureReason(new RangeError('Out of bounds access')),/特定できません/);assert.match(c.fileFailureReason(new RangeError('Out of bounds access')),/Out of bounds access/);
 });
+
