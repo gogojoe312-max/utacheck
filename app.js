@@ -113,7 +113,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.10";
+const APP_VER = "16.41.58.11";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -301,7 +301,7 @@ let S = {
   groups: [], groupId: "",
   src: "", key: "", keyInLink: true,
   memos: {}, staffMemos: {}, recs: {}, kbps: 128, preroll: 5, viewer: false, srcGroup: "",
-  draws: {}, folders: {}, folderOrder: [], rfolders: {}, rfolderOrder: [], subs: {}, subsMan: {}, subLib: {}, gsubs: {},
+  draws: {}, folders: {}, folderOrder: [], performanceFolderOrders: {}, rfolders: {}, rfolderOrder: [], subs: {}, subsMan: {}, subLib: {}, gsubs: {},
   recMode: false, recOvSize: 14, rsongs: [], rsongId: "", recBars: true, liveShow: "", recEdit: false, linkSrc: "", groupOrder: [], pubAt: 0, syncAt: 0, seen: {}, planMin: 90, planPrep: 10, rosters: {}, secWords: [], trash: [], secAll: false, secHide: [], tagHide: [],
   plan: { start: "10:00", slots: [] },
   size: 19,
@@ -1312,6 +1312,7 @@ function migrate({preserve = false,keepPublicationBindings = false} = {}) {
   if (!S.draws) S.draws = {};
   if (!S.folders) S.folders = {};
   if (!S.folderOrder) S.folderOrder = [];
+  if (!S.performanceFolderOrders || typeof S.performanceFolderOrders !== "object" || Array.isArray(S.performanceFolderOrders)) S.performanceFolderOrders = {};
   if (!S.rfolders) S.rfolders = {};
   if (!S.rfolderOrder) S.rfolderOrder = [];
   if (!S.subs) S.subs = {};
@@ -1530,7 +1531,7 @@ function performanceSelectionOrder(list, dateOf=performanceDateOrder) {
     return b.date.month-a.date.month || b.date.day-a.date.day || a.index-b.index;
   }).map(x=>x.show);
 }
-function performanceFolderGroups(list, includeEmpty = false) {
+function performanceFolderGroups(list, includeEmpty = false, scope = null) {
   const groups = new Map();
   performanceSelectionOrder(list).forEach(show => {
     const name = show.folder || "";
@@ -1544,21 +1545,27 @@ function performanceFolderGroups(list, includeEmpty = false) {
       if (name && !(S.shows || []).some(show => (show.folder || "") === name)) groups.set(name, []);
     });
   }
-  const order = [...new Set((S.folderOrder || []).filter(name => name && groups.has(name)))];
+  // First appearance after the one date sort is the folder's newest performance.
+  // Manual order belongs to the visible group, never to another group's list.
+  const saved = scope === null ? null : S.performanceFolderOrders?.[JSON.stringify([scope])];
+  const order = saved?.mode === "manual" && Array.isArray(saved.names)
+    ? [...new Set(saved.names.filter(name => name && groups.has(name)))] : [];
   for (const name of groups.keys()) if (name && !order.includes(name)) order.push(name);
   if (groups.has("")) order.push("");
   return order.map(name => [name, groups.get(name)]);
 }
 function groupedPerformanceHTML(list, row, options = {}) {
   const scope = U.showFilter || "", remembered = U.performanceFolderOpen;
-  return performanceFolderGroups(list, !!options.editable).map(([name, shows]) => {
+  const editable = !!options.editable && scope !== "__archive__";
+  const orderScope = editable || typeof VIEW === "function" && !VIEW() ? scope : null;
+  return performanceFolderGroups(list, editable, orderScope).map(([name, shows]) => {
     const key = JSON.stringify([scope, name]);
     const open = remembered?.folders && remembered.showId === S.showId && Object.prototype.hasOwnProperty.call(remembered.folders, key)
       ? remembered.folders[key] : shows.some(show => show.id === S.showId);
     return `<details class="performance-folder" data-performance-folder="${h(name)}" data-performance-scope="${h(scope)}" ${open ? "open" : ""}>
-      <summary ${options.editable ? `data-drop="f:${h(name)}"` : ""}><span class="performance-folder-name">${h(name || "フォルダなし")}</span><span class="performance-folder-count">${shows.length ? shows.length + "公演" : "空"}</span></summary>
+      <summary ${editable ? `data-drop="f:${h(name)}"` : ""}><span class="performance-folder-name">${h(name || "フォルダなし")}</span><span class="performance-folder-count">${shows.length ? shows.length + "公演" : "空"}</span>${editable && name ? `<button class="organize-more" data-act="folder-actions" data-id="${h(name)}" aria-label="${h(name)}の操作">⋯</button>` : ""}</summary>
       <div class="performance-folder-body">${shows.map(row).join("") || '<p class="note">公演はありません</p>'}
-      ${options.editable ? `<div class="performance-folder-actions">${name ? `<button class="chip sm" data-act="frename" data-id="${h(name)}">名前を変更</button>` : ""}${!shows.length ? `<button class="chip sm" data-act="newshow" data-folder="${h(name)}">ここに公演を追加</button>` : ""}</div>` : ""}</div></details>`;
+      ${editable && !shows.length ? `<div class="performance-folder-actions"><button class="chip sm" data-act="newshow" data-folder="${h(name)}">ここに公演を追加</button></div>` : ""}</div></details>`;
   }).join("");
 }
 
@@ -2256,7 +2263,8 @@ let readTimer = null;
 function pushUndo(songId, notesOnly = false) {
   const snap = { notes: S.notes };
   if (!notesOnly) Object.assign(snap, { rsongs: S.rsongs, plan: S.plan,
-    shows: S.shows, folders: S.folders, folderOrder: S.folderOrder });
+    shows: S.shows, folders: S.folders, folderOrder: S.folderOrder,
+    performanceFolderOrders: S.performanceFolderOrders || {} });
   // 歌割を差し替える時だけ、その1曲と代役も控える。
   // 全曲を毎回控えるとメモリを食うので、必要な時に限る。
   if (songId) {
@@ -5701,12 +5709,96 @@ function rememberFolder(name, rec = false) {
   if (!S[key].includes(name)) S[key].push(name);
   S[state][name] = true;
 }
+function performanceFolderContext(name) {
+  const scope = U.showFilter || "";
+  if (!name || scope === "__archive__") return null;
+  const showIds = showsFor().filter(sw => !sw.hidden && !recoveryMaterialShow(sw) && folderOf(sw) === name).map(sw => sw.id);
+  if (showIds.some(id => !id || S.shows.filter(sw => sw.id === id).length !== 1)) return null;
+  const exists = showIds.length || (S.folderOrder || []).includes(name) && !S.shows.some(sw => folderOf(sw) === name);
+  return exists ? {kind:"organize",mode:"folder-actions",id:name,scope,showIds} : null;
+}
+function updatePerformanceFolderReference(oldName, newName, scope, allScopes = false) {
+  const orders = S.performanceFolderOrders;
+  if (!orders || typeof orders !== "object") return;
+  for (const [key, value] of Object.entries(orders)) {
+    if ((!allScopes && key !== JSON.stringify([scope || ""])) || !Array.isArray(value?.names)) continue;
+    value.names = [...new Set(value.names.flatMap(name => name === oldName ? (newName ? [newName] : []) : [name]))];
+  }
+}
+async function changePerformanceFolderOrder(action, name) {
+  if (VIEW() || preview || !recordingInboxCanWrite() || U.showFilter === "__archive__") return false;
+  const scope = U.showFilter || "", key = JSON.stringify([scope]), menu = U.menu;
+  if (action !== "date" && (U.menu?.mode !== "folder-actions" || U.menu.id !== name || U.menu.scope !== scope)) return false;
+  const names = performanceFolderGroups(showsFor(), true, scope).map(([folder]) => folder).filter(Boolean);
+  if (action !== "date") {
+    const from = names.indexOf(name), to = from + (action === "up" ? -1 : 1);
+    if (!["up", "down"].includes(action) || from < 0 || to < 0 || to >= names.length) return false;
+    names.splice(to, 0, names.splice(from, 1)[0]);
+  } else if (S.performanceFolderOrders?.[key]?.mode !== "manual") return false;
+  const before = JSON.stringify(S);
+  if (!await automaticBackupBeforeEdit("folder-order")) return false;
+  if (JSON.stringify(S) !== before || (U.showFilter || "") !== scope || U.menu !== menu || VIEW() || preview || !recordingInboxCanWrite()) {
+    alert("保存内容が変わったため、並べ替えを止めました。一覧から操作し直してください。"); return false;
+  }
+  pushUndo();
+  S.performanceFolderOrders ||= {};
+  S.performanceFolderOrders[key] = {mode:action === "date" ? "date" : "manual", names};
+  U.menu = null; save(); render(); return true;
+}
+function performanceFolderChangeKeepsDelivery(showIds, folder = "") {
+  const ids = new Set(showIds), original = S;
+  const destinations = () => JSON.stringify([
+    S.shows.filter(sw => ids.has(sw.id)).map(sw => [sw.id, showDeliveryGroupId(sw)]),
+    S.songs.filter(so => ids.has(so.showId)).map(so => [so.id, songDeliveryGroupId(so)])
+  ]);
+  const before = destinations();
+  try {
+    S = {...original, shows:original.shows.map(sw => ids.has(sw.id) ? {...sw,folder} : sw)};
+    return destinations() === before;
+  } finally { S = original; }
+}
+async function removePerformanceFolder(menu) {
+  if (VIEW() || preview || !recordingInboxCanWrite() || !menu || menu.mode !== "folder-actions") return false;
+  const current = performanceFolderContext(menu.id);
+  if (!current || current.scope !== menu.scope || JSON.stringify(current.showIds) !== JSON.stringify(menu.showIds)) {
+    alert("フォルダの内容が変わりました。一覧から操作し直してください。"); return false;
+  }
+  if (!performanceFolderChangeKeepsDelivery(menu.showIds)) {
+    alert("フォルダ名から配信先を判定している公演があります。先に各公演の「公演名・グループ・フォルダを編集」で現在のグループを保存してください。公演や記録は変更していません。"); return false;
+  }
+  const scopeName = menu.scope ? groupDisplayName(S.groups.find(g => g.id === menu.scope)) || "表示中の公演" : "全グループの表示中の公演";
+  const selected = S.shows.filter(sw => menu.showIds.includes(sw.id));
+  const shared = !!menu.scope && selected.some(sw => showGroupIds(sw).some(id => id !== menu.scope));
+  const elsewhere = S.shows.some(sw => folderOf(sw) === menu.id && !menu.showIds.includes(sw.id));
+  const message = menu.showIds.length
+    ? `「${menu.id}」を${scopeName}から外しますか？\n対象の${menu.showIds.length}公演を「フォルダなし」へ移します。曲・記録・録音は残ります。${shared ? "\n他グループにも表示される共有公演は、そちらでもフォルダなしになります。" : ""}${elsewhere ? "\n対象外の公演と、そのフォルダは残します。" : ""}`
+    : `空のフォルダ「${menu.id}」を削除しますか？\n空のフォルダは全グループ共通です。公演・曲・記録・録音は変更しません。`;
+  if (!confirm(message)) return false;
+  const before = JSON.stringify(S);
+  if (!await automaticBackupBeforeEdit("folder-delete")) return false;
+  if (JSON.stringify(S) !== before || (U.showFilter || "") !== menu.scope || U.menu !== menu || VIEW() || preview || !recordingInboxCanWrite()) {
+    alert("保存内容が変わったため、削除を止めました。一覧から操作し直してください。"); return false;
+  }
+  pushUndo();
+  S.shows.filter(sw => menu.showIds.includes(sw.id)).forEach(sw => { sw.folder = ""; });
+  const remains = S.shows.some(sw => folderOf(sw) === menu.id);
+  if (!remains) { S.folderOrder = (S.folderOrder || []).filter(name => name !== menu.id); delete S.folders[menu.id]; }
+  updatePerformanceFolderReference(menu.id, "", menu.scope, !remains);
+  U.menu = null; save(); render(); return true;
+}
 function organizeSheetHTML(m) {
   const rec = !!m.rec, item = (rec ? S.rsongs : S.shows).find(x => x.id === m.id);
-  const title = m.mode === "show" ? (item ? "公演を編集" : "公演を追加") : m.mode === "move" ? "フォルダを選択" : m.mode === "actions" ? (item?.name || "公演") : m.id ? "フォルダ名を変更" : "フォルダを作成";
+  const title = m.mode === "show" ? (item ? "公演を編集" : "公演を追加") : m.mode === "move" ? "フォルダを選択" : m.mode === "folder-actions" ? m.id : m.mode === "actions" ? (item?.name || "公演") : m.id ? "フォルダ名を変更" : "フォルダを作成";
   const btn = (act,label,extra="") => `<button class="organize-action" data-act="${act}" data-id="${h(m.id || "")}" ${extra}>${label}</button>`;
   let body = "";
-  if (m.mode === "actions" && item) {
+  if (m.mode === "folder-actions") {
+    const names = performanceFolderGroups(showsFor(), true, m.scope).map(([name]) => name).filter(Boolean), index = names.indexOf(m.id);
+    body = btn("frename", "名前を変更")
+      + btn("fup", "フォルダを1つ上へ", index <= 0 ? "disabled" : "")
+      + btn("fdown", "フォルダを1つ下へ", index < 0 || index === names.length - 1 ? "disabled" : "")
+      + btn("fdelete", "フォルダを削除", 'style="color:var(--bad)"')
+      + `<p class="note">${m.scope ? "表示中のグループが対象です。" : "全グループの表示中の公演が対象です。"}フォルダを削除しても公演・曲・記録・録音は残ります。</p>`;
+  } else if (m.mode === "actions" && item) {
     body = btn("editshow","公演名・グループ・フォルダを編集") + btn("show-delivery","配信先を変更")
       + btn("showpub", item.nopub ? "配信を有効にする" : "配信を止める")
       + btn("copyshow","公演を複製") + btn("delshow","公演を削除",'style="color:var(--bad)"');
@@ -5724,8 +5816,6 @@ function organizeSheetHTML(m) {
         <label class="organize-field">配信方法<select class="field" id="org-delivery"><option value="show">公演のグループに配信</option><option value="song" ${item?.deliveryMode === "song" ? "selected" : ""}>曲ごとに配信先を分ける（ハロコンなど）</option></select></label>`;
     }
     body += `<p id="org-error" role="alert" class="organize-error" hidden></p><button class="primary" type="submit">${m.mode === "move" ? "ここに移動" : m.mode === "show" && !item ? "公演を作成" : m.mode === "folder" && !m.id ? "フォルダを作成" : "保存"}</button></form>`;
-    if (m.mode === "folder" && m.id && !(rec ? S.rsongs : S.shows).some(x => folderOf(x) === m.id))
-      body += `<button class="organize-action" style="color:var(--bad);margin-top:12px" data-act="empty-folder-delete">空のフォルダを削除</button>`;
   }
   return `<button class="sp" data-act="org-close" aria-label="閉じる"></button><div class="sheet organize-sheet" role="dialog" aria-modal="true" aria-label="${h(title)}"><div class="row"><b class="grow">${h(title)}</b><button class="chip" data-act="org-close">閉じる</button></div>${body}</div>`;
 }
@@ -5742,8 +5832,10 @@ function saveOrganization(m, values) {
     const showIds = !rec && Array.isArray(m.showIds) ? new Set(m.showIds) : null;
     if (m.id && !rec && m.showIds === undefined && U.showFilter)
       return "フォルダ一覧から名前の変更を開き直してください。";
-    if (m.id && showIds && !list.some(x => showIds.has(x.id) && folderOf(x) === m.id))
+    if (m.id && showIds && (showIds.size ? !list.some(x => showIds.has(x.id) && folderOf(x) === m.id) : list.some(x => folderOf(x) === m.id)))
       return "変更する公演が見つかりません。フォルダ一覧を開き直してください。";
+    if (m.id && !rec && !performanceFolderChangeKeepsDelivery(list.filter(x => folderOf(x) === m.id && (!showIds || showIds.has(x.id))).map(x => x.id), name))
+      return "改名すると配信先が変わる公演があります。先に各公演のグループを保存してください。";
     pushUndo();
     if (m.id) {
       list.forEach(x => { if (folderOf(x) === m.id && (!showIds || showIds.has(x.id))) x.folder = name; });
@@ -5751,6 +5843,7 @@ function saveOrganization(m, values) {
       if (!list.some(x => folderOf(x) === m.id)) {
         S[key] = S[key].map(n => n === m.id ? name : n); delete S[state][m.id];
       }
+      if (!rec) updatePerformanceFolderReference(m.id, name, m.scope ?? U.showFilter, !list.some(x => folderOf(x) === m.id));
     }
     rememberFolder(name, rec);
   } else if (m.mode === "move") {
@@ -6323,7 +6416,7 @@ function summaryShowPicker() {
   if (S.recMode) return "";
   return `<label class="summary-show-picker"><span>公演・日付</span><select id="summary-show" aria-label="公演・日付">
     <option value="" ${U.allShows ? "selected" : ""}>全公演をまとめる</option>
-    ${performanceFolderGroups(summaryShows()).map(([name, shows]) => `<optgroup label="${h(name || "フォルダなし")}">${shows.map(sw => `<option value="${h(sw.id)}" ${!U.allShows && sw.id === S.showId ? "selected" : ""}>${h(sw.name)}</option>`).join("")}</optgroup>`).join("")}
+    ${performanceFolderGroups(summaryShows(), false, typeof VIEW === "function" && !VIEW() ? S.groupId || "" : null).map(([name, shows]) => `<optgroup label="${h(name || "フォルダなし")}">${shows.map(sw => `<option value="${h(sw.id)}" ${!U.allShows && sw.id === S.showId ? "selected" : ""}>${h(sw.name)}</option>`).join("")}</optgroup>`).join("")}
   </select></label>`;
 }
 function selectSummaryShow(id) {
@@ -8553,6 +8646,7 @@ function viewSetup() {
     <h4 class="head">公演</h4>
     <p class="note">フォルダを開いて公演を選択 · フォルダ内は新しい日付順</p>
     <div class="organize-create"><button class="primary" data-act="newshow">＋ 公演を追加</button><button class="chip" data-act="newfolder">＋ フォルダ</button></div>
+    ${U.showFilter !== "__archive__" ? `<div class="performance-folder-order"><span class="note">フォルダ：${S.performanceFolderOrders?.[JSON.stringify([U.showFilter || ""])]?.mode === "manual" ? "手動順" : "新しい日付順"}</span>${S.performanceFolderOrders?.[JSON.stringify([U.showFilter || ""])]?.mode === "manual" ? '<button class="chip sm" data-act="folder-sort">新しい日付順に戻す</button>' : ""}</div>` : ""}
     ${shows}
     ${U.showFilter === "__archive__" ? '<button class="ghost" data-act="showfilter" data-id="">通常の公演に戻る</button>' : ''}
 
@@ -8708,6 +8802,15 @@ document.addEventListener("click", async (e) => {
   if (a === 'publication-inspect') { void inspectPublication(id); return; }
   if (a === 'app-update-check') { void checkAppUpdate(); return; }
   if (a === 'app-update-reload') { void reloadForAppUpdate(); return; }
+  if (a === "folder-actions") {
+    e.preventDefault(); e.stopPropagation();
+    if (!VIEW() && !preview) { U.menu = performanceFolderContext(id); if (U.menu) renderSheet(); }
+    return;
+  }
+  if (a === "fdelete") { await removePerformanceFolder(U.menu); return; }
+  if (a === "fup" || a === "fdown" || a === "folder-sort") {
+    await changePerformanceFolderOrder(a === "folder-sort" ? "date" : a === "fup" ? "up" : "down", id); return;
+  }
   if (new Set(['note','draw','word','up','down','toggleabsent','resetsubs','setblock','unassign','setassign','goabsent','assignline','assignblock','assign','absent','absent-clear','newshow','dupshow','newfolder','frename','set-show-delivery','usegroup','m-setgroup','pickgroup','delpicked','deletesong','deleteshow','wordedit','word-save']).has(a) && !VIEW() && !preview) {
     if (!await automaticBackupBeforeEdit(a)) return;
     if (!b.isConnected) return;
@@ -8842,6 +8945,7 @@ document.addEventListener("click", async (e) => {
           if (prev.shows) S.shows = prev.shows;
           if (prev.folders) S.folders = prev.folders;
           if (prev.folderOrder) S.folderOrder = prev.folderOrder;
+          if (prev.performanceFolderOrders) S.performanceFolderOrders = prev.performanceFolderOrders;
           if (prev.subs) S.subs = prev.subs;
           if (prev.subsMan) S.subsMan = prev.subsMan;
           if (prev.song) {                                  // 差し替えを元に戻す
@@ -10006,18 +10110,10 @@ document.addEventListener("click", async (e) => {
       render();
       break;
     }
-    case "frename": U.menu = {kind:"organize",mode:"folder",id,
-      showIds:U.showFilter && S.shows.some(x => folderOf(x) === id) ? showsFor().filter(x => folderOf(x) === id).map(x => x.id) : null}; renderSheet(); break;
-    case "fup": case "fdown": {
-      const names = groupShows(S.shows.filter((x) => !x.hidden)).map(([k]) => k).filter(Boolean);
-      let ord = (S.folderOrder || []).filter((x) => names.includes(x));
-      names.forEach((x) => { if (!ord.includes(x)) ord.push(x); });   // まだ並べていないものを今の順で足す
-      const i2 = ord.indexOf(id);
-      const j2 = a === "fup" ? i2 - 1 : i2 + 1;
-      if (i2 < 0 || j2 < 0 || j2 >= ord.length) break;
-      ord.splice(j2, 0, ord.splice(i2, 1)[0]);
-      S.folderOrder = ord;
-      save(); render(); break;
+    case "frename": {
+      const context = U.menu?.mode === "folder-actions" && U.menu.id === id ? U.menu : performanceFolderContext(id);
+      if (!context) break;
+      U.menu = {...context,mode:"folder",showIds:[...context.showIds]}; renderSheet(); break;
     }
     case "folder": S.folders[id] = S.folders[id] === false; save(); render(); break;
     case "showfilter": setShowFilter(id); break;
@@ -10053,15 +10149,6 @@ document.addEventListener("click", async (e) => {
     case "newfolder": U.menu = {kind:"organize",mode:"folder",rec:b.dataset.rec === "1"}; renderSheet(); break;
     case "show-actions": U.menu = {kind:"organize",mode:"actions",id}; renderSheet(); break;
     case "editshow": U.menu = {kind:"organize",mode:"show",id}; renderSheet(); break;
-    case "empty-folder-delete": {
-      const m = U.menu;
-      if (!m || m.kind !== "organize" || m.mode !== "folder" || !m.id || VIEW()) break;
-      if ((m.rec ? S.rsongs : S.shows).some(x => folderOf(x) === m.id)) break;
-      pushUndo();
-      const key = m.rec ? "rfolderOrder" : "folderOrder", state = m.rec ? "rfolders" : "folders";
-      S[key] = S[key].filter(x => x !== m.id); delete S[state][m.id];
-      document.activeElement?.blur(); U.menu = null; save(); render(); break;
-    }
     case "org-close": document.activeElement?.blur(); U.menu = null; renderSheet(); break;
     case "useshow": selectShow(id); U.view = "live"; render(); break;
     case "copyshow": { U.menu = null; dupShow(id); renderSheet(); break; }

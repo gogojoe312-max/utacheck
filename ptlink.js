@@ -452,9 +452,12 @@
     if (typeof save !== "function" || save.__pt) return;
     var orig = save;
     var w = function () {
-      if (!inboxWritable()) return false;
+      // A recovery network hold still permits the editor's verified local save.
+      // Keep every PT mutation/transport behind the separate communication gate.
+      var localWritable = typeof recordingInboxCanWrite === "function" ? recordingInboxCanWrite() : inboxWritable();
+      if (!localWritable) return false;
       var r = orig.apply(this, arguments);
-      if (r === false) return r;
+      if (r === false || !inboxWritable()) return r;
       try { resetTakeOnSecChange(); } catch (e) { /* 失敗で保存を壊さない */ }
       try { paint(); } catch (e) { /* 描画の失敗で保存を壊さない */ }
       /* 区切りが変わった時だけ送る。テイクを押しただけで送ると無駄に飛ぶ。 */

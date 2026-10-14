@@ -1,7 +1,7 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 const src=fs.readFileSync(require('node:path').join(__dirname,'../app.js'),'utf8');
 function fn(n){const i=src.indexOf('function '+n+'(');return src.slice(src.lastIndexOf('\n',i)+1,src.indexOf('\n}',i)+2);}
-function setup(){let id=0;const c=vm.createContext({S:{shows:[{id:'old',name:'前の公演',folder:'春'}],rsongs:[],songs:[],groups:[{id:'ocha',name:'OCHA NORMA'},{id:'rose',name:'ロージークロニクル'}],groupId:'rose',showId:'old',folders:{春:true},folderOrder:['春'],rfolders:{},rfolderOrder:[]},U:{},VIEW:()=>false,syncShowGroup(){},schedulePush(){},pushUndo(){},save(){},uid:()=>String(++id),selectShow:who=>{c.S.showId=who;},folderOf:x=>x?.folder||''});for(const n of ['folderNames','rememberFolder','saveOrganization','autoShowGroupId','groupShows','groupRSongs'])vm.runInContext(fn(n),c);return c;}
+function setup(){let id=0;const c=vm.createContext({S:{shows:[{id:'old',name:'前の公演',folder:'春'}],rsongs:[],songs:[],groups:[{id:'ocha',name:'OCHA NORMA'},{id:'rose',name:'ロージークロニクル'}],groupId:'rose',showId:'old',folders:{春:true},folderOrder:['春'],rfolders:{},rfolderOrder:[]},U:{},VIEW:()=>false,syncShowGroup(){},schedulePush(){},pushUndo(){},save(){},uid:()=>String(++id),selectShow:who=>{c.S.showId=who;},folderOf:x=>x?.folder||''});for(const n of ['folderNames','rememberFolder','saveOrganization','autoShowGroupId','groupShows','groupRSongs','performanceFolderContext','recoveryMaterialShow','updatePerformanceFolderReference','performanceFolderChangeKeepsDelivery','showDeliveryGroupId','songDeliveryGroupId','privateDeliveryGroup'])vm.runInContext(fn(n),c);return c;}
 test('create an empty folder then create a show inside it with automatic group selection',()=>{
  const c=setup();assert.equal(c.saveOrganization({mode:'folder'},{name:'OCHA 秋ツアー'}),'');
  assert(c.groupShows(c.S.shows).some(([name,shows])=>name==='OCHA 秋ツアー'&&shows.length===0));
@@ -26,7 +26,7 @@ test('release event creation uses the displayed Rosy group even when the current
 
 function openFolderRename(c,id){
  c.id=id;c.renderSheet=()=>{};c.showsFor=()=>c.S.shows.filter(x=>!c.U.showFilter||x.groupId===c.U.showFilter);
- const start=src.indexOf('    case "frename":'),end=src.indexOf('    case "fup":',start);
+ const start=src.indexOf('    case "frename":'),end=src.indexOf('    case "folder":',start);
  vm.runInContext('switch("frename"){'+src.slice(start,end)+'}',c);
  return c.U.menu;
 }
@@ -58,6 +58,16 @@ test('stale or missing group rename scope cannot fall back to renaming every gro
 });
 test('a truly empty saved folder can be renamed in a filtered list without touching other groups',()=>{
  const c=setup();c.S.folderOrder.push('空の予定');c.S.folders['空の予定']=true;c.U.showFilter='rose';const before=JSON.stringify(c.S.shows);
- const menu=openFolderRename(c,'空の予定');assert.equal(menu.showIds,null);assert.equal(c.saveOrganization(menu,{name:'次の公演'}),'');
+ const menu=openFolderRename(c,'空の予定');assert.deepEqual(Array.from(menu.showIds),[]);assert.equal(c.saveOrganization(menu,{name:'次の公演'}),'');
  assert.equal(JSON.stringify(c.S.shows),before);assert(c.S.folderOrder.includes('次の公演'));assert(!c.S.folderOrder.includes('空の予定'));
+});
+test('empty folder rename cannot capture shows added after opening and legacy inferred destinations cannot change',()=>{
+ const c=setup();c.S.folderOrder.push('空の予定');c.U.showFilter='rose';const menu=openFolderRename(c,'空の予定');c.S.shows.push({id:'later',groupId:'ocha',folder:'空の予定'});let before=JSON.stringify(c.S);
+ assert.match(c.saveOrganization(menu,{name:'変更'}),/開き直して/);assert.equal(JSON.stringify(c.S),before);
+ c.S.groups.push({id:'rosy',name:'Rosy'});c.S.shows=[{id:'legacy',name:'10/1 東京',folder:'Rosy'}];c.S.songs=[{id:'song',showId:'legacy',groupId:'ocha'}];before=JSON.stringify(c.S);
+ assert.match(c.saveOrganization({mode:'folder',id:'Rosy',showIds:['legacy']},{name:'秋ツアー'}),/配信先が変わる/);assert.equal(JSON.stringify(c.S),before);
+});
+test('scoped rename updates only its saved manual order while a final rename updates remaining references',()=>{
+ const c=setup();c.S.shows=[{id:'r',groupId:'rose',folder:'春'},{id:'o',groupId:'ocha',folder:'春'}];c.S.performanceFolderOrders={'["rose"]':{mode:'manual',names:['春','夏']},'["ocha"]':{mode:'manual',names:['夏','春']}};c.U.showFilter='rose';
+ assert.equal(c.saveOrganization(openFolderRename(c,'春'),{name:'春ツアー'}),'');assert.deepEqual(Array.from(c.S.performanceFolderOrders['["rose"]'].names),['春ツアー','夏']);assert.deepEqual(Array.from(c.S.performanceFolderOrders['["ocha"]'].names),['夏','春']);
 });

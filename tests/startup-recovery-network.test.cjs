@@ -215,6 +215,38 @@ function ptFixture(extra) {
   });
   f.loadPT('inboxWritable', 'inboxTransport'); return f;
 }
+test('PT save wrapper retains local persistence under a recovery network hold', () => {
+  const calls = [], result = { savedLocally: true }, receiver = {};
+  const f = ptFixture({save:function (...args) { calls.push({receiver:this,args}); return result; }});
+  Object.assign(f.c,{resetTakeOnSecChange:()=>f.effects.push('resetTake'),paint:()=>f.effects.push('paint'),
+    liveSlot:()=>{f.effects.push('liveSlot');return {secCur:'1A'};},sendLocate:()=>f.effects.push('sendLocate')});
+  f.loadPT('hookSave');f.c.hookSave();
+  assert.equal(f.c.window.save.call(receiver,'same-argument'),result);
+  assert.equal(calls.length,1);assert.equal(calls[0].receiver,receiver);assert.deepEqual(calls[0].args,['same-argument']);
+  f.sealed();
+});
+test('PT save wrapper still denies a non-writable editor before calling the original save', () => {
+  let calls = 0;const f = ptFixture({startupPhase:'blocked',save:()=>{calls++;return true;}});
+  f.loadPT('hookSave');f.c.hookSave();
+  assert.equal(f.c.window.save(),false);assert.equal(calls,0);f.sealed();
+});
+test('PT save wrapper preserves the original preview save guard', () => {
+  const f = ptFixture({preview:'synthetic-original',stateRevision:8,idbOK:true});
+  f.load('save');f.loadPT('hookSave');f.c.hookSave();
+  assert.equal(f.c.window.save(),undefined);assert.equal(f.c.stateRevision,8);assert.equal(f.timers.size,0);f.sealed();
+});
+test('PT save wrapper preserves a rejected save without any downstream PT effect', () => {
+  let calls=0;const f = ptFixture({startupRecoveryNetworkHold:false,save:()=>{calls++;return false;}});
+  Object.assign(f.c,{resetTakeOnSecChange:()=>f.effects.push('resetTake'),paint:()=>f.effects.push('paint')});
+  f.loadPT('hookSave');f.c.hookSave();assert.equal(f.c.window.save(),false);assert.equal(calls,1);f.sealed();
+});
+test('PT save wrapper retains normal post-save behavior only when communication is allowed', () => {
+  const calls=[],result={saved:true};const f = ptFixture({startupRecoveryNetworkHold:false,save:()=>{calls.push('save');return result;}});
+  Object.assign(f.c,{lastHookSec:'',resetTakeOnSecChange:()=>calls.push('resetTake'),paint:()=>calls.push('paint'),
+    liveSlot:()=>({secCur:'1A'}),sendLocate:force=>calls.push('sendLocate:'+force)});
+  f.loadPT('hookSave');f.c.hookSave();assert.equal(f.c.window.save(),result);
+  assert.deepEqual(calls,['save','resetTake','paint','sendLocate:false']);assert.equal(f.c.lastHookSec,'1A');f.sealed();
+});
 test('PT transport denies its callback before writer admission', async () => {
   const f = ptFixture(); let ran = 0;
   await assert.rejects(f.c.inboxTransport(() => { ran++; }), /recovery-network-held/);

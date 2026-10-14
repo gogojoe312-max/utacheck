@@ -35,6 +35,7 @@ async function fixture(options={}){
  c.group=id=>c.S.groups.find(g=>g.id===(id||c.S.groupId));c.member=id=>c.S.members.find(m=>m.id===id);c.showsNewestFirst=()=>c.S.shows;
  vm.runInContext(app.slice(app.indexOf('function autoShowGroupId('),app.indexOf('function showsFor()')),c);
  vm.runInContext(app.slice(app.indexOf('function publicationData('),app.indexOf('async function gh(')),c);vm.runInContext(fn('payloadKey'),c);vm.runInContext(fn('gistRawSource'),c);
+ vm.runInContext(app.match(/^const NAMESEP = .*;$/m)[0]+'\n'+app.match(/^const hash32 = .*;$/m)[0]+'\n'+['stripParens','splitNames','songSig','buildSong'].map(fn).join('\n'),c);
  const orig=c.S;c.S=clone(orig);c.S.groups[0].nopub=false;c.S.groups[0].gistId=gistId;c.S.groups[0].src=src;c.S.shows[0].nopub=false;
  const remote=clone(c.publicationData('g'));delete remote.shows[0].recoveredSourceShowId;remote.folderOrder=[];remoteRaw=JSON.stringify(remote);c.S=orig;
  const packet={app:'utacheck-existing-delivery',version:2,targets:[{sourceSha256:sourceHash,expectedRemoteSha256:sha(remoteRaw),groupName:'Synthetic Group',gistId,src,sourceShowIds:['show']}]};
@@ -360,6 +361,7 @@ test('fileless reconnection selects the sole unfinished group and keeps its unce
  assert.match(f.modal().innerHTML,/接続ファイルを使って確認/);assert.match(f.modal().innerHTML,/保存済みの認証情報/);
  assert.equal(f.modal().querySelector('#rd-file').files.length,0);assert.equal(f.modal().querySelector('#rd-token').value,'');
  assert.match(f.modal().querySelector('#rd-preview').innerHTML,/確認後の新しい指摘を反映する公演：1件/);
+ assert.match(f.modal().querySelector('#rd-preview').innerHTML,/<details><summary>対象の公演を見る（1公演）<\/summary><ul/);
  assert.match(f.modal().querySelector('#rd-status').textContent,/まだ送信・保存/);
  assert.equal(JSON.stringify(f.c.S),before);assert.deepEqual(f.idb.snapshot(),db);assert.equal(f.patches(),0);
  assert.deepEqual(f.calls.map(c=>({url:c.url,method:c.method,token:c.token})),[{url:'https://api.github.com/gists/'+f.packet.targets[0].gistId,method:'GET',token:'Bearer SYNTHETIC_SAVED_TOKEN'}]);
@@ -450,4 +452,116 @@ test('fileless read rejects a changed selection or owner edit while the request 
   assert.equal(f.modal().querySelector('#rd-preview').innerHTML,'');assert.deepEqual(clone(f.c.S.recoveryDelivery),oldBinding);assert.deepEqual(f.idb.snapshot(),db);assert.equal(f.patches(),0);
   if(variant==='state')assert.equal(f.c.S.notes[0].memo,'NEWER_EDIT');
  }
+});
+test('native reconnect consent avoids the editor checkpoint but keeps the owner and prepared guards',async()=>{
+ const f=await savedFixture();await savedCheck(f);const before=JSON.stringify(f.c.S),db=f.idb.snapshot();let checkpoints=0;
+ f.c.automaticBackupBeforeEdit=async()=>{checkpoints++;return false;};
+ vm.runInContext(app.slice(app.indexOf('const verifiedBackupWidgetReplay ='),app.indexOf('const verifiedBackupSelectPending =')),f.c);
+ const nativeClick=field=>{
+  field.tagName='INPUT';field.type='checkbox';field.closest=()=>null;
+  const previous=field.checked;field.checked=!previous;let stopped=false,prevented=false;
+  const event={target:field,stopImmediatePropagation(){stopped=true;},preventDefault(){prevented=true;}};
+  for(const handler of f.handlers.click){handler(event);if(stopped)break;}
+  if(prevented)field.checked=previous;return {stopped,prevented};
+ };
+ for(const id of ['rd-exclusive','rd-approve']){
+  const field=f.modal().querySelector('#'+id);assert.deepEqual(nativeClick(field),{stopped:true,prevented:false});assert.equal(field.checked,true);
+ }
+ assert.equal(checkpoints,0);assert.equal(JSON.stringify(f.c.S),before);assert.deepEqual(f.idb.snapshot(),db);
+ f.c.recordingInboxCanWrite=()=>false;const field=f.modal().querySelector('#rd-approve');assert.equal(nativeClick(field).prevented,true);assert.equal(field.checked,true);
+ f.c.recordingInboxCanWrite=()=>true;
+ const unrelated={id:'other-checkbox',checked:false};nativeClick(unrelated);assert.equal(checkpoints,1,'Other editor checkboxes keep their checkpoint');
+ f.click('rd-commit');await f.until(()=>f.calls.some(c=>c.action==='pushOne'));assert.equal(f.c.S.recoveryDelivery.targets[0].status,'ready');
+});
+test('commit feedback stays next to the button and a rejected commit requires fresh checking',async()=>{
+ const f=await savedFixture();await savedCheck(f);
+ assert.match(f.modal().querySelector('#rd-preview').innerHTML,/id="rd-commit-status"/);
+ f.click('rd-commit');assert.match(f.modal().querySelector('#rd-commit-status').textContent,/2つの確認欄/);
+ f.modal().querySelector('#rd-approve').checked=true;f.modal().querySelector('#rd-exclusive').checked=true;
+ f.setRemote(f.remote()+' ');f.click('rd-commit');await f.until(()=>/上書きせず停止/.test(f.modal().querySelector('#rd-status').textContent));
+ assert.equal(f.modal().querySelector('#rd-commit-status').textContent,f.modal().querySelector('#rd-status').textContent);
+ assert.equal(f.modal().querySelector('[data-act="rd-commit"]').dataset.act,'rd-check-saved');assert.equal(f.patches(),0);
+ f.click('rd-commit');assert.match(f.modal().querySelector('#rd-commit-status').textContent,/もう一度/);assert.equal(f.patches(),0);
+});
+test('saved mismatch identifies the affected show and folder without accepting or changing either copy',async()=>{
+ const f=await savedFixture();f.c.S.shows[0].folder='手元のフォルダ';const remote=JSON.parse(f.remote());remote.shows[0].folder='配信済みのフォルダ';f.setRemote(JSON.stringify(remote));
+ f.c.S.notes[0].memo='A newer correction that must not be replaced';
+ const before=JSON.stringify(f.c.S),db=f.idb.snapshot();await savedCheck(f);
+ const status=f.modal().querySelector('#rd-status').textContent;
+ assert.match(status,/すべて一致していない/);assert.match(status,/Performance/);assert.match(status,/公演情報/);
+ assert.match(status,/手元「手元のフォルダ」／配信済み「配信済みのフォルダ」/);
+ assert.equal(JSON.stringify(f.c.S),before);assert.deepEqual(f.idb.snapshot(),db);assert.equal(f.patches(),0);
+ assert.equal(f.modal().querySelector('#rd-preview').innerHTML,'');
+});
+async function alignmentFixture(options={}){
+ const f=await savedFixture(options);f.c.S.shows[0].folder='Local folder';
+ f.c.S.members.push({id:'b',name:'B'});f.c.S.songs[0].lines.push({t:'Second lyric',raw:'B',label:'B',parts:['b']});
+ const remote=clone(f.c.publicationData('g',undefined,true));delete remote.shows[0].recoveredSourceShowId;
+ remote.shows[0].folder='Published folder';remote.lib[0].order.push('B');f.setRemote(JSON.stringify(remote));
+ f.c.save();await f.c.saveNow();return f;
+}
+test('a bounded display proposal requires per-show acceptance and preserves originals before exact reconnection',async()=>{
+ const f=await alignmentFixture(),before=JSON.stringify(f.c.S),db=f.idb.snapshot(),other=clone(f.c.S.recoveryDelivery.targets[1]);await savedCheck(f);
+ const html=f.modal().querySelector('#rd-preview').innerHTML;
+ assert.match(html,/手元の表示を配信済みに合わせる確認/);assert.match(html,/Local folder.*Published folder/);assert.match(html,/曲の表示名簿の末尾に B/);
+ assert.equal(JSON.stringify(f.c.S),before);assert.deepEqual(f.idb.snapshot(),db);assert.equal(f.patches(),0);
+ f.modal().querySelector('#rd-exclusive').checked=true;f.modal().querySelector('#rd-approve').checked=true;f.click('rd-commit');
+ assert.match(f.modal().querySelector('#rd-commit-status').textContent,/公演ごとの表示変更/);assert.equal(JSON.stringify(f.c.S),before);assert.deepEqual(f.idb.snapshot(),db);
+ f.modal().querySelector('#rd-alignment-0').checked=true;f.click('rd-commit');await f.until(()=>f.calls.some(c=>c.action==='pushOne'));
+ assert.equal(f.c.S.shows[0].folder,'Published folder');assert.deepEqual(clone(f.c.S.songs[0].roster),['m','b']);
+ const expected=JSON.parse(before);expected.shows[0].folder='Published folder';expected.songs[0].roster.push('b');
+ for(const key of ['shows','songs','members','rosters','notes','pubNotes','memos','subs','gsubs','rsongs','staffMemos','recs','draws','folderOrder','trash','plan'])assert.deepEqual(clone(f.c.S[key]),expected[key],key);
+ assert.deepEqual(clone(f.c.S.recoveryDelivery.targets[1]),other);assert.equal(f.c.S.recoveryDelivery.targets[0].heldLocalShowIds.length,0);
+ assert(f.idb.snapshot().state.some(([key,value])=>key.includes('editor:')&&value===before));assert.deepEqual(f.idb.record('recovery:network-hold:v1'),f.hold);
+});
+test('display proposals refuse content edits, reordered singers, unknown identities and unapproved scopes',async()=>{
+ for(const variant of ['note','memo','lyric','reorder','middle-insert','unknown-name','other-song-only','duplicate-id-for-name','new-held','missing-protected','unknown-remote']){
+  const f=await alignmentFixture(),remote=JSON.parse(f.remote());
+  if(variant==='note')f.c.S.notes[0].memo='NEW OWNER NOTE';
+  if(variant==='memo')f.c.S.memos['show|song']='NEW OWNER SUMMARY';
+  if(variant==='lyric')f.c.S.songs[0].lines[0].t='NEW OWNER LYRIC';
+  if(variant==='reorder')remote.lib[0].order.reverse();
+  if(variant==='middle-insert')remote.lib[0].order.unshift('B');
+  if(variant==='unknown-name')remote.lib[0].order.push('UNKNOWN');
+  if(variant==='other-song-only'){f.c.S.members.push({id:'else',name:'Else'});f.c.S.rsongs[0].lines=[{t:'Elsewhere',raw:'Else',parts:['else']}];remote.lib[0].order.push('Else');}
+  if(variant==='duplicate-id-for-name'){f.c.S.members.push({id:'b2',name:'B'});f.c.S.songs[0].lines[1].parts.push('b2');}
+  if(variant==='new-held')f.c.S.recoveryDelivery.targets[0].heldLocalShowIds=[];
+  if(variant==='missing-protected')f.c.S.recoveryDelivery.targets[0].preservedShowIds.push('missing');
+  if(variant==='unknown-remote'){remote.shows.push({id:'unknown',name:'Unknown'});remote.songs.push({...remote.songs[0],showId:'unknown'});}
+  f.setRemote(JSON.stringify(remote));const before=JSON.stringify(f.c.S),db=f.idb.snapshot();await savedCheck(f);
+  assert.match(f.modal().querySelector('#rd-status').textContent,/一致していない/,variant);assert.equal(f.modal().querySelector('#rd-preview').innerHTML,'',variant);
+  assert.equal(JSON.stringify(f.c.S),before,variant);assert.deepEqual(f.idb.snapshot(),db,variant);assert.equal(f.patches(),0,variant);
+ }
+});
+test('a changed remote still blocks an explicitly accepted display proposal before any save or PATCH',async()=>{
+ const f=await alignmentFixture();await savedCheck(f);const before=JSON.stringify(f.c.S),db=f.idb.snapshot();
+ for(const id of ['rd-exclusive','rd-approve','rd-alignment-0'])f.modal().querySelector('#'+id).checked=true;
+ f.setRemote(f.remote()+' ');f.click('rd-commit');await f.until(()=>/上書きせず停止/.test(f.modal().querySelector('#rd-status').textContent));
+ assert.equal(JSON.stringify(f.c.S),before);assert.deepEqual(f.idb.snapshot(),db);assert.equal(f.patches(),0);
+});
+test('one valid display alignment cannot partially adopt another held show with an actual content edit',async()=>{
+ const f=await alignmentFixture(),remote=JSON.parse(f.remote()),binding=f.c.S.recoveryDelivery.targets[0];
+ f.c.S.shows.push({...clone(f.c.S.shows[0]),id:'second-show',name:'Second',recoveredSourceShowId:'second-show'});
+ f.c.S.songs.push({...clone(f.c.S.songs[0]),id:'second-song',showId:'second-show'});
+ binding.sourceShowIds.push('second-show');binding.showIds.push('second-show');binding.heldLocalShowIds.push('second-show');binding.preservedShowIds.push('second-show');
+ remote.shows.push({...clone(remote.shows[0]),id:'second-show',name:'Second'});remote.songs.push({...clone(remote.songs[0]),showId:'second-show'});
+ f.c.S.notes.push({id:'new-second-note',songId:'second-song',showId:'second-show',lineIdx:0,memberIds:['m'],tags:[],memo:'NEW NOTE'});
+ f.setRemote(JSON.stringify(remote));const before=JSON.stringify(f.c.S),db=f.idb.snapshot();await savedCheck(f);
+ assert.match(f.modal().querySelector('#rd-status').textContent,/一致していない/);assert.equal(f.modal().querySelector('#rd-preview').innerHTML,'');
+ assert.equal(JSON.stringify(f.c.S),before);assert.deepEqual(f.idb.snapshot(),db);assert.equal(f.patches(),0);
+});
+test('display proposal groups only exact title and added-name matches without changing approved records',()=>{
+ const start=code.indexOf('  function alignmentHTML('),end=code.indexOf('\n  function payloadFor(',start),c=vm.createContext({h:s=>String(s)});
+ vm.runInContext(code.slice(start,end),c);
+ const change={showId:'show',name:'Performance',fromFolder:'Old',toFolder:'New',rosterAdditions:[
+  ...Array.from({length:4},(_,i)=>({songId:'take-'+i,title:'Repeated long title',names:['A','B']})),
+  {songId:'different-names',title:'Repeated long title',names:['A','C']},
+  {songId:'different-order',title:'Repeated long title',names:['B','A']},
+  {songId:'different-title',title:'Repeated long title ',names:['A','B']}
+ ]};
+ const changes=[change],before=JSON.stringify(changes),html=c.alignmentHTML(changes);
+ assert.equal((html.match(/Repeated long title（4件）/g)||[]).length,1);
+ assert.equal((html.match(/曲の表示名簿の末尾に/g)||[]).length,4);
+ assert(html.includes('末尾に A、C'));assert(html.includes('末尾に B、A'));assert(html.includes('Repeated long title ：'));
+ assert.equal((html.match(/id="rd-alignment-/g)||[]).length,1);assert.equal(JSON.stringify(changes),before);
 });

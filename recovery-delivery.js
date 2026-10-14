@@ -34,7 +34,7 @@
       'remote':'GitHubから元の配信内容を読み取れませんでした。送信・設定変更はしていません。',
     };
     const prefix=code==='source-receipt-mismatch'&&Number.isSafeInteger(error.targetNumber)&&error.targetNumber>0&&error.targetNumber<=100?'接続対象'+error.targetNumber+'：':'';
-    return prefix+(messages[code]||'元の配信先・公演の対応または形式を確認できません。配信・設定は変更していません。');
+    return prefix+(messages[code]||'元の配信先・公演の対応または形式を確認できません。配信・設定は変更していません。')+(code==='saved-mismatch'&&error.reconnectDetail?'\n\n'+error.reconnectDetail:'');
   }
   function ready(){return typeof S!=='undefined'&&startupRecoveryNetworkHold&&recordingInboxCanWrite()&&!VIEW()&&!preview&&!document.hidden;}
   function currentBinding(gid){return S.recoveryDelivery?.version===2&&Array.isArray(S.recoveryDelivery.targets)?S.recoveryDelivery.targets.find(t=>t.groupId===gid):null;}
@@ -183,15 +183,98 @@
     // A fresh digest is acceptable only after proving every owned performance
     // already exists with identical checked content. Unknown additions, edits,
     // or removed protected performances require the explicit file workflow.
-    if(merged.heldLocalShowIds.length||!sameSet(sources,target.sourceShowIds)||!sameSet(merged.managedLocalShowIds,target.showIds)
+    const contentMismatch=merged.heldLocalShowIds.length||!sameSet(sources,target.sourceShowIds)||!sameSet(merged.managedLocalShowIds,target.showIds)
       ||!sameSet(merged.preservedShowIds,remoteOnly)||!Array.isArray(binding.preservedShowIds)
       ||new Set(binding.preservedShowIds).size!==binding.preservedShowIds.length||binding.preservedShowIds.some(id=>!remoteById.has(id))
-      ||!sameSet(remoteOnly,binding.preservedShowIds.filter(id=>!equivalent.includes(id))))fail('saved-mismatch');
+      ||!sameSet(remoteOnly,binding.preservedShowIds.filter(id=>!equivalent.includes(id)));
     // Show equality does not compare the destination's formal membership.
     // Require that known roster to agree and prohibit participant expansion.
-    if(JSON.stringify(local.rosters)!==JSON.stringify(remote.rosters)
+    const rosterMismatch=JSON.stringify(local.rosters)!==JSON.stringify(remote.rosters)
       ||JSON.stringify(merged.payload.rosters)!==JSON.stringify(remote.rosters)
-      ||JSON.stringify(merged.payload.members)!==JSON.stringify(remote.members))fail('saved-mismatch');
+      ||JSON.stringify(merged.payload.members)!==JSON.stringify(remote.members);
+    if(contentMismatch||rosterMismatch){
+      // Explain the rejected comparison without changing either copy. This is
+      // owner-only text, with no lyrics, credentials or private staff memos.
+      const rows=heldDifferenceSummary({heldLocalShowIds:merged.heldLocalShowIds},remote,local),details=[];
+      for(let i=0;i<Math.min(rows.length,30);i++){
+        const row=rows[i],localShow=local.shows.find(sw=>sw.id===merged.heldLocalShowIds[i]),source=localShow&&(localShow.recoveredSourceShowId||localShow.id);
+        const remoteShow=remote.shows.find(sw=>(sw.recoveredSourceShowId||sw.id)===source);
+        const folder=localShow&&remoteShow&&(localShow.folder||'')!==(remoteShow.folder||'')
+          ?'\nフォルダ　手元「'+String(localShow.folder||'未分類').slice(0,160)+'」／配信済み「'+String(remoteShow.folder||'未分類').slice(0,160)+'」':'';
+        details.push(row.name+'\n'+row.status+folder+(row.counts?'\n'+row.counts:''));
+      }
+      if(rows.length>30)details.push('ほか'+(rows.length-30)+'公演に相違があります。');
+      if(contentMismatch&&!rows.length)details.push('対象公演または配信済みの保護公演の組み合わせが一致しません。');
+      if(rosterMismatch)details.push('配信先の名簿または参加者の内容・並びが一致しません。');
+      const error=new Error('saved-mismatch');error.reconnectCode='saved-mismatch';error.reconnectDetail=details.join('\n\n');throw error;
+    }
+  }
+  function proposeSavedAlignment(state,binding,target,remote,local,merged){
+    // Offer changes only to a previously held performance at this same bound
+    // destination. Existing exact comparison remains the final acceptance test.
+    if(!merged.heldLocalShowIds.length||!Array.isArray(binding.heldLocalShowIds)||typeof buildSong!=='function')return null;
+    const stable=value=>JSON.stringify(value,(_,v)=>v&&typeof v==='object'&&!Array.isArray(v)?Object.fromEntries(Object.keys(v).sort().map(k=>[k,v[k]])):v);
+    const same=(a,b)=>stable(a)===stable(b),source=show=>show.recoveredSourceShowId||show.id;
+    const next=copy(state),changes=[];
+    for(const id of merged.heldLocalShowIds){
+      if(!binding.heldLocalShowIds.includes(id))return null;
+      const own=local.shows.filter(show=>show.id===id),editor=next.shows.filter(show=>show.id===id);
+      if(own.length!==1||editor.length!==1)return null;
+      const others=remote.shows.filter(show=>source(show)===source(own[0]));
+      if(others.length!==1||!binding.preservedShowIds?.includes(others[0].id))return null;
+      const prior=others[0],localSongs=local.songs.filter(song=>song.showId===id),remoteSongs=remote.songs.filter(song=>song.showId===prior.id),
+        editorSongs=next.songs.filter(song=>song.showId===id);
+      if(!localSongs.length||localSongs.length!==remoteSongs.length||localSongs.length!==editorSongs.length)return null;
+      const change={showId:id,name:own[0].name,fromFolder:own[0].folder||'',toFolder:prior.folder||'',rosterAdditions:[]};
+      if(change.fromFolder!==change.toFolder)editor[0].folder=change.toFolder;
+      for(let i=0;i<localSongs.length;i++){
+        const left=local.lib[localSongs[i].libIdx],right=remote.lib[remoteSongs[i].libIdx];
+        if(!left||!right)return null;
+        if(same(left.order||[],right.order||[]))continue;
+        if(!same({...left,order:undefined},{...right,order:undefined}))return null;
+        const oldOrder=left.order||[],newOrder=right.order||[];
+        if(new Set(oldOrder).size!==oldOrder.length||new Set(newOrder).size!==newOrder.length
+          ||newOrder.length<=oldOrder.length||!oldOrder.every((name,index)=>newOrder[index]===name))return null;
+        // Use the real reader with deterministic, isolated identity providers.
+        // It must produce the same complete song, not only the same lyric text.
+        const providers={addMember:name=>({id:'existing-name:'+name,name}),uid:()=> 'existing-song'};
+        if(!same(buildSong(copy(left),providers),buildSong(copy(right),providers)))return null;
+        const song=editorSongs[i],members=new Map(),domain=new Set([
+          ...(song.roster||[]),...Object.values(song.blocks||{}).flat(),...(song.lines||[]).flatMap(line=>line.parts||[])]);
+        for(const mid of domain){
+          const known=next.members.filter(member=>member.id===mid);if(known.length!==1)return null;
+          const name=known[0].name;if(members.has(name)&&members.get(name)!==mid)return null;members.set(name,mid);
+        }
+        const addedNames=newOrder.slice(oldOrder.length),addedIds=addedNames.map(name=>members.get(name));
+        if(addedIds.some(mid=>!mid)||new Set(addedIds).size!==addedIds.length||addedIds.some(mid=>(song.roster||[]).includes(mid)))return null;
+        song.roster=[...(song.roster||[]),...addedIds];
+        change.rosterAdditions.push({songId:song.id,title:song.title,names:addedNames});
+      }
+      if(change.fromFolder===change.toFolder&&!change.rosterAdditions.length)return null;
+      changes.push(change);
+    }
+    const expected=copy(state);
+    for(const change of changes){
+      if(change.fromFolder!==change.toFolder)expected.shows.find(show=>show.id===change.showId).folder=change.toFolder;
+      for(const row of change.rosterAdditions)expected.songs.find(song=>song.id===row.songId).roster=copy(next.songs.find(song=>song.id===row.songId).roster);
+    }
+    const aligned=payloadFor(next,target.groupId),verified=RecoveryDeliveryScope.mergePublication(target,remote,aligned);
+    // This also rejects unknown/missing remote shows, additions, changed notes,
+    // lyrics, takes, ancestry, membership, and any still-held performance.
+    verifySavedMatch(binding,target,remote,aligned,verified);
+    if(!same(expected,next))return null;
+    return {state:next,local:aligned,merged:verified,changes};
+  }
+  function alignmentHTML(changes){
+    const rosterHTML=rows=>{
+      const groups=new Map();
+      for(const row of rows){
+        const key=JSON.stringify([row.title,row.names]),prior=groups.get(key);
+        if(prior)prior.count++;else groups.set(key,{title:row.title,names:row.names,count:1});
+      }
+      return [...groups.values()].map(row=>'<p class="note">'+h(row.title)+(row.count>1?'（'+row.count+'件）':'')+'：曲の表示名簿の末尾に '+row.names.map(h).join('、')+' を追加（歌詞の担当に存在する名前）</p>').join('');
+    };
+    return changes?.length?'<div class="card"><b>手元の表示を配信済みに合わせる確認</b><p class="note">歌詞・指摘・総括・公演と曲の対応が一致することを確認しました。次のフォルダ・曲の表示名簿だけを合わせると再開できます。変更前の端末原本は保全します。</p>'+changes.map((change,i)=>'<label class="organize-field"><span><input id="rd-alignment-'+i+'" type="checkbox"> '+h(change.name)+'：以下の表示変更を確認しました。</span></label>'+ (change.fromFolder!==change.toFolder?'<p class="note">フォルダ「'+h(change.fromFolder||'未分類')+'」→「'+h(change.toFolder||'未分類')+'」</p>':'')+rosterHTML(change.rosterAdditions)).join('')+'</div>':'';
   }
   function payloadFor(state,gid){const old=S;try{S=state;const data=copy(publicationData(gid,undefined,true));data.folderOrder=(data.folderOrder||[]).filter(name=>data.shows.some(sw=>sw.folder===name));for(const sw of data.shows)if(sw.from&&!data.shows.some(item=>item.id===sw.from))delete sw.from;if(data.alert?.to?.length)data.alert.to=[gid];return data;}finally{S=old;}}
   async function request(url,token,opts={},active=()=>true){
@@ -224,7 +307,7 @@
     return {raw,data,digest};
   }
   function summaryHTML(plan,payloads,merges){return plan.targets.map((t,i)=>{
-    const p=payloads[i],m=merges[i],managed=m.managedLocalShowIds.length;return '<div class="card"><b>'+h(t.groupName)+'</b><p class="note">既存の配信先：'+h(t.gistId)+'<br>公演'+p.shows.length+'件・曲'+p.songs.length+'件・指摘'+p.notes.length+'件</p><ul style="padding-left:20px">'+p.shows.map(sw=>'<li>'+h(sw.name)+'</li>').join('')+'</ul><p class="note">端末の復旧対象公演の「配信しない」を解除します。スタッフ個人メモ・REC・保管資料は対象外です。</p><p class="note">確認後の新しい指摘を反映する公演：'+managed+'件。</p>'+ (m.preservedShowNames.length?'<p class="note">現配信のまま保持：'+m.preservedShowNames.map(h).join('、')+'。同じ公演の端末版差分は上書きせず保留します。</p>':'<p class="note">配信済みの内容と一致しています。確認後の新しい指摘も既存の配信先に反映します。</p>')+'</div>';
+    const p=payloads[i],m=merges[i],managed=m.managedLocalShowIds.length;return '<div class="card"><b>'+h(t.groupName)+'</b><p class="note">既存の配信先：'+h(t.gistId)+'<br>公演'+p.shows.length+'件・曲'+p.songs.length+'件・指摘'+p.notes.length+'件</p><details><summary>対象の公演を見る（'+p.shows.length+'公演）</summary><ul style="padding-left:20px">'+p.shows.map(sw=>'<li>'+h(sw.name)+'</li>').join('')+'</ul></details><p class="note">端末の復旧対象公演の「配信しない」を解除します。スタッフ個人メモ・REC・保管資料は対象外です。</p><p class="note">確認後の新しい指摘を反映する公演：'+managed+'件。</p>'+ (m.preservedShowNames.length?'<p class="note">現配信のまま保持：'+m.preservedShowNames.map(h).join('、')+'。同じ公演の端末版差分は上書きせず保留します。</p>':'<p class="note">配信済みの内容と一致しています。確認後の新しい指摘も既存の配信先に反映します。</p>')+'</div>';
   }).join('');}
   function settingsHTML(){
     if(!startupRecoveryNetworkHold||VIEW())return '';
@@ -250,12 +333,16 @@
       '<label class="organize-field">接続対応ファイル<input id="rd-file" class="field" type="file" accept=".json,application/json"></label>'+
       '<label class="organize-field">既存のGitHubトークン<input id="rd-token" class="field" type="password" autocomplete="off" placeholder="既存トークンをこの欄に入力"></label>'+
       '<p class="note">トークンをチャットに送らないでください。確認中はメモリだけで扱い、閉じると消します。</p>'+
-      '<button class="primary" data-act="rd-check">既存の配信先を確認（送信なし）</button></details><p id="rd-status" class="note" role="status"></p><div id="rd-preview"></div></div>';
+      '<button class="primary" data-act="rd-check">既存の配信先を確認（送信なし）</button></details><p id="rd-status" class="note" role="status" style="white-space:pre-wrap"></p><div id="rd-preview"></div></div>';
     if(choices.length)node.querySelector('#rd-group').value=choices.length===1?choices[0].groupId:'';
     const notice=document.getElementById('recovery-network-notice');
     session={id,node,token:'',prepared:null,busy:false,committing:false,notice,noticeHidden:notice?.hidden};if(notice)notice.hidden=true;document.body.appendChild(node);document.getElementById('app').inert=true;
   }
-  function status(text){const el=session?.node.querySelector('#rd-status');if(el)el.textContent=text;}
+  function status(text,atCommit=false){
+    const el=session?.node.querySelector('#rd-status'),near=session?.node.querySelector('#rd-commit-status');
+    if(el)el.textContent=text;if(near)near.textContent=text;
+    if(atCommit)(near||el)?.scrollIntoView?.({block:'nearest'});
+  }
   function controls(disabled){session?.node.querySelectorAll('[data-act="rd-check"],[data-act="rd-check-saved"],#rd-group,#rd-file,#rd-token').forEach(el=>el.disabled=disabled);}
   async function check(useSaved=false){
     const s=session;if(!s||s.busy||!ready())return;s.busy=true;s.prepared=null;controls(true);s.node.querySelector('#rd-preview').innerHTML='';
@@ -283,27 +370,37 @@
       }
       s.stage='scope';
       const plan=RecoveryDeliveryScope.plan(S,packet),mergeTargets=plan.targets.map(t=>RecoveryDeliveryScope.extendForOwnedShows(plan.state,t)),
-        localPayloads=plan.targets.map(t=>payloadFor(plan.state,t.groupId)),payloads=[],remotes=[],merges=[];
+        localPayloads=plan.targets.map(t=>payloadFor(plan.state,t.groupId)),payloads=[],remotes=[],merges=[],alignments=[];
       for(let i=0;i<plan.targets.length;i++){
         s.stage='remote';const remote=useSaved?readOnce:await readTarget(plan.targets[i],s.token,active);
         if(remote.digest!==plan.targets[i].expectedRemoteSha256)fail('source-changed');
         // Keep the recovered-source receipt bounded; newly authored performances
         // extend only the checked payload, exactly as they do during later sends.
-        s.stage='merge';const merged=RecoveryDeliveryScope.mergePublication(mergeTargets[i],remote.data,localPayloads[i]);
-        if(useSaved)verifySavedMatch(binding,mergeTargets[i],remote.data,localPayloads[i],merged);
+        s.stage='merge';let merged=RecoveryDeliveryScope.mergePublication(mergeTargets[i],remote.data,localPayloads[i]);
+        if(useSaved)try{verifySavedMatch(binding,mergeTargets[i],remote.data,localPayloads[i],merged);}catch(error){
+          if(error.reconnectCode!=='saved-mismatch')throw error;
+          let proposal;try{proposal=proposeSavedAlignment(plan.state,binding,mergeTargets[i],remote.data,localPayloads[i],merged);}catch(_){}
+          if(!proposal)throw error;
+          plan.state=proposal.state;localPayloads[i]=proposal.local;merged=proposal.merged;alignments.push(...proposal.changes);
+        }
         merges.push(merged);payloads.push(merged.payload);remotes.push(remote);
       }
       if(!active()||JSON.stringify(S)!==original||stateRevision!==revision)fail('local-changed');
-      s.prepared={packet,plan,payloads,remotes,merges,original,revision,savedGroupId:useSaved?selectedGroup:null};
+      s.prepared={packet,plan,payloads,remotes,merges,original,revision,savedGroupId:useSaved?selectedGroup:null,alignments};
       const keepManual=!S.autoPub&&S.recoveryDelivery?.targets?.some(t=>!plan.targets.some(p=>p.groupId===t.groupId));
-      s.node.querySelector('#rd-preview').innerHTML=summaryHTML(plan,payloads,merges)+(keepManual?'<p class="note">ほかの配信設定を保持するため、端末全体の自動配信は停止のままです。今回確認した配信先へ送信します。</p>':'')+'<p class="note">別の端末が同時に送信すると、送信直前の確認だけでは競合を防ぎきれません。</p><label class="organize-field"><span><input id="rd-exclusive" type="checkbox"> 同じ配信先へのほかの端末・アプリの自動公開を止め、この端末だけを配信元にしました。</span></label><label class="organize-field"><span><input id="rd-approve" type="checkbox"> この既存先・対象公演を確認しました。既存トークンをこの端末に保存し、上記公演の'+(keepManual?'配信':'自動配信')+'を再開します。</span></label><button class="primary" data-act="rd-commit">この既存先だけ配信を再開</button>';
+      s.node.querySelector('#rd-preview').innerHTML=alignmentHTML(alignments)+summaryHTML(plan,payloads,merges)+(keepManual?'<p class="note">ほかの配信設定を保持するため、端末全体の自動配信は停止のままです。今回確認した配信先へ送信します。</p>':'')+'<p class="note">別の端末が同時に送信すると、送信直前の確認だけでは競合を防ぎきれません。</p><label class="organize-field"><span><input id="rd-exclusive" type="checkbox"> 同じ配信先へのほかの端末・アプリの自動公開を止め、この端末だけを配信元にしました。</span></label><label class="organize-field"><span><input id="rd-approve" type="checkbox"> この既存先・対象公演を確認しました。既存トークンをこの端末に保存し、上記公演の'+(keepManual?'配信':'自動配信')+'を再開します。</span></label><button class="primary" data-act="rd-commit">この既存先だけ配信を再開</button><p id="rd-commit-status" class="note" role="status" style="white-space:pre-wrap"></p>';
       status('接続先と対象を確認できました。まだ送信・保存していません。');
     }catch(e){s.token='';s.prepared=null;if(session===s)status(({file:'ファイルの読取：',scope:'公演の対応確認：',remote:'配信先の読取：',merge:'配信内容の照合：'}[s.stage]||'')+message(e));}
     finally{if(session===s){s.busy=false;controls(false);}}
   }
   async function commit(){
-    const s=session,p=s?.prepared;if(!s||s.busy||!p||!s.node.querySelector('#rd-approve')?.checked||!s.node.querySelector('#rd-exclusive')?.checked)return;
+    const s=session,p=s?.prepared;if(!s)return;
+    if(s.busy){status('確認・保全を進めています。そのままお待ちください。',true);return;}
+    if(!p){status('もう一度、上のボタンから配信先と対象公演を確認してください。まだ再開していません。',true);return;}
+    if(!s.node.querySelector('#rd-approve')?.checked||!s.node.querySelector('#rd-exclusive')?.checked){status('上の2つの確認欄をチェックしてから、配信を再開してください。',true);return;}
+    if(p.alignments.some((_,i)=>!s.node.querySelector('#rd-alignment-'+i)?.checked)){status('上の公演ごとの表示変更を確認してチェックしてください。まだ再開していません。',true);return;}
     s.busy=true;s.committing=true;controls(true);s.node.querySelectorAll('button').forEach(b=>b.disabled=true);
+    status('再開前の確認を進めています。そのままお待ちください。',true);
     const active=()=>session===s&&turn===s.id&&ready()&&JSON.stringify(S)===p.original&&stateRevision===p.revision
       &&(!p.savedGroupId||s.node.querySelector('#rd-group')?.value===p.savedGroupId);
     let committed=false,release,sendTargets=[];
@@ -340,8 +437,13 @@
       s.token='';s.committing=false;s.busy=false;close();render();
       sendTargets=p.plan.targets.map(t=>t.groupId);
     }catch(e){
-      if(committed){s.token='';s.prepared=null;startupPhase='blocked';status('再接続設定は保存されましたが、再読確認が必要です。この画面からは送信を止めています。アプリを開き直してください。');}
-      else if(session===s){s.token='';s.prepared=null;status(message(e));s.committing=false;s.busy=false;s.node.querySelectorAll('button').forEach(b=>b.disabled=false);controls(false);}
+      if(committed){s.token='';s.prepared=null;startupPhase='blocked';status('再接続設定は保存されましたが、再読確認が必要です。この画面からは送信を止めています。アプリを開き直してください。',true);}
+      else if(session===s){
+        s.token='';s.prepared=null;status(message(e),true);s.committing=false;s.busy=false;
+        s.node.querySelectorAll('button').forEach(b=>b.disabled=false);controls(false);
+        const retry=s.node.querySelector('[data-act="rd-commit"]');
+        if(retry){retry.dataset.act=p.savedGroupId?'rd-check-saved':'rd-check';retry.textContent='配信先をもう一度確認する';}
+      }
     }finally{release?.();}
     // The stored/re-read connection is already confirmed. A later delivery
     // failure must keep its own ledger and must not masquerade as a save error.
@@ -406,7 +508,17 @@
       alert('既存先の送信結果を確認しました。この確認では再送していません。');render();
     }catch(e){alert(message(e));}finally{release?.();pushing=false;}
   }
-  document.addEventListener('click',e=>{const b=e.target.closest?.('[data-act^="rd-"]');if(!b)return;e.preventDefault();e.stopImmediatePropagation();
+  document.addEventListener('click',e=>{
+    const field=e.target,s=session;
+    if(s&&(['rd-exclusive','rd-approve'].includes(field?.id)||s.prepared?.alignments.some((_,i)=>field?.id==='rd-alignment-'+i))&&s.node.querySelector('#'+field.id)===field){
+      // These two native checkboxes are temporary consent, not editor data.
+      // The explicit commit below owns the full original/readback transaction;
+      // do not run the general pre-edit checkpoint for each checkbox click.
+      e.stopImmediatePropagation();
+      if(!ready()||s.busy||!s.prepared){e.preventDefault();status(s.busy?'確認・保全を進めています。そのままお待ちください。':'もう一度、配信先と対象公演を確認してください。',true);}
+      return;
+    }
+    const b=e.target.closest?.('[data-act^="rd-"]');if(!b)return;e.preventDefault();e.stopImmediatePropagation();
     const action=b.dataset.act;if(action==='rd-differences')void inspectHeldDifferences(b.dataset.id);if(action==='rd-open')open();if(action==='rd-close')close();if(action==='rd-check')void check();if(action==='rd-check-saved')void check(true);if(action==='rd-commit')void commit();if(action==='rd-reconcile')void reconcile();},true);
   document.addEventListener('input',e=>{if(session&&!session.busy&&['rd-file','rd-token','rd-group'].includes(e.target.id)){session.prepared=null;session.token='';session.node.querySelector('#rd-preview').innerHTML='';status('入力が変わりました。もう一度接続先を確認してください。');}},true);
   document.addEventListener('change',e=>{if(session&&!session.busy&&['rd-file','rd-group'].includes(e.target.id)){session.prepared=null;session.token='';session.node.querySelector('#rd-preview').innerHTML='';status('選択が変わりました。もう一度接続先を確認してください。');}},true);

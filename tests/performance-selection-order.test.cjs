@@ -16,7 +16,7 @@ test('selected folder opens initially, other folders collapse, and toggling is o
 });
 test('filtered folders exclude other groups while saved empty folders remain usable',()=>{
  const c=context();c.S.shows=[{id:'r',groupId:'rosy',folder:'Blueprint'},{id:'o',groupId:'ocha',folder:'OCHAリリイベ'},{id:'r2',groupId:'rosy',folder:'Bookmark'}];c.S.folderOrder=['OCHAリリイベ','Blueprint','空の予定'];const before=JSON.stringify(c.S);
- const html=vm.runInContext('groupedPerformanceHTML(showsFor(),x=>x.id+";",{editable:true})',c);assert(!html.includes('OCHAリリイベ'));assert(html.includes('data-drop="f:空の予定"'));assert(html.includes('data-folder="空の予定"'));assert(!html.includes('フォルダなし'));assert(html.includes('名前を変更'));assert.equal(JSON.stringify(c.S),before);
+ const html=vm.runInContext('groupedPerformanceHTML(showsFor(),x=>x.id+";",{editable:true})',c);assert(!html.includes('OCHAリリイベ'));assert(html.includes('data-drop="f:空の予定"'));assert(html.includes('data-folder="空の予定"'));assert(!html.includes('フォルダなし'));assert(html.includes('data-act="folder-actions"'));assert.equal(JSON.stringify(c.S),before);
  assert(!source.includes('manage-folders'));assert(!source.includes('selectionFolderNames'));assert(!source.includes('公演を選ぶ ·'));
 });
 test('existing unfiled performances have an explicit folderless heading and drop target',()=>{
