@@ -6,13 +6,17 @@
   const copy=value=>JSON.parse(JSON.stringify(value));
   const fail=code=>{const e=new Error(code);e.reconnectCode=code;throw e;};
   function message(error){
-    const code=error?.reconnectCode||error?.recoveryDeliveryCode;
+    const code=error?.reconnectCode||error?.recoveryDeliveryCode||error?.inspectionCode
+      ||(['state-format','lyric-format','lyric-reference'].includes(error?.message)?error.message:null);
     const messages={
       'source-changed':'配信先に新しい変更があります。上書きせず停止しました。',
       'encrypted':'既存の配信は暗号化されています。この再接続では変更していません。',
       'auth':'既存トークンの有効性・Gist権限を確認できません。新規発行はしていません。',
       'local-changed':'端末の内容が変わったため停止しました。もう一度内容を確認してください。',
       'storage':'原本保全と保存の確認ができないため、配信していません。',
+      'state-format':'端末データの保存形式を確認できないため停止しました。公演照合後の形式確認で、配信・設定は変更していません。',
+      'lyric-format':'端末内の歌詞行の保存形式を確認できないため停止しました。配信・設定は変更していません。',
+      'lyric-reference':'端末内の歌詞の参照先を確認できないため停止しました。配信・設定は変更していません。',
       'unknown':'送信結果が未確認です。自動再送せず、結果確認を待っています。',
       'cancelled':'確認を中止しました。配信・設定は変更していません。',
       'not-ready':'録音や入力・保存を終えてから再接続してください。',

@@ -113,7 +113,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.11";
+const APP_VER = "16.41.58.12";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -454,9 +454,11 @@ function recoveryValidateCloudState(value){
   for(const member of state.members||[])if(!id(member.id)||typeof member.name!=='string')invalid();
   for(const group of state.groups||[])if(!id(group.id)||typeof group.name!=='string')invalid();
   for(const show of state.shows||[])if(!id(show.id)||typeof show.name!=='string')invalid();
-  for(const list of [state.songs||[],state.rsongs||[]])for(const song of list){
+  for(const [list,recording] of [[state.songs||[],false],[state.rsongs||[],true]])for(const song of list){
     if(!id(song.id)||typeof song.title!=='string'||!Array.isArray(song.lines))invalid();
-    for(const line of song.lines)if(typeof line.t!=='string'||!ids(line.parts))invalid();
+    // REC text imports create {t,bars} and gap rows without singer parts.
+    // Preserve that native format; a supplied parts array must still be valid.
+    for(const line of song.lines)if(typeof line.t!=='string'||(!recording||line.parts!==undefined)&&!ids(line.parts))invalid();
   }
   for(const song of state.songs||[])if(!id(song.showId))invalid();
   for(const note of [...(state.notes||[]),...(state.pubNotes||[])])
