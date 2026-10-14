@@ -113,7 +113,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.8";
+const APP_VER = "16.41.58.9";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -5173,6 +5173,9 @@ function typingNow() {
 }
 function render(background = false) {
   if (!recordingInboxCanWrite()) return;
+  // Cached member data may have the same version as the server (or be offline),
+  // so applySetlist need not run. Member screens always use LIVE navigation.
+  if (VIEW()) S.recMode = false;
   // メンバーへのお知らせだけは、打っていても割り込ませる
   if ((typingNow() || renderPointers.size || Date.now() < scrollingUntil
     || (background && (U.sheet || U.menu || U.picker))) && !alertPending()) {
@@ -5711,11 +5714,20 @@ function saveOrganization(m, values) {
   if (m.mode !== "move" && !name) return "名前を入力してください。";
   if (m.mode === "folder") {
     if (name !== m.id && folderNames(rec).includes(name)) return "同じ名前のフォルダがあります。";
+    // Capture the visible shows when the rename dialog opens. A later filter
+    // change must not turn a group-scoped rename into an all-group edit.
+    const showIds = !rec && Array.isArray(m.showIds) ? new Set(m.showIds) : null;
+    if (m.id && !rec && m.showIds === undefined && U.showFilter)
+      return "フォルダ一覧から名前の変更を開き直してください。";
+    if (m.id && showIds && !list.some(x => showIds.has(x.id) && folderOf(x) === m.id))
+      return "変更する公演が見つかりません。フォルダ一覧を開き直してください。";
     pushUndo();
     if (m.id) {
-      list.forEach(x => { if (folderOf(x) === m.id) x.folder = name; });
+      list.forEach(x => { if (folderOf(x) === m.id && (!showIds || showIds.has(x.id))) x.folder = name; });
       const key = rec ? "rfolderOrder" : "folderOrder", state = rec ? "rfolders" : "folders";
-      S[key] = S[key].map(n => n === m.id ? name : n); delete S[state][m.id];
+      if (!list.some(x => folderOf(x) === m.id)) {
+        S[key] = S[key].map(n => n === m.id ? name : n); delete S[state][m.id];
+      }
     }
     rememberFolder(name, rec);
   } else if (m.mode === "move") {
@@ -9951,7 +9963,8 @@ document.addEventListener("click", async (e) => {
       break;
     }
     case "manage-folders": U.menu = {kind:"organize",mode:"folders"}; renderSheet(); break;
-    case "frename": U.menu = {kind:"organize",mode:"folder",id}; renderSheet(); break;
+    case "frename": U.menu = {kind:"organize",mode:"folder",id,
+      showIds:U.showFilter ? showsFor().filter(x => folderOf(x) === id).map(x => x.id) : null}; renderSheet(); break;
     case "fup": case "fdown": {
       const names = groupShows(S.shows.filter((x) => !x.hidden)).map(([k]) => k).filter(Boolean);
       let ord = (S.folderOrder || []).filter((x) => names.includes(x));

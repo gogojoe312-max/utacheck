@@ -26,7 +26,7 @@ async function fixture(options={}){
  localStorage:{getItem:()=>null},backupDigest:async s=>{await options.digest?.(s,c);return sha(s);},
  idbGet:async k=>idb.record(k),idbPut:async(k,v)=>{writes.push(k);idb.replace(k,v);},
  save(){c.stateRevision++;c.saveDirty=true;},async saveNow(){if(c.saveDirty){await options.persist?.(c);c.saveSeq++;idb.replace('state:'+(c.saveSeq%2),{seq:c.saveSeq,at:1,txt:JSON.stringify(c.S)});c.saveDirty=false;}},
- async doPush(){calls.push({action:'doPush'});},
+ async pushOne(groupId){calls.push({action:'pushOne',groupId});await options.afterCommitPush?.(groupId,c);},
  fetch:async(url,opts)=>{const method=opts.method||'GET';calls.push({url,method,token:opts.headers.Authorization});await options.network?.(url,opts,c);
   if(method==='PATCH'){patches++;remoteRaw=JSON.parse(opts.body).files['utacheck.json'].content;if(options.unknownPatch)throw Error('UNKNOWN_RESPONSE');}
   const content=JSON.stringify({id:gistId,public:false,files:{'utacheck.json':{content:remoteRaw,raw_url:src,truncated:false}}});
@@ -50,8 +50,64 @@ test('preflight reads only, token stays outside saved state until explicit accep
  assert.equal(JSON.stringify(f.c.S),f.initial);assert.deepEqual(f.idb.snapshot(),before);assert.equal(f.patches(),0);assert.equal(f.modal().querySelector('#rd-token').value,'');
  f.click('rd-commit');await new Promise(r=>setImmediate(r));assert.equal(f.patches(),0);assert.equal(f.c.S.ghToken,'');f.click('rd-close');assert.equal(f.c.S.ghToken,'');assert.equal(f.c.document.getElementById('app').inert,false);
 });
+test('reconnection preflight includes new owner shows while its recovered-source receipt stays bounded',async()=>{
+ const f=await fixture();
+ for(let i=1;i<=3;i++){
+  f.c.S.shows.push({id:'new-reny-'+i,name:'New owner performance '+i,groupId:'g',from:i===1?'show':'new-reny-'+(i-1)});
+  f.c.S.songs.push({...clone(f.c.S.songs[0]),id:'new-song-'+i,showId:'new-reny-'+i});
+  f.c.S.notes.push({...clone(f.c.S.notes[0]),id:'new-note-'+i,songId:'new-song-'+i,showId:'new-reny-'+i});
+ }
+ f.c.save();await f.c.saveNow();const before=JSON.stringify(f.c.S),db=f.idb.snapshot();
+ await f.check();assert.match(f.modal().querySelector('#rd-status').textContent,/まだ送信・保存/);
+ assert.match(f.modal().querySelector('#rd-preview').innerHTML,/公演4件・曲4件・指摘4件/);
+ assert.equal(JSON.stringify(f.c.S),before);assert.deepEqual(f.idb.snapshot(),db);assert.equal(f.patches(),0);
+ f.modal().querySelector('#rd-approve').checked=true;f.modal().querySelector('#rd-exclusive').checked=true;f.click('rd-commit');
+ await f.until(()=>f.calls.some(x=>x.action==='pushOne'));
+ assert.deepEqual(clone(f.c.S.recoveryDelivery.targets[0].sourceShowIds),['show']);
+ assert.deepEqual(clone(f.c.S.recoveryDelivery.targets[0].showIds),['show']);
+ assert.deepEqual(clone(f.c.S.recoveryDelivery.targets[0].managedLocalShowIds),['show','new-reny-1','new-reny-2','new-reny-3']);
+ assert.deepEqual(f.calls.filter(x=>x.action==='pushOne'),[{action:'pushOne',groupId:'g'}]);
+ assert.equal(await f.c.RecoveryDelivery.push('g',true),'sent');assert.equal(JSON.parse(f.remote()).shows.length,4);
+});
+test('one-group reconnection retains unrelated ready and uncertain bindings without resuming or sending them',async()=>{
+ for(const status of ['ready','uncertain','blocked','prepared']){
+  const f=await fixture();
+  const other={groupId:'other',groupName:'Other group',gistId:'c'.repeat(32),src:'https://gist.githubusercontent.com/other/'+ 'c'.repeat(32)+'/raw/utacheck.json',
+    sourceSha256:'d'.repeat(64),expectedRemoteSha256:'e'.repeat(64),sourceShowIds:['other-source'],showIds:['other-show'],status,
+    preservedShowIds:['other-held'],heldLocalShowIds:['other-show'],pendingDigest:'f'.repeat(64),pendingKey:'OTHER_PENDING_KEY'};
+  f.c.S.groups.push({id:'other',name:'Other group',gistId:other.gistId,src:other.src,nopub:false});
+  f.c.S.recoveryDelivery={version:2,targets:[clone(other)]};
+  f.c.save();await f.c.saveNow();await f.check();
+  f.modal().querySelector('#rd-approve').checked=true;f.modal().querySelector('#rd-exclusive').checked=true;f.click('rd-commit');
+  await f.until(()=>f.calls.some(x=>x.action==='pushOne'));
+  assert.deepEqual(clone(f.c.S.recoveryDelivery.targets[0]),other);
+  assert.equal(f.c.S.recoveryDelivery.targets.length,2);assert.equal(f.c.S.recoveryDelivery.targets[1].groupId,'g');
+  assert.equal(f.c.S.recoveryDelivery.targets[1].status,'ready');
+  assert.equal(f.c.S.autoPub,false);
+  assert.deepEqual(f.calls.filter(x=>x.action==='pushOne'),[{action:'pushOne',groupId:'g'}]);
+  assert(f.calls.filter(x=>x.url).every(x=>!x.url.includes(other.gistId)));
+  assert.deepEqual(f.idb.record('recovery:network-hold:v1'),f.hold);
+  assert.equal(await f.c.RecoveryDelivery.push('g',true),'sent','unrelated incomplete receipts must not block the selected target');
+  assert(f.calls.filter(x=>x.url).every(x=>!x.url.includes(other.gistId)));
+  assert.deepEqual(clone(f.c.S.recoveryDelivery.targets[0]),other);
+ }
+});
+test('post-commit delivery failure does not turn verified local storage into a blocked startup',async()=>{
+ const f=await fixture({afterCommitPush:async()=>{throw Error('synthetic queue failure');}});await f.check();
+ f.modal().querySelector('#rd-approve').checked=true;f.modal().querySelector('#rd-exclusive').checked=true;f.click('rd-commit');
+ await f.until(()=>f.alerts.length>0);assert.match(f.alerts[0],/再接続設定は保存済み/);
+ assert.equal(f.c.startupPhase,'ready');assert.equal(f.c.S.recoveryDelivery.targets[0].status,'ready');
+ assert.equal(f.patches(),0);assert.equal(f.c.document.getElementById('app').inert,false);
+});
+test('reconnection reuses an existing saved token without requiring token entry',async()=>{
+ const f=await fixture();f.c.S.ghToken='SYNTHETIC_SAVED_TOKEN';
+ f.click('rd-open');f.modal().querySelector('#rd-file').files=[{size:JSON.stringify(f.packet).length,text:async()=>JSON.stringify(f.packet)}];
+ f.click('rd-check');await f.until(()=>/まだ送信・保存/.test(f.modal().querySelector('#rd-status').textContent));
+ assert(f.calls.every(call=>call.token==='Bearer SYNTHETIC_SAVED_TOKEN'));assert.equal(f.patches(),0);
+ assert.equal(f.modal().querySelector('#rd-token').value,'');f.click('rd-close');assert.equal(f.c.S.ghToken,'SYNTHETIC_SAVED_TOKEN');
+});
 test('explicit commit archives originals, keeps global hold and REC/private state, and only enables bound existing destination',async()=>{
- const f=await fixture();await f.check();f.modal().querySelector('#rd-approve').checked=true;f.modal().querySelector('#rd-exclusive').checked=true;f.click('rd-commit');await f.until(()=>f.calls.some(x=>x.action==='doPush'));
+ const f=await fixture();await f.check();f.modal().querySelector('#rd-approve').checked=true;f.modal().querySelector('#rd-exclusive').checked=true;f.click('rd-commit');await f.until(()=>f.calls.some(x=>x.action==='pushOne'));
  assert.equal(f.c.S.ghToken,'SYNTHETIC_EXISTING_TOKEN');assert.equal(f.c.S.groups[0].nopub,false);assert.equal(f.c.S.shows[0].nopub,false);assert(f.c.RecoveryDelivery.canPublish('g'));assert(!f.c.RecoveryDelivery.canPublish('foreign'));
  assert.deepEqual(f.idb.record('recovery:network-hold:v1'),f.hold);assert.deepEqual(clone(f.c.S.rsongs),JSON.parse(f.initial).rsongs);assert.equal(f.c.S.staffMemos['show|song'],'PRIVATE');
  assert(f.idb.snapshot().state.some(([key,value])=>key.includes('editor:')&&value===f.initial));assert.equal(f.patches(),0);
@@ -70,31 +126,31 @@ test('a missing preservation verification blocks adoption and sending',async()=>
  assert.equal(f.patches(),0);assert.equal(f.c.S.ghToken,'');assert.equal(f.c.document.getElementById('app').inert,true);
 });
 test('unknown PATCH outcome disables retries until read-only reconciliation',async()=>{
- const f=await fixture({unknownPatch:true});await f.check();f.modal().querySelector('#rd-approve').checked=true;f.modal().querySelector('#rd-exclusive').checked=true;f.click('rd-commit');await f.until(()=>f.calls.some(x=>x.action==='doPush'));
+ const f=await fixture({unknownPatch:true});await f.check();f.modal().querySelector('#rd-approve').checked=true;f.modal().querySelector('#rd-exclusive').checked=true;f.click('rd-commit');await f.until(()=>f.calls.some(x=>x.action==='pushOne'));
  await assert.rejects(()=>f.c.RecoveryDelivery.push('g',true),/送信結果/);assert.equal(f.patches(),1);assert.equal(f.c.S.recoveryDelivery.targets[0].status,'uncertain');
  assert.equal(await f.c.RecoveryDelivery.push('g',true),false);assert.equal(f.patches(),1);await f.c.RecoveryDelivery.reconcile();assert.equal(f.patches(),1);assert.equal(f.c.S.recoveryDelivery.targets[0].status,'ready');
 });
 test('opt-out during final digest prevents stale payload PATCH',async()=>{
- let mutate=false;const f=await fixture({digest:async(raw,c)=>{if(mutate&&raw.includes('"groupName":"Synthetic Group"')){c.S.shows[0].nopub=true;mutate=false;}}});await f.check();f.modal().querySelector('#rd-approve').checked=true;f.modal().querySelector('#rd-exclusive').checked=true;f.click('rd-commit');await f.until(()=>f.calls.some(x=>x.action==='doPush'));
+ let mutate=false;const f=await fixture({digest:async(raw,c)=>{if(mutate&&raw.includes('"groupName":"Synthetic Group"')){c.S.shows[0].nopub=true;mutate=false;}}});await f.check();f.modal().querySelector('#rd-approve').checked=true;f.modal().querySelector('#rd-exclusive').checked=true;f.click('rd-commit');await f.until(()=>f.calls.some(x=>x.action==='pushOne'));
  mutate=true;await assert.rejects(()=>f.c.RecoveryDelivery.push('g',true));assert.equal(f.patches(),0);
 });
 
 test('final save failure retains pending ledger so reconciliation never repeats a successful PATCH',async()=>{
- let count=0;const f=await fixture({persist:async()=>{if(++count===3)throw Error('storage failure');}});await f.check();f.modal().querySelector('#rd-approve').checked=true;f.modal().querySelector('#rd-exclusive').checked=true;f.click('rd-commit');await f.until(()=>f.calls.some(x=>x.action==='doPush'));
+ let count=0;const f=await fixture({persist:async()=>{if(++count===3)throw Error('storage failure');}});await f.check();f.modal().querySelector('#rd-approve').checked=true;f.modal().querySelector('#rd-exclusive').checked=true;f.click('rd-commit');await f.until(()=>f.calls.some(x=>x.action==='pushOne'));
  await assert.rejects(()=>f.c.RecoveryDelivery.push('g',true),/送信結果/);const b=f.c.S.recoveryDelivery.targets[0];assert.equal(b.status,'uncertain');assert(b.pendingDigest);assert(b.pendingKey);assert.equal(f.patches(),1);
  await f.c.RecoveryDelivery.reconcile();assert.equal(b.status,'ready');assert.equal(f.patches(),1);assert(!f.c.RecoveryDelivery.pending('g'));
 });
 test('reconciliation save failure restores uncertain in-memory ledger and does not claim success',async()=>{
- let failSave=false;const f=await fixture({unknownPatch:true,persist:async()=>{if(failSave)throw Error('storage failure');}});await f.check();f.modal().querySelector('#rd-approve').checked=true;f.modal().querySelector('#rd-exclusive').checked=true;f.click('rd-commit');await f.until(()=>f.calls.some(x=>x.action==='doPush'));
+ let failSave=false;const f=await fixture({unknownPatch:true,persist:async()=>{if(failSave)throw Error('storage failure');}});await f.check();f.modal().querySelector('#rd-approve').checked=true;f.modal().querySelector('#rd-exclusive').checked=true;f.click('rd-commit');await f.until(()=>f.calls.some(x=>x.action==='pushOne'));
  await assert.rejects(()=>f.c.RecoveryDelivery.push('g',true));const before=clone(f.c.S.recoveryDelivery.targets[0]);failSave=true;await f.c.RecoveryDelivery.reconcile();assert.deepEqual(clone(f.c.S.recoveryDelivery.targets[0]),before);assert.equal(f.patches(),1);assert(!f.alerts.at(-1).includes('結果を確認しました'));
 });
 
 test('other publishers must be explicitly stopped before commit',async()=>{
- const f=await fixture();await f.check();f.modal().querySelector('#rd-approve').checked=true;f.click('rd-commit');await new Promise(r=>setImmediate(r));assert.equal(f.c.S.ghToken,'');assert.equal(f.patches(),0);assert(!f.calls.some(x=>x.action==='doPush'));
+ const f=await fixture();await f.check();f.modal().querySelector('#rd-approve').checked=true;f.click('rd-commit');await new Promise(r=>setImmediate(r));assert.equal(f.c.S.ghToken,'');assert.equal(f.patches(),0);assert(!f.calls.some(x=>x.action==='pushOne'));
 });
 
 test('unexpected remote change blocks automatic retries without PATCH',async()=>{
- const f=await fixture();await f.check();f.modal().querySelector('#rd-approve').checked=true;f.modal().querySelector('#rd-exclusive').checked=true;f.click('rd-commit');await f.until(()=>f.calls.some(x=>x.action==='doPush'));
+ const f=await fixture();await f.check();f.modal().querySelector('#rd-approve').checked=true;f.modal().querySelector('#rd-exclusive').checked=true;f.click('rd-commit');await f.until(()=>f.calls.some(x=>x.action==='pushOne'));
  const old=f.remote();f.setRemote(old+' ');await assert.rejects(()=>f.c.RecoveryDelivery.push('g',true),/上書き/);assert.equal(f.c.S.recoveryDelivery.targets[0].status,'blocked');const requests=f.calls.length;assert.equal(await f.c.RecoveryDelivery.push('g',true),false);assert.equal(f.calls.length,requests);assert.equal(f.patches(),0);
  f.setRemote(old);await f.c.RecoveryDelivery.reconcile();assert.equal(f.c.S.recoveryDelivery.targets[0].status,'ready');assert.equal(f.patches(),0);
 });
@@ -112,20 +168,20 @@ test('missing recovered receipt is distinct from token errors and only exposes t
  assert.match(text,/公演の対応確認.*接続対象1.*救出情報/);assert(!text.includes('SYNTHETIC_EXISTING_TOKEN'));assert(!text.includes(f.packet.targets[0].sourceSha256));assert.equal(f.calls.length,0);assert.equal(f.c.S.ghToken,'');
 });
 test('legacy saved bindings cannot resume or reconcile a superseded target',async()=>{
- const f=await fixture();await f.check();f.modal().querySelector('#rd-approve').checked=true;f.modal().querySelector('#rd-exclusive').checked=true;f.click('rd-commit');await f.until(()=>f.calls.some(x=>x.action==='doPush'));
+ const f=await fixture();await f.check();f.modal().querySelector('#rd-approve').checked=true;f.modal().querySelector('#rd-exclusive').checked=true;f.click('rd-commit');await f.until(()=>f.calls.some(x=>x.action==='pushOne'));
  f.c.S.recoveryDelivery.version=1;const before=f.calls.length;assert.equal(f.c.RecoveryDelivery.canPublish('g'),false);assert.equal(f.c.RecoveryDelivery.hasResumed(),false);assert.equal(await f.c.RecoveryDelivery.push('g',true),false);await f.c.RecoveryDelivery.reconcile();assert.equal(f.calls.length,before);assert.equal(f.patches(),0);assert.match(f.c.RecoveryDelivery.settingsHTML(),/接続ファイルの更新が必要/);
 });
 
 test('verified matching baseline resumes new live notes through the actual transport ledger',async()=>{
  const f=await fixture();await f.check();assert.match(f.modal().querySelector('#rd-preview').innerHTML,/新しい指摘/);
- f.modal().querySelector('#rd-approve').checked=true;f.modal().querySelector('#rd-exclusive').checked=true;f.click('rd-commit');await f.until(()=>f.calls.some(x=>x.action==='doPush'));
+ f.modal().querySelector('#rd-approve').checked=true;f.modal().querySelector('#rd-exclusive').checked=true;f.click('rd-commit');await f.until(()=>f.calls.some(x=>x.action==='pushOne'));
  assert.deepEqual(clone(f.c.S.recoveryDelivery.targets[0].preservedShowIds),[]);assert.equal(await f.c.RecoveryDelivery.push('g',true),'sent');
  f.c.S.notes.push({id:'new-live-note',songId:'song',showId:'show',lineIdx:0,memberIds:['m'],tags:['fast'],memo:'New live correction'});f.c.save();await f.c.saveNow();
  assert(f.c.RecoveryDelivery.pending('g'));assert.equal(await f.c.RecoveryDelivery.push('g',false),'sent');
  const output=JSON.parse(f.remote());assert.equal(output.notes.length,2);assert(output.notes.some(n=>n.memo==='New live correction'));assert.equal(f.patches(),2);assert(!f.c.RecoveryDelivery.pending('g'));
 });
 test('a different remote edit blocks a new local note without dropping either side',async()=>{
- const f=await fixture();await f.check();f.modal().querySelector('#rd-approve').checked=true;f.modal().querySelector('#rd-exclusive').checked=true;f.click('rd-commit');await f.until(()=>f.calls.some(x=>x.action==='doPush'));await f.c.RecoveryDelivery.push('g',true);
+ const f=await fixture();await f.check();f.modal().querySelector('#rd-approve').checked=true;f.modal().querySelector('#rd-exclusive').checked=true;f.click('rd-commit');await f.until(()=>f.calls.some(x=>x.action==='pushOne'));await f.c.RecoveryDelivery.push('g',true);
  f.c.S.notes.push({id:'local-only-note',songId:'song',showId:'show',lineIdx:0,memberIds:['m'],tags:['fast'],memo:'Keep local edit'});f.c.save();await f.c.saveNow();
  const remote=JSON.parse(f.remote());remote.notes[0].memo='Keep other editor change';f.setRemote(JSON.stringify(remote));await assert.rejects(()=>f.c.RecoveryDelivery.push('g',false),/新しい変更/);
  assert.equal(f.patches(),1);assert(f.c.S.notes.some(n=>n.memo==='Keep local edit'));assert.equal(JSON.parse(f.remote()).notes[0].memo,'Keep other editor change');assert.equal(f.c.S.recoveryDelivery.targets[0].status,'blocked');

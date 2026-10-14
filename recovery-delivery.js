@@ -145,7 +145,7 @@
   }
   function pending(gid){if(!canPublish(gid))return false;const g=S.groups.find(g=>g.id===gid);try{return g.publishKeyPending||payloadKey(payloadFor(S,gid))!==g.lastKey;}catch(_){return true;}}
   function hasResumed(){return ready()&&!session&&(S.recoveryDelivery?.targets||[]).some(t=>canPublish(t.groupId));}
-  function packetForBindings(){return {app:'utacheck-existing-delivery',version:2,targets:S.recoveryDelivery.targets.map(t=>{
+  function packetForBindings(gid){return {app:'utacheck-existing-delivery',version:2,targets:S.recoveryDelivery.targets.filter(t=>!gid||t.groupId===gid).map(t=>{
     const {sourceSha256,groupName,gistId,src,sourceShowIds,expectedRemoteSha256}=t;return {sourceSha256,groupName,gistId,src,sourceShowIds,expectedRemoteSha256};
   })};}
   function payloadFor(state,gid){const old=S;try{S=state;const data=copy(publicationData(gid,undefined,true));data.folderOrder=(data.folderOrder||[]).filter(name=>data.shows.some(sw=>sw.folder===name));for(const sw of data.shows)if(sw.from&&!data.shows.some(item=>item.id===sw.from))delete sw.from;if(data.alert?.to?.length)data.alert.to=[gid];return data;}finally{S=old;}}
@@ -215,15 +215,19 @@
       status('元の配信先を読み取っています。送信はしていません。');
       s.stage='file';const raw=await file.text();if(!active())fail('cancelled');const packet=JSON.parse(raw),original=JSON.stringify(S),revision=stateRevision;
       s.stage='scope';
-      const plan=RecoveryDeliveryScope.plan(S,packet),localPayloads=plan.targets.map(t=>payloadFor(plan.state,t.groupId)),payloads=[],remotes=[],merges=[];
+      const plan=RecoveryDeliveryScope.plan(S,packet),mergeTargets=plan.targets.map(t=>RecoveryDeliveryScope.extendForOwnedShows(plan.state,t)),
+        localPayloads=plan.targets.map(t=>payloadFor(plan.state,t.groupId)),payloads=[],remotes=[],merges=[];
       for(let i=0;i<plan.targets.length;i++){
         s.stage='remote';const remote=await readTarget(plan.targets[i],s.token,active);
         if(remote.digest!==plan.targets[i].expectedRemoteSha256)fail('source-changed');
-        s.stage='merge';const merged=RecoveryDeliveryScope.mergePublication(plan.targets[i],remote.data,localPayloads[i]);merges.push(merged);payloads.push(merged.payload);remotes.push(remote);
+        // Keep the recovered-source receipt bounded; newly authored performances
+        // extend only the checked payload, exactly as they do during later sends.
+        s.stage='merge';const merged=RecoveryDeliveryScope.mergePublication(mergeTargets[i],remote.data,localPayloads[i]);merges.push(merged);payloads.push(merged.payload);remotes.push(remote);
       }
       if(!active()||JSON.stringify(S)!==original||stateRevision!==revision)fail('local-changed');
       s.prepared={packet,plan,payloads,remotes,merges,original,revision};
-      s.node.querySelector('#rd-preview').innerHTML=summaryHTML(plan,payloads,merges)+'<p class="note">別の端末が同時に送信すると、送信直前の確認だけでは競合を防ぎきれません。</p><label class="organize-field"><span><input id="rd-exclusive" type="checkbox"> 同じ配信先へのほかの端末・アプリの自動公開を止め、この端末だけを配信元にしました。</span></label><label class="organize-field"><span><input id="rd-approve" type="checkbox"> この既存先・対象公演を確認しました。既存トークンをこの端末に保存し、上記公演の自動配信を再開します。</span></label><button class="primary" data-act="rd-commit">この既存先だけ配信を再開</button>';
+      const keepManual=!S.autoPub&&S.recoveryDelivery?.targets?.some(t=>!plan.targets.some(p=>p.groupId===t.groupId));
+      s.node.querySelector('#rd-preview').innerHTML=summaryHTML(plan,payloads,merges)+(keepManual?'<p class="note">ほかの配信設定を保持するため、端末全体の自動配信は停止のままです。今回確認した配信先へ送信します。</p>':'')+'<p class="note">別の端末が同時に送信すると、送信直前の確認だけでは競合を防ぎきれません。</p><label class="organize-field"><span><input id="rd-exclusive" type="checkbox"> 同じ配信先へのほかの端末・アプリの自動公開を止め、この端末だけを配信元にしました。</span></label><label class="organize-field"><span><input id="rd-approve" type="checkbox"> この既存先・対象公演を確認しました。既存トークンをこの端末に保存し、上記公演の'+(keepManual?'配信':'自動配信')+'を再開します。</span></label><button class="primary" data-act="rd-commit">この既存先だけ配信を再開</button>';
       status('接続先と対象を確認できました。まだ送信・保存していません。');
     }catch(e){s.token='';s.prepared=null;if(session===s)status(({file:'ファイルの読取：',scope:'公演の対応確認：',remote:'配信先の読取：',merge:'配信内容の照合：'}[s.stage]||'')+message(e));}
     finally{if(session===s){s.busy=false;controls(false);}}
@@ -232,7 +236,7 @@
     const s=session,p=s?.prepared;if(!s||s.busy||!p||!s.node.querySelector('#rd-approve')?.checked||!s.node.querySelector('#rd-exclusive')?.checked)return;
     s.busy=true;s.committing=true;controls(true);s.node.querySelectorAll('button').forEach(b=>b.disabled=true);
     const active=()=>session===s&&turn===s.id&&ready()&&JSON.stringify(S)===p.original&&stateRevision===p.revision;
-    let committed=false,release;
+    let committed=false,release,sendTargets=[];
     try{
       release=recordingInboxAdmitWriter();
       if(!active())fail('local-changed');await saveNow();if(saveErr||!active())fail('storage');
@@ -241,8 +245,19 @@
         const remote=await readTarget(p.plan.targets[i],s.token,active);if(remote.digest!==p.remotes[i].digest)fail('source-changed');
       }
       if(!active())fail('local-changed');
-      const next=copy(p.plan.state);next.ghToken=s.token;next.autoPub=true;
-      next.recoveryDelivery={version:2,targets:p.plan.targets.map((t,i)=>({...copy(t),preservedShowIds:copy(p.merges[i].preservedShowIds),heldLocalShowIds:copy(p.merges[i].heldLocalShowIds),managedLocalShowIds:copy(p.merges[i].managedLocalShowIds),preservedShowNames:copy(p.merges[i].preservedShowNames),status:'prepared'}))};
+      const next=copy(p.plan.state);next.ghToken=s.token;
+      const hasUnrelated=next.recoveryDelivery?.targets?.some(t=>!p.plan.targets.some(p=>p.groupId===t.groupId));
+      if(!hasUnrelated)next.autoPub=true;
+      if(hasUnrelated&&next.recoveryDelivery.version!==2)fail('packet-version');
+      const reconnecting=new Map(p.plan.targets.map((t,i)=>[t.groupId,{...copy(t),preservedShowIds:copy(p.merges[i].preservedShowIds),heldLocalShowIds:copy(p.merges[i].heldLocalShowIds),managedLocalShowIds:copy(p.merges[i].managedLocalShowIds),preservedShowNames:copy(p.merges[i].preservedShowNames),status:'prepared'}]));
+      const priorDelivery=next.recoveryDelivery?.version===2?next.recoveryDelivery:null;
+      const priorTargets=priorDelivery?.targets||[],previousGroups=new Set(priorTargets.map(t=>t.groupId));
+      if(previousGroups.size!==priorTargets.length)fail('target');
+      // A one-group reconnection must not discard or resume another group's
+      // saved connection, protection list, or uncertain-send ledger.
+      next.recoveryDelivery={...(priorDelivery||{}),version:2,targets:[
+        ...priorTargets.map(t=>reconnecting.get(t.groupId)||t),
+        ...[...reconnecting.values()].filter(t=>!previousGroups.has(t.groupId))]};
       const nextRaw=JSON.stringify(packState(next));recoveryValidateCloudState(JSON.parse(nextRaw));
       status('端末原本と既存配信を保全しています。');
       const result=await RecoveryDeliveryStore.commit({database:()=>DB,hash:backupDigest,isActive:active,readLegacy:()=>localStorage.getItem(KEY),expectedLegacyRaw:legacy,
@@ -251,13 +266,18 @@
       committed=result.committed===true;if(result.status!=='committed')fail('storage');
       if(!active())fail('local-changed');
       S=next;saveSeq=result.seq;stateRevision++;saveDirty=false;savePend=null;
-      S.recoveryDelivery.targets.forEach(t=>t.status='ready');await persist();
+      S.recoveryDelivery.targets.filter(t=>reconnecting.has(t.groupId)).forEach(t=>t.status='ready');await persist();
       s.token='';s.committing=false;s.busy=false;close();render();
-      await doPush('force');
+      sendTargets=p.plan.targets.map(t=>t.groupId);
     }catch(e){
       if(committed){s.token='';s.prepared=null;startupPhase='blocked';status('再接続設定は保存されましたが、再読確認が必要です。この画面からは送信を止めています。アプリを開き直してください。');}
       else if(session===s){s.token='';s.prepared=null;status(message(e));s.committing=false;s.busy=false;s.node.querySelectorAll('button').forEach(b=>b.disabled=false);controls(false);}
     }finally{release?.();}
+    // The stored/re-read connection is already confirmed. A later delivery
+    // failure must keep its own ledger and must not masquerade as a save error.
+    for(const gid of sendTargets)try{await pushOne(gid);}catch(_){
+      alert('再接続設定は保存済みです。送信処理を完了できませんでした。設定の配信状況を確認してください。');render();
+    }
   }
   async function persist(){save();await saveNow();if(saveErr)fail('storage');const envelope=await idbGet('state:'+(saveSeq%2));if(envelope?.txt!==JSON.stringify(packState(S)))fail('storage');}
   async function preserveRemote(target,remote,active){
@@ -273,7 +293,7 @@
     const active=()=>ready()&&!session&&currentBinding(gid)===binding&&S.ghToken===token&&S.groups.find(g=>g.id===gid)===group&&!group.nopub&&group.gistId===binding.gistId&&group.src===binding.src&&JSON.stringify({...S,recoveryDelivery:undefined})===contentSnapshot;
     try{
       release=recordingInboxAdmitWriter();
-      const plan=RecoveryDeliveryScope.plan(S,packetForBindings()),originalTarget=plan.targets.find(t=>t.groupId===gid);if(!originalTarget)fail('target');
+      const plan=RecoveryDeliveryScope.plan(S,packetForBindings(gid)),originalTarget=plan.targets.find(t=>t.groupId===gid);if(!originalTarget)fail('target');
       const target=RecoveryDeliveryScope.extendForOwnedShows(S,originalTarget);
       const localPayload=payloadFor(S,gid),key=payloadKey(localPayload);
       if(!force&&!group.publishKeyPending&&group.lastKey===key)return 'same';
