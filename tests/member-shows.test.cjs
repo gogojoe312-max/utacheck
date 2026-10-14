@@ -16,13 +16,15 @@ test('summary changes day while keeping member open and excludes other groups',(
 });
 test('new received notes preserve the selected summary day and member',()=>{
  let next=0;
- const c=vm.createContext({rememberViewSelection(){},restoreViewSelection(){},S:{groups:[],groupId:'g',showId:'yesterday',srcGroup:'group',members:[{id:'m',name:'山田'}],songs:[{id:'old',showId:'yesterday'}],notes:[],shows:[]},U:{view:'summary',mode:'member',sumOpen:'m'},VIEW:()=>true,Date,
+ const c=vm.createContext({rememberViewSelection(){},restoreViewSelection(){},S:{recMode:true,rsongs:[{id:'private-rec',title:'Keep recording'}],plan:{slots:[{id:'keep-slot'}]},recs:{'private-rec':{clip:'keep'}},groups:[],groupId:'g',showId:'yesterday',srcGroup:'group',members:[{id:'m',name:'山田'}],songs:[{id:'old',showId:'yesterday'}],notes:[],shows:[]},U:{view:'summary',mode:'member',sumOpen:'m'},VIEW:()=>true,Date,
   member:id=>c.S.members.find(m=>m.id===id),addMember:name=>c.S.members.find(m=>m.name===name),group:()=>({id:'g'}),uid:()=>String(++next),
   buildSong:sg=>({...sg,id:String(++next),lines:[],blocks:{},roster:[]}),songSig:()=>'',save(){},render(){},NOTES:()=>c.S.pubNotes||[],showsNewestFirst:()=>c.S.shows});
  vm.runInContext(block('function gistRawSource(', '// 入れたトークン'),c);
  vm.runInContext(block('function applySetlist(d)', 'async function syncSetlist'),c);
  c.data={version:2,groupName:'group',members:[{name:'山田'}],songs:[{showId:'today'},{showId:'yesterday'}],shows:[{id:'today'},{id:'yesterday'}],notes:[],focusShow:'today'};
+ const privateRecording=JSON.stringify([c.S.rsongs,c.S.plan,c.S.recs]);
  vm.runInContext('applySetlist(data)',c);
+ assert.equal(c.S.recMode,false);assert.equal(JSON.stringify([c.S.rsongs,c.S.plan,c.S.recs]),privateRecording);
  assert.equal(c.S.showId,'yesterday');assert.equal(c.U.view,'summary');assert.equal(c.U.sumOpen,'m');
  c.data.songs=[{showId:'today'}];c.data.shows=[{id:'today'}];c.justUpdated=0;
  vm.runInContext('applySetlist(data)',c);assert.equal(c.S.showId,'today');assert.equal(c.U.view,'summary');

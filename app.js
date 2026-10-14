@@ -113,7 +113,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.7";
+const APP_VER = "16.41.58.8";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -12823,6 +12823,10 @@ function resetForNewSource() {
 
 function applySetlist(d) {
   if (!VIEW()) return;
+  // Member publications are LIVE data. A previously opened personal REC view
+  // must not hide the show picker or point lyric navigation at personal songs.
+  // Keep all REC songs, notes, recordings and plan state intact.
+  S.recMode = false;
   const initialSource = !S.songs.length || !!(d.groupName && S.srcGroup && d.groupName !== S.srcGroup);
   const currentSelection = S.showId;
   const summaryContext = VIEW() && U.view === "summary" && S.songs.length
