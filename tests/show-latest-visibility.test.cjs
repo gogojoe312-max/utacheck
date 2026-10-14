@@ -13,10 +13,10 @@ test('new empty editor performance remains selectable in summary without exposin
  c.S.shows[0].deliveryMode='song';assert.equal(vm.runInContext('summaryShows()[0].id',c),'reny');
  c.VIEW=()=>true;assert.equal(vm.runInContext('summaryShows().length',c),0);
 });
-test('main show pickers preserve folders and expose an immediate selection button',()=>{
+test('settings use one folder list and keep the lyrics show picker available',()=>{
  const setup=block('function viewSetup()', 'function viewSetupRec()');
- assert(setup.includes('groupedPerformanceHTML(allShows, showRow)'));
- assert(setup.includes('公演を選ぶ ·'));
+ assert(setup.includes('groupedPerformanceHTML(allShows, showRow, {editable:true})'));
+ assert(!setup.includes('公演を選ぶ ·'));
  assert(src.includes('groupedPerformanceHTML(showsFor(),'));
- assert(setup.includes('フォルダを管理'));
+ assert(!setup.includes('フォルダを管理'));
 });

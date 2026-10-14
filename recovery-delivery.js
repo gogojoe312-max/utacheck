@@ -19,6 +19,10 @@
       'packet':'接続対応ファイルを選択してください。公演・指摘の救出ファイルとは別のファイルです。',
       'packet-invalid':'接続対応ファイルの種類・形式を確認できません。公演・指摘の救出ファイルとは別のファイルを選んでください。',
       'packet-version':'この接続ファイルは旧版です。最新の確認済み接続ファイルを選んでください。旧版では配信を再開しません。',
+      'saved-missing':'この端末に確認できる接続情報がありません。接続ファイルを使う方法で確認してください。',
+      'saved-selection':'確認する配信先を選択してください。ほかの配信先は変更しません。',
+      'saved-unfinished':'送信中または保存確認中の接続です。この確認では変更していません。',
+      'saved-mismatch':'端末と配信済みの内容がすべて一致していないため停止しました。上書きや接続情報の変更はしていません。',
       'source-receipt-missing':'必要な公演の救出情報が、この端末にまだありません。先に公演・指摘の救出ファイルを追加してください。',
       'source-receipt-mismatch':'対応する公演の救出情報が、この端末にないか別の版です。先に対応する公演・指摘の救出ファイルを追加してください。トークンの形式エラーではありません。',
       'group-name-mismatch':'復旧したグループ名が接続ファイルと一致しません。別グループには送信していません。',
@@ -148,6 +152,47 @@
   function packetForBindings(gid){return {app:'utacheck-existing-delivery',version:2,targets:S.recoveryDelivery.targets.filter(t=>!gid||t.groupId===gid).map(t=>{
     const {sourceSha256,groupName,gistId,src,sourceShowIds,expectedRemoteSha256}=t;return {sourceSha256,groupName,gistId,src,sourceShowIds,expectedRemoteSha256};
   })};}
+  function savedTargets(){
+    const delivery=S.recoveryDelivery;
+    if(delivery?.version!==2||!Array.isArray(delivery.targets)||!delivery.targets.length)fail('saved-missing');
+    const groups=new Set(),gists=new Set(),sources=new Set();
+    for(const t of delivery.targets){
+      if(!t||typeof t.groupId!=='string'||!t.groupId||typeof t.gistId!=='string'||!t.gistId||typeof t.src!=='string'||!t.src
+        ||!['ready','blocked','uncertain','sending','prepared'].includes(t.status)
+        ||groups.has(t.groupId)||gists.has(t.gistId.toLowerCase())||sources.has(t.src))fail('target');
+      groups.add(t.groupId);gists.add(t.gistId.toLowerCase());sources.add(t.src);
+    }
+    return delivery.targets.filter(t=>t.status!=='ready');
+  }
+  function savedTarget(gid){
+    if(!gid)fail('saved-selection');
+    const matches=savedTargets().filter(t=>t.groupId===gid);
+    if(matches.length!==1)fail('target');
+    const target=matches[0],groups=S.groups.filter(g=>g.id===gid);
+    if(groups.length!==1||groups[0].name!==target.groupName||groups[0].gistId!==target.gistId||groups[0].src!==target.src)fail('target');
+    if(['sending','prepared'].includes(target.status))fail('saved-unfinished');
+    return target;
+  }
+  function verifySavedMatch(binding,target,remote,local,merged){
+    const sameSet=(left,right)=>Array.isArray(left)&&Array.isArray(right)&&new Set(left).size===left.length&&new Set(right).size===right.length
+      &&left.length===right.length&&left.every(value=>right.includes(value));
+    const remoteById=new Map(remote.shows.map(show=>[show.id,show]));
+    const equivalent=merged.equivalentRemoteShowIds;
+    const sources=equivalent.map(id=>{const show=remoteById.get(id);return show&&(show.recoveredSourceShowId||show.id);});
+    const remoteOnly=remote.shows.filter(show=>!equivalent.includes(show.id)).map(show=>show.id);
+    // A fresh digest is acceptable only after proving every owned performance
+    // already exists with identical checked content. Unknown additions, edits,
+    // or removed protected performances require the explicit file workflow.
+    if(merged.heldLocalShowIds.length||!sameSet(sources,target.sourceShowIds)||!sameSet(merged.managedLocalShowIds,target.showIds)
+      ||!sameSet(merged.preservedShowIds,remoteOnly)||!Array.isArray(binding.preservedShowIds)
+      ||new Set(binding.preservedShowIds).size!==binding.preservedShowIds.length||binding.preservedShowIds.some(id=>!remoteById.has(id))
+      ||!sameSet(remoteOnly,binding.preservedShowIds.filter(id=>!equivalent.includes(id))))fail('saved-mismatch');
+    // Show equality does not compare the destination's formal membership.
+    // Require that known roster to agree and prohibit participant expansion.
+    if(JSON.stringify(local.rosters)!==JSON.stringify(remote.rosters)
+      ||JSON.stringify(merged.payload.rosters)!==JSON.stringify(remote.rosters)
+      ||JSON.stringify(merged.payload.members)!==JSON.stringify(remote.members))fail('saved-mismatch');
+  }
   function payloadFor(state,gid){const old=S;try{S=state;const data=copy(publicationData(gid,undefined,true));data.folderOrder=(data.folderOrder||[]).filter(name=>data.shows.some(sw=>sw.folder===name));for(const sw of data.shows)if(sw.from&&!data.shows.some(item=>item.id===sw.from))delete sw.from;if(data.alert?.to?.length)data.alert.to=[gid];return data;}finally{S=old;}}
   async function request(url,token,opts={},active=()=>true){
     if(!active())fail('cancelled');
@@ -194,38 +239,62 @@
   function open(){
     if(!ready()||pushing||publishInFlight||saving||REC||(U.sheet&&sheetHasInput())){alert(message({reconnectCode:'not-ready'}));return;}
     close();const id=++turn,node=document.createElement('div');node.className='mask';
+    let choices=[];try{choices=savedTargets();}catch(_){}
+    const savedInfo=choices.length?'<p class="note">保存済みの接続情報を使います。端末と配信済みの公演がすべて一致する場合だけ、再開の確認に進みます。</p>'+
+      '<label class="organize-field">確認する配信先<select id="rd-group" class="field">'+(choices.length>1?'<option value="">配信先を選択</option>':'')+choices.map(t=>'<option value="'+h(t.groupId)+'">'+h(t.groupName)+'</option>').join('')+'</select></label>'+
+      '<p class="note">'+(S.ghToken?'保存済みの認証情報を使用します。':'保存済みの認証情報がありません。下の接続ファイルを使う方法で確認してください。')+'</p>'+
+      '<button class="primary" data-act="rd-check-saved">保存済みの配信先を確認（ファイル不要）</button>':'';
     node.innerHTML='<div class="sheet organize-sheet" role="dialog" aria-modal="true" aria-label="既存配信の再接続"><div class="row"><b class="grow">既存配信の再接続</b><button class="chip" data-act="rd-close">閉じる</button></div>'+
+      savedInfo+'<details'+(choices.length?'':' open')+'><summary>接続ファイルを使って確認</summary>'+
       '<p class="note">接続対応ファイルと既存の認証情報を使います。確認中は端末の設定を変更しません。</p>'+
       '<label class="organize-field">接続対応ファイル<input id="rd-file" class="field" type="file" accept=".json,application/json"></label>'+
       '<label class="organize-field">既存のGitHubトークン<input id="rd-token" class="field" type="password" autocomplete="off" placeholder="既存トークンをこの欄に入力"></label>'+
       '<p class="note">トークンをチャットに送らないでください。確認中はメモリだけで扱い、閉じると消します。</p>'+
-      '<button class="primary" data-act="rd-check">既存の配信先を確認（送信なし）</button><p id="rd-status" class="note" role="status"></p><div id="rd-preview"></div></div>';
+      '<button class="primary" data-act="rd-check">既存の配信先を確認（送信なし）</button></details><p id="rd-status" class="note" role="status"></p><div id="rd-preview"></div></div>';
+    if(choices.length)node.querySelector('#rd-group').value=choices.length===1?choices[0].groupId:'';
     const notice=document.getElementById('recovery-network-notice');
     session={id,node,token:'',prepared:null,busy:false,committing:false,notice,noticeHidden:notice?.hidden};if(notice)notice.hidden=true;document.body.appendChild(node);document.getElementById('app').inert=true;
   }
   function status(text){const el=session?.node.querySelector('#rd-status');if(el)el.textContent=text;}
-  function controls(disabled){session?.node.querySelectorAll('[data-act="rd-check"],#rd-file,#rd-token').forEach(el=>el.disabled=disabled);}
-  async function check(){
+  function controls(disabled){session?.node.querySelectorAll('[data-act="rd-check"],[data-act="rd-check-saved"],#rd-group,#rd-file,#rd-token').forEach(el=>el.disabled=disabled);}
+  async function check(useSaved=false){
     const s=session;if(!s||s.busy||!ready())return;s.busy=true;s.prepared=null;controls(true);s.node.querySelector('#rd-preview').innerHTML='';
-    const active=()=>session===s&&turn===s.id&&ready();
+    const selectedGroup=useSaved?s.node.querySelector('#rd-group')?.value:'';
+    let original,revision;
+    const active=()=>session===s&&turn===s.id&&ready()&&(!useSaved||s.node.querySelector('#rd-group')?.value===selectedGroup)
+      &&(original===undefined||JSON.stringify(S)===original&&stateRevision===revision);
     try{
-      const file=s.node.querySelector('#rd-file').files?.[0];if(!file||file.size>128*1024)fail('packet');
-      const input=s.node.querySelector('#rd-token');s.token=input.value.trim()||S.ghToken||'';input.value='';
+      const file=s.node.querySelector('#rd-file').files?.[0];if(!useSaved&&(!file||file.size>128*1024))fail('packet');
+      const input=s.node.querySelector('#rd-token');s.token=useSaved?(S.ghToken||''):(input.value.trim()||S.ghToken||'');input.value='';
       if(!s.token||/^github_pat_/.test(s.token))fail('auth');
       status('元の配信先を読み取っています。送信はしていません。');
-      s.stage='file';const raw=await file.text();if(!active())fail('cancelled');const packet=JSON.parse(raw),original=JSON.stringify(S),revision=stateRevision;
+      original=JSON.stringify(S);revision=stateRevision;
+      let packet,binding,readOnce;
+      if(useSaved){
+        s.stage='scope';binding=savedTarget(selectedGroup);packet=packetForBindings(selectedGroup);
+        const bound=RecoveryDeliveryScope.plan(S,packet);
+        if(bound.targets.length!==1||bound.targets[0].groupId!==selectedGroup)fail('target');
+        s.stage='remote';readOnce=await readTarget(bound.targets[0],s.token,active);
+        // Only this in-memory proposal receives the observed digest. The
+        // existing uncertain-send ledger remains intact until explicit commit.
+        packet.targets[0].expectedRemoteSha256=readOnce.digest;
+      }else{
+        s.stage='file';const raw=await file.text();if(!active())fail('cancelled');packet=JSON.parse(raw);
+      }
       s.stage='scope';
       const plan=RecoveryDeliveryScope.plan(S,packet),mergeTargets=plan.targets.map(t=>RecoveryDeliveryScope.extendForOwnedShows(plan.state,t)),
         localPayloads=plan.targets.map(t=>payloadFor(plan.state,t.groupId)),payloads=[],remotes=[],merges=[];
       for(let i=0;i<plan.targets.length;i++){
-        s.stage='remote';const remote=await readTarget(plan.targets[i],s.token,active);
+        s.stage='remote';const remote=useSaved?readOnce:await readTarget(plan.targets[i],s.token,active);
         if(remote.digest!==plan.targets[i].expectedRemoteSha256)fail('source-changed');
         // Keep the recovered-source receipt bounded; newly authored performances
         // extend only the checked payload, exactly as they do during later sends.
-        s.stage='merge';const merged=RecoveryDeliveryScope.mergePublication(mergeTargets[i],remote.data,localPayloads[i]);merges.push(merged);payloads.push(merged.payload);remotes.push(remote);
+        s.stage='merge';const merged=RecoveryDeliveryScope.mergePublication(mergeTargets[i],remote.data,localPayloads[i]);
+        if(useSaved)verifySavedMatch(binding,mergeTargets[i],remote.data,localPayloads[i],merged);
+        merges.push(merged);payloads.push(merged.payload);remotes.push(remote);
       }
       if(!active()||JSON.stringify(S)!==original||stateRevision!==revision)fail('local-changed');
-      s.prepared={packet,plan,payloads,remotes,merges,original,revision};
+      s.prepared={packet,plan,payloads,remotes,merges,original,revision,savedGroupId:useSaved?selectedGroup:null};
       const keepManual=!S.autoPub&&S.recoveryDelivery?.targets?.some(t=>!plan.targets.some(p=>p.groupId===t.groupId));
       s.node.querySelector('#rd-preview').innerHTML=summaryHTML(plan,payloads,merges)+(keepManual?'<p class="note">ほかの配信設定を保持するため、端末全体の自動配信は停止のままです。今回確認した配信先へ送信します。</p>':'')+'<p class="note">別の端末が同時に送信すると、送信直前の確認だけでは競合を防ぎきれません。</p><label class="organize-field"><span><input id="rd-exclusive" type="checkbox"> 同じ配信先へのほかの端末・アプリの自動公開を止め、この端末だけを配信元にしました。</span></label><label class="organize-field"><span><input id="rd-approve" type="checkbox"> この既存先・対象公演を確認しました。既存トークンをこの端末に保存し、上記公演の'+(keepManual?'配信':'自動配信')+'を再開します。</span></label><button class="primary" data-act="rd-commit">この既存先だけ配信を再開</button>';
       status('接続先と対象を確認できました。まだ送信・保存していません。');
@@ -235,7 +304,8 @@
   async function commit(){
     const s=session,p=s?.prepared;if(!s||s.busy||!p||!s.node.querySelector('#rd-approve')?.checked||!s.node.querySelector('#rd-exclusive')?.checked)return;
     s.busy=true;s.committing=true;controls(true);s.node.querySelectorAll('button').forEach(b=>b.disabled=true);
-    const active=()=>session===s&&turn===s.id&&ready()&&JSON.stringify(S)===p.original&&stateRevision===p.revision;
+    const active=()=>session===s&&turn===s.id&&ready()&&JSON.stringify(S)===p.original&&stateRevision===p.revision
+      &&(!p.savedGroupId||s.node.querySelector('#rd-group')?.value===p.savedGroupId);
     let committed=false,release,sendTargets=[];
     try{
       release=recordingInboxAdmitWriter();
@@ -337,9 +407,9 @@
     }catch(e){alert(message(e));}finally{release?.();pushing=false;}
   }
   document.addEventListener('click',e=>{const b=e.target.closest?.('[data-act^="rd-"]');if(!b)return;e.preventDefault();e.stopImmediatePropagation();
-    const action=b.dataset.act;if(action==='rd-differences')void inspectHeldDifferences(b.dataset.id);if(action==='rd-open')open();if(action==='rd-close')close();if(action==='rd-check')void check();if(action==='rd-commit')void commit();if(action==='rd-reconcile')void reconcile();},true);
-  document.addEventListener('input',e=>{if(session&&!session.busy&&['rd-file','rd-token'].includes(e.target.id)){session.prepared=null;session.token='';session.node.querySelector('#rd-preview').innerHTML='';status('入力が変わりました。もう一度接続先を確認してください。');}},true);
-  document.addEventListener('change',e=>{if(session&&!session.busy&&e.target.id==='rd-file'){session.prepared=null;session.token='';session.node.querySelector('#rd-preview').innerHTML='';status('ファイルが変わりました。もう一度接続先を確認してください。');}},true);
+    const action=b.dataset.act;if(action==='rd-differences')void inspectHeldDifferences(b.dataset.id);if(action==='rd-open')open();if(action==='rd-close')close();if(action==='rd-check')void check();if(action==='rd-check-saved')void check(true);if(action==='rd-commit')void commit();if(action==='rd-reconcile')void reconcile();},true);
+  document.addEventListener('input',e=>{if(session&&!session.busy&&['rd-file','rd-token','rd-group'].includes(e.target.id)){session.prepared=null;session.token='';session.node.querySelector('#rd-preview').innerHTML='';status('入力が変わりました。もう一度接続先を確認してください。');}},true);
+  document.addEventListener('change',e=>{if(session&&!session.busy&&['rd-file','rd-group'].includes(e.target.id)){session.prepared=null;session.token='';session.node.querySelector('#rd-preview').innerHTML='';status('選択が変わりました。もう一度接続先を確認してください。');}},true);
   document.addEventListener('visibilitychange',()=>{if(document.hidden&&!session?.committing)close();});
   root.RecoveryDelivery=Object.freeze({settingsHTML,open,close,canPublish,hasResumed,pending,push,reconcile,readPreview,inspectHeldDifferences});
 })(globalThis);

@@ -18,7 +18,7 @@ module.exports = function createUnenrolledContext(sandbox = {}, options) {
   if (!('recordingInboxStorageRemove' in context)) context.recordingInboxStorageRemove = key => context.localStorage.removeItem(key);
   const result = vm.createContext(context, options);
   const source = require('node:fs').readFileSync(__dirname + '/../app.js','utf8');
-  for (const name of ['groupDisplayName','privateDeliveryGroup','groupedPerformanceHTML']) {
+  for (const name of ['groupDisplayName','privateDeliveryGroup','performanceDateOrder','performanceSelectionOrder','performanceFolderGroups','groupedPerformanceHTML']) {
     const start = source.indexOf('function ' + name + '(');
     vm.runInContext(source.slice(start, source.indexOf('\n}',start)+2), result);
   }

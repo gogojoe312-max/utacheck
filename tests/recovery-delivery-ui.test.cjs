@@ -337,3 +337,117 @@ test('new-performance scope rejects private, other-group, recovered, hidden, rer
   assert.equal(JSON.stringify(f.c.S),before);assert.equal(f.patches(),0);
  }
 });
+
+async function savedFixture(options={}){
+ const f=await fixture(options),plan=Scope.plan(f.c.S,f.packet);f.c.S=plan.state;
+ const binding={...clone(plan.targets[0]),status:'uncertain',expectedRemoteSha256:'d'.repeat(64),pendingDigest:'e'.repeat(64),pendingKey:'OLD_PENDING',
+  preservedShowIds:['show'],heldLocalShowIds:['show'],managedLocalShowIds:[]};
+ const other={groupId:'other',groupName:'Ready Group',gistId:'c'.repeat(32),src:'https://gist.githubusercontent.com/other/'+ 'c'.repeat(32)+'/raw/utacheck.json',
+  sourceSha256:'f'.repeat(64),expectedRemoteSha256:'1'.repeat(64),sourceShowIds:['other-source'],showIds:['other-show'],status:'ready',preservedShowIds:[],heldLocalShowIds:[],managedLocalShowIds:['other-show']};
+ f.c.S.groups.push({id:other.groupId,name:other.groupName,gistId:other.gistId,src:other.src,nopub:false});
+ f.c.S.recoveryDelivery={version:2,targets:[binding,clone(other)]};f.c.S.ghToken='SYNTHETIC_SAVED_TOKEN';f.c.S.groupId='other';
+ f.c.save();await f.c.saveNow();
+ return f;
+}
+async function savedCheck(f,gid){
+ f.click('rd-open');if(gid!==undefined)f.modal().querySelector('#rd-group').value=gid;
+ f.click('rd-check-saved');
+ await f.until(()=>{const text=f.modal().querySelector('#rd-status').textContent;return text&&!text.includes('読み取っています');});
+}
+test('fileless reconnection selects the sole unfinished group and keeps its uncertain ledger unchanged in preview',async()=>{
+ const f=await savedFixture(),before=JSON.stringify(f.c.S),db=f.idb.snapshot();
+ await savedCheck(f);assert.equal(f.modal().querySelector('#rd-group').value,'g');assert.equal(f.c.S.groupId,'other');
+ assert.match(f.modal().innerHTML,/接続ファイルを使って確認/);assert.match(f.modal().innerHTML,/保存済みの認証情報/);
+ assert.equal(f.modal().querySelector('#rd-file').files.length,0);assert.equal(f.modal().querySelector('#rd-token').value,'');
+ assert.match(f.modal().querySelector('#rd-preview').innerHTML,/確認後の新しい指摘を反映する公演：1件/);
+ assert.match(f.modal().querySelector('#rd-status').textContent,/まだ送信・保存/);
+ assert.equal(JSON.stringify(f.c.S),before);assert.deepEqual(f.idb.snapshot(),db);assert.equal(f.patches(),0);
+ assert.deepEqual(f.calls.map(c=>({url:c.url,method:c.method,token:c.token})),[{url:'https://api.github.com/gists/'+f.packet.targets[0].gistId,method:'GET',token:'Bearer SYNTHETIC_SAVED_TOKEN'}]);
+ f.click('rd-close');assert.equal(JSON.stringify(f.c.S),before);
+});
+test('fileless explicit commit retains old pending evidence, unrelated ready group and hold before allowing new notes',async()=>{
+ const f=await savedFixture(),before=JSON.stringify(f.c.S),other=clone(f.c.S.recoveryDelivery.targets[1]);
+ await savedCheck(f);f.modal().querySelector('#rd-approve').checked=true;f.click('rd-commit');await new Promise(r=>setImmediate(r));
+ assert.equal(JSON.stringify(f.c.S),before);assert.equal(f.calls.length,1,'second approval remains required');
+ f.modal().querySelector('#rd-exclusive').checked=true;f.click('rd-commit');await f.until(()=>f.calls.some(c=>c.action==='pushOne'));
+ assert(f.idb.snapshot().state.some(([key,value])=>key.includes('editor:')&&value===before));
+ assert.deepEqual(f.idb.record('recovery:network-hold:v1'),f.hold);assert.equal(f.c.startupRecoveryNetworkHold,true);
+ assert.deepEqual(clone(f.c.S.recoveryDelivery.targets[1]),other);assert.equal(f.c.S.autoPub,false);
+ const binding=f.c.S.recoveryDelivery.targets[0];assert.equal(binding.status,'ready');assert.equal(binding.expectedRemoteSha256,sha(f.remote()));
+ assert.deepEqual(clone(binding.sourceShowIds),['show']);assert.deepEqual(clone(binding.heldLocalShowIds),[]);assert.deepEqual(clone(binding.managedLocalShowIds),['show']);
+ assert.equal(binding.pendingDigest,undefined);assert.equal(binding.pendingKey,undefined);
+ assert.equal(f.calls.filter(c=>c.method==='GET').length,2);assert.equal(f.patches(),0);assert(f.calls.every(c=>!c.url||!c.url.includes(other.gistId)));
+ f.c.S.notes.push({id:'after-fileless',songId:'song',showId:'show',lineIdx:0,memberIds:['m'],tags:[],memo:'New after reconnect'});f.c.save();await f.c.saveNow();
+ assert.equal(await f.c.RecoveryDelivery.push('g',true),'sent');assert(JSON.parse(f.remote()).notes.some(n=>n.memo==='New after reconnect'));
+ assert.deepEqual(clone(f.c.S.recoveryDelivery.targets[1]),other);
+});
+test('fileless checking requires an explicit choice when more than one connection is unfinished',async()=>{
+ const f=await savedFixture();f.c.S.recoveryDelivery.targets[1].status='blocked';
+ await savedCheck(f);assert.equal(f.modal().querySelector('#rd-group').value,'');assert.match(f.modal().querySelector('#rd-status').textContent,/配信先を選択/);assert.equal(f.calls.length,0);
+ f.modal().querySelector('#rd-group').value='g';f.click('rd-check-saved');await f.until(()=>/まだ送信・保存/.test(f.modal().querySelector('#rd-status').textContent));
+ assert.equal(f.calls.length,1);assert.equal(f.c.S.recoveryDelivery.targets[1].status,'blocked');
+});
+test('fileless checking rejects missing, ambiguous, inconsistent and unfinished stored targets before GET',async()=>{
+ const variants=['missing-token','legacy','duplicate-group','duplicate-gist','duplicate-src','group-name','group-gist','group-src','receipt','unknown-status','sending','prepared','ready-selected'];
+ for(const variant of variants){
+  const f=await savedFixture(),b=f.c.S.recoveryDelivery.targets[0],other=f.c.S.recoveryDelivery.targets[1];
+  if(variant==='missing-token')f.c.S.ghToken='';
+  if(variant==='legacy')f.c.S.recoveryDelivery.version=1;
+  if(variant==='duplicate-group')f.c.S.recoveryDelivery.targets.push(clone(b));
+  if(variant==='duplicate-gist')other.gistId=b.gistId;
+  if(variant==='duplicate-src')other.src=b.src;
+  if(variant==='group-name')f.c.S.groups[0].name='Other name';
+  if(variant==='group-gist')f.c.S.groups[0].gistId='2'.repeat(32);
+  if(variant==='group-src')f.c.S.groups[0].src=other.src;
+  if(variant==='receipt')f.c.S.recoveredShowSources[b.sourceSha256].focusGroupId='other';
+  if(variant==='unknown-status')b.status='unknown-status';
+  if(variant==='sending'||variant==='prepared')b.status=variant;
+  const before=JSON.stringify(f.c.S),db=f.idb.snapshot();
+  await savedCheck(f,variant==='ready-selected'?'other':'g');
+  assert.equal(f.calls.length,0,variant);assert.equal(f.patches(),0,variant);assert.equal(JSON.stringify(f.c.S),before,variant);assert.deepEqual(f.idb.snapshot(),db,variant);
+  assert.equal(f.modal().querySelector('#rd-preview').innerHTML,'',variant);
+ }
+});
+test('fileless checking refuses non-equivalent content, participant changes and unknown remote-only changes without writes',async()=>{
+ for(const variant of ['local-note','remote-note','wrong-source-id','local-addition','remote-addition','missing-protected','roster','participant-expansion']){
+  const f=await savedFixture(),remote=JSON.parse(f.remote()),b=f.c.S.recoveryDelivery.targets[0];
+  if(variant==='local-note')f.c.S.notes[0].memo='LOCAL_NEW';
+  if(variant==='remote-note')remote.notes[0].memo='REMOTE_NEW';
+  if(variant==='wrong-source-id'){remote.shows[0].id='different';remote.songs[0].showId='different';for(const field of ['notes','memos','subs','gsubs'])for(const row of remote[field]||[])if(row.showId)row.showId='different';}
+  if(variant==='local-addition'){f.c.S.shows.push({id:'new-show',name:'New',groupId:'g'});f.c.S.songs.push({...clone(f.c.S.songs[0]),id:'new-song',showId:'new-show'});}
+  if(variant==='remote-addition'){remote.shows.push({id:'new-remote',name:'Remote new'});remote.songs.push({...remote.songs[0],showId:'new-remote'});}
+  if(variant==='missing-protected')b.preservedShowIds.push('missing');
+  if(variant==='roster')remote.rosters['Synthetic Group']=['Different'];
+  if(variant==='participant-expansion')remote.members=[];
+  f.setRemote(JSON.stringify(remote));const before=JSON.stringify(f.c.S),db=f.idb.snapshot();
+  await savedCheck(f);assert.equal(f.modal().querySelector('#rd-preview').innerHTML,'',variant);
+  assert.equal(f.calls.length,1,variant);assert.equal(f.patches(),0,variant);assert.equal(JSON.stringify(f.c.S),before,variant);assert.deepEqual(f.idb.snapshot(),db,variant);
+ }
+});
+test('fileless checking preserves the complete known remote-only set while newly proving the old held show equivalent',async()=>{
+ const f=await savedFixture(),remote=JSON.parse(f.remote());remote.shows.push({id:'bookmark',name:'Existing bookmark'});remote.songs.push({...remote.songs[0],showId:'bookmark'});
+ f.c.S.recoveryDelivery.targets[0].preservedShowIds.push('bookmark');f.setRemote(JSON.stringify(remote));
+ await savedCheck(f);assert.match(f.modal().querySelector('#rd-status').textContent,/まだ送信・保存/);assert.match(f.modal().querySelector('#rd-preview').innerHTML,/公演2件/);
+ f.modal().querySelector('#rd-approve').checked=true;f.modal().querySelector('#rd-exclusive').checked=true;f.click('rd-commit');await f.until(()=>f.calls.some(c=>c.action==='pushOne'));
+ assert.deepEqual(clone(f.c.S.recoveryDelivery.targets[0].preservedShowIds),['bookmark']);assert.deepEqual(clone(f.c.S.recoveryDelivery.targets[0].heldLocalShowIds),[]);
+ assert.equal(await f.c.RecoveryDelivery.push('g',true),'sent');const after=JSON.parse(f.remote());assert.deepEqual(after.shows.find(s=>s.id==='bookmark'),remote.shows[1]);
+});
+test('fileless confirmation stops for a changed remote or selection before commit and never changes the old ledger',async()=>{
+ for(const variant of ['remote','selection','selection-event']){
+  const f=await savedFixture(),before=JSON.stringify(f.c.S),db=f.idb.snapshot();await savedCheck(f);
+  if(variant==='remote')f.setRemote(f.remote()+' ');
+  else f.modal().querySelector('#rd-group').value='other';
+  if(variant==='selection-event')for(const h of f.handlers.change)h({target:{id:'rd-group'}});
+  f.modal().querySelector('#rd-approve').checked=true;f.modal().querySelector('#rd-exclusive').checked=true;f.click('rd-commit');
+  if(variant==='selection-event')await new Promise(r=>setImmediate(r));else await f.until(()=>/停止/.test(f.modal().querySelector('#rd-status').textContent));
+  assert.equal(JSON.stringify(f.c.S),before);assert.deepEqual(f.idb.snapshot(),db);assert.equal(f.patches(),0);assert(!f.calls.some(c=>c.action==='pushOne'));
+ }
+});
+test('fileless read rejects a changed selection or owner edit while the request is in flight',async()=>{
+ for(const variant of ['selection','state']){
+  let f;f=await savedFixture({network:async()=>{if(variant==='selection')f.modal().querySelector('#rd-group').value='other';else f.c.S.notes[0].memo='NEWER_EDIT';}});
+  const oldBinding=clone(f.c.S.recoveryDelivery),db=f.idb.snapshot();await savedCheck(f);
+  assert.equal(f.modal().querySelector('#rd-preview').innerHTML,'');assert.deepEqual(clone(f.c.S.recoveryDelivery),oldBinding);assert.deepEqual(f.idb.snapshot(),db);assert.equal(f.patches(),0);
+  if(variant==='state')assert.equal(f.c.S.notes[0].memo,'NEWER_EDIT');
+ }
+});

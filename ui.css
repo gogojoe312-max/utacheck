@@ -321,6 +321,18 @@ select.field{appearance:auto}textarea.field{resize:vertical}
 .organize-create button{min-height:46px;white-space:nowrap;padding:10px 14px}
 .organize-more{flex:0 0 44px;min-width:44px;min-height:44px;font-size:22px;color:var(--dim);border-radius:10px}
 .organize-more:active{background:var(--panel2)}
+.performance-folder,.rec-date.card{margin:0 0 10px;padding:0;border:1px solid var(--line);border-radius:12px;background:var(--panel);overflow:hidden}
+.performance-folder>summary,.rec-date>summary{display:flex;align-items:center;gap:10px;min-height:50px;padding:10px 12px;box-sizing:border-box;cursor:pointer;list-style:none;font-size:15px;font-weight:700}
+.performance-folder>summary::-webkit-details-marker,.rec-date>summary::-webkit-details-marker{display:none}
+.performance-folder>summary::before,.rec-date>summary::before{content:'▸';color:var(--dim);flex:none}
+.performance-folder[open]>summary::before,.rec-date[open]>summary::before{content:'▾'}
+.performance-folder-name{flex:1;min-width:0;font-size:15px;font-weight:700;overflow-wrap:anywhere}
+.performance-folder-count{flex:none;color:var(--dim);font-size:12px;white-space:nowrap}
+.performance-folder-body{padding:0 10px 10px}
+.rec-date>.rec-artist{padding:0 10px 10px}
+.performance-folder-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.performance-folder-actions button{min-height:42px}
+.performance-show-choice{text-align:left;margin-bottom:6px}
 .organize-mask{top:var(--note-vv-top,0px);height:var(--note-vv-height,100dvh);bottom:auto}
 .organize-sheet{overflow-y:auto;max-height:calc(100% - 20px);box-sizing:border-box}
 .organize-sheet>.row{margin-bottom:18px;gap:12px}
@@ -334,3 +346,11 @@ select.field{appearance:auto}textarea.field{resize:vertical}
 
 /* Keep recovery status out of the recording lyrics and take controls. */
 #app[data-rec="1"] ~ #recovery-network-notice{display:none}
+
+/* LIVE and REC song lists use the same full-title row and action target. */
+@media screen {
+.settings-section .row.card.settings-song-row{flex-wrap:nowrap;align-items:flex-start;gap:8px}
+.settings-section .row.card.settings-song-row>.settings-song-select{flex:1 1 0;min-width:0;min-height:44px;text-align:left;padding:4px 0}
+.settings-song-title{display:block;white-space:normal;overflow:visible;overflow-wrap:anywhere;text-overflow:clip;-webkit-line-clamp:unset;max-height:none;font-size:15px;line-height:1.55}
+.settings-section .row.card.settings-song-row>.organize-more{flex:0 0 44px;width:44px;min-width:44px;min-height:44px;padding:0!important}
+}

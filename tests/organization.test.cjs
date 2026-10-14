@@ -56,3 +56,8 @@ test('stale or missing group rename scope cannot fall back to renaming every gro
  let before=JSON.stringify(c.S);assert.match(c.saveOrganization(menu,{name:'春ツアー'}),/見つかりません/);assert.equal(JSON.stringify(c.S),before);
  assert.match(c.saveOrganization({mode:'folder',id:'春'},{name:'春ツアー'}),/開き直して/);assert.equal(JSON.stringify(c.S),before);
 });
+test('a truly empty saved folder can be renamed in a filtered list without touching other groups',()=>{
+ const c=setup();c.S.folderOrder.push('空の予定');c.S.folders['空の予定']=true;c.U.showFilter='rose';const before=JSON.stringify(c.S.shows);
+ const menu=openFolderRename(c,'空の予定');assert.equal(menu.showIds,null);assert.equal(c.saveOrganization(menu,{name:'次の公演'}),'');
+ assert.equal(JSON.stringify(c.S.shows),before);assert(c.S.folderOrder.includes('次の公演'));assert(!c.S.folderOrder.includes('空の予定'));
+});
