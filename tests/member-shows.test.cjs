@@ -6,6 +6,7 @@ const block=(a,b)=>src.slice(src.indexOf(a),src.indexOf(b,src.indexOf(a)));
 test('summary changes day while keeping member open and excludes other groups',()=>{
  const c=vm.createContext({rememberViewSelection(){},restoreViewSelection(){},S:{groupId:'g',showId:'today',shows:[{id:'today',name:'今日'},{id:'yesterday',name:'昨日'},{id:'other',name:'別グループ'}],songs:[{showId:'today',groupId:'g'},{showId:'yesterday',groupId:'g'},{showId:'other',groupId:'other'}]},U:{view:'summary',mode:'member',sumOpen:'member1'},VIEW:()=>true,save(){},render(){},h:x=>x});
  c.showsNewestFirst=()=>c.S.shows;
+ vm.runInContext(src.slice(src.indexOf('function performanceDateOrder('),src.indexOf('function groupedPerformanceHTML(')),c);
  vm.runInContext(block('function summaryShows()', 'function viewSummary()'),c);
  vm.runInContext("selectSummaryShow('yesterday')",c);
  assert.equal(c.S.showId,'yesterday');assert.equal(c.U.sumOpen,'member1');assert.equal(c.U.view,'summary');assert.equal(c.U.mode,'member');

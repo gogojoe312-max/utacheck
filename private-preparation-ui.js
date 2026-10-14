@@ -9,23 +9,24 @@
   &&!(recordingInboxIntegration?.gate?.activeEditors||recordingInboxIntegration?.gate?.applying)
   &&!(typeof RecordingScheduleUI!=='undefined'&&RecordingScheduleUI.isApplying());}
  function statusText(){
-  if(status.kind==='applied')return '本人用の準備を受信し、この端末への保存を確認しました。';
-  if(status.kind==='current')return '本人用の準備は、この端末に反映済みです。';
-  if(status.kind==='checking')return '本人用の準備を確認しています…';
+  if(status.kind==='applied')return 'dot経由の更新をこの端末へ保存しました。クラウドバックアップ・メンバー配信は別に確認してください。';
+  if(status.kind==='current')return 'dot経由の更新は、この端末に反映済みです。';
+  if(status.kind==='checking')return 'dot経由の更新を確認しています…';
   if(status.kind==='active-plan')return '進行中の枠が残っているため、予定の反映を待っています。実際には未開始なら、その枠の「その他」から開始状態だけ解除できます。';
-  if(status.kind==='deferred')return '録音・入力が終わってから、本人用の準備を自動で反映します。';
+  if(status.kind==='deferred')return '録音・入力が終わってから、dot経由の更新を自動で反映します。';
   if(status.kind==='missing-token')return '本人用の自動受信は未接続です。この端末のGitHub接続を確認する必要があります。';
-  if(status.kind==='access')return '本人用の準備をまだ受信できません。既存のGitHub接続では非公開の保存先を確認できませんでした。';
-  if(status.kind==='conflict')return '準備資料と現在の曲・予定の対応を確認できず、反映を止めています。現在の記録は保持しています。';
+  if(status.kind==='access')return 'dot経由の更新をまだ受信できません。既存のGitHub接続では非公開の保存先を確認できませんでした。';
+  if(status.kind==='conflict')return '更新内容と現在の曲・予定の対応を確認できず、反映を止めています。現在の記録は保持しています。';
   if(status.kind==='owner-required')return '安全な編集状態を確認するため、ほかの歌チェックを閉じて、この画面を開き直してください。';
   if(status.kind==='multiple-windows')return 'ほかの歌チェックの画面を閉じてから、この画面を開き直してください。現在の記録は保持しています。';
   if(status.kind==='unsupported')return 'このブラウザでは安全な自動反映を確認できません。現在の記録は保持しています。';
-  if(status.kind==='unverified')return '準備資料の保存後確認が必要です。アプリを開き直してください。';
-  if(status.kind==='offline')return '本人用の準備を受信できません。接続が戻ったら再確認します。';
-  return '本人用の準備を、録音・入力をしていないときに自動で確認します。';
+  if(status.kind==='unverified')return '更新内容の保存後確認が必要です。アプリを開き直してください。';
+  if(status.kind==='offline')return 'dot経由の更新を受信できません。接続が戻ったら再確認します。';
+  return 'dot経由の更新を、録音・入力をしていないときに自動で確認します。';
  }
  function setStatus(value){status=value;document.querySelectorAll?.('[data-private-preparation-status]').forEach(el=>el.textContent=statusText());}
- function settingsHTML(){return '<p class="note" data-private-preparation-status role="status">'+h(statusText())+'</p><button class="ghost" data-act="private-preparation-check">本人用の準備を確認</button><button class="ghost" data-act="private-preparation-file">REC準備ファイルから曲を追加</button><p class="note">本人用の準備JSONからREC曲だけを追加します。端末内で確認し、ファイルを送信しません。</p>';}
+ function settingsHTML(){return '<button class="ghost" data-act="private-preparation-check">dot経由で更新する</button><p class="note" data-private-preparation-status role="status">'+h(statusText())+'</p>';}
+
  async function singleEditorClient(){
   const controller=navigator.serviceWorker?.controller;
   if(!controller||typeof MessageChannel!=='function')throw failure('DEFERRED');

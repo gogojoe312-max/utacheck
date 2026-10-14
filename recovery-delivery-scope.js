@@ -545,13 +545,15 @@
     for(const known of knownNames)if(known&&labelNames.has(known))requiredNames.add(known);
     payload.members=copy(prior.members||[],'publication');
     const memberNames=new Set(payload.members.map(member=>member.name));
-    const localNames=[...(candidate.members||[]).map(member=>member.name),...requiredNames];
+    // Song labels, blocks and substitution text are references, not a source
+    // of new people. Only explicit candidate member/roster entries can extend
+    // the lyric participants, and only when a managed show actually uses them.
+    const localNames=[...(candidate.members||[]).map(member=>member.name),...(candidate.rosters?.[scope.groupName]||[])];
     for(const name of localNames)if(requiredNames.has(name)&&!memberNames.has(name)){payload.members.push({name});memberNames.add(name);}
-    payload.rosters=copy(prior.rosters||{},'publication');
-    const remoteRoster=payload.rosters[scope.groupName]||[],rosterNames=new Set(remoteRoster);
-    const extraRoster=[...(candidate.rosters?.[scope.groupName]||[]),...requiredNames];
-    for(const name of extraRoster)if(requiredNames.has(name)&&!rosterNames.has(name)){remoteRoster.push(name);rosterNames.add(name);}
-    if(own(payload.rosters,scope.groupName)||remoteRoster.length)payload.rosters[scope.groupName]=remoteRoster;
+    // Recovery restores performances to an existing destination. It never
+    // authorizes changing that group's formal membership or creating a roster.
+    if(own(prior,'rosters'))payload.rosters=copy(prior.rosters,'publication');
+    else delete payload.rosters;
     payload.groupName=scope.groupName;payload.src=scope.src;payload.groupOrder=[scope.groupName];
     const folders=new Set(payload.shows.map(show=>show.folder).filter(Boolean));
     payload.folderOrder=[];

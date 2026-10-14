@@ -11,7 +11,7 @@ function events(){const handlers={};return {handlers,addEventListener(name,fn){(
 test('background publishing changes only its status, without replacing the open note dialog',()=>{
  const status={style:{}},sheet={memo:'入力中'};let renders=0;
  const c=testContext({U:{view:'live',sheet},pushState:'送信中',app:{querySelector:()=>status},render(){renders++;}});
- vm.runInContext(block('function renderPublishStatus()', 'async function pushOne'),c);
+ vm.runInContext(block('function recoveryPublicationHolds()', 'async function pushOne'),c);
  vm.runInContext('renderPublishStatus()',c);assert.equal(status.textContent,' ・ 送信中');assert.equal(c.U.sheet,sheet);assert.equal(renders,0);
  c.pushState='未送信';vm.runInContext('renderPublishStatus()',c);assert.equal(status.style.color,'var(--bad)');assert.equal(renders,0);
 });

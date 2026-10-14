@@ -34,7 +34,7 @@ test('recovery hold uses the existing file backup action even with saved cloud c
  const f=fixture({state:{ghToken:'synthetic-token',bkGistId:'synthetic-id',bkAt:123,bkHash:7}});f.c.startupRecoveryNetworkHold=true;
  const html=f.html(),shown=visible(html);
  assert.match(shown,/クラウド保存・他端末との同期は停止中/);assert.match(shown,/data-act="bkfile"/);assert.doesNotMatch(html,/data-act="bknow"/);
- assert.doesNotMatch(html,/recovery-original-backup-check/);assert.doesNotMatch(html,/data-act="backup-restore"/);
+ assert.match(html,/recovery-original-backup-check/);assert.doesNotMatch(shown,/recovery-original-backup-check/);assert.doesNotMatch(html,/data-act="backup-restore"/);
  assert.doesNotMatch(html,/synthetic-token|synthetic-id/);
 });
 test('ordinary connected backup is automatic and keeps only file export',()=>{

@@ -229,3 +229,20 @@ test('printed group follows the current show destination without rewriting the o
  const f=await fixture({recMode:false});f.run(`S.groups=[{id:'old',name:'Old import'},{id:'current',name:'Current destination'}];S.shows[0].groupId='current';S.shows[0].deliveryGroupId='current';S.songs[0].groupId='old';U.printPick=null;`);
  const before=f.run('JSON.stringify(S)'),html=f.run('viewPrint()');assert.match(html,/class="prc">[^<]*Current destination/);assert.doesNotMatch(html,/class="prc">[^<]*Old import/);assert.equal(f.run('JSON.stringify(S)'),before);assert.equal(f.calls.saves,0);assert.equal(f.calls.network.length,0);
 });
+
+test('expired REC plans cannot focus a singer or auto-select a past-year slot; explicit archive remains readable',async()=>{
+ const f=await fixture();f.run(`S.plan={year:2025,start:'10:00',slots:[{id:'old',name:'担当A',kind:'member',day:'10/14',date:'2025-10-14',at:600,min:90}]};S.planFocus='old';U.recFocusId='';U.recSchedulePaused=false;U.recScheduleId='old';U.view='live';Date.now=()=>Date.parse('2026-10-14T10:30:00+09:00');`);
+ const before=f.run('JSON.stringify(S)');
+ assert.equal(f.run('recordingPlanExpired()'),true);assert.equal(f.run('recScheduledRow()'),null);
+ assert.equal(f.run('recWho()'),'');assert.equal(f.run('recFocusMember()'),null);assert.doesNotMatch(f.run('recBar()'),/data-act="recschedule"/);
+ f.run('autoPlan()');assert.equal(f.run('U.recScheduleId'),'');
+ f.run(`U.recFocusId='member-1'`);assert.equal(f.run('recFocusMember().id'),'member-1');
+ f.run(`U.view='recplan'`);assert.equal(f.run('focusRow().s.id'),'old');
+ assert.equal(f.run('JSON.stringify(S)'),before);assert.equal(f.calls.network.length,0);
+});
+
+test('REC explicit slot dates override yearless labels and plan year prevents annual reuse',async()=>{
+ const f=await fixture();f.run(`S.plan={year:2025,start:'10:00',slots:[{id:'old',name:'担当A',kind:'member',day:'10/14',at:600,min:90},{id:'future',name:'担当B',day:'10/15',date:'2027-10-15',at:600,min:90}]};Date.now=()=>Date.parse('2026-10-14T10:30:00+09:00');`);
+ assert.equal(f.run('recordingPlanExpired()'),false);assert.equal(f.run('recScheduledRow()'),null);
+ f.run(`S.plan.slots[0].date='2026-10-14'`);assert.equal(f.run('recScheduledRow().s.id'),'old');
+});

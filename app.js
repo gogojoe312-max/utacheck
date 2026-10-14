@@ -113,7 +113,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.6";
+const APP_VER = "16.41.58.7";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1503,10 +1503,38 @@ function ensurePersonalPrivateGroup() {
   S.groups.push({id:uid(),name:'配信しない',nopub:true,gistId:'',src:'',key:'',keyInLink:true});
   save(); return true;
 }
+function performanceDateOrder(sw) {
+  // Only dates explicitly written in the saved date or performance name count.
+  const text = String(sw.date || sw.day || sw.name || '').normalize('NFKC');
+  let match = text.match(/(?:^|[^0-9])(20[0-9]{2})[年/.-](\d{1,2})[月/.-](\d{1,2})(?:日|[^0-9]|$)/);
+  let year, month, day;
+  if (match) [,year,month,day] = match.map(Number);
+  else if ((match = text.match(/^(\d{2})(\d{2})(\d{2})(?!\d)/))) {
+    year = 2000 + Number(match[1]); month = Number(match[2]); day = Number(match[3]);
+  } else if ((match = text.match(/(?:^|[^0-9])(\d{1,2})[月/](\d{1,2})(?:日|[^0-9]|$)/))) {
+    // Yearless labels remain yearless; no date is manufactured from creation time.
+    month = Number(match[1]); day = Number(match[2]);
+  } else return null;
+  if (month < 1 || month > 12 || day < 1 || day > new Date(Date.UTC(year || 2000,month,0)).getUTCDate()) return null;
+  return {year:year || null, month, day};
+}
+function performanceSelectionOrder(list, dateOf=performanceDateOrder) {
+  // Yearless dates are ordered by the month/day actually shown to the user.
+  const dated = list.map((show,index)=>({show,index,date:dateOf(show)}));
+  const years = new Set(dated.filter(x=>x.date?.year).map(x=>x.date.year));
+  return dated.sort((a,b)=>{
+    if (!a.date || !b.date) return Number(!!b.date)-Number(!!a.date) || a.index-b.index;
+    const ay=a.date.year, by=b.date.year;
+    if (ay && by && ay !== by) return by-ay;
+    if (years.size > 1 && !!ay !== !!by) return Number(!!by)-Number(!!ay);
+    return b.date.month-a.date.month || b.date.day-a.date.day || a.index-b.index;
+  }).map(x=>x.show);
+}
 function groupedPerformanceHTML(list, row) {
-  return groupShows(list).map(([name, shows]) => name
-    ? `<details class="card" ${shows.some(sw => sw.id === S.showId) ? 'open' : ''}><summary>${h(name)} · ${shows.length}公演</summary>${shows.map(row).join('')}</details>`
-    : shows.map(row).join('')).join('');
+  return performanceSelectionOrder(list).map(row).join('');
+}
+function selectionFolderNames() {
+  return [...new Set(showsFor().map(folderOf).filter(Boolean))];
 }
 
 // Each show owns its default delivery group. A manual override affects delivery only.
@@ -5379,6 +5407,7 @@ function viewLive() {
       「${h(fsec)}」の歌詞がありません</div>`;
   }
   const noSong = VIEW() && !SONGS().length;
+  const publicationStatus = publicationStatusText();
   return `
   ${preview ? `<div class="noprint" style="padding:10px 12px;background:#1F2E24;color:#8FD9A8;font-size:12px">
       メンバーの見え方を確認中（手元のデータは変わりません／既読も残りません）
@@ -5410,7 +5439,7 @@ function viewLive() {
       <div class="t2">${s && s.mark ? `<b style="color:var(--accent)">★</b> ` : ""}${s && !S.recMode && takeLabel(s) ? `<b class="tkmk">${h(takeLabel(s))}</b>` : ""}${h(s ? s.title : "曲がありません")}</div>
       <div class="t1">${S.recMode
         ? `録音${s ? " ・ " + h((S.groups.find((x) => x.id === s.groupId) || {}).name || s.folder || "") : ""}`
-        : `${s ? h((S.groups.find((x) => x.id === (VIEW() ? s.groupId : songDeliveryGroupId(s))) || {}).name || "") + " ・ " : ""}${h(showName() || "公演名未設定")}${SONGS().length ? ` ・ ${U.songIdx + 1}/${SONGS().length}` : ""}${showNoPub() ? ` ・ <span style="color:var(--dim)">配信しない</span>` : `<span data-push-state style="color:${/未送信|保留|一部送信/.test(pushState) ? "var(--bad)" : "var(--dim)"}">${pushState ? " ・ " + h(pushState) : ""}</span>`}`}${recWho()}${S.recMode ? `<span id="pcd2" style="margin-left:8px;font-variant-numeric:tabular-nums"></span>` : ""}</div>
+        : `${s ? h((S.groups.find((x) => x.id === (VIEW() ? s.groupId : songDeliveryGroupId(s))) || {}).name || "") + " ・ " : ""}${h(showName() || "公演名未設定")}${SONGS().length ? ` ・ ${U.songIdx + 1}/${SONGS().length}` : ""}${showNoPub() ? ` ・ <span style="color:var(--dim)">配信しない</span>` : `<span data-push-state style="color:${/未送信|保留|一部送信|確認待ち|結果不明/.test(publicationStatus) ? "var(--bad)" : "var(--dim)"}">${publicationStatus ? " ・ " + h(publicationStatus) : ""}</span>`}`}${recWho()}${S.recMode ? `<span id="pcd2" style="margin-left:8px;font-variant-numeric:tabular-nums"></span>` : ""}</div>
       ${VIEW() && S.pubAt ? `<div class="song-freshness">${freshLine()}</div>` : ""}
     </button>
     ${s ? `<button class="ic" data-act="overview" style="font-size:12px">全体</button>` : ""}
@@ -5646,10 +5675,12 @@ function rememberFolder(name, rec = false) {
 }
 function organizeSheetHTML(m) {
   const rec = !!m.rec, item = (rec ? S.rsongs : S.shows).find(x => x.id === m.id);
-  const title = m.mode === "show" ? (item ? "公演を編集" : "公演を追加") : m.mode === "move" ? "フォルダを選択" : m.mode === "actions" ? (item?.name || "公演") : m.id ? "フォルダ名を変更" : "フォルダを作成";
+  const title = m.mode === "folders" ? "フォルダを管理" : m.mode === "show" ? (item ? "公演を編集" : "公演を追加") : m.mode === "move" ? "フォルダを選択" : m.mode === "actions" ? (item?.name || "公演") : m.id ? "フォルダ名を変更" : "フォルダを作成";
   const btn = (act,label,extra="") => `<button class="organize-action" data-act="${act}" data-id="${h(m.id || "")}" ${extra}>${label}</button>`;
   let body = "";
-  if (m.mode === "actions" && item) {
+  if (m.mode === "folders") {
+    body = selectionFolderNames().map(name => `<div class="row" style="padding:8px 0"><span class="grow">${h(name)}</span><button class="chip sm" data-act="frename" data-id="${h(name)}" aria-label="${h(name)}の名前を変更">名前を変更</button></div>`).join('') || '<p class="note">この一覧にフォルダはありません</p>';
+  } else if (m.mode === "actions" && item) {
     body = btn("editshow","公演名・グループ・フォルダを編集") + btn("show-delivery","配信先を変更")
       + btn("showpub", item.nopub ? "配信を有効にする" : "配信を止める")
       + btn("copyshow","公演を複製") + btn("delshow","公演を削除",'style="color:var(--bad)"');
@@ -5893,7 +5924,7 @@ function renderSheet() {
           <button class="grow trunc" style="text-align:left" data-act="ruse" data-id="${x.id}">${h(x.title)}</button>
           <button data-act="rdel" data-id="${x.id}" style="padding:4px 6px;color:var(--bad)">✕</button>
         </div>`).join("") || `<p class="note">曲がありません</p>`}
-        <button class="primary" data-act="rpick">歌詞のWord / PDF / Excelを読み込む（複数可）</button>
+        <button class="primary" data-act="rpick">歌割り・歌詞ファイルを読み込む（Word/PDF/Excel）</button>
       </div></div>`;
     document.body.appendChild(overlay);
     return;
@@ -6083,7 +6114,7 @@ function renderSheet() {
         ${recordingGroupSelector()}
         ${recordingLibraryHTML(recordingSelectionSongs(), x => `<button class="ghost" data-act="ruse" data-id="${h(x.id)}" style="text-align:left;margin-bottom:6px;${x.id === S.rsongId ? "background:var(--accent);color:#0A0A0A" : ""}">${h(x.title)}</button>`) || `<p class="note">曲がありません</p>`}
       </div>
-      <div class="sec"><button class="primary" data-act="goplan">進行表</button></div>
+      <div class="sec">${recordingPlanEntryHTML()}</div>
       ${VIEW() && unreadSongs().length ? `<div class="sec">
         <button class="ghost" data-act="readall" style="text-align:left;color:var(--accent)">未読 ${unreadSongs().length}曲 をすべて既読にする</button>
       </div>` : ""}
@@ -6104,7 +6135,7 @@ function renderSheet() {
           style="${U.showFilter === g.id ? "background:var(--accent);color:#0A0A0A" : ""}">${h(groupDisplayName(g))}</button>`).join("")}
       </div>` : "";
     const shows = groupedPerformanceHTML(showsFor(), (sw) => `<button class="chip sm" data-act="jumpshow" data-id="${sw.id}"
-        style="${sw.id === S.showId ? "background:var(--accent);color:#0A0A0A" : ""}">${h(sw.name)}${folderOf(sw) ? `<span style="opacity:.6;font-size:10px"> · ${h(folderOf(sw))}</span>` : ""}</button>`);
+        style="${sw.id === S.showId ? "background:var(--accent);color:#0A0A0A" : ""}">${h(sw.name)}${folderOf(sw) && folderOf(sw) !== sw.name ? `<span style="opacity:.6;font-size:10px"> · ${h(folderOf(sw))}</span>` : ""}</button>`);
     const list = SONGS().map((x, i) => {
       const gn = (S.groups.find((g) => g.id === x.groupId) || {}).name || "";
       const cnt = NOTES().filter((n) => n.songId === x.id && n.showId === S.showId).length;
@@ -6247,7 +6278,7 @@ function summaryShowPicker() {
   if (S.recMode) return "";
   return `<label class="summary-show-picker"><span>公演・日付</span><select id="summary-show" aria-label="公演・日付">
     <option value="" ${U.allShows ? "selected" : ""}>全公演をまとめる</option>
-    ${summaryShows().map(sw => `<option value="${h(sw.id)}" ${!U.allShows && sw.id === S.showId ? "selected" : ""}>${h(sw.name)}</option>`).join("")}
+    ${performanceSelectionOrder(summaryShows()).map(sw => `<option value="${h(sw.id)}" ${!U.allShows && sw.id === S.showId ? "selected" : ""}>${h(sw.name)}</option>`).join("")}
   </select></label>`;
 }
 function selectSummaryShow(id) {
@@ -6517,7 +6548,7 @@ function viewSummary() {
         </div>`).join("")}</div>`;
     }).join("");
   } else {
-    body = showsNewestFirst().map((sw) => {
+    body = performanceSelectionOrder(showsNewestFirst()).map((sw) => {
       const ns = ns0.filter((n) => n.showId === sw.id);
       if (!ns.length) return "";
       const counts = S.members.map((m) => ({ name: m.name, n: ns.filter((x) => x.memberIds.includes(m.id)).length })).filter((c) => c.n);
@@ -7040,11 +7071,14 @@ function backupSettingsHTML() {
   return `<h4 class="head">バックアップ</h4><div class="card">
     <p class="note" role="status" ${S.bkError ? 'style="color:var(--bad)"' : ""}>${h(status)}</p>
     <button class="ghost" data-act="bkfile" ${backupInFlight ? "disabled" : ""}>ファイルに保存</button>
+    ${!fileOnly && S.bkGistId ? '<button class="primary" data-act="bknow" '+(backupInFlight?'disabled':'')+'>今すぐバックアップ</button><button class="ghost" data-act="backup-check">クラウドの保存内容を確認</button>' : ''}
+    ${startupRecoveryNetworkHold ? '<p class="note">元の保存先と現在の編集内容の照合が終わるまで、クラウドへ送信しません。まず「ファイルに保存」で現在の内容を保管できます。</p>' : !S.ghToken || !S.bkGistId ? '<p class="note">既存クラウド保存先への接続をこの端末で確認できていません。</p>' : ''}
     ${otherAt ? `<div role="status" class="card"><b>クラウドとこの端末に違いがあります</b><p class="note">クラウドへの送信は止めています。両方のファイルを保管し、残す内容を確認してください。</p>
       ${syncComparison ? `<p class="note">この端末の公演：${syncComparison.localShows.map(h).join('、')}<br>クラウドの公演：${syncComparison.cloudShows.map(h).join('、')}</p>` : ''}
       <button class="ghost" data-act="bkfile">この端末をファイルに保存</button>
       <button class="ghost" data-act="backup-check">クラウドをもう一度確認</button></div>` : ''}
   </div>
+  ${startupRecoveryNetworkHold ? `<details class="card"><summary>保存・配信の復旧状況</summary>${recoveryOriginalBackupHTML()}${typeof RecoveryDelivery !== 'undefined' ? RecoveryDelivery.settingsHTML() : ''}</details>` : ''}
   ${storageSettingsHTML()}`;
 }
 
@@ -7088,11 +7122,10 @@ function viewSetupRec() {
   <div class="scroll pad">
     <section data-settings-panel="rec-materials">
     ${recordingGroupSelector()}
-    ${typeof PrivatePreparationUI !== "undefined" ? PrivatePreparationUI.settingsHTML() : ""}
     <h4 class="head">曲</h4>
     <div class="organize-create"><button class="chip" data-act="newfolder" data-rec="1">＋ フォルダを作成</button></div>
     ${list || `<p class="note">曲がありません</p>`}
-    <div class="card"><button class="primary" data-act="rpick">歌詞のWord / PDF / Excelを読み込む（複数可）</button></div>
+    <div class="card"><button class="primary" data-act="rpick">歌割り・歌詞ファイルを読み込む（Word/PDF/Excel）</button>${typeof PrivatePreparationUI !== "undefined" ? PrivatePreparationUI.settingsHTML() : ""}</div>
 
     </section>
     ${recMemberSelector()}
@@ -7101,7 +7134,7 @@ function viewSetupRec() {
     <div class="card"><button class="primary" data-act="pt-settings">Pro Tools操作・表示設定</button></div>
 
     <h4 class="head">進行</h4>
-    <div class="card"><button class="primary" data-act="goplan">進行表をひらく</button></div>
+    ${recordingPlanEntryHTML()}
 
     ${practiceToolsSettingsHTML()}
 
@@ -7136,21 +7169,50 @@ function recordingSelectionSongs() {
   const selected = U.recArtistFilter || "";
   return S.rsongs.filter(x => !selected || recordingClassification(x).artist === selected);
 }
+function recordingDateInfo(label) {
+  const text=String(label || '').normalize('NFKC');
+  const first=performanceDateOrder({name:text});
+  if (!first) return {label:'日付未設定',date:null};
+  const tail=text.match(/[・〜~～–-](\d{1,2})(?:日)?(?:\s+[^0-9]*)?$/i);
+  const last=tail ? Number(tail[1]) : first.day;
+  if (last < first.day || last > new Date(Date.UTC(first.year || 2000,first.month,0)).getUTCDate()) return {label:'日付未設定',date:null};
+  return {label:String(label),date:{...first,day:last}};
+}
 function recordingLibraryHTML(list, row) {
-  const artists = new Map();
+  const dates = new Map();
   list.forEach(so => {
-    const info = recordingClassification(so);
-    if (!artists.has(info.artist)) artists.set(info.artist, new Map());
-    const sessions = artists.get(info.artist);
-    if (!sessions.has(info.session)) sessions.set(info.session, {label:info.label,songs:[]});
-    sessions.get(info.session).songs.push(so);
+    const info=recordingClassification(so), date=recordingDateInfo(info.label);
+    const key=date.date ? info.label : '日付未設定';
+    if (!dates.has(key)) dates.set(key,{label:date.label,date:date.date,artists:new Map(),songs:[]});
+    const bucket=dates.get(key);bucket.songs.push(so);
+    if (!bucket.artists.has(info.artist)) bucket.artists.set(info.artist,[]);
+    bucket.artists.get(info.artist).push(so);
   });
-  return [...artists].map(([artist,sessions]) => '<section class="rec-artist"><h4 class="head">'+h(artist)+'</h4>'+[...sessions.values()].map(session => '<div class="rec-session"><div class="note" style="margin:8px 0">'+h(session.label)+' ・ '+session.songs.length+'曲</div>'+session.songs.map(row).join('')+'</div>').join('')+'</section>').join('');
+  const sorted=performanceSelectionOrder([...dates.values()],bucket=>bucket.date);
+  return sorted.map(date=>'<details class="card rec-date" '+(date.songs.some(so=>so.id===S.rsongId)?'open':'')+'><summary>'+h(date.label)+' · '+date.songs.length+'曲</summary>'+[...date.artists].map(([artist,songs])=>'<section class="rec-artist"><h4 class="head">'+h(artist)+'</h4>'+songs.map(row).join('')+'</section>').join('')+'</details>').join('');
+}
+function recordingPlanExpired(now=Date.now()) {
+  const slots=S.plan?.slots || [];
+  if(!slots.length)return false;
+  const year=Number(S.plan.year);
+  const dates=slots.map(sl=>{
+    let date=String(sl.date || '');
+    if(!date && Number.isInteger(year) && year>=2000 && year<=2099){const m=/^(\d{1,2})\/(\d{1,2})$/.exec(sl.day||'');if(m)date=year+'-'+m[1].padStart(2,'0')+'-'+m[2].padStart(2,'0');}
+    const m=/^(20\d{2})-(\d{2})-(\d{2})$/.exec(date);
+    if(!m || !performanceDateOrder({date:m[1]+'/'+Number(m[2])+'/'+Number(m[3])}))return null;
+    return date;
+  });
+  if(dates.some(x=>!x))return false;
+  const last=dates.sort().at(-1), end=Date.parse(last+'T00:00:00+09:00')+86400000;
+  return Number.isFinite(end)&&now>=end;
+}
+function recordingPlanEntryHTML() {
+  return recordingPlanExpired() ? '<details class="card"><summary>過去の進行表</summary><button class="ghost" data-act="goplan">過去の進行表をひらく</button></details>' : '<div class="card"><button class="primary" data-act="goplan">進行表をひらく</button></div>';
 }
 function recordingGroupSelector() {
   const artists = [...new Set(S.rsongs.map(x => recordingClassification(x).artist))];
   const selected = U.recArtistFilter || "";
-  return '<p class="note">RECはすべて本人用です。アーティスト → セッション日付 → 曲で表示します。</p><div class="chips"><button class="chip sm" data-act="rec-artist-filter" data-id="" aria-pressed="'+!selected+'">すべてのアーティスト</button>'+artists.map(artist => '<button class="chip sm" data-act="rec-artist-filter" data-id="'+h(artist)+'" aria-pressed="'+(selected===artist)+'">'+h(artist)+'</button>').join('')+'</div>';
+  return '<p class="note">RECはすべて本人用です。日付 → アーティスト → 曲で表示します。</p><div class="chips"><button class="chip sm" data-act="rec-artist-filter" data-id="" aria-pressed="'+!selected+'">すべてのアーティスト</button>'+artists.map(artist => '<button class="chip sm" data-act="rec-artist-filter" data-id="'+h(artist)+'" aria-pressed="'+(selected===artist)+'">'+h(artist)+'</button>').join('')+'</div>';
 }
 function selectRecordingGroup(id) {
   if (VIEW()) return;
@@ -7196,6 +7258,7 @@ function takeNo(slot) {
 
 /* いま扱っている枠。進行で人を押していればその人、なければ進行中の人。 */
 function focusRow() {
+  if (recordingPlanExpired() && U.view !== "recplan") return null;
   const rows = planRows();
   const foc = S.planFocus ? rows.find((r) => r.s.id === S.planFocus) : null;
   const scheduled = !U.recSchedulePaused && U.recScheduleId ? rows.find(r => r.s.id === U.recScheduleId) : null;
@@ -7292,8 +7355,7 @@ function recBar() {
   return `${tabs ? `<div class="sectabs">${tabs}</div>` : ""}${subTabs}
   <div class="aubar rec-tools">
     <div class="rec-tools-meta">
-      <button class="chip sm" data-act="goplan">進行表</button>
-      <button class="chip sm" data-act="recschedule" aria-pressed="${!U.recSchedulePaused}">${U.recSchedulePaused ? "予定に合わせる" : "自動切替中"}</button>
+      ${recordingPlanExpired() ? '' : '<button class="chip sm" data-act="goplan">進行表</button><button class="chip sm" data-act="recschedule" aria-pressed="'+!U.recSchedulePaused+'">'+(U.recSchedulePaused ? '予定に合わせる' : '自動切替中')+'</button>'}
       ${live ? `<span class="rec-person">${h(live.s.name)}${live.done ? " · 終了" : ""}</span>` : '<span class="grow"></span>'}
       ${live && (live.live || live.scheduled) ? '<span id="pcd">—</span>' : ""}
       <button class="chip sm" data-act="draw" aria-label="手書き" aria-pressed="${!!U.draw}">✎</button>
@@ -7340,13 +7402,14 @@ function recScheduleClock(at = Date.now()) {
   return {day:p.year+"-"+p.month+"-"+p.day, year:Number(p.year), month:Number(p.month), date:Number(p.day), seconds:Number(p.hour)*3600+Number(p.minute)*60+Number(p.second)};
 }
 function recScheduledRow(at = Date.now()) {
+  if (recordingPlanExpired(at)) return null;
   const clock = recScheduleClock(at);
   const rows = planRows().filter(r => {
-    const text = String(r.s.day || "").trim();
+    const text = String(r.s.date || r.s.day || "").trim();
     const full = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(text);
     const short = /^(\d{1,2})\s*\/\s*(\d{1,2})$/.exec(text);
     const today = full ? Number(full[1])===clock.year && Number(full[2])===clock.month && Number(full[3])===clock.date
-      : short && Number(short[1])===clock.month && Number(short[2])===clock.date;
+      : short && (!S.plan.year || Number(S.plan.year)===clock.year) && Number(short[1])===clock.month && Number(short[2])===clock.date;
     return today && !r.s.scheduleTimeUnconfirmed && !r.done && Number.isFinite(r.pS) && Number.isFinite(r.pE) && r.pS>=0 && r.pE<=1440 && r.pE>r.pS && clock.seconds>=r.pS*60 && clock.seconds<r.pE*60;
   });
   return rows.length===1 ? {...rows[0],scheduled:true,left:rows[0].pE*60-clock.seconds} : null;
@@ -8349,7 +8412,7 @@ function viewPrint() {
 function viewSetup() {
   if (VIEW()) {
     // 公演選択は編集側と同じ最新順。フォルダの開閉で公演を隠さない。
-    const allShows = showsFor();
+    const allShows = performanceSelectionOrder(showsFor());
     const curFolder = folderOf(S.shows.find((x) => x.id === S.showId));
     const unreadIn = (sid) => S.songs.filter((x) => x.showId === sid && isUnread(x)).length;
     const showRow = (sw) => {
@@ -8357,7 +8420,7 @@ function viewSetup() {
       return `<div class="row card" style="margin-bottom:8px;padding:12px;${sw.id === S.showId ? "outline:1px solid var(--accent)" : ""}">
       <button class="grow" style="text-align:left;min-width:0" data-act="useshow" data-id="${sw.id}">
         <div class="clamp2" style="${sw.id === S.showId ? "color:var(--accent)" : ""}">${h(sw.name)}</div>
-        ${folderOf(sw) ? `<div style="font-size:10px;color:var(--dim)">${h(folderOf(sw))}</div>` : ""}
+        ${folderOf(sw) && folderOf(sw) !== sw.name ? `<div style="font-size:10px;color:var(--dim)">${h(folderOf(sw))}</div>` : ""}
         <div style="font-size:11px;color:var(--dim)">${S.songs.filter((x) => x.showId === sw.id).length}曲 ・ ${NOTES().filter((n) => n.showId === sw.id).length}件</div>
       </button>
       ${un ? `<span style="font-size:11px;color:var(--accent);font-weight:700">未読${un}</span>` : ""}</div>`;
@@ -8384,13 +8447,13 @@ function viewSetup() {
 
   if (S.recMode) return viewSetupRec();
 
-  const allShows = showsFor();
+  const allShows = performanceSelectionOrder(showsFor());
   const curFolder = folderOf(S.shows.find((x) => x.id === S.showId));
   const showRow = (sw) => `<div class="row card" data-drop="s:${sw.id}" style="margin-bottom:8px;padding:10px 12px;${sw.id === S.showId ? "outline:1px solid var(--accent)" : ""}">
       <span class="grip" data-drag="show:${sw.id}">⣿</span>
       <button class="grow" style="text-align:left;min-width:0" data-act="useshow" data-id="${sw.id}">
         <div class="clamp2" style="${sw.id === S.showId ? "color:var(--accent)" : ""}">${h(sw.name)}</div>
-        ${folderOf(sw) ? `<div style="font-size:10px;color:var(--dim)">${h(folderOf(sw))}</div>` : ""}
+        ${folderOf(sw) && folderOf(sw) !== sw.name ? `<div style="font-size:10px;color:var(--dim)">${h(folderOf(sw))}</div>` : ""}
         <div style="font-size:11px;color:var(--dim)">${S.songs.filter((x) => x.showId === sw.id).length}曲 ・ ${NOTES().filter((n) => n.showId === sw.id).length}件${sw.id === S.showId ? " ・ 記録中" : ""} ・ 配信先：${h(showDeliveryLabel(sw))}</div>
       </button>
       <button class="organize-more" data-act="show-actions" data-id="${sw.id}" aria-label="${h(sw.name)}の操作">⋯</button>
@@ -8443,11 +8506,11 @@ function viewSetup() {
       ${liveGroups().map((g) => `<button class="chip sm" data-act="showfilter" data-id="${g.id}"
         style="${U.showFilter === g.id ? "background:var(--accent);color:#0A0A0A" : ""}">${h(groupDisplayName(g))}</button>`).join("")}
     </div>` : ""}
-    <details class="card" data-performance-selector open><summary>公演を選ぶ・追加</summary>
+    <details class="card" data-performance-selector open><summary>公演を選ぶ・追加</summary><p class="note">最新の日付順 · 日付のない公演は最後に表示</p>
     <h4 class="head">公演</h4>
     <div class="organize-create"><button class="primary" data-act="newshow">＋ 公演を追加</button><button class="chip" data-act="newfolder">＋ フォルダ</button></div>
     ${shows}
-    ${folderNames().length ? `<details><summary>フォルダを管理</summary>${folderNames().map(name=>`<div class="row card" data-drop="f:${h(name)}"><span class="grow">${h(name)}</span><button class="chip sm" data-act="newshow" data-folder="${h(name)}">＋公演</button><button class="organize-more" data-act="frename" data-id="${h(name)}" aria-label="${h(name)}の名前を変更">⋯</button></div>`).join("")}</details>` : ""}
+    ${selectionFolderNames().length ? '<button class="chip sm" data-act="manage-folders">フォルダを管理</button>' : ""}
     ${U.showFilter === "__archive__" ? '<button class="ghost" data-act="showfilter" data-id="">通常の公演に戻る</button>' : ''}
 
     </details>
@@ -8456,8 +8519,8 @@ function viewSetup() {
     ${cur.length ? bar : ""}
     ${songs}
     ${!activeShow ? `<p class="note">このグループの公演を選択するか、新しい公演を追加してください。</p>` : `<div class="card">
-      <button class="primary" data-act="pickfile" style="margin-bottom:8px">歌詞・歌割のWord / PDF / Excel を選ぶ（複数可）</button>
-      <div style="font-size:11px;color:var(--dim);margin-top:6px">取り込み先：${h(activeShow.name)} ・ ${h(group().name || "")}</div>
+      <button class="primary" data-act="pickfile" style="margin-bottom:8px">歌割り・歌詞ファイルを読み込む（Word/PDF/Excel）</button>
+      <div style="font-size:11px;color:var(--dim);margin-top:6px">取り込み先：${h(activeShow.name)} ・ ${h(group().name || "")}</div>${typeof PrivatePreparationUI !== "undefined" ? PrivatePreparationUI.settingsHTML() : ""}
     </div>`}
 
 
@@ -9887,6 +9950,7 @@ document.addEventListener("click", async (e) => {
       render();
       break;
     }
+    case "manage-folders": U.menu = {kind:"organize",mode:"folders"}; renderSheet(); break;
     case "frename": U.menu = {kind:"organize",mode:"folder",id}; renderSheet(); break;
     case "fup": case "fdown": {
       const names = groupShows(S.shows.filter((x) => !x.hidden)).map(([k]) => k).filter(Boolean);
@@ -11633,12 +11697,28 @@ function schedulePush() {
 // 1つのグループにだけ送る。お知らせのように相手が決まっている時に使う。
 // 全グループへ送ると、GitHubの送信回数をむだに使って「混み合っています」になりやすい。
 // 配信状態の変化だけで歌詞や指摘画面を作り直さない。
+function recoveryPublicationHolds() {
+  if (typeof startupRecoveryNetworkHold === "undefined" || !startupRecoveryNetworkHold || typeof S === "undefined") return [];
+  return (S.recoveryDelivery?.targets || []).filter(t => S.recoveryDelivery.version !== 2 || t.status !== "ready").map(t => {
+    const name = S.groups.find(g => g.id === t.groupId)?.name || t.groupName || "配信先";
+    const unknown = ["sending", "uncertain"].includes(t.status);
+    const reason = unknown ? "配信結果の確認待ち" : t.status === "prepared" ? "接続設定の保存確認待ち" : "配信保留（復旧状況を確認してください）";
+    return {groupId:t.groupId, unknown, message:name + "：" + reason};
+  });
+}
+function publicationStatusText() {
+  const held = recoveryPublicationHolds();
+  if (!held.length) return pushState;
+  if (held.some(t => t.unknown)) return "配信結果の確認待ち（" + held.length + "件）";
+  return (pushState === "送信中" ? "送信中・" : "") + "配信保留（" + held.length + "件）";
+}
 function renderPublishStatus() {
   if (U.view === "setup") { render(true); return; }
   const status = app.querySelector("[data-push-state]");
   if (status) {
-    status.textContent = pushState ? " ・ " + pushState : "";
-    status.style.color = /未送信|保留|一部送信/.test(pushState) ? "var(--bad)" : "var(--dim)";
+    const text = publicationStatusText();
+    status.textContent = text ? " ・ " + text : "";
+    status.style.color = /未送信|保留|一部送信|確認待ち|結果不明/.test(text) ? "var(--bad)" : "var(--dim)";
   }
 }
 
@@ -11654,7 +11734,9 @@ async function publishOne(gid) {
   lastPushAt = Date.now();
   let sent = false;
   try {
-    sent = (await gistPush(g.id, true)) === "sent";
+    const result = await gistPush(g.id, true);
+    sent = result === "sent";
+    if (!sent && result !== "same") throw new Error("送信は完了していません。配信の復旧状況を確認してください。");
     publishIssues = g.publishWarning ? [g.name + "：" + g.publishWarning] : [];
     const d = new Date();
     pushState = `公開済 ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
@@ -11669,6 +11751,8 @@ async function publishOne(gid) {
       pushTimer = setTimeout(() => { pushTimer = null; pushOne(gid); }, wait);
     } else { pushState = e.publicationUnknown ? "配信結果不明（設定で確認・再送信）" : "未送信（設定で原因を確認）"; publishIssues = [g.name + "：" + e.message]; }
   }
+  publishIssues = [...new Set(publishIssues.concat(recoveryPublicationHolds().map(t => t.message)))];
+  pushState = publicationStatusText();
   renderPublishStatus();
   return {sent, state:pushState};
 }
@@ -11698,7 +11782,11 @@ async function publishGroups(silent) {
   if (!recordingInboxCanWrite()) return false;
   const live = S.groups.filter((g) => g.gistId && !privateDeliveryGroup(g)
     &&(typeof startupRecoveryNetworkHold==='undefined'||!startupRecoveryNetworkHold||typeof RecoveryDelivery!=='undefined'&&RecoveryDelivery.canPublish(g.id)));
-  if (!S.ghToken || !live.length) return;
+  if (!S.ghToken || !live.length) {
+    const held = recoveryPublicationHolds();
+    if (held.length) { publishIssues = held.map(t => t.message); pushState = publicationStatusText(); renderPublishStatus(); }
+    return;
+  }
   pushState = "送信中"; renderPublishStatus();
   lastPushAt = Date.now();
   const failed = [];
@@ -11706,7 +11794,11 @@ async function publishGroups(silent) {
   const gone = [];
   let sent = 0, limited = 0, unknown = 0;
   for (const g of live) {
-    try { if ((await gistPush(g.id, silent === "force")) === "sent") sent++; }
+    try {
+      const result = await gistPush(g.id, silent === "force");
+      if (result === "sent") sent++;
+      else if (result !== "same") failed.push(g.name + "：送信は完了していません。配信の復旧状況を確認してください。");
+    }
     catch (e) {
       if (e.status === 404) { gone.push(g); }
       else if (e.status === 429) {
@@ -11722,8 +11814,9 @@ async function publishGroups(silent) {
     }
   }
   if (limited) {
-    publishIssues = failed;
+    publishIssues = failed.concat(recoveryPublicationHolds().map(t => t.message));
     pushState = unknown ? "配信結果不明・一部順番待ち（設定で確認）" : "順番待ち" + (limitedAt ? " " + limitedAt + "頃" : "");
+    pushState = publicationStatusText();
     if (silent !== true) alert("GitHubへの送信が混み合っています。\n記録は端末に残っていて、少し待つと自動で送り直します。");
     renderPublishStatus();
     return;
@@ -11747,6 +11840,8 @@ async function publishGroups(silent) {
     if (publishIssues.length) pushState = "送信済・一部公演は保留";
     else if (silent === "force" && !sent) pushState += "（変更なし）";
   }
+  publishIssues = [...new Set(publishIssues.concat(recoveryPublicationHolds().map(t => t.message)))];
+  pushState = publicationStatusText();
   renderPublishStatus();
 }
 
@@ -13044,6 +13139,7 @@ async function readSyncBackup(target) {
 }
 // その場で両方向に揃える
 async function syncNow() {
+  if(typeof startupCanCommunicate==='function'&&!startupCanCommunicate()){alert('復旧保護中のため、クラウドへ送信していません。現在の内容をファイルに保存してください。');return false;}
   const recordingInboxRelease = enterRecordingInboxEditor();
   if (!recordingInboxRelease) return false;
   try {
@@ -13055,7 +13151,7 @@ async function syncNow() {
   try {
     commitFields();
     const result = await checkOther(true);
-    if (result === "busy" || result === "unlinked") throw new Error("接続状態を確認できません。送信せずに中止しました。");
+    if (result === false || result === "busy" || result === "unlinked") throw new Error("接続状態を確認できません。送信せずに中止しました。");
     if (result === "conflict") {
       alert("クラウドと手元の内容が違います。どちらを採るか確認してください。手元からは送信していません。");
       return;

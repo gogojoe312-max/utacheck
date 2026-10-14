@@ -453,14 +453,51 @@ test('merge correctly remaps every song, lyric library, note, memo, substitution
   assert.equal(out.subs.at(-1).songIdx,4);assert.equal(out.gsubs.at(-1).songIdx,5);
   for(const field of ['notes','memos','subs','gsubs'])for(const row of out[field])assert.equal(row.showId,out.songs[row.songIdx].showId);
 });
-test('merge preserves remote roster order and adds only managed-required local names',()=>{
+test('merge preserves the complete remote formal roster and adds only managed-required known participants',()=>{
   const f=mergeFixture(),out=API.mergePublication(f.target,f.remote,f.local).payload;
   assert.deepEqual(out.members.slice(0,f.remote.members.length),f.remote.members);
-  assert.deepEqual(out.rosters['Fixture group'].slice(0,2),f.remote.rosters['Fixture group']);
+  assert.deepEqual(out.rosters,f.remote.rosters);
   for(const name of ['Managed singer','Direct singer','Managed note singer','Managed substitute']){
-    assert(out.members.some(member=>member.name===name));assert(out.rosters['Fixture group'].includes(name));
+    assert(out.members.some(member=>member.name===name));assert(!out.rosters['Fixture group'].includes(name));
   }
   assert(!out.members.some(member=>member.name==='HELD_LOCAL_MEMBER'));assert(!out.rosters['Fixture group'].includes('HELD_LOCAL_MEMBER'));
+});
+test('recovery never creates a missing or empty formal roster from lyric participants',()=>{
+  for(const roster of [undefined,{}, {'Fixture group':[]}]){
+    const f=mergeFixture();
+    if(roster===undefined)delete f.remote.rosters;else f.remote.rosters=roster;
+    const out=API.mergePublication(f.target,f.remote,f.local).payload;
+    assert.equal(Object.hasOwn(out,'rosters'),Object.hasOwn(f.remote,'rosters'));
+    assert.deepEqual(out.rosters,f.remote.rosters);
+    assert(out.members.some(member=>member.name==='Managed singer'));
+  }
+});
+test('unknown labels, locations and note references cannot become members during recovery',()=>{
+  const f=mergeFixture(),labels=['A','全','東京','(','Unknown note reference','Unknown substitute'];
+  f.local.lib[1].order.push(...labels);
+  f.local.lib[1].groups.B=['Unknown block reference'];
+  f.local.lib[1].lines[0][0]='Unknown direct label';
+  f.local.notes[1].memberNames.push('Unknown note reference');
+  f.local.subs[0].names.push('Unknown substitute');
+  const out=API.mergePublication(f.target,f.remote,f.local).payload;
+  for(const name of [...labels,'Unknown block reference','Unknown direct label'])assert(!out.members.some(member=>member.name===name),name);
+  assert.deepEqual(out.rosters,f.remote.rosters);
+  assert(out.lib.some(entry=>entry.order.includes('東京')),'original lyric metadata stays intact');
+  assert(out.notes.some(note=>note.memberNames.includes('Unknown note reference')),'existing note contents stay intact');
+  assert.deepEqual(out.members.slice(0,f.remote.members.length),f.remote.members);
+});
+test('an explicit same-group roster participant may be used without editing the destination roster',()=>{
+  const f=mergeFixture();f.local.rosters['Fixture group'].push('Roster-only singer');
+  f.local.lib[1].order.push('Roster-only singer');
+  const out=API.mergePublication(f.target,f.remote,f.local).payload;
+  assert(out.members.some(member=>member.name==='Roster-only singer'));
+  assert.deepEqual(out.rosters,f.remote.rosters);
+});
+test('foreign group rosters cannot supply people to an existing-destination recovery',()=>{
+  for(const side of ['remote','local']){
+    const f=mergeFixture();f[side].rosters['Foreign group']=['Foreign singer'];
+    fails(side==='remote'?'remote-publication-invalid':'payload-publication-invalid',()=>API.mergePublication(f.target,f.remote,f.local));
+  }
 });
 test('subsequent merge replaces previously managed content while original protections remain exact',()=>{
   const f=mergeFixture(),first=API.mergePublication(f.target,f.remote,f.local),current=clone(first.payload),changed=clone(f.local);
