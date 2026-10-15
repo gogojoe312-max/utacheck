@@ -257,6 +257,7 @@ async function checkDotConnection(page,width){
  assert.equal(url.searchParams.get('target_name'),'gogojoe312-max');
  assert((await settings.innerText()).includes('shinkou-data'));
  await settings.locator('[data-private-preparation-token]').fill(token);
+ assert.equal(await settings.locator('[data-private-preparation-token]').inputValue(),token,'Credential input must not be intercepted as a song edit');
  assert.equal(await settings.locator('[data-private-preparation-token]').getAttribute('type'),'password');
  await assertFits(page);
  await page.evaluate(()=>{document.activeElement?.blur();renderPointers.clear();scrollingUntil=0;render(true);});

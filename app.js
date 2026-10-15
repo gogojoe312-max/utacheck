@@ -9129,7 +9129,7 @@ function viewSetup() {
 // Hold editable fields until the pre-edit restore point has been verified.
 document.addEventListener('focusin', async event => {
   const field=event.target;
-  if (VIEW() || preview || !field || !/^(INPUT|TEXTAREA)$/.test(field.tagName) || field.type==='file' || field.readOnly || field.disabled || ['checkbox','radio','button','submit'].includes(field.type)) return;
+  if (VIEW() || preview || !field || !/^(INPUT|TEXTAREA)$/.test(field.tagName) || field.type==='file' || field.matches?.('[data-private-preparation-token]') || field.readOnly || field.disabled || ['checkbox','radio','button','submit'].includes(field.type)) return;
   field.readOnly=true;
   if (await automaticBackupBeforeEdit('text-edit') && field.isConnected) field.readOnly=false;
 });
