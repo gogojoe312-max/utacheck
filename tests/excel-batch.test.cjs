@@ -6,17 +6,18 @@ const XLSX=require('../vendor/xlsx.full.min.js');
 const source=fs.readFileSync(path.join(__dirname,'../app.js'),'utf8');
 function fn(name){const i=source.indexOf('function '+name+'(');assert(i>=0,name);return source.slice(source.lastIndexOf('\n',i)+1,source.indexOf('\n}',i)+2);}
 function setup(overrides={}){
- let id=0;const alerts=[],captures=[];
- const c=testContext({XLSX,Uint8Array,TextDecoder,Blob,Date,Promise,clearTimeout,
-  setTimeout:(f,ms)=>setTimeout(f,ms>=5000?25:ms),
+ let id=0;const alerts=[],captures=[],originals=new Map();
+ const c=testContext({XLSX,Uint8Array,DataView,TextDecoder,Blob,Date,Promise,clearTimeout,crypto:require('node:crypto').webcrypto,
+  setTimeout:(f,ms)=>setTimeout(f,ms>=5000?100:ms),
   uid:()=>String(++id),recSong:()=>null,S:{rsongs:[],songs:[],notes:[],groups:[],rosters:{},groupId:'group',showId:'show',shows:[]},U:{view:'setup'},
   VIEW:()=>false,rememberViewSelection(){},render(){},save(){},autoSubs(){},showDeliveryGroupId:()=>'',alert:m=>alerts.push(m),confirm:()=>false,
   sigOf:s=>s.title,songName:s=>s.title,copyRecords:()=>({lost:0}),
   addMember:n=>({name:n,id:n}),buildSong:p=>({...p,id:String(++id)}),
   putClip:async(key,blob)=>captures.push({key,blob}),...overrides});
+ const put=c.putClip;c.putClip=async(key,blob)=>{await put(key,blob);originals.set(key,blob);};c.getClip=async key=>originals.get(key);
  vm.runInContext(source.match(/^const NAMESEP = .+$/m)[0]+source.match(/^const HAMO_RE = .+$/m)[0]+source.match(/^const cleanName = .+$/m)[0],c);
  vm.runInContext('const looksName = v => nameScore(v) >= 0.6; const SONGS=()=>S.recMode ? S.rsongs : S.songs.filter(s=>s.showId===S.showId);',c);
- for(const n of ['ensurePersonalPrivateGroup','fileFailureReason','showFileReport','cleanText','softText','stripParens','splitNames','nameScore','pickSheet','readBubbles','trimExcelRange','parseXLSX','finalize','compareSongTitles','sortSongsByTitle','importTimeout','captureImportFiles','handleFiles','loadRecDocs','importSelection']) vm.runInContext(fn(n),c);
+ for(const n of ['startupExcelWithinBudget','startupExcelDigest','storeOriginalExcel','ensurePersonalPrivateGroup','fileFailureReason','showFileReport','cleanText','softText','stripParens','splitNames','nameScore','pickSheet','readBubbles','trimExcelRange','parseXLSX','finalize','compareSongTitles','sortSongsByTitle','importTimeout','captureImportFiles','handleFiles','loadRecDocs','importSelection']) vm.runInContext(fn(n),c);
  return {c,alerts,captures};
 }
 function workbook(n,type='xlsx'){
@@ -30,7 +31,7 @@ test('mixed Excel imports keep original bytes and place numbered encores after t
  await c.handleFiles(f);assert.deepEqual(Array.from(c.S.songs,s=>s.title),['M1','M2','M10','M16','ＥＮ１_アンコール','en 2_続き','EN10_最後']);
  assert(c.S.songs.every(s=>s.lines.filter(r=>r[1]).length===3));assert.equal(c.U.songIdx,6);assert.equal(c.U.view,'live');assert.equal(c.U.busy,'');
  assert.equal(alerts.length,0);assert.equal(captures.length,7);assert(c.S.songs.every(s=>s.xls===1));
- const expected=[f[6],f[3],f[1],f[5],f[4],f[2],f[0]];for(let i=0;i<expected.length;i++)assert.deepEqual(Buffer.from(await captures[i].blob.arrayBuffer()),Buffer.from(await expected[i].arrayBuffer()));
+ const expected=[f[6],f[3],f[1],f[5],f[4],f[2],f[0]];for(let i=0;i<expected.length;i++){assert.match(c.S.songs[i].xlsSourceId,/^sha256-[a-f0-9]{64}$/);assert.deepEqual(Buffer.from(await (await c.getClip('xls:'+c.S.songs[i].xlsSourceId)).arrayBuffer()),Buffer.from(await expected[i].arrayBuffer()));}
  const other={id:'other',showId:'other-show',title:'EN1_別公演'};c.S.songs.splice(1,0,other);
  await c.handleFiles([file('M15.xlsx',workbook(15))]);
  assert.deepEqual(Array.from(c.S.songs.filter(s=>s.showId==='show'),s=>s.title),['M1','M2','M10','M15','M16','ＥＮ１_アンコール','en 2_続き','EN10_最後']);
