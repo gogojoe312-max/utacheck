@@ -133,3 +133,41 @@ for(const changed of [false,true])test('material operation rechecks prepared sou
  if(changed){assert.equal(result.status,'conflict');assert.equal(result.code,'PREPARATION_SOURCE_CHANGED');assert.deepEqual(clone(f.run('S')),baseline);}
  else{assert.equal(result.status,'applied');assert.equal(f.run("S.privatePreparations['new-material'].type"),'material-update');}
 });
+
+test('private source failure shows a fixed stage and reason while state and credentials stay unchanged',async()=>{
+ const cases=[
+  ['HTTP_401','identity','GitHubの本人確認','401'],
+  ['HTTP_403','repository','非公開の保存先の確認','403'],
+  ['HTTP_404','contents','更新ファイルの確認','404'],
+  ['HTTP_404','blob','更新ファイル本体の読取','404'],
+  ['OWNER_MISMATCH','identity','GitHubの本人確認','本人アカウントと一致しません'],
+  ['REPOSITORY_NOT_PRIVATE','repository','非公開の保存先の確認','非公開の保存先であることを確認できません'],
+  ['HTTP_429','repository','非公開の保存先の確認','429'],
+  ['HTTP_503','contents','更新ファイルの確認','GitHub側でエラー'],
+  ['TIMEOUT','identity','GitHubの本人確認','時間を超えました'],
+  ['FETCH_FAILED','repository','非公開の保存先の確認','通信が完了しませんでした']
+ ];
+ for(const [code,stage,label,reason]of cases){
+  const f=await setup({source:async()=>({status:'unavailable',code,stage,message:'synthetic-private-error-details'})});
+  const before=f.run('JSON.stringify(S)'),db=f.idb.snapshot();
+  await f.c.PrivatePreparationUI.receive(true);
+  const html=f.c.PrivatePreparationUI.settingsHTML();
+  assert(html.includes(label),stage);assert(html.includes(reason),code);
+  assert.doesNotMatch(html,/synthetic-token|synthetic-private-error-details|https:\/\/api\.github\.com/);
+  assert.equal(f.c.PrivatePreparationUI.getStatus().stage,stage);
+  assert.equal(f.reads,1);assert.equal(f.run('JSON.stringify(S)'),before);assert.deepEqual(f.idb.snapshot(),db);
+  assert.equal(f.localWrites.length,0);assert.equal(f.calls.network.length,0);
+ }
+});
+test('unrecognized source diagnostics never expose arbitrary server strings or inherited property values',async()=>{
+ for(const code of ['synthetic-secret-error','constructor','toString','__proto__']){
+  const f=await setup({source:async()=>({status:'unavailable',code,stage:'synthetic-secret-stage',message:'synthetic-private-error-details'})});
+  const before=f.run('JSON.stringify(S)'),db=f.idb.snapshot();
+  await f.c.PrivatePreparationUI.receive(true);
+  const html=f.c.PrivatePreparationUI.settingsHTML();
+  assert(html.includes('受信内容を安全に確認できなかったため停止しました'));
+  assert.doesNotMatch(html,/synthetic-secret|synthetic-private|native code|function|synthetic-token/);
+  assert.equal(f.c.PrivatePreparationUI.getStatus().stage,undefined);
+  assert.equal(f.run('JSON.stringify(S)'),before);assert.deepEqual(f.idb.snapshot(),db);assert.equal(f.localWrites.length,0);
+ }
+});

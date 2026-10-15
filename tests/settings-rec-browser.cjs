@@ -1,6 +1,7 @@
 'use strict';
 // Isolated browser checks with synthetic data. Every external request is blocked.
 const playwright=require('playwright'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),http=require('node:http');
+const {checkAbsence}=require('./absence-view-browser-helper.cjs');
 const engine=process.env.BROWSER_ENGINE||'chromium';assert(['chromium','webkit'].includes(engine));
 const root=path.resolve(__dirname,'..'),out=process.env.QA_OUTPUT||path.join(require('node:os').tmpdir(),'utacheck-settings-qa',engine);
 fs.mkdirSync(out,{recursive:true});
@@ -106,15 +107,103 @@ async function readableTitles(page,rec){
    const beforeReload=await page.evaluate(()=>qaContent()),dialogCount=dialogs.length;
    await page.evaluate(()=>{U.sheet={lineIdx:0,lineEnd:null,range:null,anchor:null,point:null,quick:true,tags:[],memo:'未保存の合成入力',seq:[],rec:false,sel:['m']};document.querySelector('[data-act="app-update-reload"]').click();});
    assert.equal(dialogs.length,dialogCount+1);assert.equal(dialogs.at(-1).type,'alert');assert.equal(await page.evaluate(()=>U.sheet.memo),'未保存の合成入力');assert.equal(await page.evaluate(()=>qaContent()),beforeReload);
-   await page.evaluate(()=>{U.sheet=null;renderPointers.clear();scrollingUntil=0;render(true);});await info.locator(':scope > summary').click();assert.equal(await info.evaluate(el=>el.open),false);
+   await page.evaluate(()=>{document.activeElement?.blur();U.sheet=null;renderPointers.clear();scrollingUntil=0;pendingRender=false;render(true);});await page.locator('.note-quick-mask').waitFor({state:'detached'});await info.locator(':scope > summary').click();assert.equal(await info.evaluate(el=>el.open),false);
+   const absenceResult=await checkAbsence(page,width,{mode,assertFits,screenshot});
+   const excelCheck=await checkExcelReattach(page,width,dialogs);
    await page.evaluate(async()=>{await saveNow();saveErr=true;renderPointers.clear();scrollingUntil=0;render(true);});
    await page.waitForSelector('[data-settings-panel="storage"][open]');assert.equal(await page.getByText('いま保存できていません',{exact:false}).isVisible(),true);
    assert.equal(await page.locator('[data-settings-panel="data-save"] [data-act="bkfile"]').isVisible(),true);assert.equal(await page.locator('[data-settings-panel="connection-recovery"]').evaluate(el=>el.open),false);
    await assertFits(page);await screenshot(page,width,'save-error');assert.deepEqual(JSON.parse(await page.evaluate(()=>qaContent())),expected);
-   results.push({width,settings:true,pdfLiveRecView:true,fullTitles:true,recFolderRename:true,footer:true,draftPreserved:true,saveErrorVisible:true});await context.close();
+   results.push({width,...absenceResult,excelOriginal:excelCheck,settings:true,pdfLiveRecView:true,fullTitles:true,recFolderRename:true,footer:true,draftPreserved:true,saveErrorVisible:true});await context.close();
   }
   assert.deepEqual(errors,[]);assert.equal(blocked.filter(x=>x.method!=='GET').length,0);
   const report={passed:true,engine,results,errors,blocked,externalRequestsAllowed:0,syntheticDataOnly:true};
   fs.writeFileSync(path.join(out,'report.json'),JSON.stringify(report,null,2));console.log(JSON.stringify(report));
  }finally{await browser?.close();await new Promise(resolve=>server.close(resolve));}
 })().catch(error=>{console.error(error);process.exitCode=1;});
+
+
+async function checkExcelReattach(page,width,dialogs){
+ const saved=await page.evaluate(()=>({state:JSON.stringify(S),ui:JSON.stringify(U),hold:startupRecoveryNetworkHold,saveErr}));
+ const songId='qa-excel-song',showId='qa-excel-show';
+ try{
+  const files=await page.evaluate(async()=>{
+   document.activeElement?.blur();closeExcelExport();saveErr=false;S.viewer=false;S.recMode=false;
+   const title='合成Excel曲',make=(wrong=false)=>{
+    const wb=XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([['Synthetic cover to preserve'],['Cover sheet stays unchanged']]),'表紙');
+    const sheet=XLSX.utils.aoa_to_sheet([['甲',wrong?'Unrelated replacement lyric':'Synthetic lyric one to preserve'],['乙','Synthetic lyric two to preserve']]);
+    sheet['!cols']=[{wch:12},{wch:48}];sheet['!rows']=[{hpt:28},{hpt:32}];
+    XLSX.utils.book_append_sheet(wb,sheet,'歌割');
+    return new Uint8Array(XLSX.write(wb,{bookType:'xlsx',type:'array'}));
+   },correct=make(),wrong=make(true);
+   const file=new File([correct],title+'.xlsx',{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+   const parsed=await parseXLSX(file,correct,{sheetName:'歌割',state:S});
+   const addMember=name=>{const id='qa-excel-member-'+name;if(!S.members.some(m=>m.id===id))S.members.push({id,name});return{id};};
+   const so=buildSong(parsed,{addMember,uid:()=> 'qa-excel-song'});
+   Object.assign(so,{showId:'qa-excel-show',groupId:'qa-excel-group',xls:1,xlsSourceId:'qa-excel-missing',xlsAt:123});
+   S.groups.push({id:'qa-excel-group',name:'合成Excel検証',nopub:true});
+   S.shows.push({id:'qa-excel-show',groupId:'qa-excel-group',name:'合成Excel公演',nopub:true,absent:['qa-excel-member-甲']});
+   S.songs.push(so);S.groupId='qa-excel-group';S.showId='qa-excel-show';
+   const lineIdx=so.lines.findIndex(l=>l.t==='Synthetic lyric one to preserve');
+   if(lineIdx<0||so.lines[lineIdx].cell!=='A1'||so.lines[lineIdx].lcell!=='B1')throw Error('Synthetic workbook must retain expected cell mapping');
+   S.subs[S.showId+'|'+so.id]={[lineIdx]:['qa-excel-member-乙']};S.subsMan[S.showId+'|'+so.id]={[lineIdx]:1};
+   S.notes.push({id:'qa-excel-note',songId:so.id,showId:S.showId,lineIdx,memo:'合成指摘を保持',memberIds:['qa-excel-member-甲'],tags:[]});
+   S.memos[S.showId+'|'+so.id]='合成総括を保持';S.staffMemos[S.showId+'|'+so.id]='合成本人メモを保持';
+   Object.assign(U,{view:'absent',songIdx:0,menu:null,sheet:null,picker:false,overview:false,showFilter:'qa-excel-group',excelExport:null,fileReport:null});
+   startupRecoveryNetworkHold=true;renderPointers.clear();scrollingUntil=0;pendingRender=false;
+   save();await saveNow();if(saveErr)throw Error('Synthetic original state was not persisted');render(true);
+   window.qaExcelBytes={correct,wrong};
+   return {correct:Array.from(correct),wrong:Array.from(wrong),before:JSON.stringify(S)};
+  });
+  const initial=files.before,exportButton=page.locator('[data-act="xlsout"][data-id="'+songId+'"]');
+  await exportButton.click();
+  const reattach=page.locator('[data-act="excel-reattach"][data-id="'+songId+'"]');
+  await reattach.waitFor({state:'visible'});
+  assert.equal(await page.evaluate(()=>JSON.stringify(S)),initial,'Missing original must not change the song');
+  await assertFits(page);await screenshot(page,width,'excel-original-missing');
+  const wrongDialogCount=dialogs.length,wrongChooser=page.waitForEvent('filechooser'),wrongRejected=page.waitForEvent('dialog');
+  await reattach.click();await(await wrongChooser).setFiles({name:'合成Excel曲.xlsx',mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',buffer:Buffer.from(files.wrong)});
+  await wrongRejected;await page.waitForFunction(()=>!U.importing&&!U.busy);
+  assert(dialogs.length>wrongDialogCount,'Wrong workbook must explain rejection');
+  assert.equal(await page.evaluate(()=>JSON.stringify(S)),initial,'Same-title different lyrics must not change any state');
+  assert.equal(await page.evaluate(()=>S.songs.find(s=>s.id==='qa-excel-song').xlsSourceId),'qa-excel-missing');
+  await page.evaluate(async()=>{
+   U.menu=null;U.fileReport=null;renderPointers.clear();scrollingUntil=0;render(true);
+   await putClip('xls:qa-excel-song',new Blob([qaExcelBytes.wrong],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
+  });
+  await exportButton.click();await reattach.waitFor({state:'visible'});
+  const successDialogCount=dialogs.length,chooser=page.waitForEvent('filechooser');
+  await reattach.click();await(await chooser).setFiles({name:'合成Excel曲.xlsx',mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',buffer:Buffer.from(files.correct)});
+  await page.waitForFunction(()=>!U.importing&&!U.busy&&/^sha256-[a-f0-9]{64}$/.test(S.songs.find(s=>s.id==='qa-excel-song').xlsSourceId||''));
+  assert(dialogs.slice(successDialogCount).some(d=>d.message.includes('元Excelを再添付し、保存後の一致を確認しました。')));
+  const verified=await page.evaluate(async()=>{
+   const so=S.songs.find(s=>s.id==='qa-excel-song'),original=await getOriginalExcel(so,true),old=await getClip('xls:'+so.id),durable=await loadRaw();
+   return {state:JSON.stringify(S),source:so.xlsSourceId,stored:Array.from(new Uint8Array(await original.arrayBuffer())),old:Array.from(new Uint8Array(await old.arrayBuffer())),durable,packed:JSON.stringify(packState(S)),automaticExport:!!U.excelExport};
+  });
+  const expected=JSON.parse(initial),next=JSON.parse(verified.state),expectedSong=expected.songs.find(s=>s.id===songId),actualSong=next.songs.find(s=>s.id===songId);
+  for(const key of ['xlsSourceId','xls','xlsAt'])expectedSong[key]=actualSong[key];
+  assert.deepEqual(next,expected,'Reattachment changes only original-workbook metadata');
+  assert.deepEqual(verified.stored,files.correct);assert.deepEqual(verified.old,files.wrong,'Existing legacy workbook bytes remain unchanged');
+  assert.equal(verified.durable,verified.packed,'Successful reattachment is durably reread');assert.equal(verified.automaticExport,false);
+  await exportButton.click();await page.waitForFunction(()=>!!U.excelExport?.blob&&!U.exportingExcel);
+  const exported=await page.evaluate(async()=>{
+   const so=S.songs.find(s=>s.id==='qa-excel-song'),bytes=new Uint8Array(await U.excelExport.blob.arrayBuffer()),wb=XLSX.read(bytes,{type:'array',cellStyles:true});
+   return {state:JSON.stringify(S),name:U.excelExport.name,count:U.excelExport.count,failures:U.excelExport.failures,sheets:wb.SheetNames,cover:wb.Sheets['表紙'].A1.v,originalName:wb.Sheets['歌割'].A1.v,originalLyric:wb.Sheets['歌割'].B1.v,versionName:wb.Sheets[absentTab()].A1.v,versionLyric:wb.Sheets[absentTab()].B1.v,tab:absentTab()};
+  });
+  assert.equal(exported.state,verified.state,'Export preserves song IDs, lyrics and notes');
+  assert.equal(exported.count,1);assert.deepEqual(exported.failures,[]);assert(exported.name.endsWith('.xlsx'));
+  assert.deepEqual(exported.sheets,['表紙','歌割',exported.tab]);assert.equal(exported.cover,'Synthetic cover to preserve');
+  assert.equal(exported.originalName,'甲');assert.equal(exported.originalLyric,'Synthetic lyric one to preserve');
+  assert.equal(exported.versionName,'乙');assert.equal(exported.versionLyric,'Synthetic lyric one to preserve');
+  await assertFits(page);await screenshot(page,width,'excel-reattached-export');
+ }finally{
+  await page.evaluate(async saved=>{
+   closeExcelExport();S=JSON.parse(saved.state);Object.keys(U).forEach(key=>delete U[key]);Object.assign(U,JSON.parse(saved.ui));
+   startupRecoveryNetworkHold=saved.hold;saveErr=false;renderPointers.clear();scrollingUntil=0;pendingRender=false;save();await saveNow();
+   if(saveErr)throw Error('Synthetic test could not restore prior state');saveErr=saved.saveErr;delete window.qaExcelBytes;render(true);
+  },saved);
+  assert.equal(await page.evaluate(()=>JSON.stringify(S)),saved.state,'Excel check restores exact prior application state');
+ }
+ return {reattach:true,wrongWorkbookRejected:true,oldWorkbookPreserved:true,idsLyricsNotesPreserved:true,export:true};
+}

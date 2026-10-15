@@ -71,10 +71,10 @@ test('HTTP failures do not retry or leak GitHub response/error/token details', a
   for (const [stage, status] of [[0,401], [1,403], [2,404], [2,429], [2,500]]) {
     const responses = []; responses[stage] = () => json({error:TOKEN, message:'private server details'}, status);
     const f = fixture({responses}); const result = await read(f.options);
-    assert.deepEqual(result, {status:'unavailable', code:'HTTP_'+status}); assert.equal(f.calls.length, stage+1);
+    assert.deepEqual(result, {status:'unavailable', code:'HTTP_'+status, stage:['identity','repository','contents'][stage]}); assert.equal(f.calls.length, stage+1);
   }
   const f = fixture(); f.options.fetch = async() => {throw Error(TOKEN)};
-  assert.deepEqual(await read(f.options), {status:'unavailable', code:'FETCH_FAILED'});
+  assert.deepEqual(await read(f.options), {status:'unavailable', code:'FETCH_FAILED', stage:'identity'});
 });
 test('unexpected redirects are rejected even if a nonstandard fetch follows them', async () => {
   for (const extra of [{redirected:true}, {url:'https://evil.example/path'}]) {
@@ -144,4 +144,28 @@ test('no source storage, credential creation, logging, public fallback or privat
   for(const forbidden of ['localStorage','sessionStorage','indexedDB','console.','download_url','gogojoe','北原','OCHA','shinkou-data'])assert.ok(!source.includes(forbidden),forbidden);
   assert.equal((source.match(/https:\/\//g)||[]).length,1);
   assert.doesNotMatch(source,/method:\s*['"](?:POST|PUT|PATCH|DELETE)['"]/);
+});
+
+test('diagnostics preserve the failing stage without reading response bodies or trying another credential', async () => {
+  for (const [index,stage] of ['identity','repository','contents','blob'].entries()) {
+    for (const status of [401,403,404,429,500]) {
+      let bodyRead=false;
+      const responses=[];responses[index]=()=>({status,headers:{get:()=>null},body:{getReader(){bodyRead=true;throw Error('sensitive response body')}}});
+      const f=fixture({file:index===3?{encoding:'none',content:''}:undefined,responses});
+      const result=await read(f.options);
+      assert.deepEqual(result,{status:'unavailable',code:'HTTP_'+status,stage});
+      assert.equal(f.calls.length,index+1);assert.equal(bodyRead,false);
+      assert(f.calls.every(c=>c.init.method==='GET'&&c.init.headers.Authorization==='Bearer '+TOKEN));
+      assert.doesNotMatch(JSON.stringify(result),/sensitive response|synthetic-already-saved-token/);
+    }
+  }
+});
+test('owner and privacy checks identify their stage and keep downstream reads blocked', async () => {
+  for (const [responses,code,stage,count] of [
+    [[()=>json({login:'different-owner'})],'OWNER_MISMATCH','identity',1],
+    [[null,()=>json({private:false})],'REPOSITORY_NOT_PRIVATE','repository',2],
+    [[null,()=>json({private:true,full_name:'other/private',owner:{login:OWNER}})],'REPOSITORY_MISMATCH','repository',2]
+  ]) {
+    const f=fixture({responses});assert.deepEqual(await read(f.options),{status:'unavailable',code,stage});assert.equal(f.calls.length,count);
+  }
 });

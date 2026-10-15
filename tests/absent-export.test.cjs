@@ -7,7 +7,7 @@ const source=fs.readFileSync(require('node:path').join(__dirname,'../app.js'),'u
 function fn(name){const i=source.indexOf('function '+name+'(');assert(i>=0,name);return source.slice(source.lastIndexOf('\n',i)+1,source.indexOf('\n}',i)+2);}
 function setup(extra={}){
  const c=testContext({XLSX,Uint8Array,Uint32Array,DataView,TextEncoder,TextDecoder,Blob,File,Response,setTimeout,clearTimeout,console,
- U:{},S:{songs:[]},save(){},render(){},renderSheet(){},URL:{createObjectURL:()=> 'blob:test',revokeObjectURL(){}},...extra});
+ U:{},S:{songs:[]},inspectOriginalExcel:async()=>true,startupExcelDigest:async blob=>Buffer.from(await blob.arrayBuffer()).toString("base64"),storedOriginalExcelEntries:async()=>[],originalExcelSourceGroupAllowed:()=>true,save(){},render(){},renderSheet(){},URL:{createObjectURL:()=> 'blob:test',revokeObjectURL(){}},...extra});
  vm.runInContext(source.slice(source.indexOf('const CRCT ='),source.indexOf('\n\n',source.indexOf('  return { data: await zip(files, names), changed };'))),c);
  for(const n of ['fileFailureReason','showFileReport','importTimeout','closeExcelExport','presentExcelExport','excelSourceCandidates','getOriginalExcel','hasAbsentExportChanges','buildAbsentWorkbook','absentExportFilename','runAbsentExport','shareExcelExport'])vm.runInContext(fn(n),c);
  return c;
@@ -68,12 +68,12 @@ test('a failure preparing one song cannot stop later exports; all-failed reports
 
 test('missing originals never silently generate a different workbook layout',async()=>{
  const c=setup({getClip:async()=>null});
- await assert.rejects(c.buildAbsentWorkbook({id:'song',title:'曲',lines:[{t:'歌詞'}]},'欠席ver',{}),/元の書式を保つため/);
+ await assert.rejects(c.buildAbsentWorkbook({id:'song',title:'曲',lines:[{t:'歌詞'}]},'欠席ver',{}),/元Excelを再添付/);
 });
 test('missing original in a batch is reported while the available original keeps its worksheets',async()=>{
  const c=setup({getClip:async key=>key==='xls:good'?new Blob([fixture()]):null,alert:m=>{throw Error(m);},absentIds:()=>['a'],absentTab:()=> '欠席ver',showName:()=> '公演',absentEdits:()=>({A1:'橋田'})});
  await c.runAbsentExport([{id:'missing',title:'元なし',lines:[]},{id:'good',title:'元あり',sheetName:'歌割'}],true);
- assert.equal(c.U.excelExport.count,1);assert.match(c.U.excelExport.failures[0],/元なし/);assert.match(c.U.excelExport.failures[0],/元の書式/);
+ assert.equal(c.U.excelExport.count,1);assert.match(c.U.excelExport.failures[0],/元なし/);assert.match(c.U.excelExport.failures[0],/元Excelを再添付/);
  const zip=await c.unzip(await c.U.excelExport.blob.arrayBuffer());const wb=XLSX.read(zip.files[zip.order[0]],{type:'array'});
  assert.equal(wb.Sheets['歌割'].A1.v,'相馬');assert.equal(wb.Sheets['欠席ver'].A1.v,'橋田');assert(wb.Sheets['表紙']);
 });
@@ -84,14 +84,14 @@ test('previously duplicated shows locate the original workbook and preserve its 
  const c=setup({S:{songs:[original,copy],shows:[{id:'first'},{id:'second',from:'first'}]},getClip:async key=>key==='xls:original'?new Blob([fixture()]):null});
  const warnings=[];const data=await c.buildAbsentWorkbook(copy,'欠席ver',{A1:'橋田'},warnings);
  const wb=XLSX.read(data,{type:'array'});assert.equal(wb.Sheets['欠席ver'].A1.v,'橋田');assert.equal(wb.Sheets['歌割'].A1.v,'相馬');assert.equal(wb.Sheets['表紙'].A1.v,'表紙');
- assert.equal(warnings.length,0);assert.equal(copy.xlsSourceId,'original');
+ assert.equal(warnings.length,0);assert.equal(copy.xlsSourceId,undefined);
 });
 test('original references survive multiple duplicates and do not select a different arrangement by title',async()=>{
  const original={id:'original',title:'曲',showId:'first',sheetName:'歌割',xls:1,lines:[{t:'別の歌詞',cell:'A1',lcell:'B1'}]};
  const copy={id:'copy',title:'曲',showId:'second',sheetName:'歌割',lines:[{t:'今回の歌詞',cell:'A1',lcell:'B1'}]};
  const c=setup({S:{songs:[original,copy],shows:[{id:'first'},{id:'second',from:'first'}]},getClip:async key=>key==='xls:original'?new Blob([fixture()]):null});
  assert.equal(await c.getOriginalExcel(copy),null);
- copy.xlsSourceId='original';assert(await c.getOriginalExcel(copy));
+ copy.xlsSourceId='original';c.inspectOriginalExcel=async()=>false;assert.equal(await c.getOriginalExcel(copy),null);
 });
 
 test('new show duplicates keep the original-file reference and worksheet metadata',()=>{
@@ -104,4 +104,15 @@ test('deleting an original cannot delete a workbook referenced by another show',
  let removed=0;const c=setup({S:{songs:[{id:'copy',xlsSourceId:'original'}]},db:()=>{removed++;return Promise.resolve({transaction:()=>({objectStore:()=>({delete(){}})})});}});
  vm.runInContext(fn('delClip'),c);c.delClip('xls:original');assert.equal(removed,0);
  c.S.songs=[];c.delClip('xls:original');assert.equal(removed,1);
+});
+
+test('explicit worksheet names are decoded exactly and never fall back to the first sheet',async()=>{
+ const c=setup(),wb=XLSX.utils.book_new();
+ XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([['cover']]),'表紙');
+ XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([['original']]),'歌割 & 声');
+ const bytes=XLSX.write(wb,{type:'buffer',bookType:'xlsx',compression:true});
+ const data=(await c.addVersionTab(new Uint8Array(bytes),'欠席ver',{A1:'変更'},'歌割 & 声')).data;
+ const read=XLSX.read(data,{type:'array'});assert.equal(read.Sheets['欠席ver'].A1.v,'変更');
+ assert.equal(read.Sheets['歌割 & 声'].A1.v,'original');assert.equal(read.Sheets['表紙'].A1.v,'cover');
+ await assert.rejects(c.addVersionTab(new Uint8Array(bytes),'欠席ver',{A1:'変更'},'存在しない歌割'),/対象シート/);
 });

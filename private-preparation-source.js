@@ -51,7 +51,7 @@
     if (typeof requestFetch !== 'function' || typeof root.AbortController !== 'function'
         || typeof root.TextDecoder !== 'function' || typeof root.atob !== 'function') return {status:'unavailable', code:'UNSUPPORTED'};
     const controller = new root.AbortController();
-    let timedOut = false, timer;
+    let timedOut = false, timer, stage = 'identity';
     const abort = () => controller.abort();
     const active = () => {
       if (timedOut) fail('TIMEOUT');
@@ -84,10 +84,12 @@
       const identity = await request('/user', META_BYTES);
       if (typeof identity.login !== 'string' || identity.login.toLowerCase() !== owner.toLowerCase()) fail('OWNER_MISMATCH');
       const prefix = '/repos/' + encodeURIComponent(owner) + '/' + encodeURIComponent(repo);
+      stage = 'repository';
       const repository = await request(prefix, META_BYTES);
       if (repository.private !== true) fail('REPOSITORY_NOT_PRIVATE');
       if (typeof repository.full_name !== 'string' || repository.full_name.toLowerCase() !== (owner + '/' + repo).toLowerCase()
           || typeof repository.owner?.login !== 'string' || repository.owner.login.toLowerCase() !== owner.toLowerCase()) fail('REPOSITORY_MISMATCH');
+      stage = 'contents';
       const file = await request(prefix + '/contents/' + PATH, MAX_BYTES, 'application/vnd.github.object+json');
       if (file.type !== 'file' || file.path !== PATH || file.name !== 'prepared.json' || !['base64','none'].includes(file.encoding)
           || file.truncated === true || own(file, 'target') || own(file, 'submodule_git_url')) fail('INVALID_FILE');
@@ -98,6 +100,7 @@
         if (file.content !== '') fail('INVALID_FILE_CONTENT');
         // Large files have metadata only. Fetch this exact immutable blob from
         // the already-verified repository; never follow a supplied content URL.
+        stage = 'blob';
         blob = await request(prefix + '/git/blobs/' + file.sha, MAX_BYTES);
         if (blob.sha !== file.sha || blob.size !== file.size || blob.encoding !== 'base64' || blob.truncated === true) fail('BLOB_MISMATCH');
       }
@@ -115,7 +118,7 @@
       active();
       return {status:'ready', manifest, sourceSha:file.sha, sourcePath:PATH};
     } catch (error) {
-      return {status:'unavailable', code:timedOut ? 'TIMEOUT' : signal?.aborted ? 'ABORTED' : error?.preparationSourceCode || 'FETCH_FAILED'};
+      return {status:'unavailable', code:timedOut ? 'TIMEOUT' : signal?.aborted ? 'ABORTED' : error?.preparationSourceCode || 'FETCH_FAILED', stage};
     } finally {
       if (timer !== undefined) clearTimeout(timer);
       if (typeof signal?.removeEventListener === 'function') signal.removeEventListener('abort', abort);

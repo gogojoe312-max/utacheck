@@ -8,6 +8,25 @@
   &&!saving&&!syncing&&!manualSync&&!backupInFlight&&!publishInFlight&&!recordingInboxWriters&&!U.busy&&!U.importing&&!U.sheet&&!U.menu&&!U.showRecovery&&!typingNow()&&!renderPointers.size&&Date.now()>=scrollingUntil
   &&!(recordingInboxIntegration?.gate?.activeEditors||recordingInboxIntegration?.gate?.applying)
   &&!(typeof RecordingScheduleUI!=='undefined'&&RecordingScheduleUI.isApplying());}
+ function sourceFailureText(){
+  const stage={identity:'GitHubの本人確認',repository:'非公開の保存先の確認',contents:'更新ファイルの確認',blob:'更新ファイル本体の読取'}[status.stage];
+  const reasons={
+   HTTP_401:'保存済みのGitHub接続を受け付けてもらえませんでした（401）。',
+   HTTP_403:'GitHubに拒否されました（403）。アクセスの条件または一時的な制限を確認できません。',
+   HTTP_404:'対象が見つからないか、この接続からは読み取れません（404）。',
+   HTTP_429:'GitHubの利用制限により停止しました（429）。',
+   OWNER_MISMATCH:'保存済みの接続が、予定された本人アカウントと一致しません。',
+   REPOSITORY_NOT_PRIVATE:'予定された非公開の保存先であることを確認できません。',
+   REPOSITORY_MISMATCH:'保存先の識別情報が予定と一致しません。',
+   INVALID_CONFIG:'この端末に保存された接続設定の形式を確認できません。',
+   TIMEOUT:'応答を待つ時間を超えました。接続が戻ってから再確認してください。',
+   FETCH_FAILED:'通信が完了しませんでした。ネットワークまたはブラウザ側で止まった可能性があります。',
+   ABORTED:'確認が中断されました。',
+   INACTIVE:'確認中に端末の状態が変わったため停止しました。'
+  };
+  const reason=Object.prototype.hasOwnProperty.call(reasons,status.code)?reasons[status.code]:(/^HTTP_5[0-9]{2}$/.test(status.code||'')?'GitHub側でエラーが発生しました。時間をおいて再確認してください。':'受信内容を安全に確認できなかったため停止しました。');
+  return 'dot経由の更新をまだ受信できません。'+(stage?stage+'：':'')+reason+' 現在の記録と接続情報は保持しています。';
+ }
  function statusText(){
   if(status.kind==='applied')return 'dot経由の更新をこの端末へ保存しました。クラウドバックアップ・メンバー配信は別に確認してください。';
   if(status.kind==='current')return 'dot経由の更新は、この端末に反映済みです。';
@@ -15,13 +34,13 @@
   if(status.kind==='active-plan')return '進行中の枠が残っているため、予定の反映を待っています。実際には未開始なら、その枠の「その他」から開始状態だけ解除できます。';
   if(status.kind==='deferred')return '録音・入力が終わってから、dot経由の更新を自動で反映します。';
   if(status.kind==='missing-token')return '本人用の自動受信は未接続です。この端末のGitHub接続を確認する必要があります。';
-  if(status.kind==='access')return 'dot経由の更新をまだ受信できません。既存のGitHub接続では非公開の保存先を確認できませんでした。';
+  if(status.kind==='access')return sourceFailureText();
   if(status.kind==='conflict')return '更新内容と現在の曲・予定の対応を確認できず、反映を止めています。現在の記録は保持しています。';
   if(status.kind==='owner-required')return '安全な編集状態を確認するため、ほかの歌チェックを閉じて、この画面を開き直してください。';
   if(status.kind==='multiple-windows')return 'ほかの歌チェックの画面を閉じてから、この画面を開き直してください。現在の記録は保持しています。';
   if(status.kind==='unsupported')return 'このブラウザでは安全な自動反映を確認できません。現在の記録は保持しています。';
   if(status.kind==='unverified')return '更新内容の保存後確認が必要です。アプリを開き直してください。';
-  if(status.kind==='offline')return 'dot経由の更新を受信できません。接続が戻ったら再確認します。';
+  if(status.kind==='offline')return sourceFailureText();
   return 'dot経由の更新を、録音・入力をしていないときに自動で確認します。';
  }
  function setStatus(value){status=value;document.querySelectorAll?.('[data-private-preparation-status]').forEach(el=>el.textContent=statusText());}
@@ -129,7 +148,7 @@
    setStatus({kind:'checking'});
    const source=await PrivatePreparationSource.read({...config,token,isActive:()=>startupPhase==='ready'&&!document.hidden&&recordingInboxCanWrite()&&S.ghToken===token});
    if(source.status!=='ready'){
-    const code=source.code;setStatus({kind:code==='MISSING_TOKEN'?'missing-token':['OWNER_MISMATCH','REPOSITORY_NOT_PRIVATE','REPOSITORY_MISMATCH','HTTP_401','HTTP_403','HTTP_404'].includes(code)?'access':code==='UNSUPPORTED'?'unsupported':'offline',code});
+    const code=source.code,stage=['identity','repository','contents','blob'].includes(source.stage)?source.stage:undefined;setStatus({kind:code==='MISSING_TOKEN'?'missing-token':['OWNER_MISMATCH','REPOSITORY_NOT_PRIVATE','REPOSITORY_MISMATCH','HTTP_401','HTTP_403','HTTP_404'].includes(code)?'access':code==='UNSUPPORTED'?'unsupported':'offline',code,stage});
     return {status:status.kind,code};
    }
    const manifest=await PrivatePreparation.validate(source.manifest,config.owner);
