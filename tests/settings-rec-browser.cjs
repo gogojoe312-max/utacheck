@@ -59,7 +59,7 @@ async function readableTitles(page,rec){
     if(url.searchParams.has('app-update-check'))return route.fulfill({status:200,contentType:'text/html',body:'<script src="app.js?v=99.99.99"></script>'});return route.continue();});
    if(context.routeWebSocket)await context.routeWebSocket('**/*',socket=>{blocked.push({origin:'websocket',method:'CONNECT'});socket.close();});
    const page=await context.newPage();page.setDefaultTimeout(20000);let promptReply=null;
-   page.on('pageerror',e=>errors.push(e.message));
+   page.on('pageerror',e=>errors.push(e.stack||e.message));
    page.on('dialog',async dialog=>{dialogs.push({type:dialog.type(),message:dialog.message()});if(dialog.type()==='prompt'&&promptReply!==null){const reply=promptReply;promptReply=null;await dialog.accept(reply);}else await dialog.dismiss();});
    await page.goto(origin);await page.waitForFunction(()=>typeof normalStartupInitialized!=='undefined'&&normalStartupInitialized);await page.evaluate(seed);
    const original=await page.evaluate(()=>qaContent()),data=page.locator('[data-settings-panel="data-save"]');
@@ -104,7 +104,7 @@ async function readableTitles(page,rec){
    await info.locator('[data-act="app-update-check"]').click();await page.waitForFunction(()=>U.appUpdateVersion==='99.99.99');
    await info.locator('[data-act="app-update-reload"]').waitFor({state:'visible'});assert.equal(await info.evaluate(el=>el.open),true);
    const beforeReload=await page.evaluate(()=>qaContent()),dialogCount=dialogs.length;
-   await page.evaluate(()=>{U.sheet={memo:'未保存の合成入力'};});await info.locator('[data-act="app-update-reload"]').click();
+   await page.evaluate(()=>{U.sheet={lineIdx:0,lineEnd:null,range:null,anchor:null,point:null,quick:true,tags:[],memo:'未保存の合成入力',seq:[],rec:false,sel:['m']};document.querySelector('[data-act="app-update-reload"]').click();});
    assert.equal(dialogs.length,dialogCount+1);assert.equal(dialogs.at(-1).type,'alert');assert.equal(await page.evaluate(()=>U.sheet.memo),'未保存の合成入力');assert.equal(await page.evaluate(()=>qaContent()),beforeReload);
    await page.evaluate(()=>{U.sheet=null;renderPointers.clear();scrollingUntil=0;render(true);});await info.locator(':scope > summary').click();assert.equal(await info.evaluate(el=>el.open),false);
    await page.evaluate(async()=>{await saveNow();saveErr=true;renderPointers.clear();scrollingUntil=0;render(true);});
