@@ -55,7 +55,9 @@ async function readableTitles(page,rec){
   const allowedOrigin=new URL(origin).origin;
   browser=await playwright[engine].launch({headless:true});
   for(const width of [320,390]){
-   const context=await browser.newContext({viewport:{width,height:844},serviceWorkers:'block'});
+   const context=engine==='webkit'
+    ? await playwright.webkit.launchPersistentContext(fs.mkdtempSync(path.join(require('node:os').tmpdir(),'utacheck-webkit-')),{headless:true,viewport:{width,height:844},serviceWorkers:'block'})
+    : await browser.newContext({viewport:{width,height:844},serviceWorkers:'block'});
    await context.route('**/*',route=>{const request=route.request(),url=new URL(request.url());if(url.origin!==allowedOrigin||request.method()!=='GET'){blocked.push({origin:url.origin,method:request.method()});return route.abort('blockedbyclient');}
     if(url.searchParams.has('app-update-check'))return route.fulfill({status:200,contentType:'text/html',body:'<script src="app.js?v=99.99.99"></script>'});return route.continue();});
    if(context.routeWebSocket)await context.routeWebSocket('**/*',socket=>{blocked.push({origin:'websocket',method:'CONNECT'});socket.close();});
@@ -193,7 +195,7 @@ async function checkExcelReattach(page,width,dialogs){
   });
   assert.equal(exported.state,verified.state,'Export preserves song IDs, lyrics and notes');
   assert.equal(exported.count,1);assert.deepEqual(exported.failures,[]);assert(exported.name.endsWith('.xlsx'));
-  assert.deepEqual(exported.sheets,['表紙','歌割',exported.tab]);assert.equal(exported.cover,'Synthetic cover to preserve');
+  assert.deepEqual(exported.sheets,[exported.tab,'表紙','歌割']);assert.equal(exported.cover,'Synthetic cover to preserve');
   assert.equal(exported.originalName,'甲');assert.equal(exported.originalLyric,'Synthetic lyric one to preserve');
   assert.equal(exported.versionName,'乙');assert.equal(exported.versionLyric,'Synthetic lyric one to preserve');
   await assertFits(page);await screenshot(page,width,'excel-reattached-export');
