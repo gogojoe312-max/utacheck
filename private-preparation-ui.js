@@ -316,6 +316,14 @@
  for(const name of ['click','input','change','keydown','submit','pointerdown','drop'])document.addEventListener(name,event=>{if(applying){event.preventDefault();event.stopImmediatePropagation();}},true);
  document.addEventListener('click',event=>{if(!event.target.closest?.('[data-act="private-preparation-check"]'))return;event.preventDefault();event.stopImmediatePropagation();void receive(true);},true);
  document.addEventListener('click',event=>{if(!event.target.closest?.('[data-act="private-preparation-file"]'))return;event.preventDefault();event.stopImmediatePropagation();chooseFile();},true);
+ // Keep the password field focused until click captures its value. Blurring on
+ // pointerdown can flush a pending app render and replace the field beforehand.
+ const keepConnectionTarget=event=>{
+  if(event.button!==0||event.isPrimary===false)return;
+  if(event.target.closest?.('[data-act="private-preparation-connect"]')&&document.activeElement?.matches?.('[data-private-preparation-token]'))event.preventDefault();
+ };
+ document.addEventListener('pointerdown',keepConnectionTarget,{capture:true,passive:false});
+ document.addEventListener('mousedown',keepConnectionTarget,{capture:true,passive:false});
  document.addEventListener('click',event=>{
   const button=event.target.closest?.('[data-act="private-preparation-connect"]');if(!button)return;
   event.preventDefault();event.stopImmediatePropagation();
