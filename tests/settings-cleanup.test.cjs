@@ -33,7 +33,7 @@ test('normal settings keep backup visible and remove routine recovery and manual
 test('recovery hold uses the existing file backup action even with saved cloud credentials',()=>{
  const f=fixture({state:{ghToken:'synthetic-token',bkGistId:'synthetic-id',bkAt:123,bkHash:7}});f.c.startupRecoveryNetworkHold=true;
  const html=f.html(),shown=visible(html);
- assert.match(shown,/クラウド保存・他端末との同期は停止中/);assert.match(shown,/data-act="bkfile"/);assert.doesNotMatch(html,/data-act="bknow"/);
+ assert.match(shown,/クラウド保存・他端末同期は停止中/);assert.match(shown,/data-act="bkfile"/);assert.doesNotMatch(html,/data-act="bknow"/);
  assert.match(html,/recovery-original-backup-check/);assert.doesNotMatch(shown,/recovery-original-backup-check/);assert.doesNotMatch(html,/data-act="backup-restore"/);
  assert.doesNotMatch(html,/synthetic-token|synthetic-id/);
 });

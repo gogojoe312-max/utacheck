@@ -496,6 +496,7 @@
   }
   async function reconcile(){
     if(!ready()||session||pushing||publishInFlight||S.recoveryDelivery?.version!==2)return;pushing=true;let release;
+    const resolvedIssues=new Set();
     try{
       release=recordingInboxAdmitWriter();
       RecoveryDeliveryScope.plan(S,packetForBindings());
@@ -508,9 +509,15 @@
         if(remote.digest===target.pendingDigest){target.expectedRemoteSha256=remote.digest;if(g){g.lastKey=target.pendingKey;g.publishKeyPending=false;}}
         target.status='ready';delete target.pendingDigest;delete target.pendingKey;
         try{await persist();}catch(error){Object.keys(target).forEach(k=>delete target[k]);Object.assign(target,prior);if(g){g.lastKey=priorKey;g.publishKeyPending=priorPending;}throw error;}
+        const name=g?.name||target.groupName||'配信先';
+        if(S.groups.filter(group=>(group.name||'配信先')===name).length===1)for(const reason of ['配信結果の確認待ち','接続設定の保存確認待ち','配信保留（復旧状況を確認してください）',message({reconnectCode:'unknown'})])resolvedIssues.add(name+'：'+reason);
       }
       alert('既存先の送信結果を確認しました。この確認では再送していません。');render();
-    }catch(e){alert(message(e));}finally{release?.();pushing=false;}
+    }catch(e){alert(message(e));}finally{
+      if(typeof publishIssues!=='undefined'&&resolvedIssues.size)publishIssues=publishIssues.filter(issue=>!resolvedIssues.has(issue));
+      release?.();pushing=false;
+      if(resolvedIssues.size&&typeof renderPublishStatus==='function')renderPublishStatus();
+    }
   }
   document.addEventListener('click',e=>{
     const field=e.target,s=session;

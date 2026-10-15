@@ -1,0 +1,39 @@
+name: Regression checks
+on:
+  push:
+    branches: [main, 'codex/**']
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: regression-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Read the exact revision
+        env:
+          REPO_URL: https://github.com/${{ github.repository }}.git
+          CHECK_SHA: ${{ github.sha }}
+        run: |
+          git init .
+          git remote add origin "$REPO_URL"
+          git fetch --depth=1 origin "$CHECK_SHA"
+          git checkout --detach FETCH_HEAD
+      - name: Run data and behavior tests
+        run: node --test tests/*.test.cjs
+      - name: Install isolated test browsers
+        run: |
+          npm install --prefix "$RUNNER_TEMP/utacheck-browser" --no-save --package-lock=false playwright@1.56.1
+          "$RUNNER_TEMP/utacheck-browser/node_modules/.bin/playwright" install --with-deps chromium webkit
+      - name: Check Chromium layout and controls
+        env:
+          BROWSER_ENGINE: chromium
+        run: NODE_PATH="$RUNNER_TEMP/utacheck-browser/node_modules" node tests/settings-rec-browser.cjs
+      - name: Check WebKit layout and controls
+        env:
+          BROWSER_ENGINE: webkit
+        run: NODE_PATH="$RUNNER_TEMP/utacheck-browser/node_modules" node tests/settings-rec-browser.cjs

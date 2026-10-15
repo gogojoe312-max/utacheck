@@ -113,7 +113,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.12";
+const APP_VER = "16.41.58.13";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -3976,10 +3976,13 @@ const footerHTML = () => `
     <div style="text-align:center;color:var(--dim);font-size:11px;letter-spacing:.04em;margin:26px 0 4px">
       Created by Joe Takasaki
     </div>
-    <div style="text-align:center;color:var(--dim);font-size:10px;opacity:.6;margin-bottom:10px">${APP_VER}</div>
-    ${!VIEW() ? `<div class="card"><button class="ghost" data-act="app-update-check">アプリの更新を確認</button>
-      ${U.appUpdateText ? `<p class="note" role="status">${h(U.appUpdateText)}</p>` : ''}
-      ${U.appUpdateVersion && U.appUpdateVersion !== APP_VER ? '<button class="primary" data-act="app-update-reload">保存して開き直す</button>' : ''}</div>` : ''}`;
+    <div style="text-align:center;color:var(--dim);font-size:11px;margin-bottom:10px">
+      ${VIEW() ? APP_VER : `<details data-settings-panel="app-info" ${U.appInfoOpen ? "open" : ""}><summary>バージョン ${APP_VER}</summary>
+        <div class="card"><button class="chip sm" data-act="app-update-check">更新を確認</button>
+          ${U.appUpdateText ? `<p class="note" role="status">${h(U.appUpdateText)}</p>` : ''}
+          ${U.appUpdateVersion && U.appUpdateVersion !== APP_VER ? '<button class="primary" data-act="app-update-reload">保存して開き直す</button>' : ''}
+        </div></details>`}
+    </div>`;
 
 async function checkAppUpdate() {
   try {
@@ -3993,15 +3996,20 @@ async function checkAppUpdate() {
     U.appUpdateText = match[1] === APP_VER ? 'この画面は公開版 ' + APP_VER + ' を読み込んでいます。'
       : 'この画面は ' + APP_VER + '、公開版は ' + match[1] + ' です。録音・入力を終えてから開き直してください。';
   } catch (_) { U.appUpdateVersion = ''; U.appUpdateText = '公開版を確認できませんでした。オンラインで再確認してください。この画面は ' + APP_VER + ' です。'; }
+  U.appInfoOpen = true;
   render();
 }
 async function reloadForAppUpdate() {
-  if (!recordingInboxCanWrite() || VIEW() || preview || typingNow() || U.sheet || U.menu || U.busy || U.importing || REC || recordingStartPending || recordingFinalizePending || pitchStartPending || PT.on || micStream || saving || syncing || manualSync || publishInFlight || backupInFlight) {
-    alert('録音・入力・保存が終わってから開き直してください。'); return false;
-  }
+  const canReload = () => recordingInboxCanWrite() && !VIEW() && !preview && !typingNow() && !U.sheet && !U.menu && !U.busy && !U.importing && !REC && !recordingStartPending && !recordingFinalizePending && !pitchStartPending && !PT.on && !micStream && !saving && !syncing && !manualSync && !publishInFlight && !backupInFlight;
+  const stopBusy = () => { alert('録音・入力・保存が終わってから開き直してください。'); return false; };
+  if (!canReload()) return stopBusy();
   if (!await automaticBackupBeforeEdit('app-code-update')) return false;
+  if (!canReload()) return stopBusy();
   const expected = JSON.stringify(packState(S)); save(); await saveNow();
-  if (saveErr || await loadRaw() !== expected || JSON.stringify(packState(S)) !== expected) {
+  if (!canReload()) return stopBusy();
+  const stored = await loadRaw();
+  if (!canReload()) return stopBusy();
+  if (saveErr || stored !== expected || JSON.stringify(packState(S)) !== expected) {
     alert('保存の確認が終わっていないため、開き直していません。'); return false;
   }
   location.reload(); return true;
@@ -5477,11 +5485,12 @@ function viewLive() {
       <div class="t2">${s && s.mark ? `<b style="color:var(--accent)">★</b> ` : ""}${s && !S.recMode && takeLabel(s) ? `<b class="tkmk">${h(takeLabel(s))}</b>` : ""}${h(s ? s.title : "曲がありません")}</div>
       <div class="t1">${S.recMode
         ? `録音${s ? " ・ " + h((S.groups.find((x) => x.id === s.groupId) || {}).name || s.folder || "") : ""}`
-        : `${s ? h((S.groups.find((x) => x.id === (VIEW() ? s.groupId : songDeliveryGroupId(s))) || {}).name || "") + " ・ " : ""}${h(showName() || "公演名未設定")}${SONGS().length ? ` ・ ${U.songIdx + 1}/${SONGS().length}` : ""}${showNoPub() ? ` ・ <span style="color:var(--dim)">配信しない</span>` : `<span data-push-state style="color:${/未送信|保留|一部送信|確認待ち|結果不明/.test(publicationStatus) ? "var(--bad)" : "var(--dim)"}">${publicationStatus ? " ・ " + h(publicationStatus) : ""}</span>`}`}${recWho()}${S.recMode ? `<span id="pcd2" style="margin-left:8px;font-variant-numeric:tabular-nums"></span>` : ""}</div>
+        : `${s ? h((S.groups.find((x) => x.id === (VIEW() ? s.groupId : songDeliveryGroupId(s))) || {}).name || "") + " ・ " : ""}${h(showName() || "公演名未設定")}${SONGS().length ? ` ・ ${U.songIdx + 1}/${SONGS().length}` : ""}${showNoPub() ? ` ・ <span style="color:var(--dim)">配信しない</span>` : `<span data-push-state style="color:${/未送信|保留|一部送信|確認待ち|確認事項|結果不明/.test(publicationStatus) ? "var(--bad)" : "var(--dim)"}">${publicationStatus ? " ・ " + h(publicationStatus) : ""}</span>`}`}${recWho()}${S.recMode ? `<span id="pcd2" style="margin-left:8px;font-variant-numeric:tabular-nums"></span>` : ""}</div>
       ${VIEW() && S.pubAt ? `<div class="song-freshness">${freshLine()}</div>` : ""}
     </button>
     ${s ? `<button class="ic" data-act="overview" style="font-size:12px">全体</button>` : ""}
-    ${!VIEW() && !S.recMode && s ? `<button class="ic" data-act="songmenu" data-i="${U.songIdx}" aria-label="曲のメニュー">⋯</button>` : ""}
+    ${VIEW() && s ? `<button class="ic" data-act="gopdf" data-id="${h(s.id)}" aria-label="この曲をPDFにする">PDF</button>` : ""}
+      ${!VIEW() && !S.recMode && s ? `<button class="ic" data-act="songmenu" data-i="${U.songIdx}" aria-label="曲のメニュー">⋯</button>` : ""}
     <button class="ic" data-act="go-setup" style="font-size:12px">設定</button>
   </div>
   ${s ? blockBar(s) : ""}
@@ -5879,6 +5888,13 @@ function renderSheet() {
   // 記録シートの中で打っている最中も、組み直すと文字が飛ぶ
   if (typingNow() && overlay && overlay.contains(document.activeElement)) { pendingRender = true; return; }
   if (overlay) { overlay.remove(); overlay = null; }
+
+  if (U.menu?.kind === "rec-date-actions" && !VIEW()) {
+    const html=recDateActionsHTML(U.menu);
+    if (!html) { U.menu=null;return; }
+    overlay=document.createElement("div");overlay.className="mask";
+    overlay.innerHTML=html;document.body.appendChild(overlay);return;
+  }
 
   if (U.menu?.kind === "rec-song-actions" && !VIEW()) {
     const html = recSongActionsHTML(U.menu.id);
@@ -7136,7 +7152,6 @@ function viewAbsent() {
 // Shared settings renderers only describe existing state; they never migrate or delete data.
 function storageSettingsHTML() {
   return `
-    <h4 class="head">保存領域</h4>
     <details class="practice-tools card" data-settings-panel="storage" ${saveErr ? "open" : ""}><summary>${saveErr ? "保存できていません・保存領域を確認" : "保存容量・以前の保存データ"}</summary>
       ${(() => {
         // Safariは保存領域を「この場所ぜんぶ」で数える。今のデータだけ見ても実態は分からない。
@@ -7203,22 +7218,23 @@ function practiceToolsSettingsHTML() {
 
 function backupSettingsHTML() {
   const status = backupInFlight ? "バックアップ中…" : S.bkError ? "クラウド保存に失敗しました：" + S.bkError
-    : startupRecoveryNetworkHold ? "復旧保護中。ファイルに保存できます。クラウド保存・他端末との同期は停止中です。"
+    : startupRecoveryNetworkHold ? "クラウド保存・他端末同期は停止中。ファイルに保存できます。"
     : !S.ghToken ? "クラウド未接続。ファイルで保存できます。"
     : S.bkAt ? "クラウド保存：" + new Date(S.bkAt).toLocaleString("ja-JP") + (bkSignature() !== S.bkHash ? "（未保存の変更あり）" : "")
     : "クラウドにはまだ保存されていません";
   const fileOnly = startupRecoveryNetworkHold || !S.ghToken;
-  return `<h4 class="head">バックアップ</h4><div class="card">
+  return `<h4 class="head">データの保存</h4><div data-settings-panel="data-save"><div class="card">
     <p class="note" role="status" ${S.bkError ? 'style="color:var(--bad)"' : ""}>${h(status)}</p>
     <button class="ghost" data-act="bkfile" ${backupInFlight ? "disabled" : ""}>ファイルに保存</button>
     ${!fileOnly && S.bkGistId ? '<button class="primary" data-act="bknow" '+(backupInFlight?'disabled':'')+'>今すぐバックアップ</button>'+(!otherAt?'<button class="ghost" data-act="backup-check">クラウドの保存内容を確認</button>':'') : ''}
-    ${startupRecoveryNetworkHold ? '<p class="note">元の保存先と現在の編集内容の照合が終わるまで、クラウドへ送信しません。まず「ファイルに保存」で現在の内容を保管できます。</p>' : !S.ghToken || !S.bkGistId ? '<p class="note">既存クラウド保存先への接続をこの端末で確認できていません。</p>' : ''}
+    ${!startupRecoveryNetworkHold && (!S.ghToken || !S.bkGistId) ? '<p class="note">既存クラウド保存先への接続をこの端末で確認できていません。</p>' : ''}
     ${otherAt ? `<div role="status" class="card"><b>クラウドとこの端末に違いがあります</b><p class="note">クラウドへの送信は止めています。両方のファイルを保管し、残す内容を確認してください。</p>
       ${syncComparison ? `<p class="note">この端末の公演：${syncComparison.localShows.map(h).join('、')}<br>クラウドの公演：${syncComparison.cloudShows.map(h).join('、')}</p>` : ''}
       <button class="ghost" data-act="backup-check">クラウドをもう一度確認</button></div>` : ''}
   </div>
-  ${startupRecoveryNetworkHold ? `<details class="card"><summary>保存・配信の復旧状況</summary>${recoveryOriginalBackupHTML()}${typeof RecoveryDelivery !== 'undefined' ? RecoveryDelivery.settingsHTML() : ''}</details>` : ''}
-  ${storageSettingsHTML()}`;
+  ${storageSettingsHTML()}
+  ${startupRecoveryNetworkHold ? `<details class="card" data-settings-panel="connection-recovery"><summary>接続・復旧の詳細</summary>${recoveryOriginalBackupHTML()}${typeof RecoveryDelivery !== 'undefined' ? RecoveryDelivery.settingsHTML() : ''}</details>` : ''}
+  </div>`;
 }
 
 function lyricDisplaySettings() {
@@ -7258,7 +7274,7 @@ function viewSetupRec() {
       </button>
       <button class="organize-more" data-act="rec-song-actions" data-id="${x.id}" aria-label="${h(x.title)}の操作">⋯</button>
     </div>`;
-  const list = recordingLibraryHTML(cur, songRow);
+  const list = recordingLibraryHTML(cur, songRow, {editable:true});
 
   return `
   <div class="hd"><button class="ic" data-act="go-live">‹</button><b>設定</b>
@@ -7315,26 +7331,81 @@ function recordingSelectionSongs() {
   return S.rsongs.filter(x => !selected || recordingClassification(x).artist === selected);
 }
 function recordingDateInfo(label) {
-  const text=String(label || '').normalize('NFKC');
+  const text=String(label || '').normalize('NFKC').trim();
   const first=performanceDateOrder({name:text});
-  if (!first) return {label:'日付未設定',date:null};
-  const tail=text.match(/[・〜~～–-](\d{1,2})(?:日)?(?:\s+[^0-9]*)?$/i);
-  const last=tail ? Number(tail[1]) : first.day;
-  if (last < first.day || last > new Date(Date.UTC(first.year || 2000,first.month,0)).getUTCDate()) return {label:'日付未設定',date:null};
-  return {label:String(label),date:{...first,day:last}};
+  const unknown=()=>({label:text || '日付未設定',dateLabel:'日付未設定',date:null});
+  if (!first) return unknown();
+  const full=(first.year ? /(^|[^0-9])((20\d{2})[年/.-](\d{1,2})[月/.-](\d{1,2})日?)/ : /(^|[^0-9])((\d{1,2})[月/](\d{1,2})日?)/).exec(text);
+  const compact=!full && /^(\d{2})(\d{2})(\d{2})(?!\d)/.exec(text);
+  if (!full && !compact) return unknown();
+  const start=full ? full.index+full[1].length : 0, end=full ? start+full[2].length : compact[0].length;
+  const after=text.slice(end), range=/^(\s*[・〜~～–-]\s*)(\d{1,2})(?:日)?(\s+[^0-9]*)?$/.exec(after);
+  const last=range ? Number(range[2]) : first.day;
+  if (last < first.day || last > new Date(Date.UTC(first.year || 2000,first.month,0)).getUTCDate()) return unknown();
+  if (!range && /^\s*[・〜~～–-]/.test(after)) return unknown();
+  const day=n=>(first.year ? String(first.year)+'/' : '')+String(first.month).padStart(2,'0')+'/'+String(n).padStart(2,'0');
+  const dateLabel=day(first.day)+(range ? range[1].trim()+day(last) : '')+(first.year ? '' : '（年未設定）');
+  return {label:text.slice(0,start)+dateLabel+(range ? range[3] || '' : after),dateLabel,date:{...first,day:last}};
 }
-function recordingLibraryHTML(list, row) {
-  const dates = new Map();
-  list.forEach(so => {
+function recordingDateBuckets(list) {
+  const dates=new Map();
+  list.forEach(so=>{
     const info=recordingClassification(so), date=recordingDateInfo(info.label);
-    const key=date.date ? info.label : '日付未設定';
-    if (!dates.has(key)) dates.set(key,{label:date.label,date:date.date,artists:new Map(),songs:[]});
+    const displayLabel=typeof so.recSession?.displayLabel === 'string' ? so.recSession.displayLabel : '';
+    const key=JSON.stringify([info.label,displayLabel]);
+    if (!dates.has(key)) dates.set(key,{key,label:date.label,dateLabel:date.dateLabel,date:date.date,displayLabel,artists:new Map(),songs:[]});
     const bucket=dates.get(key);bucket.songs.push(so);
     if (!bucket.artists.has(info.artist)) bucket.artists.set(info.artist,[]);
     bucket.artists.get(info.artist).push(so);
   });
-  const sorted=performanceSelectionOrder([...dates.values()],bucket=>bucket.date);
-  return sorted.map(date=>'<details class="card rec-date" '+(date.songs.some(so=>so.id===S.rsongId)?'open':'')+'><summary>'+h(date.label)+' · '+date.songs.length+'曲</summary>'+[...date.artists].map(([artist,songs])=>'<section class="rec-artist"><h4 class="head">'+h(artist)+'</h4>'+songs.map(row).join('')+'</section>').join('')+'</details>').join('');
+  return performanceSelectionOrder([...dates.values()],bucket=>bucket.date);
+}
+function recordingDateHeading(bucket) {
+  return bucket.displayLabel ? bucket.dateLabel+'　'+bucket.displayLabel : bucket.label;
+}
+function recordingLibraryHTML(list, row, options={}) {
+  const editable=!!options.editable && !VIEW() && !preview && S.recMode && recordingInboxCanWrite();
+  return recordingDateBuckets(list).map(date=>'<details class="card rec-date" '+(date.songs.some(so=>so.id===S.rsongId)?'open':'')+'><summary><span class="performance-folder-name">'+h(recordingDateHeading(date))+'</span><span class="performance-folder-count">'+date.songs.length+'曲</span>'+(editable?'<button class="organize-more" data-act="rec-date-actions" data-id="'+h(date.key)+'" aria-label="'+h(recordingDateHeading(date))+'の操作">⋯</button>':'')+'</summary>'+[...date.artists].map(([artist,songs])=>'<section class="rec-artist"><h4 class="head">'+h(artist)+'</h4>'+songs.map(row).join('')+'</section>').join('')+'</details>').join('');
+}
+function recordingDateContext(key) {
+  if (VIEW() || preview || !S.recMode || !recordingInboxCanWrite()) return null;
+  const bucket=recordingDateBuckets(recordingSelectionSongs()).find(item=>item.key===key);
+  if (!bucket) return null;
+  const songIds=bucket.songs.map(song=>song.id);
+  if (new Set(songIds).size!==songIds.length || songIds.some(id=>!id || S.rsongs.filter(song=>song.id===id).length!==1)) return null;
+  if (bucket.songs.some(song=>song.recSession!=null && (typeof song.recSession!=='object' || Array.isArray(song.recSession)))) return null;
+  return {kind:'rec-date-actions',id:key,artistFilter:U.recArtistFilter || '',songIds,title:recordingDateHeading(bucket),displayLabel:bucket.displayLabel};
+}
+function recDateActionsHTML(menu) {
+  const current=recordingDateContext(menu.id);
+  if (!current || current.artistFilter!==menu.artistFilter || JSON.stringify(current.songIds)!==JSON.stringify(menu.songIds)) return '';
+  return '<button class="sp" data-act="closemenu" aria-label="閉じる"></button><div class="sheet organize-sheet" role="dialog" aria-modal="true" aria-label="RECフォルダの操作"><div class="row"><b class="grow settings-song-title">'+h(menu.title)+'</b><button class="chip" data-act="closemenu">閉じる</button></div><button class="organize-action" data-act="rec-date-rename">名前を変更</button><p class="note">表示中の'+menu.songIds.length+'曲'+(menu.artistFilter?'（'+h(menu.artistFilter)+'）':'')+'が対象です。</p></div>';
+}
+async function renameRecordingDateBucket(menu) {
+  const current=menu && recordingDateContext(menu.id);
+  if (!current || U.menu!==menu || current.artistFilter!==menu.artistFilter || JSON.stringify(current.songIds)!==JSON.stringify(menu.songIds)) return false;
+  const before=JSON.stringify(S);
+  const answer=prompt('フォルダ名（日付は変わりません。空欄で元の日付表示）',current.displayLabel);
+  if (answer===null) return false;
+  const name=answer.trim().normalize('NFC');
+  if (name===current.displayLabel) return false;
+  const ids=new Set(menu.songIds), rawLabel=JSON.parse(menu.id)[0], nextKey=JSON.stringify([rawLabel,name]);
+  if (name && recordingDateBuckets(S.rsongs.filter(song=>!ids.has(song.id))).some(bucket=>bucket.key===nextKey)) {
+    alert('同じ日付・名前のフォルダがあります。');return false;
+  }
+  if (!await automaticBackupBeforeEdit('recording-date-folder-name')) return false;
+  const checked=recordingDateContext(menu.id);
+  if (JSON.stringify(S)!==before || U.menu!==menu || !checked || checked.artistFilter!==menu.artistFilter || JSON.stringify(checked.songIds)!==JSON.stringify(menu.songIds)) {
+    alert('保存内容が変わったため、名前の変更を止めました。一覧から操作し直してください。');return false;
+  }
+  pushUndo();
+  S.rsongs.filter(song=>ids.has(song.id)).forEach(song=>{
+    const session={...(song.recSession || {})};
+    if (!Object.prototype.hasOwnProperty.call(session,'label')) session.label=recordingClassification(song).label;
+    if (name) session.displayLabel=name;else delete session.displayLabel;
+    song.recSession=session;
+  });
+  U.menu=null;save();renderSheet();render();return true;
 }
 function recordingPlanExpired(now=Date.now()) {
   const slots=S.plan?.slots || [];
@@ -7379,7 +7450,7 @@ async function editRecordingClassification(id) {
   if (!await automaticBackupBeforeEdit('recording-classification')) return;
   if (S.rsongs.find(x => x.id === id) !== so) return;
   so.recArtist = artist.trim();
-  so.recSession = {id: label.trim() ? artist.trim() + ':' + label.trim() : 'undated:' + so.id, label:label.trim() || '日付未設定'};
+  so.recSession = {...(so.recSession || {}), id: so.recSession?.id || (label.trim() ? artist.trim() + ':' + label.trim() : 'undated:' + so.id), label:label.trim() || '日付未設定'};
   U.recArtistFilter = ''; save(); render();
 }
 
@@ -8582,8 +8653,6 @@ function viewSetup() {
     ${list || `<p class="note">公演がありません</p>`}
 
     ${practiceToolsSettingsHTML()}
-    <h4 class="head">歌割をPDFにする</h4>
-    <div class="card"><button class="primary" data-act="gopdf">PDFにする</button></div>
     ${footerHTML()}
     <div style="height:40px"></div></div>`;
   }
@@ -8715,8 +8784,6 @@ function viewSetup() {
       })()}
     </div>
 
-    <h4 class="head">歌割をPDFにする</h4>
-    <div class="card"><button class="primary" data-act="gopdf">PDFにする</button></div>
 
     ${backupSettingsHTML()}
 
@@ -8804,6 +8871,13 @@ document.addEventListener("click", async (e) => {
   if (a === 'publication-inspect') { void inspectPublication(id); return; }
   if (a === 'app-update-check') { void checkAppUpdate(); return; }
   if (a === 'app-update-reload') { void reloadForAppUpdate(); return; }
+  if (a === "rec-date-actions") {
+    e.preventDefault();e.stopPropagation();
+    U.menu=recordingDateContext(id);if(U.menu)renderSheet();return;
+  }
+  if (a === "rec-date-rename") {
+    e.preventDefault();await renameRecordingDateBucket(U.menu);return;
+  }
   if (a === "folder-actions") {
     e.preventDefault(); e.stopPropagation();
     if (!VIEW() && !preview) { U.menu = performanceFolderContext(id); if (U.menu) renderSheet(); }
@@ -9966,7 +10040,11 @@ document.addEventListener("click", async (e) => {
       if (!U.importing) recFileInput().click();
       break;
     }
-    case "gopdf": commitFields(); U.picker = false; U.printPick = null; U.view = "print"; render(); autoPrint(); break;
+    case "gopdf": {
+      const target = id ? SONGS().find(x => x.id === id) : null;
+      if (id && !target) break;
+      commitFields(); U.picker = false; U.printPick = target ? [target.id] : null; U.view = "print"; render(); autoPrint(); break;
+    }
     case "doprint": void savePrintPDF(); break;
     case "prlook": setPrLook(prLook() === "plain" ? "xl" : "plain"); render(); break;
     case "ghstart": gistStart(id); break;
@@ -10189,6 +10267,7 @@ document.addEventListener("click", async (e) => {
 // or publication metadata. Selecting another show opens its folder by default.
 document.addEventListener("toggle", e => {
   const folder = e.target;
+  if (folder.matches?.('details[data-settings-panel="app-info"]') && folder.isConnected) { U.appInfoOpen = folder.open; return; }
   if (!folder.matches?.("details.performance-folder") || !folder.isConnected) return;
   if (!U.performanceFolderOpen || U.performanceFolderOpen.showId !== S.showId)
     U.performanceFolderOpen = {showId:S.showId, folders:{}};
@@ -11864,7 +11943,23 @@ function recoveryPublicationHolds() {
 }
 function publicationStatusText() {
   const held = recoveryPublicationHolds();
-  if (!held.length) return pushState;
+  if (!held.length) {
+    // A hold label can have been cached in pushState by an earlier send.
+    // Reconciliation clears the ledger; do not keep showing that old warning.
+    const staleHold = /^(?:配信結果の確認待ち|(?:送信中・)?配信保留)（\d+件）$/.test(pushState);
+    if (staleHold && typeof startupRecoveryNetworkHold !== "undefined" && startupRecoveryNetworkHold
+        && S.recoveryDelivery?.version === 2 && S.recoveryDelivery.targets?.length
+        && typeof RecoveryDelivery !== "undefined" && typeof RecoveryDelivery.pending === "function"
+        && typeof RecoveryDelivery.hasResumed === "function" && RecoveryDelivery.hasResumed()) {
+      const pending = S.recoveryDelivery.targets.some(t => RecoveryDelivery.pending(t.groupId));
+      const warning = S.recoveryDelivery.targets.some(t => t.heldLocalShowIds?.length
+        || S.groups.find(g => g.id === t.groupId)?.publishWarning)
+        || (typeof publishIssues !== "undefined" && publishIssues.length > 0);
+      if (warning) return pending ? "未送信・確認事項あり" : "配信に確認事項あり";
+      return pending ? "未送信" : "配信結果を確認済み";
+    }
+    return pushState;
+  }
   if (held.some(t => t.unknown)) return "配信結果の確認待ち（" + held.length + "件）";
   return (pushState === "送信中" ? "送信中・" : "") + "配信保留（" + held.length + "件）";
 }
@@ -11874,7 +11969,7 @@ function renderPublishStatus() {
   if (status) {
     const text = publicationStatusText();
     status.textContent = text ? " ・ " + text : "";
-    status.style.color = /未送信|保留|一部送信|確認待ち|結果不明/.test(text) ? "var(--bad)" : "var(--dim)";
+    status.style.color = /未送信|保留|一部送信|確認待ち|確認事項|結果不明/.test(text) ? "var(--bad)" : "var(--dim)";
   }
 }
 

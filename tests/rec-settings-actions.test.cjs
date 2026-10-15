@@ -9,13 +9,13 @@ function fixture(){
   {id:'two',title:'Super Duper Long Title That Must Stay Completely Visible',groupId:'private',folder:'Other folder',recArtist:'Singer',recSession:{id:'day',label:'2026/10/8'},lines:[{t:'Other lyric',parts:[]}],cols:2}],
   notes:[{id:'note',songId:'one',memo:'Kept memo'}],staffMemos:{one:'Private'},recs:{audio:{size:23}},plan:{slots:[{id:'slot',takes:{A:3}}]},trash:[],ghToken:'',rfolderOrder:['Existing folder','Empty old folder'],rfolders:{'Existing folder':true}};
  const h=x=>String(x??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
- const c=vm.createContext({S,U:{view:'setup',busy:''},h,VIEW:()=>false,Date,JSON,overlay:null,pendingRender:false,
+ const c=vm.createContext({S,U:{view:'setup',busy:''},h,VIEW:()=>false,preview:null,recordingInboxCanWrite:()=>true,Date,JSON,overlay:null,pendingRender:false,
   resumeRender(){},typingNow:()=>false,document:{activeElement:null,body:{appendChild:x=>calls.push({append:x.innerHTML})},createElement:()=>({className:'',innerHTML:'',remove(){calls.push({remove:true});}})},
   recMemberSelector:()=>'',lyricDisplaySettings:()=>'',recordingPlanEntryHTML:()=>'',practiceToolsSettingsHTML:()=>'',backupSettingsHTML:()=>'',footerHTML:()=>'',
   save:()=>calls.push({save:true}),render:()=>calls.push({render:true}),renderSheet:()=>calls.push({menu:clone(c.U.menu)}),
   confirm:()=>false,recSong:()=>S.rsongs.find(s=>s.id===S.rsongId),SONGS:()=>S.rsongs,
   editRecordingClassification:id=>calls.push({classify:id,menu:clone(c.U.menu)}),toTrash(){throw Error('Unexpected deletion');}});
- for(const name of ['performanceDateOrder','performanceSelectionOrder','recordingClassification','recordingSelectionSongs','recordingDateInfo','recordingLibraryHTML','recordingGroupSelector','recSongActionsHTML','viewSetupRec'])vm.runInContext(read(name),c);
+ for(const name of ['performanceDateOrder','performanceSelectionOrder','recordingClassification','recordingSelectionSongs','recordingDateInfo','recordingDateBuckets','recordingDateHeading','recordingLibraryHTML','recordingGroupSelector','recSongActionsHTML','viewSetupRec'])vm.runInContext(read(name),c);
  const branch=(name,next)=>{const start=source.indexOf('case "'+name+'":');return source.slice(start,source.indexOf('case "'+next+'":',start));};
  const cleanupStart=source.indexOf('  // The compact REC menu delegates'),cleanupEnd=source.indexOf('  switch (a)',cleanupStart);
  vm.runInContext('function action(a,id){'+source.slice(cleanupStart,cleanupEnd)+'switch(a){'+[

@@ -1,0 +1,119 @@
+'use strict';
+// Isolated browser checks with synthetic data. Every external request is blocked.
+const playwright=require('playwright'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),http=require('node:http');
+const engine=process.env.BROWSER_ENGINE||'chromium';assert(['chromium','webkit'].includes(engine));
+const root=path.resolve(__dirname,'..'),out=process.env.QA_OUTPUT||path.join(require('node:os').tmpdir(),'utacheck-settings-qa',engine);
+fs.mkdirSync(out,{recursive:true});
+const mime={'.html':'text/html','.js':'text/javascript','.css':'text/css','.json':'application/json','.png':'image/png','.svg':'image/svg+xml','.webmanifest':'application/manifest+json'};
+const server=http.createServer((req,res)=>{
+ const url=new URL(req.url,'http://localhost'),file=path.resolve(root,url.pathname==='/'?'index.html':'.'+url.pathname);
+ if(req.method!=='GET'||!file.startsWith(root+path.sep)){res.writeHead(403).end();return;}
+ try{res.setHeader('Content-Type',mime[path.extname(file)]||'application/octet-stream');res.end(fs.readFileSync(file));}catch{res.writeHead(404).end();}
+});
+function seed(){
+ const clone=x=>JSON.parse(JSON.stringify(x)),makeSong=(id,showId,groupId,title)=>({id,showId,groupId,title,roster:['m'],take:1,blocks:{},lines:[{t:'合成歌詞を保持',parts:['m']}]});
+ S=Object.assign(clone(S0),{pt:clone(S.pt||{}),viewer:false,recMode:false,ghToken:'',bkGistId:'',src:'',showId:'show-a',groupId:'group-a',
+  groups:[{id:'group-a',name:'検証グループA',nopub:true},{id:'group-b',name:'検証グループB',nopub:true}],
+  members:[{id:'m',name:'検証メンバー'}],
+  shows:[{id:'show-a',groupId:'group-a',name:'2026/10/14 合成公演A',folder:'合成フォルダ',nopub:true},{id:'show-b',groupId:'group-b',name:'2026/10/13 合成公演B',folder:'別グループ',nopub:true}],
+  songs:[makeSong('song-a','show-a','group-a','長い曲名が途中で省略されず最後の文字まで読み取れることを確認する合成曲A'),makeSong('song-b','show-a','group-a','合成曲B'),makeSong('song-other','show-b','group-b','対象外合成曲')],
+  rsongs:[
+   {id:'rec-a',groupId:'group-a',title:'録音の長い曲名も途中で省略されず最後の文字まで読み取れることを確認する合成曲',recArtist:'歌手A',recSession:{id:'session-a',label:'2026/10/08',kept:'session metadata'},lines:[{t:'REC合成歌詞A'}]},
+   {id:'rec-b',groupId:'group-a',title:'REC合成曲B',recArtist:'歌手A',recSession:{id:'session-b',label:'2026/10/08',kept:'second metadata'},lines:[{t:'REC合成歌詞B'}]},
+   {id:'rec-other',groupId:'group-b',title:'REC対象外合成曲',recArtist:'歌手B',recSession:{id:'session-other',label:'2026/10/09',kept:'other metadata'},lines:[{t:'REC対象外歌詞'}]}],
+  rsongId:'rec-a',notes:[{id:'note',songId:'song-a',showId:'show-a',memo:'合成指摘を保持',memberIds:['m'],tags:[],lineIdx:0}],
+  memos:{'show-a|song-a':'合成総括を保持'},staffMemos:{'show-a|song-a':'合成本人メモを保持'},recs:{synthetic:{size:0,dur:0}},plan:{slots:[]},
+  folders:{'合成フォルダ':true,'別グループ':true},folderOrder:['合成フォルダ','別グループ'],rfolders:{},rfolderOrder:[]});
+ startupRecoveryNetworkHold=true;
+ Object.assign(U,{view:'setup',showFilter:'group-a',songIdx:0,menu:null,sheet:null,picker:false,overview:false,pick:[],allShows:false,recArtistFilter:'',appInfoOpen:false,appUpdateText:'',appUpdateVersion:''});
+ renderPointers.clear();scrollingUntil=0;pendingRender=false;render(true);
+ window.qaContent=()=>JSON.stringify(Object.fromEntries(['groups','shows','songs','rsongs','notes','memos','staffMemos','recs','plan'].map(k=>[k,S[k]])));
+}
+async function mode(page,rec=false,viewer=false,view='setup'){
+ await page.evaluate(({rec,viewer,view})=>{document.activeElement?.blur();S.viewer=viewer;S.recMode=rec;
+  Object.assign(U,{view,songIdx:0,menu:null,sheet:null,picker:false,overview:false,pick:[],recArtistFilter:''});
+  renderPointers.clear();scrollingUntil=0;pendingRender=false;render(true);
+ },{rec,viewer,view});
+ await page.waitForFunction(view=>U.view===view&&document.querySelector('#app')?.dataset.screen===view,view);
+}
+async function screenshot(page,width,name){await page.screenshot({path:path.join(out,engine+'-'+width+'-'+name+'.png')});}
+async function assertFits(page){assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),true,'No horizontal viewport overflow');}
+async function readableTitles(page,rec){
+ const rows=page.locator('.settings-song-row[data-drop^="'+(rec?'r:':'g:')+'"]');
+ if(rec)for(const detail of await page.locator('.rec-date').all())if(!await detail.evaluate(el=>el.open))await detail.locator(':scope > summary').click();
+ const titles=await rows.locator('.settings-song-title').evaluateAll(nodes=>nodes.map(el=>({text:el.textContent,whiteSpace:getComputedStyle(el).whiteSpace,textOverflow:getComputedStyle(el).textOverflow,lineClamp:getComputedStyle(el).webkitLineClamp,w:el.clientWidth,h:el.clientHeight,sw:el.scrollWidth,sh:el.scrollHeight})));
+ assert(titles.length>=2);
+ const expected=await page.evaluate(rec=>rec?recordingSelectionSongs().map(s=>s.title):SONGS().map(songName),rec);
+ assert.deepEqual(titles.map(t=>t.text.replace(/^★\s*/,'')).sort(),expected.sort());
+ for(const title of titles){assert.equal(title.whiteSpace,'normal');assert.notEqual(title.textOverflow,'ellipsis');assert(['none','unset','0',''].includes(title.lineClamp));assert(title.w>0&&title.h>0);assert(title.sw<=title.w+1&&title.sh<=title.h+1);}
+ for(const control of await rows.locator('.settings-song-select').evaluateAll(nodes=>nodes.map(el=>({align:getComputedStyle(el).textAlign,height:el.getBoundingClientRect().height})))){assert.equal(control.align,'left');assert(control.height>=44);}
+}
+(async()=>{let browser;const results=[],errors=[],blocked=[],dialogs=[];
+ try{
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const origin='http://127.0.0.1:'+server.address().port;
+  browser=await playwright[engine].launch({headless:true});
+  for(const width of [320,390]){
+   const context=await browser.newContext({viewport:{width,height:844},serviceWorkers:'block'});
+   await context.route('**/*',route=>{const request=route.request(),url=new URL(request.url());if(url.origin!==origin||request.method()!=='GET'){blocked.push({origin:url.origin,method:request.method()});return route.abort('blockedbyclient');}
+    if(url.searchParams.has('app-update-check'))return route.fulfill({status:200,contentType:'text/html',body:'<script src="app.js?v=99.99.99"></script>'});return route.continue();});
+   if(context.routeWebSocket)await context.routeWebSocket('**/*',socket=>{blocked.push({origin:'websocket',method:'CONNECT'});socket.close();});
+   const page=await context.newPage();page.setDefaultTimeout(20000);let promptReply=null;
+   page.on('pageerror',e=>errors.push(e.message));
+   page.on('dialog',async dialog=>{dialogs.push({type:dialog.type(),message:dialog.message()});if(dialog.type()==='prompt'&&promptReply!==null){const reply=promptReply;promptReply=null;await dialog.accept(reply);}else await dialog.dismiss();});
+   await page.goto(origin);await page.waitForFunction(()=>typeof normalStartupInitialized!=='undefined'&&normalStartupInitialized);await page.evaluate(seed);
+   const original=await page.evaluate(()=>qaContent()),data=page.locator('[data-settings-panel="data-save"]');
+   assert.equal(await data.count(),1);assert.equal(await page.getByText('データの保存',{exact:true}).count(),1);
+   assert.equal(await page.getByText('歌割をPDFにする',{exact:true}).count(),0);assert.equal(await page.locator('[data-act="gopdf"]').count(),0);
+   assert.equal(await data.locator('[data-act="bkfile"]').count(),1);assert.equal(await data.locator('[data-act="bkfile"]').isVisible(),true);assert.equal(await data.locator('[data-act="bknow"]').count(),0);
+   const storage=data.locator('[data-settings-panel="storage"]'),recovery=data.locator('[data-settings-panel="connection-recovery"]');
+   assert.equal(await storage.evaluate(el=>el.open),false);assert.equal(await recovery.evaluate(el=>el.open),false);
+   await recovery.locator(':scope > summary').click();assert.equal(await recovery.locator('#recovery-original-backup-check').isVisible(),true);
+   await recovery.locator(':scope > summary').click();assert.equal(await recovery.locator('#recovery-original-backup-check').isVisible(),false);assert.equal(await page.evaluate(()=>qaContent()),original);
+   await readableTitles(page,false);await assertFits(page);await screenshot(page,width,'live-settings');
+   await page.locator('.settings-song-row [data-act="songmenu"][data-i="0"]').click();
+   await page.getByRole('dialog',{name:'曲の操作',exact:true}).locator('[data-act="m-pdf"]').click();await page.waitForSelector('#prpage');
+   assert.deepEqual(await page.evaluate(()=>U.printPick),['song-a']);assert.equal(await page.locator('#prpage .prs').count(),1);
+   await mode(page,true);await readableTitles(page,true);assert.equal(await page.getByText('RECはすべて本人用です',{exact:false}).count(),0);
+   await page.locator('[data-act="ruse"][data-id="rec-a"]').scrollIntoViewIfNeeded();await screenshot(page,width,'rec-titles');
+   await page.locator('[data-act="rec-song-actions"][data-id="rec-a"]').click();const recMenu=page.getByRole('dialog',{name:'曲の操作',exact:true});
+   for(const action of ['rpdf','rec-classify','rfset','rdel'])assert.equal(await recMenu.locator('[data-act="'+action+'"]').count(),1);
+   await recMenu.locator('[data-act="rpdf"]').click();await page.waitForSelector('#prpage');assert.equal(await page.evaluate(()=>U.view),'recprint');assert.equal(await page.locator('#prpage .prs').count(),1);
+   await mode(page,true);const date=page.locator('.rec-date').filter({has:page.locator('[data-act="ruse"][data-id="rec-a"]')});
+   const dateOpen=await date.evaluate(el=>el.open),beforeRename=await page.evaluate(()=>JSON.stringify(S));
+   await date.locator(':scope > summary [data-act="rec-date-actions"]').click();assert.equal(await date.evaluate(el=>el.open),dateOpen);
+   await page.getByRole('dialog',{name:'RECフォルダの操作',exact:true}).locator('[data-act="rec-date-rename"]').click();
+   assert.equal(dialogs.at(-1).type,'prompt');assert.equal(await page.evaluate(()=>JSON.stringify(S)),beforeRename);
+   await mode(page,true);await date.locator(':scope > summary [data-act="rec-date-actions"]').click();promptReply='検証用フォルダ名';
+   await page.getByRole('dialog',{name:'RECフォルダの操作',exact:true}).locator('[data-act="rec-date-rename"]').click();
+   await page.waitForFunction(()=>S.rsongs.find(s=>s.id==='rec-a').recSession.displayLabel==='検証用フォルダ名');
+   const expected=JSON.parse(original);for(const song of expected.rsongs)if(['rec-a','rec-b'].includes(song.id))song.recSession.displayLabel='検証用フォルダ名';
+   assert.deepEqual(JSON.parse(await page.evaluate(()=>qaContent())),expected);
+   await page.waitForFunction(()=>Array.from(document.querySelectorAll('.rec-date > summary')).some(el=>el.textContent.includes('検証用フォルダ名')));
+   assert((await date.locator(':scope > summary').innerText()).includes('検証用フォルダ名'));await screenshot(page,width,'rec-folder-renamed');
+   await mode(page,false,true,'live');const viewerBefore=await page.evaluate(()=>qaContent());
+   assert.equal(await page.locator('.song-header [data-act="songmenu"]').count(),0);
+   const pdf=page.locator('.song-header [data-act="gopdf"][data-id="song-a"]');assert.equal(await pdf.getAttribute('aria-label'),'この曲をPDFにする');
+   await assertFits(page);await screenshot(page,width,'viewer-song-pdf');await pdf.click();await page.waitForSelector('#prpage');
+   assert.deepEqual(await page.evaluate(()=>U.printPick),['song-a']);assert.equal(await page.locator('#prpage .prs').count(),1);assert.equal(await page.evaluate(()=>qaContent()),viewerBefore);
+   await mode(page,false,true);assert.equal(await page.locator('[data-act="app-update-check"]').count(),0);
+   await mode(page,false,false);const info=page.locator('[data-settings-panel="app-info"]');
+   assert.equal(await info.evaluate(el=>el.open),false);assert.equal(await info.evaluate(el=>el.closest('.settings-section')===null),true);
+   await info.locator(':scope > summary').click();assert.equal(await info.evaluate(el=>el.open),true);
+   await page.evaluate(()=>{renderPointers.clear();scrollingUntil=0;render(true);});assert.equal(await info.evaluate(el=>el.open),true);
+   await info.locator('[data-act="app-update-check"]').click();await page.waitForFunction(()=>U.appUpdateVersion==='99.99.99');
+   assert.equal(await info.evaluate(el=>el.open),true);assert.equal(await info.locator('[data-act="app-update-reload"]').isVisible(),true);
+   const beforeReload=await page.evaluate(()=>qaContent()),dialogCount=dialogs.length;
+   await page.evaluate(()=>{U.sheet={memo:'未保存の合成入力'};});await info.locator('[data-act="app-update-reload"]').click();
+   assert.equal(dialogs.length,dialogCount+1);assert.equal(dialogs.at(-1).type,'alert');assert.equal(await page.evaluate(()=>U.sheet.memo),'未保存の合成入力');assert.equal(await page.evaluate(()=>qaContent()),beforeReload);
+   await page.evaluate(()=>{U.sheet=null;renderPointers.clear();scrollingUntil=0;render(true);});await info.locator(':scope > summary').click();assert.equal(await info.evaluate(el=>el.open),false);
+   await page.evaluate(async()=>{await saveNow();saveErr=true;renderPointers.clear();scrollingUntil=0;render(true);});
+   await page.waitForSelector('[data-settings-panel="storage"][open]');assert.equal(await page.getByText('いま保存できていません',{exact:false}).isVisible(),true);
+   assert.equal(await page.locator('[data-settings-panel="data-save"] [data-act="bkfile"]').isVisible(),true);assert.equal(await page.locator('[data-settings-panel="connection-recovery"]').evaluate(el=>el.open),false);
+   await assertFits(page);await screenshot(page,width,'save-error');assert.deepEqual(JSON.parse(await page.evaluate(()=>qaContent())),expected);
+   results.push({width,settings:true,pdfLiveRecView:true,fullTitles:true,recFolderRename:true,footer:true,draftPreserved:true,saveErrorVisible:true});await context.close();
+  }
+  assert.deepEqual(errors,[]);assert.equal(blocked.filter(x=>x.method!=='GET').length,0);
+  const report={passed:true,engine,results,errors,blocked,externalRequestsAllowed:0,syntheticDataOnly:true};
+  fs.writeFileSync(path.join(out,'report.json'),JSON.stringify(report,null,2));console.log(JSON.stringify(report));
+ }finally{await browser?.close();await new Promise(resolve=>server.close(resolve));}
+})().catch(error=>{console.error(error);process.exitCode=1;});
