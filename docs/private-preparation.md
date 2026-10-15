@@ -6,12 +6,26 @@ repository. The public member-delivery path is not a preparation destination.
 
 ## Private source contract
 
-The receiver uses the editor's already-stored GitHub token. It does not discover,
-create, store, expand or request credentials. It reads the authenticated identity,
+The receiver can use a separate device-local, fine-grained read credential.
+The owner creates it on GitHub for only `shinkou-data`, with Contents: read-only;
+the setup link pre-fills the owner and read permission, but repository selection
+must be made on GitHub. The application cannot create tokens or expand their
+permissions. If no dedicated credential is saved, existing installations continue
+using the editor's already-stored GitHub token. It reads the authenticated identity,
 verifies the configured repository is private and owned by that identity, then
 reads the fixed `utacheck/prepared.json` path. Large files use the exact verified
 blob SHA in the same repository. Redirects and alternate/public URLs are rejected.
 Missing access is reported without applying or publishing data.
+
+The connection form validates the identity, private repository, fixed manifest
+path and manifest before storing the credential. It uses the exclusive writer
+gate, saves under IndexedDB state key `private-preparation:read-credential:v1`,
+and rereads the saved record before reporting success. The credential never
+enters application state, exported/cloud backups, member payloads, diagnostics
+or rendered HTML. The Gist/member token is not replaced. Rejected replacements
+keep the earlier credential; an uncertain write prevents reception until reload.
+The password input is cleared on submission. A corrupt saved credential fails
+closed rather than silently falling back to a different connection.
 
 A version-1 manifest has `app: utacheck-private-preparation`, `version`, `owner`,
 `revision`, `createdAt` and `operations`. Each operation has a permanent ASCII

@@ -54,7 +54,7 @@ test('storage failed before commit preserves editor; uncertain committed save bl
  for(const committed of [false,true]){const f=await setup({store:{commit:async()=>({status:committed?'unverified':'rejected',committed})}}),before=f.run('JSON.stringify(S)');const result=await f.c.PrivatePreparationUI.receive(true);assert.equal(result.status,committed?'unverified':'conflict');assert.equal(f.run('JSON.stringify(S)'),before);assert.equal(f.run('startupPhase'),committed?'blocked':'ready');}
 });
 test('unsupported writer ownership never creates a marker, credential, or local change',async()=>{const f=await setup({owner:false}),before=f.run('JSON.stringify(S)'),db=f.idb.snapshot();assert.equal((await f.c.PrivatePreparationUI.receive(true)).status,'unsupported');assert.equal(f.run('JSON.stringify(S)'),before);assert.deepEqual(f.idb.snapshot(),db);assert.equal(f.localWrites.length,0);});
-test('normal settings hook exposes honest source state without auth material',async()=>{const f=await setup({token:''});await f.c.PrivatePreparationUI.receive(true);const html=f.c.PrivatePreparationUI.settingsHTML();assert.match(html,/未接続/);assert.match(html,/private-preparation-check/);assert.doesNotMatch(html,/password|type="password"|synthetic-token/);});
+test('normal settings hook exposes honest source state without auth material',async()=>{const f=await setup({token:''});await f.c.PrivatePreparationUI.receive(true);const html=f.c.PrivatePreparationUI.settingsHTML();assert.match(html,/未接続/);assert.match(html,/private-preparation-check/);assert.match(html,/type="password"/);assert.doesNotMatch(html,/value="[^\"]*synthetic|synthetic-token/);});
 function serviceWorkerFixture(f,replies){
  let count=0;
  f.c.location.href='https://synthetic.invalid/utacheck/';
@@ -186,4 +186,60 @@ test('manual retry after an access failure retains a queued check through intera
  assert.equal((await f.c.PrivatePreparationUI.receive(true)).status,'access');
  f.run('U.menu={}');assert.equal((await f.c.PrivatePreparationUI.receive(true)).reason,'menu');fail=false;f.run('U.menu=null');
  assert.equal((await f.c.PrivatePreparationUI.receive()).status,'applied');
+});
+
+const READ_TOKEN='github_pat_'+'q'.repeat(40),AUTH_KEY='private-preparation:read-credential:v1';
+test('separate dot credential validates the source and persists outside state and backups',async()=>{
+ const tokens=[];const f=await setup({source:async({options,manifest})=>{tokens.push(options.token);return {status:'ready',manifest,sourceSha:'a'.repeat(40)};}});
+ const before=f.run('JSON.stringify(S)'),slots=[f.idb.record('state:0'),f.idb.record('state:1')],clips=f.idb.snapshot().clips;
+ assert.equal((await f.c.PrivatePreparationUI.connectReadCredential(READ_TOKEN)).status,'connected');
+ assert.deepEqual(tokens,[READ_TOKEN]);assert.equal(f.run('JSON.stringify(S)'),before);
+ assert.deepEqual([f.idb.record('state:0'),f.idb.record('state:1')],slots);assert.deepEqual(f.idb.snapshot().clips,clips);
+ assert.equal(f.idb.record(AUTH_KEY).token,READ_TOKEN);assert.equal(f.run('S.ghToken'),'synthetic-token');
+ assert(!f.run('JSON.stringify(backupState())').includes(READ_TOKEN));
+ assert(!f.c.PrivatePreparationUI.settingsHTML().includes(READ_TOKEN));
+ assert(!JSON.stringify(f.c.PrivatePreparationUI.getStatus()).includes(READ_TOKEN));
+ assert.equal((await f.c.PrivatePreparationUI.receive(true)).status,'applied');
+ assert.equal(tokens.at(-1),READ_TOKEN);assert.equal(f.run('S.ghToken'),'synthetic-token');assert.equal(f.run('S.plan.slots[0].min'),75);
+ assert.equal(f.calls.network.length,0);
+});
+test('saved read credential is used on fresh startup even without a delivery token',async()=>{
+ const seen=[];const f=await setup({token:'',source:async({options,manifest})=>{seen.push(options.token);return {status:'ready',manifest,sourceSha:'a'.repeat(40)};}});
+ f.idb.replace(AUTH_KEY,{version:1,owner:'gogojoe312-max',repo:'shinkou-data',token:READ_TOKEN});
+ assert.equal((await f.c.PrivatePreparationUI.receive(true)).status,'applied');
+ assert.deepEqual(seen,[READ_TOKEN]);assert.equal(f.run('S.ghToken'),'');
+});
+test('bad or inaccessible replacement keeps the earlier dot credential and delivery token',async()=>{
+ let denied=false;const f=await setup({source:async({manifest})=>denied?{status:'unavailable',stage:'repository',code:'HTTP_404'}:{status:'ready',manifest,sourceSha:'a'.repeat(40)}});
+ assert.equal((await f.c.PrivatePreparationUI.connectReadCredential(READ_TOKEN)).status,'connected');
+ const db=f.idb.snapshot(),before=f.run('JSON.stringify(S)');denied=true;
+ assert.equal((await f.c.PrivatePreparationUI.connectReadCredential('github_pat_'+'r'.repeat(40))).status,'access');
+ assert.deepEqual(f.idb.snapshot(),db);assert.equal(f.run('JSON.stringify(S)'),before);
+ for(const invalid of ['ghp_'+'s'.repeat(40),'',READ_TOKEN+'\nsecret']){
+  assert.equal((await f.c.PrivatePreparationUI.connectReadCredential(invalid)).status,'invalid-read-token');assert.deepEqual(f.idb.snapshot(),db);
+ }
+});
+test('invalid stored credential stops without silently trying the member token',async()=>{
+ const f=await setup();f.idb.replace(AUTH_KEY,{version:1,owner:'other',repo:'shinkou-data',token:READ_TOKEN});
+ const db=f.idb.snapshot();assert.equal((await f.c.PrivatePreparationUI.receive(true)).status,'connection-error');
+ assert.equal(f.reads,0);assert.deepEqual(f.idb.snapshot(),db);
+});
+test('owner change and malformed manifest cannot save a new credential',async()=>{
+ for(const wrong of ['owner','manifest']){
+  const f=await setup({source:async({manifest})=>wrong==='owner'?{status:'unavailable',code:'OWNER_MISMATCH',stage:'identity'}:{status:'ready',manifest:{...manifest,owner:'another'},sourceSha:'a'.repeat(40)}});
+  const db=f.idb.snapshot(),before=f.run('JSON.stringify(S)');const result=await f.c.PrivatePreparationUI.connectReadCredential(READ_TOKEN);
+  assert.notEqual(result.status,'connected');assert.deepEqual(f.idb.snapshot(),db);assert.equal(f.run('JSON.stringify(S)'),before);
+ }
+});
+test('connection saving stops on concurrent edits or active recording',async()=>{
+ const f=await setup({source:async({f,manifest})=>{f.run('S.notes[0].memo="Concurrent edit";stateRevision++');return {status:'ready',manifest,sourceSha:'a'.repeat(40)};}});
+ assert.equal((await f.c.PrivatePreparationUI.connectReadCredential(READ_TOKEN)).status,'deferred');assert.equal(f.idb.record(AUTH_KEY),undefined);
+ assert.equal(f.run('S.notes[0].memo'),'Concurrent edit');f.run('REC={}');
+ assert.equal((await f.c.PrivatePreparationUI.connectReadCredential(READ_TOKEN)).status,'deferred');assert.equal(f.reads,1);
+});
+test('unverified credential write blocks reception until reopening and never claims connected',async()=>{
+ const f=await setup();const get=f.c.idbGet;f.c.idbGet=async key=>key===AUTH_KEY?undefined:get(key);
+ assert.equal((await f.c.PrivatePreparationUI.connectReadCredential(READ_TOKEN)).status,'connection-error');
+ assert.equal(f.run('S.ghToken'),'synthetic-token');const reads=f.reads;
+ assert.equal((await f.c.PrivatePreparationUI.receive(true)).status,'deferred');assert.equal(f.reads,reads);
 });

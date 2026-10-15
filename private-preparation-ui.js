@@ -1,10 +1,24 @@
-/* Private preparation reception uses the existing GitHub login only. */
+/* Private preparation reads use a verified, device-local credential or the existing login. */
 (function(root){
  'use strict';
  const config=Object.freeze({owner:'gogojoe312-max',repo:'shinkou-data'});
+ const credentialKey='private-preparation:read-credential:v1';
+ let credentialLoaded=false,dedicatedToken=null,connectionBlocked=false;
+ const sourceToken=()=>dedicatedToken||S.ghToken;
+ const validReadToken=token=>typeof token==='string'&&/^github_pat_[A-Za-z0-9_]{20,300}$/.test(token);
+ async function loadCredential(){
+  if(credentialLoaded)return;
+  const record=await idbGet(credentialKey);
+  if(record!==undefined&&record!==null){
+   if(record.version!==1||record.owner!==config.owner||record.repo!==config.repo||!validReadToken(record.token))throw failure('CREDENTIAL_UNREADABLE');
+   dedicatedToken=record.token;
+  }
+  credentialLoaded=true;
+ }
  let running=false,applying=false,lastAttempt=0,status={kind:'waiting'},started=false,manualPending=false,interactionRetry=null;
  const failure=code=>Object.assign(new Error(code),{preparationCode:code});
  function waitingReason(){
+  if(connectionBlocked)return 'connection';
   if(typeof S==='undefined'||startupPhase!=='ready'||!booted||bootErr)return 'startup';
   if(!recordingInboxCanWrite())return 'readonly';
   if(document.hidden)return 'hidden';
@@ -24,6 +38,7 @@
  function ready(){return !waitingReason();}
  function waitingText(reason){
   const messages={
+   connection:'接続の保存結果を確認できません。アプリを開き直してください。',
    startup:'アプリの起動と保存確認を待っています。',readonly:'この画面の編集権限を確認できず、更新を待っています。',
    hidden:'アプリを開いているときに更新を確認します。',preview:'本人用の編集画面に戻ると更新を確認します。',
    recording:'録音が終わると更新を確認します。',microphone:'マイクを使用する機能が終わると更新を確認します。',
@@ -54,6 +69,9 @@
   return 'dot経由の更新をまだ受信できません。'+(stage?stage+'：':'')+reason+' 現在の記録と接続情報は保持しています。';
  }
  function statusText(){
+  if(status.kind==='connected')return 'dotの読み取り接続を保存しました。更新を自動で確認します。';
+  if(status.kind==='connection-error')return '接続を保存できませんでした。アプリを開き直して確認してください。';
+  if(status.kind==='invalid-read-token')return 'GitHubで作成した読み取り専用の fine-grained token を入力してください。';
   if(status.kind==='applied')return 'dot経由の更新をこの端末へ保存しました。クラウドバックアップ・メンバー配信は別に確認してください。';
   if(status.kind==='current')return 'dot経由の更新は、この端末に反映済みです。';
   if(status.kind==='checking')return 'dot経由の更新を確認しています…';
@@ -69,8 +87,60 @@
   if(status.kind==='offline')return sourceFailureText();
   return 'dot経由の更新を、録音・入力をしていないときに自動で確認します。';
  }
- function setStatus(value){status=value;document.querySelectorAll?.('[data-private-preparation-status]').forEach(el=>el.textContent=statusText());}
- function settingsHTML(){return '<button class="ghost" data-act="private-preparation-check">dot経由で更新する</button><p class="note" data-private-preparation-status role="status">'+h(statusText())+'</p>';}
+ function setStatus(value){
+  status=value;document.querySelectorAll?.('[data-private-preparation-status]').forEach(el=>el.textContent=statusText());
+  if(['access','missing-token','invalid-read-token','connection-error'].includes(value.kind))document.querySelectorAll?.('[data-private-preparation-connection]').forEach(el=>el.open=true);
+  if(value.kind==='connected')document.querySelectorAll?.('[data-private-preparation-connection]').forEach(el=>el.open=false);
+ }
+ function settingsHTML(){
+  const open=['access','missing-token','invalid-read-token','connection-error'].includes(status.kind)?' open':'';
+  const tokenURL='https://github.com/settings/personal-access-tokens/new?name=utacheck-dot-read&target_name=gogojoe312-max&contents=read&expires_in=90';
+  return '<button class="ghost" data-act="private-preparation-check">dot経由で更新する</button><p class="note" data-private-preparation-status role="status">'+h(statusText())+'</p>'
+   +'<details data-private-preparation-connection'+open+'><summary>dotの接続設定</summary>'
+   +'<p class="note">読み取り先：gogojoe312-max / shinkou-data</p>'
+   +'<p class="note"><a href="'+tokenURL+'" target="_blank" rel="noopener noreferrer">GitHubで読み取り用キーを作る</a></p>'
+   +'<p class="note">Repository access は「Only select repositories」で shinkou-data だけを選び、Contents は「Read-only」にしてください。</p>'
+   +'<label>読み取り用キー<input type="password" data-private-preparation-token autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="github_pat_…" style="display:block;width:100%;box-sizing:border-box"></label>'
+   +'<button class="ghost" data-act="private-preparation-connect">接続を確認して保存</button>'
+   +'<p class="note">キーはこの端末に保存します。メンバー配信の接続は保持します。</p></details>';
+ }
+ async function connectReadCredential(candidate){
+  if(running)return {status:'busy'};
+  const token=typeof candidate==='string'?candidate.trim():'';
+  if(!validReadToken(token)){setStatus({kind:'invalid-read-token'});return {status:'invalid-read-token'};}
+  if(!ready()){setStatus({kind:'deferred',reason:waitingReason()});return {status:'deferred'};}
+  running=true;let release,releaseGate,writeAttempted=false;
+  try{
+   await loadCredential();
+   const before=JSON.stringify(S),previous=sourceToken();
+   const active=()=>ready()&&JSON.stringify(S)===before&&sourceToken()===previous;
+   setStatus({kind:'checking'});
+   const result=await PrivatePreparationSource.read({...config,token,isActive:active});
+   if(result.status!=='ready'){
+    const code=result.code,stage=['identity','repository','contents','blob'].includes(result.stage)?result.stage:undefined;
+    setStatus({kind:'access',code,stage});return {status:'access',code};
+   }
+   await PrivatePreparation.validate(result.manifest,config.owner);
+   if(!active())throw failure('DEFERRED');
+   await establishOwner();
+   if(!active())throw failure('DEFERRED');
+   releaseGate=recordingInboxIntegration?.gate?.acquire();
+   if(!releaseGate)throw failure('DEFERRED');
+   release=recordingInboxAdmitWriter();applying=true;
+   const record={version:1,owner:config.owner,repo:config.repo,token};
+   writeAttempted=true;
+   await idbPut(credentialKey,record);
+   const saved=await idbGet(credentialKey);
+   if(JSON.stringify(saved)!==JSON.stringify(record))throw failure('CREDENTIAL_UNVERIFIED');
+   dedicatedToken=token;credentialLoaded=true;lastAttempt=0;
+   setStatus({kind:'connected'});return {status:'connected'};
+  }catch(error){
+   if(writeAttempted)connectionBlocked=true;
+   const code=error?.preparationCode;
+   setStatus({kind:writeAttempted?'connection-error':code==='CREDENTIAL_UNREADABLE'?'connection-error':code==='DEFERRED'?'deferred':code==='MULTIPLE_WINDOWS'?'multiple-windows':code==='OWNER_REQUIRED'?'owner-required':code==='UNSUPPORTED'?'unsupported':'connection-error',reason:waitingReason()});
+   return {status:status.kind};
+  }finally{release?.();releaseGate?.();applying=false;running=false;}
+ }
 
  async function singleEditorClient(){
   const controller=navigator.serviceWorker?.controller;
@@ -124,7 +194,7 @@
   }finally{if(app)app.inert=!recordingInboxCanWrite();}
  }
  async function applyOne(operation,token,sourceSha,localSource){
-  if(!ready()||S.ghToken!==token)throw failure('DEFERRED');
+  if(!ready()||sourceToken()!==token)throw failure('DEFERRED');
   const receipt=S.privatePreparations?.[operation.id];
   if(receipt){if(receipt.sha256!==operation.sha256||receipt.type!==operation.type)throw failure('OPERATION_ID_REUSED');return false;}
   const gate=recordingInboxIntegration?.gate,releaseGate=gate?.acquire();if(!releaseGate)throw failure('DEFERRED');
@@ -136,7 +206,7 @@
    const original=JSON.stringify(S),revision=stateRevision,view=JSON.stringify(U);
    const selectedSongId=!S.recMode && typeof song==='function' ? song()?.id : null;
    const next=PrivatePreparation.apply(S,operation,{schedule:RecordingScheduleUpdate.apply,recording:mergeRecordingAddition}).state;
-   const active=()=>startupPhase==='ready'&&recordingInboxCanWrite()&&recordingInboxOwner?.canWrite&&!document.hidden&&S.ghToken===token&&stateRevision===revision&&JSON.stringify(S)===original&&JSON.stringify(U)===view&&!REC&&!recordingStartPending&&!recordingFinalizePending&&!pitchStartPending&&!saving&&!syncing&&!manualSync&&!backupInFlight&&!publishInFlight&&!U.busy&&!U.importing&&!U.sheet&&!U.menu&&!U.showRecovery;
+   const active=()=>startupPhase==='ready'&&recordingInboxCanWrite()&&recordingInboxOwner?.canWrite&&!document.hidden&&sourceToken()===token&&stateRevision===revision&&JSON.stringify(S)===original&&JSON.stringify(U)===view&&!REC&&!recordingStartPending&&!recordingFinalizePending&&!pitchStartPending&&!saving&&!syncing&&!manualSync&&!backupInFlight&&!publishInFlight&&!U.busy&&!U.importing&&!U.sheet&&!U.menu&&!U.showRecovery;
    const slots=await Promise.all([idbGet('state:0'),idbGet('state:1')]),hold=await idbGet('recovery:network-hold:v1'),legacy=localStorage.getItem(KEY);
    if(!active())throw failure('DEFERRED');
    if(localSource){
@@ -176,17 +246,18 @@
    return {status:'deferred',reason};
   }
   if(!manualPending&&Date.now()-lastAttempt<60000)return {status:'throttled'};
-  manualPending=false;lastAttempt=Date.now();running=true;const token=S.ghToken;
+  manualPending=false;lastAttempt=Date.now();running=true;let token;
   try{
+   await loadCredential();token=sourceToken();
    if(!token){setStatus({kind:'missing-token'});return {status:'missing-token'};}
    setStatus({kind:'checking'});
-   const source=await PrivatePreparationSource.read({...config,token,isActive:()=>startupPhase==='ready'&&!document.hidden&&recordingInboxCanWrite()&&S.ghToken===token});
+   const source=await PrivatePreparationSource.read({...config,token,isActive:()=>startupPhase==='ready'&&!document.hidden&&recordingInboxCanWrite()&&sourceToken()===token});
    if(source.status!=='ready'){
     const code=source.code,stage=['identity','repository','contents','blob'].includes(source.stage)?source.stage:undefined;setStatus({kind:code==='MISSING_TOKEN'?'missing-token':['OWNER_MISMATCH','REPOSITORY_NOT_PRIVATE','REPOSITORY_MISMATCH','HTTP_401','HTTP_403','HTTP_404'].includes(code)?'access':code==='UNSUPPORTED'?'unsupported':'offline',code,stage});
     return {status:status.kind,code};
    }
    const manifest=await PrivatePreparation.validate(source.manifest,config.owner);
-   if(!ready()||S.ghToken!==token)throw failure('DEFERRED');
+   if(!ready()||sourceToken()!==token)throw failure('DEFERRED');
    const activePlan=(S.plan?.slots||[]).some(x=>x.a0!=null&&x.a1==null);
    const unapplied=manifest.operations.filter(op=>!S.privatePreparations?.[op.id]||S.privatePreparations[op.id].sha256!==op.sha256||S.privatePreparations[op.id].type!==op.type);
    // Lyrics-only additions preserve the active plan, selected song and recordings.
@@ -196,18 +267,18 @@
    const pending=additions.length?additions:eligible;
    if(unapplied.length&&!pending.length){setStatus({kind:'active-plan'});return {status:'deferred'};}
    if(!pending.length){setStatus({kind:'current',sourceSha:source.sourceSha});return {status:'current'};}
-   await establishOwner();if(S.ghToken!==token)throw failure('DEFERRED');
+   await establishOwner();if(sourceToken()!==token)throw failure('DEFERRED');
    let count=0;
    for(const operation of pending){if(await applyOne(operation,token,source.sourceSha))count++;}
    setStatus({kind:count?'applied':'current',count,sourceSha:source.sourceSha});return {status:status.kind,count};
   }catch(error){const code=error.preparationCode||error.code||'PREPARATION_CONFLICT';
-   setStatus({kind:code==='DEFERRED'?'deferred':code==='MULTIPLE_WINDOWS'?'multiple-windows':code==='OWNER_REQUIRED'?'owner-required':code==='UNSUPPORTED'?'unsupported':code==='SAVE_UNVERIFIED'?'unverified':'conflict',code,reason:code==='DEFERRED'?waitingReason():undefined});return {status:status.kind,code};
+   setStatus({kind:code==='CREDENTIAL_UNREADABLE'?'connection-error':code==='DEFERRED'?'deferred':code==='MULTIPLE_WINDOWS'?'multiple-windows':code==='OWNER_REQUIRED'?'owner-required':code==='UNSUPPORTED'?'unsupported':code==='SAVE_UNVERIFIED'?'unverified':'conflict',code,reason:code==='DEFERRED'?waitingReason():undefined});return {status:status.kind,code};
   }finally{running=false;}
  }
  async function importFile(file){
   if(running)return {status:'busy'};
   if(!ready()){setStatus({kind:'deferred',reason:waitingReason()});return {status:'deferred'};}
-  running=true;const token=S.ghToken;
+  running=true;const token=sourceToken();
   try{
    if(!file||typeof file.text!=='function'||!Number.isSafeInteger(file.size)||file.size<1||file.size>20*1024*1024)throw failure('INVALID_MANIFEST');
    const raw=await file.text();
@@ -217,21 +288,21 @@
    // operations in an exported manifest must not run as a side effect.
    const operations=manifest.operations.filter(op=>op.type==='recording-song');
    if(!operations.length)throw failure('NO_RECORDING_SONGS');
-   if(!ready()||S.ghToken!==token)throw failure('DEFERRED');
+   if(!ready()||sourceToken()!==token)throw failure('DEFERRED');
    let candidate=S;const pending=[];
    for(const op of operations){const result=PrivatePreparation.apply(candidate,op);candidate=result.state;if(result.status!=='already-applied')pending.push(op);}
    if(!pending.length){setStatus({kind:'current'});return {status:'current'};}
    const titles=pending.map(op=>op.packet.song.title).join('、');
    if(!root.confirm('REC曲 '+pending.length+'曲（'+titles+'）をこの端末に追加します。\n既存の曲・録音・予定は保持し、ファイルは送信しません。\n追加しますか？'))return {status:'cancelled'};
-   if(!ready()||S.ghToken!==token)throw failure('DEFERRED');
+   if(!ready()||sourceToken()!==token)throw failure('DEFERRED');
    const localSource=Object.freeze({raw,sha256:await PrivatePreparation.digest(raw)});
-   await establishOwner();if(!ready()||S.ghToken!==token)throw failure('DEFERRED');
+   await establishOwner();if(!ready()||sourceToken()!==token)throw failure('DEFERRED');
    let count=0;for(const op of pending)if(await applyOne(op,token,null,localSource))count++;
    // Reveal newly added artists without changing the current song or take.
    U.recArtistFilter='';render();
    setStatus({kind:'applied',count});return {status:'applied',count};
   }catch(error){const code=error.preparationCode||error.code||'PREPARATION_CONFLICT';
-   setStatus({kind:code==='DEFERRED'?'deferred':code==='MULTIPLE_WINDOWS'?'multiple-windows':code==='OWNER_REQUIRED'?'owner-required':code==='UNSUPPORTED'?'unsupported':code==='SAVE_UNVERIFIED'?'unverified':'conflict',code,reason:code==='DEFERRED'?waitingReason():undefined});return {status:status.kind,code};
+   setStatus({kind:code==='CREDENTIAL_UNREADABLE'?'connection-error':code==='DEFERRED'?'deferred':code==='MULTIPLE_WINDOWS'?'multiple-windows':code==='OWNER_REQUIRED'?'owner-required':code==='UNSUPPORTED'?'unsupported':code==='SAVE_UNVERIFIED'?'unverified':'conflict',code,reason:code==='DEFERRED'?waitingReason():undefined});return {status:status.kind,code};
   }finally{running=false;}
  }
  function chooseFile(){
@@ -244,8 +315,18 @@
  for(const name of ['click','input','change','keydown','submit','pointerdown','drop'])document.addEventListener(name,event=>{if(applying){event.preventDefault();event.stopImmediatePropagation();}},true);
  document.addEventListener('click',event=>{if(!event.target.closest?.('[data-act="private-preparation-check"]'))return;event.preventDefault();event.stopImmediatePropagation();void receive(true);},true);
  document.addEventListener('click',event=>{if(!event.target.closest?.('[data-act="private-preparation-file"]'))return;event.preventDefault();event.stopImmediatePropagation();chooseFile();},true);
+ document.addEventListener('click',event=>{
+  const button=event.target.closest?.('[data-act="private-preparation-connect"]');if(!button)return;
+  event.preventDefault();event.stopImmediatePropagation();
+  const field=button.closest('[data-private-preparation-connection]')?.querySelector('[data-private-preparation-token]');
+  const value=field?.value||'';if(field){field.value='';field.blur();}
+  // A click can still be inside the scroll/pointer quiet period. Keep its
+  // candidate in this short-lived closure, never in app state or HTML.
+  const tryConnect=attempt=>{if(waitingReason()==='interaction'&&attempt<10)return setTimeout(()=>tryConnect(attempt+1),180);void connectReadCredential(value);};
+  tryConnect(0);
+ },true);
  function start(){if(started)return;started=true;setInterval(()=>{void receive();},10000);setTimeout(()=>{void receive();},1200);navigator.serviceWorker?.addEventListener?.('controllerchange',()=>{lastAttempt=0;void receive();});window.addEventListener('online',()=>{lastAttempt=0;void receive();});document.addEventListener('visibilitychange',()=>{if(!document.hidden){lastAttempt=0;void receive();}});}
- root.PrivatePreparationUI=Object.freeze({settingsHTML,receive,importFile,start,isApplying:()=>applying,getStatus:()=>({...status})});start();
+ root.PrivatePreparationUI=Object.freeze({settingsHTML,receive,importFile,connectReadCredential,start,isApplying:()=>applying,getStatus:()=>({...status})});start();
 })(globalThis);
 
 
