@@ -113,7 +113,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.13";
+const APP_VER = "16.41.58.14";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -5023,15 +5023,18 @@ function originalExcelSourceGroupAllowed(so,key) {
   const known = aliases.map(groupOf).filter(Boolean);
   return !known.length || !!target && known.includes(target);
 }
-async function inspectOriginalExcel(so, blob) {
+async function inspectOriginalExcel(so, blob, prepared) {
   if (!(blob instanceof Blob) || !blob.size || blob.size > 16 * 1024 * 1024) return false;
   const expected = originalExcelLayout(so);
   if (!expected) return false;
-  const bytes = new Uint8Array(await blob.arrayBuffer());
+  const bytes = prepared?.bytes || new Uint8Array(await blob.arrayBuffer());
   if (!startupExcelWithinBudget(bytes)) return false;
-  let wb;
-  try { wb = XLSX.read(bytes,{type:"array",cellStyles:true,bookFiles:true}); }
-  catch (_) { wb = XLSX.read(bytes,{type:"array",bookFiles:true}); }
+  let wb = prepared?.workbook;
+  if (!wb) {
+    try { wb = XLSX.read(bytes,{type:"array",cellStyles:true,bookFiles:true}); }
+    catch (_) { wb = XLSX.read(bytes,{type:"array",bookFiles:true}); }
+    if (prepared) prepared.workbook = wb;
+  }
   if (!Array.isArray(wb.SheetNames) || !wb.SheetNames.includes(so.sheetName)
     || new Set(wb.SheetNames).size !== wb.SheetNames.length || wb.SheetNames.length > 32
     || (so.micSheet && !wb.SheetNames.includes(so.micSheet))) return false;
@@ -5048,9 +5051,14 @@ async function inspectOriginalExcel(so, blob) {
       if (gridCells > 1500000) return false;
     }
   }
-  const parsed = await parseXLSX({name:"original.xlsx"},bytes,{state:S,workbook:wb,sheetName:so.sheetName});
-  const candidate = buildSong(parsed,{addMember:name => ({id:name}),uid:() => "original-excel-inspection"});
-  return originalExcelLayout(candidate,id => id) === expected;
+  let layout = prepared?.layouts?.get(so.sheetName);
+  if (layout === undefined) {
+    const parsed = await parseXLSX({name:"original.xlsx"},bytes,{state:S,workbook:wb,sheetName:so.sheetName});
+    const candidate = buildSong(parsed,{addMember:name => ({id:name}),uid:() => "original-excel-inspection"});
+    layout = originalExcelLayout(candidate,id => id);
+    prepared?.layouts?.set(so.sheetName,layout);
+  }
+  return layout === expected;
 }
 async function storedOriginalExcelEntries() {
   const d = await db();
@@ -5127,12 +5135,13 @@ function originalExcelRepairHTML(ids) {
   if (VIEW()) return "";
   const songs = [...new Set(ids || [])].map(id => S.songs.find(so => so.id === id)).filter(Boolean);
   return songs.length ? '<p class="note">元Excelの歌詞・担当・セル位置が一致した曲は、曲・歌詞・指摘を保って再添付できます。別端末へJSONだけを復元した場合、元ファイルは含まれていません。</p>'
+    + '<button class="organize-action" data-act="excel-reattach-batch" data-id="' + h(songs[0].id) + '">このグループの元Excelをまとめて再添付</button>'
     + songs.map(so => '<button class="organize-action" data-act="excel-reattach" data-id="' + h(so.id) + '">' + h(songName(so)) + '：元Excelを再添付</button>').join("") : "";
 }
-function originalExcelFileInput(songId) {
+function originalExcelFileInput(songId, batch = false) {
   if (VIEW() || preview || U.importing) return;
   if (!S.songs.some(so => so.id === songId)) return;
-  U.excelAttachId = songId;
+  U.excelAttachId = songId; U.excelAttachBatch = batch;
   let input = document.getElementById("exceloriginalfile");
   if (!input) {
     input = document.createElement("input");
@@ -5140,7 +5149,7 @@ function originalExcelFileInput(songId) {
     input.accept = ".xlsx,.xlsm,.xlsb,.xls,.csv";
     document.body.appendChild(input);
   }
-  input.value = ""; input.click();
+  input.multiple = batch; input.value = ""; input.click();
 }
 async function reattachOriginalExcel(songId,file) {
   const release = enterRecordingInboxEditor();
@@ -5173,6 +5182,85 @@ async function reattachOriginalExcel(songId,file) {
     return true;
   } finally { U.busy = ""; render(); release(); }
 }
+
+function originalExcelGroupTargets(songId) {
+  const selected = S.songs.find(so => so.id === songId);
+  const groupOf = so => so.groupId || S.shows.find(sh => sh.id === so.showId)?.groupId || "";
+  const groupId = selected && groupOf(selected);
+  if (!groupId) throw new Error("対象グループを確認できません。公演を選び直してください。");
+  const songs = S.songs.filter(so => !so.hidden && groupOf(so) === groupId && (so.xls || so.sheetName));
+  if (new Set(songs.map(so => so.id)).size !== songs.length) throw new Error("曲IDが重複しているため、紐付けを変更していません。");
+  return songs;
+}
+async function reattachOriginalExcelBatch(songId, files) {
+  const release = enterRecordingInboxEditor();
+  if (!release) return false;
+  try {
+    if (VIEW() || preview) return false;
+    const selected = Array.from(files || []);
+    if (!selected.length || selected.length > 100 || selected.some(f => !Number.isSafeInteger(f.size) || f.size < 1 || f.size > 16*1024*1024)
+      || selected.reduce((n,f) => n+f.size,0) > 64*1024*1024) throw new Error("100ファイル・合計64MB以内で元Excelを選んでください。");
+    const songs = originalExcelGroupTargets(songId), state = S, before = JSON.stringify(S);
+    const draft = () => JSON.stringify([U.view,U.songIdx,U.showFilter,S.showId,S.groupId,U.sheet || null,U.wordEdit || null]);
+    const beforeDraft = draft(), unchanged = () => S === state && JSON.stringify(S) === before && draft() === beforeDraft
+      && !typingNow() && !VIEW() && !preview && recordingInboxCanWrite();
+    const assertCurrent = () => { if (!unchanged()) throw new Error("照合中に編集内容が変わりました。紐付けは変更していません。"); };
+    const layouts = new Map(), matches = new Map(), blobs = new Map(), failed = [], warnings = [];
+    for (const so of songs) {
+      let layout = ""; try { layout = originalExcelLayout(so); } catch (_) {}
+      if (!layout) { warnings.push(songName(so) + "：元Excelのセル対応を確認できないため保留"); continue; }
+      if (!layouts.has(layout)) layouts.set(layout,[]);
+      layouts.get(layout).push(so); matches.set(so.id,new Set());
+    }
+    for (let i=0; i<selected.length; i++) {
+      assertCurrent();
+      const file = selected[i]; U.busy = "元Excelを照合中 " + (i+1) + "/" + selected.length; render();
+      if (!/\.(xlsx|xlsm|xlsb|xls|csv)$/i.test(file.name)) { failed.push(file.name + "：Excelではありません"); continue; }
+      try {
+        const bytes = new Uint8Array(await importTimeout(file.arrayBuffer(),60000,"元Excelを読み取れませんでした。"));
+        if (bytes.byteLength !== file.size) throw new Error("読み取りサイズが一致しません");
+        const blob = new Blob([bytes]), digest = await startupExcelDigest(blob);
+        assertCurrent();
+        if (blobs.has(digest)) continue;
+        const prepared = {bytes,layouts:new Map()}; let count = 0;
+        for (const group of layouts.values()) {
+          if (!await inspectOriginalExcel(group[0],blob,prepared)) continue;
+          for (const so of group) {
+            const pinned = /^sha256-([a-f0-9]{64})$/.exec(so.xlsSourceId || "")?.[1];
+            if (pinned && pinned !== digest) continue;
+            matches.get(so.id).add(digest); count++;
+          }
+        }
+        assertCurrent(); blobs.set(digest,blob);
+        if (!count) warnings.push(file.name + "：このグループに一致する曲なし");
+      } catch (error) { assertCurrent(); failed.push(file.name + "：" + fileFailureReason(error)); }
+      await new Promise(resolve => setTimeout(resolve,0));
+    }
+    assertCurrent();
+    const plan = [];
+    for (const so of songs) {
+      const candidates = matches.get(so.id);
+      if (candidates?.size === 1) plan.push({so,digest:[...candidates][0]});
+      else if (candidates?.size > 1) warnings.push(songName(so) + "：一致する原本が複数あるため保留");
+    }
+    if (!plan.length) { showFileReport("元Excelの復旧結果",[],failed,warnings.concat("一致した曲はありません。")); return {restored:0}; }
+    if (!await automaticBackupBeforeEdit("original-excel-batch-reattach")) return false;
+    assertCurrent();
+    for (const digest of new Set(plan.map(x => x.digest))) {
+      const sourceId = await storeOriginalExcel(blobs.get(digest));
+      if (sourceId !== "sha256-" + digest) throw new Error("元Excelの保存後確認が一致しません。");
+      assertCurrent();
+    }
+    const at = Date.now();
+    for (const {so,digest} of plan) { so.xlsSourceId = "sha256-" + digest; so.xls = 1; so.xlsAt = at; delete XLOOK[so.id]; }
+    const expected = JSON.stringify(packState(S)); save(); await saveNow();
+    if (saveErr || await loadRaw() !== expected || JSON.stringify(packState(S)) !== expected)
+      throw new Error("元Excelは保管しましたが、紐付けの保存後確認を完了できませんでした。");
+    showFileReport("元Excelの復旧結果",plan.map(({so}) => (S.shows.find(sh => sh.id === so.showId)?.name || "") + " · " + songName(so)),failed,warnings);
+    return {restored:plan.length,files:new Set(plan.map(x => x.digest)).size};
+  } finally { U.busy = ""; render(); release(); }
+}
+
 function delClip(id) {
   if(typeof startupRecoveryNetworkHold!=='undefined'&&startupRecoveryNetworkHold)return;
   if (id.startsWith("xls:") && [...(S.songs || []), ...(S.rsongs || []), ...(S.trash || []).flatMap(t => t.songs || [])]
@@ -9584,6 +9672,7 @@ document.addEventListener("click", async (e) => {
     case "excel-export-close": closeExcelExport(); renderSheet(); break;
     case "excel-export-share": shareExcelExport(); break;
     case "excel-reattach": originalExcelFileInput(id); break;
+    case "excel-reattach-batch": originalExcelFileInput(id,true); break;
     case "xlsout": exportAbsentXlsx(id); break;
     case "xlsall": exportAllAbsentXlsx(); break;
     case "bootok": bootErr = ""; render(); break;
@@ -11355,7 +11444,7 @@ async function importSelection(input) {
   U.importing = true;
   const sid = U.swapId;
   try {
-    if (input.id === "exceloriginalfile") { const target = U.excelAttachId; U.excelAttachId = ""; if (target) await reattachOriginalExcel(target,picked[0]); }
+    if (input.id === "exceloriginalfile") { const target = U.excelAttachId, batch = U.excelAttachBatch; U.excelAttachId = ""; U.excelAttachBatch = false; if (target) { if (batch) await reattachOriginalExcelBatch(target,picked); else await reattachOriginalExcel(target,picked[0]); } }
     else if (input.id === "swapfile") { U.swapId = ""; if (sid) await swapSong(sid, picked[0]); }
     else if (input.id === "recfile") await loadRecDocs(picked);
     else await handleFiles(picked);

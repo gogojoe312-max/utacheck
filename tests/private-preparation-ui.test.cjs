@@ -171,3 +171,19 @@ test('unrecognized source diagnostics never expose arbitrary server strings or i
   assert.equal(f.run('JSON.stringify(S)'),before);assert.deepEqual(f.idb.snapshot(),db);assert.equal(f.localWrites.length,0);
  }
 });
+
+test('manual update names the actual waiting reason and automatically resumes the queued request',async()=>{
+ const reasons=[['U.menu={}', 'U.menu=null','menu',/メニュー/],['backupInFlight=true','backupInFlight=false','saving',/保存・配信/],['U.sheet={}','U.sheet=null','editing',/入力中/],['micStream={}','micStream=null','microphone',/マイク/]];
+ for(const [block,release,reason,message] of reasons){
+  const f=await setup();f.run(block);const before=f.run('JSON.stringify(S)');
+  const wait=await f.c.PrivatePreparationUI.receive(true);assert.equal(wait.status,'deferred');assert.equal(wait.reason,reason);
+  assert.match(f.c.PrivatePreparationUI.settingsHTML(),message);assert.equal(f.reads,0);assert.equal(f.run('JSON.stringify(S)'),before);
+  f.run(release);const resumed=await f.c.PrivatePreparationUI.receive();assert.equal(resumed.status,'applied');assert.equal(f.run('S.plan.slots[0].min'),75);
+ }
+});
+test('manual retry after an access failure retains a queued check through interaction throttling',async()=>{
+ let fail=true;const f=await setup({source:async({manifest})=>fail?{status:'unavailable',code:'HTTP_404',stage:'repository'}:{status:'ready',manifest,sourceSha:'a'.repeat(40)}});
+ assert.equal((await f.c.PrivatePreparationUI.receive(true)).status,'access');
+ f.run('U.menu={}');assert.equal((await f.c.PrivatePreparationUI.receive(true)).reason,'menu');fail=false;f.run('U.menu=null');
+ assert.equal((await f.c.PrivatePreparationUI.receive()).status,'applied');
+});

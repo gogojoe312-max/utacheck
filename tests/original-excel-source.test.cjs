@@ -27,8 +27,8 @@ function setup(extra={}){
    s.sheetName=local.sheetName;return s;
   },
   buildSong:parsed=>parsed,getClip:async key=>clips.get(key),putClip:async(key,blob)=>{stats.writes++;clips.set(key,blob);},
-  storedOriginalExcelEntries:async()=>[...clips].map(([key,blob])=>({key,blob})),...extra});
- for(const name of ['startupExcelDigest','startupExcelWithinBudget','excelSourceCandidates','originalExcelLayout','originalExcelSourceGroupAllowed','inspectOriginalExcel','getOriginalExcel','storeOriginalExcel','originalExcelRepairHTML','reattachOriginalExcel'])vm.runInContext(fn(name),c);
+  storedOriginalExcelEntries:async()=>[...clips].map(([key,blob])=>({key,blob})),importTimeout:async p=>p,fileFailureReason:e=>e.message,showFileReport:(title,succeeded,failed,warnings)=>{c.report={title,succeeded,failed,warnings};},...extra});
+ for(const name of ['startupExcelDigest','startupExcelWithinBudget','excelSourceCandidates','originalExcelLayout','originalExcelSourceGroupAllowed','inspectOriginalExcel','getOriginalExcel','storeOriginalExcel','originalExcelRepairHTML','reattachOriginalExcel','originalExcelGroupTargets','reattachOriginalExcelBatch'])vm.runInContext(fn(name),c);
  return {c,clips,alerts,stats,so:c.S.songs[0]};
 }
 test('same-sheet exact original passes without modifying IDs, lyrics, members or notes',async()=>{
@@ -165,4 +165,45 @@ test('replacement cancellation and archive-time edits cannot remap existing reco
   assert.equal(JSON.stringify(so.lines),beforeLines);assert.equal(so.title,'合成曲');assert.equal(undo,0);assert.equal(saved,0);assert.equal(c.S.members.length,1);
   if(change==='notes')assert.equal(c.S.notes[0].memo,'new edit');
  }
+});
+
+const inputFile=(blob,name='元Excel.xlsx')=>({name,size:blob.size,arrayBuffer:()=>blob.arrayBuffer()});
+test('batch repair reuses one verified original across shows in the selected group only',async()=>{
+ const {c,so,clips,stats}=setup(),other={...copy(so),id:'other-group',groupId:'ocha'},duplicate={...copy(so),id:'duplicate',showId:'show2'};
+ c.S.shows.push({id:'show2',groupId:'rosy'});c.S.songs.push(duplicate,other);const before=copy(c.S);
+ const result=await c.reattachOriginalExcelBatch(so.id,[inputFile(fixture()),inputFile(fixture({text:'unrelated'}),'元Excel.xlsx')]);
+ assert.equal(result.restored,2);assert.equal(result.files,1);assert.equal(stats.backup,1);assert.equal(stats.save,1);
+ assert.equal(c.S.songs[0].xlsSourceId,c.S.songs[1].xlsSourceId);assert.deepEqual(c.S.songs[2],before.songs[2]);assert.equal(clips.size,1);
+ const next=copy(c.S);for(const song of next.songs.slice(0,2))for(const k of ['xlsSourceId','xls','xlsAt'])delete song[k];
+ assert.deepEqual(next,before);assert.equal(c.report.succeeded.length,2);assert.equal(c.report.warnings.length,1);
+});
+test('batch repair leaves ambiguous and pinned mismatched workbooks untouched',async()=>{
+ for(const pinned of [false,true]){
+  const {c,so,clips}=setup(),a=fixture(),b=fixture({cover:'different original'});
+  if(pinned)so.xlsSourceId='sha256-'+await c.startupExcelDigest(a);
+  const before=JSON.stringify(c.S),files=pinned?[inputFile(b)]:[inputFile(a),inputFile(b)];
+  const result=await c.reattachOriginalExcelBatch(so.id,files);
+  assert.equal(result.restored,0);assert.equal(JSON.stringify(c.S),before);assert.equal(clips.size,0);
+ }
+});
+test('batch repair uses content and not filenames, and caches parsing for duplicated shows',async()=>{
+ const {c,so}=setup();for(let i=0;i<20;i++)c.S.songs.push({...copy(so),id:'copy'+i});
+ let parses=0;const real=c.parseXLSX;c.parseXLSX=async(...args)=>{parses++;return real(...args);};
+ const result=await c.reattachOriginalExcelBatch(so.id,[inputFile(fixture(),'unrelated filename.xlsx')]);
+ assert.equal(result.restored,21);assert.equal(parses,1);
+});
+test('batch repair refuses edits during checkpoint and cannot report failed readback as success',async()=>{
+ for(const during of ['checkpoint','readback']){
+  const {c,so,clips}=setup();
+  if(during==='checkpoint')c.automaticBackupBeforeEdit=async()=>{c.S.notes[0].memo='new edit';return true;};
+  else c.loadRaw=async()=>'{}';
+  await assert.rejects(c.reattachOriginalExcelBatch(so.id,[inputFile(fixture())]),during==='checkpoint'?/編集内容が変わり/:/保存後確認/);
+  assert.equal(c.report,undefined);
+  if(during==='checkpoint'){assert.equal(so.xlsSourceId,undefined);assert.equal(c.S.notes[0].memo,'new edit');assert.equal(clips.size,0);}
+ }
+});
+test('batch repair is bounded and rejects unknown group without writing',async()=>{
+ const {c,so,clips}=setup(),file=inputFile(fixture());
+ await assert.rejects(c.reattachOriginalExcelBatch(so.id,Array(101).fill(file)),/100ファイル/);
+ so.groupId='';c.S.shows=[];await assert.rejects(c.reattachOriginalExcelBatch(so.id,[file]),/対象グループ/);assert.equal(clips.size,0);
 });

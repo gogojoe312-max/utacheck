@@ -199,6 +199,30 @@ async function checkExcelReattach(page,width,dialogs){
   assert.equal(exported.originalName,'甲');assert.equal(exported.originalLyric,'Synthetic lyric one to preserve');
   assert.equal(exported.versionName,'乙');assert.equal(exported.versionLyric,'Synthetic lyric one to preserve');
   await assertFits(page);await screenshot(page,width,'excel-reattached-export');
+  const batchBefore=await page.evaluate(async()=>{
+   document.activeElement?.blur();closeExcelExport();
+   const base=S.songs.find(s=>s.id==='qa-excel-song'),copy=JSON.parse(JSON.stringify(base));copy.id='qa-excel-copy';copy.xlsSourceId='missing-batch-original';
+   S.songs.push(copy);const other=JSON.parse(JSON.stringify(copy));other.id='qa-excel-other-group';other.groupId='group-b';S.songs.push(other);
+   Object.assign(U,{menu:null,sheet:null,fileReport:null});save();await saveNow();if(saveErr)throw Error('Batch fixture save failed');
+   renderPointers.clear();scrollingUntil=0;showFileReport('元Excelの復旧結果',[],[],[],[copy.id]);return JSON.stringify(S);
+  });
+  const batchChooser=page.waitForEvent('filechooser');
+  await page.locator('[data-act="excel-reattach-batch"]').click();
+  const batchPicker=await batchChooser;assert.equal(batchPicker.isMultiple(),true);
+  await batchPicker.setFiles([{name:'同じ名前.xlsx',mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',buffer:Buffer.from(files.correct)},{name:'別の原本.xlsx',mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',buffer:Buffer.from(files.wrong)}]);
+  await page.waitForFunction(()=>!U.importing&&!U.busy&&/^sha256-/.test(S.songs.find(s=>s.id==='qa-excel-copy').xlsSourceId||''));
+  const batchAfter=await page.evaluate(async()=>({state:JSON.stringify(S),report:U.fileReport,durable:await loadRaw(),packed:JSON.stringify(packState(S))}));
+  const oldBatch=JSON.parse(batchBefore),newBatch=JSON.parse(batchAfter.state);
+  for(const id of ['qa-excel-song','qa-excel-copy']){
+   const prev=oldBatch.songs.find(s=>s.id===id),next=newBatch.songs.find(s=>s.id===id);
+   for(const key of ['xlsSourceId','xls','xlsAt'])prev[key]=next[key];
+  }
+  assert.deepEqual(newBatch,oldBatch,'Batch binding preserves all lyrics, notes and the other group');
+  assert.equal(batchAfter.durable,batchAfter.packed);assert.equal(batchAfter.report.succeeded.length,2);
+  assert.equal(newBatch.songs.find(s=>s.id==='qa-excel-copy').xlsSourceId,newBatch.songs.find(s=>s.id==='qa-excel-song').xlsSourceId);
+  assert.equal(newBatch.songs.find(s=>s.id==='qa-excel-other-group').xlsSourceId,'missing-batch-original');
+  await assertFits(page);
+
  }finally{
   await page.evaluate(async saved=>{
    closeExcelExport();S=JSON.parse(saved.state);Object.keys(U).forEach(key=>delete U[key]);Object.assign(U,JSON.parse(saved.ui));
@@ -207,5 +231,5 @@ async function checkExcelReattach(page,width,dialogs){
   },saved);
   assert.equal(await page.evaluate(()=>JSON.stringify(S)),saved.state,'Excel check restores exact prior application state');
  }
- return {reattach:true,wrongWorkbookRejected:true,oldWorkbookPreserved:true,idsLyricsNotesPreserved:true,export:true};
+ return {reattach:true,wrongWorkbookRejected:true,oldWorkbookPreserved:true,idsLyricsNotesPreserved:true,export:true,batchReattach:true};
 }

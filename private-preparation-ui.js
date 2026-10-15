@@ -2,12 +2,38 @@
 (function(root){
  'use strict';
  const config=Object.freeze({owner:'gogojoe312-max',repo:'shinkou-data'});
- let running=false,applying=false,lastAttempt=0,status={kind:'waiting'},started=false;
+ let running=false,applying=false,lastAttempt=0,status={kind:'waiting'},started=false,manualPending=false,interactionRetry=null;
  const failure=code=>Object.assign(new Error(code),{preparationCode:code});
- function ready(){return typeof S!=='undefined'&&startupPhase==='ready'&&booted&&!bootErr&&recordingInboxCanWrite()&&!document.hidden&&!VIEW()&&!preview&&!previewLoading&&!REC&&!recordingStartPending&&!recordingFinalizePending&&!pitchStartPending&&!PT.on&&!micStream
-  &&!saving&&!syncing&&!manualSync&&!backupInFlight&&!publishInFlight&&!recordingInboxWriters&&!U.busy&&!U.importing&&!U.sheet&&!U.menu&&!U.showRecovery&&!typingNow()&&!renderPointers.size&&Date.now()>=scrollingUntil
-  &&!(recordingInboxIntegration?.gate?.activeEditors||recordingInboxIntegration?.gate?.applying)
-  &&!(typeof RecordingScheduleUI!=='undefined'&&RecordingScheduleUI.isApplying());}
+ function waitingReason(){
+  if(typeof S==='undefined'||startupPhase!=='ready'||!booted||bootErr)return 'startup';
+  if(!recordingInboxCanWrite())return 'readonly';
+  if(document.hidden)return 'hidden';
+  if(VIEW()||preview||previewLoading)return 'preview';
+  if(REC||recordingStartPending||recordingFinalizePending)return 'recording';
+  if(pitchStartPending||PT.on||micStream)return 'microphone';
+  if(saving||syncing||manualSync||backupInFlight||publishInFlight||recordingInboxWriters)return 'saving';
+  if(U.importing||U.busy)return 'importing';
+  if(U.sheet||typingNow())return 'editing';
+  if(U.menu)return 'menu';
+  if(U.showRecovery)return 'recovery';
+  if(renderPointers.size||Date.now()<scrollingUntil)return 'interaction';
+  if(recordingInboxIntegration?.gate?.activeEditors||recordingInboxIntegration?.gate?.applying)return 'editor';
+  if(typeof RecordingScheduleUI!=='undefined'&&RecordingScheduleUI.isApplying())return 'schedule';
+  return '';
+ }
+ function ready(){return !waitingReason();}
+ function waitingText(reason){
+  const messages={
+   startup:'アプリの起動と保存確認を待っています。',readonly:'この画面の編集権限を確認できず、更新を待っています。',
+   hidden:'アプリを開いているときに更新を確認します。',preview:'本人用の編集画面に戻ると更新を確認します。',
+   recording:'録音が終わると更新を確認します。',microphone:'マイクを使用する機能が終わると更新を確認します。',
+   saving:'保存・配信処理が終わると更新を確認します。',importing:'ファイルの取り込み・処理が終わると更新を確認します。',
+   editing:'入力中の画面を保存して閉じると更新を確認します。',menu:'開いているメニューを閉じると更新を確認します。',
+   recovery:'復旧画面を閉じると更新を確認します。',interaction:'画面の操作が落ち着くと更新を確認します。',
+   editor:'編集中の処理が終わると更新を確認します。',schedule:'進行表の保存が終わると更新を確認します。'
+  };
+  return messages[reason]||'更新を反映できる状態になるのを待っています。';
+ }
  function sourceFailureText(){
   const stage={identity:'GitHubの本人確認',repository:'非公開の保存先の確認',contents:'更新ファイルの確認',blob:'更新ファイル本体の読取'}[status.stage];
   const reasons={
@@ -32,7 +58,7 @@
   if(status.kind==='current')return 'dot経由の更新は、この端末に反映済みです。';
   if(status.kind==='checking')return 'dot経由の更新を確認しています…';
   if(status.kind==='active-plan')return '進行中の枠が残っているため、予定の反映を待っています。実際には未開始なら、その枠の「その他」から開始状態だけ解除できます。';
-  if(status.kind==='deferred')return '録音・入力が終わってから、dot経由の更新を自動で反映します。';
+  if(status.kind==='deferred')return waitingText(status.reason);
   if(status.kind==='missing-token')return '本人用の自動受信は未接続です。この端末のGitHub接続を確認する必要があります。';
   if(status.kind==='access')return sourceFailureText();
   if(status.kind==='conflict')return '更新内容と現在の曲・予定の対応を確認できず、反映を止めています。現在の記録は保持しています。';
@@ -139,10 +165,18 @@
   finally{release?.();releaseGate();applying=false;if(app)app.inert=!recordingInboxCanWrite();}
  }
  async function receive(force=false){
+  if(force)manualPending=true;
   if(running)return {status:'busy'};
-  if(!ready()){if(force)setStatus({kind:(S.plan?.slots||[]).some(x=>x.a0!=null&&x.a1==null)?'active-plan':'deferred'});return {status:'deferred'};}
-  if(!force&&Date.now()-lastAttempt<60000)return {status:'throttled'};
-  lastAttempt=Date.now();running=true;const token=S.ghToken;
+  const reason=waitingReason();
+  if(reason){
+   if(manualPending){
+    setStatus({kind:'deferred',reason});
+    if(reason==='interaction'&&!interactionRetry)interactionRetry=setTimeout(()=>{interactionRetry=null;void receive();},180);
+   }
+   return {status:'deferred',reason};
+  }
+  if(!manualPending&&Date.now()-lastAttempt<60000)return {status:'throttled'};
+  manualPending=false;lastAttempt=Date.now();running=true;const token=S.ghToken;
   try{
    if(!token){setStatus({kind:'missing-token'});return {status:'missing-token'};}
    setStatus({kind:'checking'});
@@ -167,12 +201,12 @@
    for(const operation of pending){if(await applyOne(operation,token,source.sourceSha))count++;}
    setStatus({kind:count?'applied':'current',count,sourceSha:source.sourceSha});return {status:status.kind,count};
   }catch(error){const code=error.preparationCode||error.code||'PREPARATION_CONFLICT';
-   setStatus({kind:code==='DEFERRED'?'deferred':code==='MULTIPLE_WINDOWS'?'multiple-windows':code==='OWNER_REQUIRED'?'owner-required':code==='UNSUPPORTED'?'unsupported':code==='SAVE_UNVERIFIED'?'unverified':'conflict',code});return {status:status.kind,code};
+   setStatus({kind:code==='DEFERRED'?'deferred':code==='MULTIPLE_WINDOWS'?'multiple-windows':code==='OWNER_REQUIRED'?'owner-required':code==='UNSUPPORTED'?'unsupported':code==='SAVE_UNVERIFIED'?'unverified':'conflict',code,reason:code==='DEFERRED'?waitingReason():undefined});return {status:status.kind,code};
   }finally{running=false;}
  }
  async function importFile(file){
   if(running)return {status:'busy'};
-  if(!ready()){setStatus({kind:'deferred'});return {status:'deferred'};}
+  if(!ready()){setStatus({kind:'deferred',reason:waitingReason()});return {status:'deferred'};}
   running=true;const token=S.ghToken;
   try{
    if(!file||typeof file.text!=='function'||!Number.isSafeInteger(file.size)||file.size<1||file.size>20*1024*1024)throw failure('INVALID_MANIFEST');
@@ -197,7 +231,7 @@
    U.recArtistFilter='';render();
    setStatus({kind:'applied',count});return {status:'applied',count};
   }catch(error){const code=error.preparationCode||error.code||'PREPARATION_CONFLICT';
-   setStatus({kind:code==='DEFERRED'?'deferred':code==='MULTIPLE_WINDOWS'?'multiple-windows':code==='OWNER_REQUIRED'?'owner-required':code==='UNSUPPORTED'?'unsupported':code==='SAVE_UNVERIFIED'?'unverified':'conflict',code});return {status:status.kind,code};
+   setStatus({kind:code==='DEFERRED'?'deferred':code==='MULTIPLE_WINDOWS'?'multiple-windows':code==='OWNER_REQUIRED'?'owner-required':code==='UNSUPPORTED'?'unsupported':code==='SAVE_UNVERIFIED'?'unverified':'conflict',code,reason:code==='DEFERRED'?waitingReason():undefined});return {status:status.kind,code};
   }finally{running=false;}
  }
  function chooseFile(){
