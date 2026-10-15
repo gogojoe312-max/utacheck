@@ -516,7 +516,7 @@
     }catch(e){alert(message(e));}finally{
       if(typeof publishIssues!=='undefined'&&resolvedIssues.size)publishIssues=publishIssues.filter(issue=>!resolvedIssues.has(issue));
       release?.();pushing=false;
-      if(resolvedIssues.size&&typeof renderPublishStatus==='function')renderPublishStatus();
+      if(typeof renderPublishStatus==='function')renderPublishStatus();
     }
   }
   document.addEventListener('click',e=>{
