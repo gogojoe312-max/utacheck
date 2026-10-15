@@ -49,7 +49,7 @@ async function readableTitles(page,rec){
  for(const title of titles){assert.equal(title.whiteSpace,'normal');assert.notEqual(title.textOverflow,'ellipsis');assert(['none','unset','0',''].includes(title.lineClamp));assert(title.w>0&&title.h>0);assert(title.sw<=title.w+1&&title.sh<=title.h+1);}
  for(const control of await rows.locator('.settings-song-select').evaluateAll(nodes=>nodes.map(el=>({align:getComputedStyle(el).textAlign,height:el.getBoundingClientRect().height})))){assert.equal(control.align,'left');assert(control.height>=44);}
 }
-(async()=>{let browser;const results=[],errors=[],blocked=[],dialogs=[];
+(async()=>{let browser;const contexts=new Set(),results=[],errors=[],blocked=[],dialogs=[];
  try{
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const origin=process.env.QA_BASE_URL||'http://127.0.0.1:'+server.address().port;
   const allowedOrigin=new URL(origin).origin;
@@ -58,6 +58,7 @@ async function readableTitles(page,rec){
    const context=engine==='webkit'
     ? await playwright.webkit.launchPersistentContext(fs.mkdtempSync(path.join(require('node:os').tmpdir(),'utacheck-webkit-')),{headless:true,viewport:{width,height:844},serviceWorkers:'block'})
     : await browser.newContext({viewport:{width,height:844},serviceWorkers:'block'});
+   contexts.add(context);
    await context.route('**/*',route=>{const request=route.request(),url=new URL(request.url());if(url.origin!==allowedOrigin||request.method()!=='GET'){blocked.push({origin:url.origin,method:request.method()});return route.abort('blockedbyclient');}
     if(url.searchParams.has('app-update-check'))return route.fulfill({status:200,contentType:'text/html',body:'<script src="app.js?v=99.99.99"></script>'});return route.continue();});
    if(context.routeWebSocket)await context.routeWebSocket('**/*',socket=>{blocked.push({origin:'websocket',method:'CONNECT'});socket.close();});
@@ -117,12 +118,12 @@ async function readableTitles(page,rec){
    assert.equal(await page.locator('[data-settings-panel="data-save"] [data-act="bkfile"]').isVisible(),true);assert.equal(await page.locator('[data-settings-panel="connection-recovery"]').evaluate(el=>el.open),false);
    await assertFits(page);await screenshot(page,width,'save-error');assert.deepEqual(JSON.parse(await page.evaluate(()=>qaContent())),expected);
    const dotConnection=await checkDotConnection(page,width);
-   results.push({width,dotConnection,...absenceResult,excelOriginal:excelCheck,settings:true,pdfLiveRecView:true,fullTitles:true,recFolderRename:true,footer:true,draftPreserved:true,saveErrorVisible:true});await context.close();
+   results.push({width,dotConnection,...absenceResult,excelOriginal:excelCheck,settings:true,pdfLiveRecView:true,fullTitles:true,recFolderRename:true,footer:true,draftPreserved:true,saveErrorVisible:true});await context.close();contexts.delete(context);
   }
   assert.deepEqual(errors,[]);assert.equal(blocked.filter(x=>x.method!=='GET').length,0);
   const report={passed:true,engine,results,errors,blocked,externalRequestsAllowed:0,syntheticDataOnly:true};
   fs.writeFileSync(path.join(out,'report.json'),JSON.stringify(report,null,2));console.log(JSON.stringify(report));
- }finally{await browser?.close();await new Promise(resolve=>server.close(resolve));}
+ }finally{await Promise.allSettled([...contexts].map(context=>context.close()));await browser?.close();await new Promise(resolve=>server.close(resolve));}
 })().catch(error=>{console.error(error);process.exitCode=1;});
 
 
