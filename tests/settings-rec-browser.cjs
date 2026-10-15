@@ -260,7 +260,8 @@ async function checkDotConnection(page,width){
  assert.equal(await settings.locator('[data-private-preparation-token]').getAttribute('type'),'password');
  await assertFits(page);
  await settings.locator('[data-act="private-preparation-connect"]').click();
- await page.waitForFunction(()=>['connected','current'].includes(PrivatePreparationUI.getStatus().kind));
+ try{await page.waitForFunction(()=>['connected','current'].includes(PrivatePreparationUI.getStatus().kind));}
+ catch(error){throw Error('Dot connection did not complete: '+JSON.stringify(await page.evaluate(()=>({status:PrivatePreparationUI.getStatus(),reads:qaDotReads,active:document.activeElement?.tagName,fieldBlank:document.querySelector('[data-private-preparation-token]')?.value==='',saving,saveErr,ready:startupPhase,writers:recordingInboxWriters,canWrite:recordingInboxCanWrite()}))));}
  const check=await page.evaluate(async()=>{
   const key='private-preparation:read-credential:v1',record=await idbGet(key),token='github_pat_'+'b'.repeat(40);
   return {saved:record?.token===token,stateUnchanged:JSON.stringify(S)===qaDotState,backupClean:!JSON.stringify(backupState()).includes(token),

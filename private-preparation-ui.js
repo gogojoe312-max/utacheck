@@ -3,7 +3,7 @@
  'use strict';
  const config=Object.freeze({owner:'gogojoe312-max',repo:'shinkou-data'});
  const credentialKey='private-preparation:read-credential:v1';
- let credentialLoaded=false,dedicatedToken=null,connectionBlocked=false;
+ let credentialLoaded=false,dedicatedToken=null,connectionBlocked=false,connectionPending=false;
  const sourceToken=()=>dedicatedToken||S.ghToken;
  const validReadToken=token=>typeof token==='string'&&/^github_pat_[A-Za-z0-9_]{20,300}$/.test(token);
  async function loadCredential(){
@@ -235,6 +235,7 @@
   finally{release?.();releaseGate();applying=false;if(app)app.inert=!recordingInboxCanWrite();}
  }
  async function receive(force=false){
+  if(connectionPending)return {status:'busy'};
   if(force)manualPending=true;
   if(running)return {status:'busy'};
   const reason=waitingReason();
@@ -318,12 +319,21 @@
  document.addEventListener('click',event=>{
   const button=event.target.closest?.('[data-act="private-preparation-connect"]');if(!button)return;
   event.preventDefault();event.stopImmediatePropagation();
+  if(connectionPending)return;
   const field=button.closest('[data-private-preparation-connection]')?.querySelector('[data-private-preparation-token]');
   const value=field?.value||'';if(field){field.value='';field.blur();}
-  // A click can still be inside the scroll/pointer quiet period. Keep its
-  // candidate in this short-lived closure, never in app state or HTML.
-  const tryConnect=attempt=>{if(waitingReason()==='interaction'&&attempt<10)return setTimeout(()=>tryConnect(attempt+1),180);void connectReadCredential(value);};
-  tryConnect(0);
+  // Keep the candidate only in this short-lived closure while a click, scroll
+  // or preceding save settles. Do not lose it to the automatic polling timer.
+  connectionPending=true;button.disabled=true;
+  const tryConnect=async attempt=>{
+   const reason=waitingReason();
+   if((running||reason)&&attempt<60&&!['readonly','connection','startup','preview'].includes(reason)){
+    setStatus({kind:'deferred',reason:reason||'saving'});setTimeout(()=>{void tryConnect(attempt+1);},180);return;
+   }
+   connectionPending=false;
+   try{await connectReadCredential(value);}finally{button.disabled=false;}
+  };
+  void tryConnect(0);
  },true);
  function start(){if(started)return;started=true;setInterval(()=>{void receive();},10000);setTimeout(()=>{void receive();},1200);navigator.serviceWorker?.addEventListener?.('controllerchange',()=>{lastAttempt=0;void receive();});window.addEventListener('online',()=>{lastAttempt=0;void receive();});document.addEventListener('visibilitychange',()=>{if(!document.hidden){lastAttempt=0;void receive();}});}
  root.PrivatePreparationUI=Object.freeze({settingsHTML,receive,importFile,connectReadCredential,start,isApplying:()=>applying,getStatus:()=>({...status})});start();
