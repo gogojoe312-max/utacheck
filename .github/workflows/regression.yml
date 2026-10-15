@@ -26,6 +26,7 @@ jobs:
       - name: Run data and behavior tests
         run: node --test tests/*.test.cjs
       - name: Install isolated test browsers
+        id: browsers
         run: |
           npm install --prefix "$RUNNER_TEMP/utacheck-browser" --no-save --package-lock=false playwright@1.56.1
           "$RUNNER_TEMP/utacheck-browser/node_modules/.bin/playwright" install --with-deps chromium webkit
@@ -34,6 +35,16 @@ jobs:
           BROWSER_ENGINE: chromium
         run: NODE_PATH="$RUNNER_TEMP/utacheck-browser/node_modules" node tests/settings-rec-browser.cjs
       - name: Check WebKit layout and controls
+        if: ${{ !cancelled() && steps.browsers.outcome == 'success' }}
         env:
           BROWSER_ENGINE: webkit
+        run: NODE_PATH="$RUNNER_TEMP/utacheck-browser/node_modules" node tests/settings-rec-browser.cjs
+      - name: Verify the existing published site
+        if: github.ref == 'refs/heads/main'
+        run: node tests/published-assets.cjs
+      - name: Check the published interface with WebKit
+        if: github.ref == 'refs/heads/main'
+        env:
+          BROWSER_ENGINE: webkit
+          QA_BASE_URL: https://gogojoe312-max.github.io/utacheck/
         run: NODE_PATH="$RUNNER_TEMP/utacheck-browser/node_modules" node tests/settings-rec-browser.cjs

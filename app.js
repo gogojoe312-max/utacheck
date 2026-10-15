@@ -7217,8 +7217,8 @@ function practiceToolsSettingsHTML() {
 }
 
 function backupSettingsHTML() {
-  const status = backupInFlight ? "バックアップ中…" : S.bkError ? "クラウド保存に失敗しました：" + S.bkError
-    : startupRecoveryNetworkHold ? "クラウド保存・他端末同期は停止中。ファイルに保存できます。"
+  const status = startupRecoveryNetworkHold ? "クラウド保存・他端末同期は停止中。ファイルに保存できます。" + (S.bkError ? " 前回の保存：" + S.bkError : "")
+    : backupInFlight ? "バックアップ中…" : S.bkError ? "クラウド保存に失敗しました：" + S.bkError
     : !S.ghToken ? "クラウド未接続。ファイルで保存できます。"
     : S.bkAt ? "クラウド保存：" + new Date(S.bkAt).toLocaleString("ja-JP") + (bkSignature() !== S.bkHash ? "（未保存の変更あり）" : "")
     : "クラウドにはまだ保存されていません";
@@ -10265,6 +10265,11 @@ document.addEventListener("click", async (e) => {
 
 // Folder expansion is a local navigation preference, never saved into content
 // or publication metadata. Selecting another show opens its folder by default.
+document.addEventListener("click", e => {
+  const summary = e.target.closest?.('details[data-settings-panel="app-info"] > summary');
+  if (summary?.isConnected) U.appInfoOpen = !summary.parentElement.open;
+}, true);
+
 document.addEventListener("toggle", e => {
   const folder = e.target;
   if (folder.matches?.('details[data-settings-panel="app-info"]') && folder.isConnected) { U.appInfoOpen = folder.open; return; }
@@ -12701,8 +12706,11 @@ async function uploadCloudBackup(content) {
     }
     saved = await write({...discard, [BACKUP_FILE]:{content:JSON.stringify(index)}});
   }
-  const files = saved.files || (await gh("/gists/" + S.bkGistId, {signal:AbortSignal.timeout(60000)})).files;
-  if (await readCloudBackupContent(files) !== content) throw new Error("保存内容の照合に失敗しました。もう一度バックアップしてください。");
+  const verifyTarget = target || saved.id;
+  const verified = await gh("/gists/" + verifyTarget, {signal:AbortSignal.timeout(60000)});
+  guard();
+  if (verified.id !== verifyTarget || verified.public !== false) throw new Error("既存の非公開バックアップ先を確認できません。");
+  if (await readCloudBackupContent(verified.files) !== content) throw new Error("保存内容の照合に失敗しました。もう一度バックアップしてください。");
   guard();
   delete S.bkPendingParts;
 }

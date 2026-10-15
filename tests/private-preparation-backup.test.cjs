@@ -67,7 +67,7 @@ test('direct upload also refuses missing destination, key, or token without netw
 });
 test('existing key encryption and verified nonpublic existing gist permit a single PATCH only',async()=>{
  const f=fixture(),before=clone(f.c.S);assert.equal(await f.c.doBackup(true),true);
- assert.equal(f.preflight,1);assert.deepEqual(f.calls.map(c=>c.init.method||'GET'),['GET','PATCH']);
+ assert.equal(f.preflight,1);assert.deepEqual(f.calls.map(c=>c.init.method||'GET'),['GET','PATCH','GET']);
  assert(f.calls.every(c=>c.path==='/gists/'+TARGET));assert.equal(f.c.S.bkGistId,TARGET);assert.equal(f.c.S.bkKey,KEY);
  const content=f.server.files['utacheck-backup.json'].content;assert.doesNotMatch(content,/PRIVATE_SYNTHETIC_LYRIC|synthetic-existing-token/);
  const restored=await f.c.unpackBackup(JSON.parse(content),KEY);assert.deepEqual(clone(restored.state.privatePreparations),before.privatePreparations);
@@ -103,7 +103,7 @@ test('matching preparation receipt identity allows existing safe whole-state syn
  assert.equal(await f.c.checkOther(true),'received');assert.equal(f.c.S.songs[0].lines[0].t,'Newer owner edit');assert.equal(f.c.S.ghToken,TOKEN);assert.equal(f.c.S.bkKey,KEY);
 });
 test('empty preparation receipts preserve ordinary existing backup behavior',async()=>{
- const f=fixture({state:{privatePreparations:{},bkKey:''}});assert.equal(await f.c.doBackup(true),true);assert.equal(f.calls.at(-1).init.method,'PATCH');
+ const f=fixture({state:{privatePreparations:{},bkKey:''}});assert.equal(await f.c.doBackup(true),true);assert.equal(f.calls.at(-1).init.method,undefined);
  const content=JSON.parse(f.server.files['utacheck-backup.json'].content);assert.equal(content.bk,1);assert.equal(content.enc,undefined);
 });
 
@@ -114,5 +114,32 @@ test('every current preparation receipt survives matching backup checks after se
   const reopened=JSON.parse(JSON.stringify(f.c.S));
   assert.equal(f.c.privatePreparationReceiptsMatch(reopened),true,type);
   reopened.privatePreparations.prepared.sha256='d'.repeat(64);assert.equal(f.c.privatePreparationReceiptsMatch(reopened),false,type);
+ }
+});
+
+test('independent readback rejects an echoed PATCH when the server cannot verify the saved backup',async()=>{
+ const cases=[
+  async()=>{throw Error('synthetic readback failure')},
+  async(c,server,previous)=>previous,
+  async(c,server)=>({...server,id:'b'.repeat(32)}),
+  async(c,server)=>({...server,public:true}),
+  async(c,server)=>({...server,public:undefined}),
+  async(c,server)=>({...server,files:{}}),
+  ...['bkGistId','bkKey','ghToken'].map(key=>async(c,server)=>{c.S[key]='changed-existing-setting';return server})
+ ];
+ for(const readback of cases){
+  const f=fixture(),before=clone(f.c.S),previous=clone(f.server),base=f.c.gh;let reads=0;
+  f.c.gh=async(path,init={})=>{
+   if(!init.method&&++reads===2){
+    f.calls.push({path,init});
+    return clone(await readback(f.c,clone(f.server),previous));
+   }
+   return base(path,init);
+  };
+  assert.equal(await f.c.doBackup(true),false);
+  assert.deepEqual(f.calls.map(x=>x.init.method||'GET'),['GET','PATCH','GET']);
+  for(const key of ['bkAt','bkSeen','bkHash','shows','songs','notes','rsongs','groups','draws','recs','privatePreparations'])
+   assert.deepEqual(f.c.S[key],before[key],key);
+  assert(f.c.S.bkError);
  }
 });

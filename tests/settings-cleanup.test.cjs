@@ -75,3 +75,9 @@ test('automatic private preparation has no routine management control',()=>{
  const html=f.html(),shown=visible(html);
  assert.equal((html.match(/data-private-preparation-status/g)||[]).length,0);assert.doesNotMatch(shown,/data-act="private-preparation-check"/);
 });
+
+test('a recovery hold stays visible alongside an earlier cloud error',()=>{
+ const f=fixture();f.c.startupRecoveryNetworkHold=true;f.c.S.bkError='以前の合成エラー';
+ const shown=visible(f.html());assert.match(shown,/クラウド保存・他端末同期は停止中/);assert.match(shown,/以前の合成エラー/);
+ assert.doesNotMatch(shown,/data-act="bknow"/);
+});

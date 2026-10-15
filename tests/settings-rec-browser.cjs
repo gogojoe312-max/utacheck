@@ -50,11 +50,12 @@ async function readableTitles(page,rec){
 }
 (async()=>{let browser;const results=[],errors=[],blocked=[],dialogs=[];
  try{
-  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const origin='http://127.0.0.1:'+server.address().port;
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const origin=process.env.QA_BASE_URL||'http://127.0.0.1:'+server.address().port;
+  const allowedOrigin=new URL(origin).origin;
   browser=await playwright[engine].launch({headless:true});
   for(const width of [320,390]){
    const context=await browser.newContext({viewport:{width,height:844},serviceWorkers:'block'});
-   await context.route('**/*',route=>{const request=route.request(),url=new URL(request.url());if(url.origin!==origin||request.method()!=='GET'){blocked.push({origin:url.origin,method:request.method()});return route.abort('blockedbyclient');}
+   await context.route('**/*',route=>{const request=route.request(),url=new URL(request.url());if(url.origin!==allowedOrigin||request.method()!=='GET'){blocked.push({origin:url.origin,method:request.method()});return route.abort('blockedbyclient');}
     if(url.searchParams.has('app-update-check'))return route.fulfill({status:200,contentType:'text/html',body:'<script src="app.js?v=99.99.99"></script>'});return route.continue();});
    if(context.routeWebSocket)await context.routeWebSocket('**/*',socket=>{blocked.push({origin:'websocket',method:'CONNECT'});socket.close();});
    const page=await context.newPage();page.setDefaultTimeout(20000);let promptReply=null;
