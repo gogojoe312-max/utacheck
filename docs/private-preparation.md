@@ -24,7 +24,8 @@ and rereads the saved record before reporting success. The credential never
 enters application state, exported/cloud backups, member payloads, diagnostics
 or rendered HTML. The Gist/member token is not replaced. Rejected replacements
 keep the earlier credential; an uncertain write prevents reception until reload.
-The password input is cleared on submission. A corrupt saved credential fails
+The password input lives in a separate dialog so app rerenders cannot erase it;
+it is cleared on submission or closing. Closing during validation cancels saving. A corrupt saved credential fails
 closed rather than silently falling back to a different connection.
 
 A version-1 manifest has `app: utacheck-private-preparation`, `version`, `owner`,

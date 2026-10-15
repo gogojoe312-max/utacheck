@@ -250,8 +250,8 @@ async function checkDotConnection(page,width){
   }};
   renderPointers.clear();scrollingUntil=0;render(true);
  });
- const settings=page.locator('[data-private-preparation-connection]');
- if(!await settings.evaluate(el=>el.open))await settings.locator('summary').click();
+ await page.locator('[data-act="private-preparation-setup"]').click();
+ const settings=page.getByRole('dialog',{name:'dotの接続設定',exact:true});
  const link=await settings.locator('a').getAttribute('href'),url=new URL(link);
  assert.equal(url.origin,'https://github.com');assert.equal(url.searchParams.get('contents'),'read');
  assert.equal(url.searchParams.get('target_name'),'gogojoe312-max');
@@ -259,6 +259,8 @@ async function checkDotConnection(page,width){
  await settings.locator('[data-private-preparation-token]').fill(token);
  assert.equal(await settings.locator('[data-private-preparation-token]').getAttribute('type'),'password');
  await assertFits(page);
+ await page.evaluate(()=>{document.activeElement?.blur();renderPointers.clear();scrollingUntil=0;render(true);});
+ assert.equal(await settings.locator('[data-private-preparation-token]').inputValue(),token,'A settings render must preserve the independent connection input');
  await settings.locator('[data-act="private-preparation-connect"]').click();
  try{await page.waitForFunction(()=>['connected','current'].includes(PrivatePreparationUI.getStatus().kind));}
  catch(error){throw Error('Dot connection did not complete: '+JSON.stringify(await page.evaluate(()=>({status:PrivatePreparationUI.getStatus(),reads:qaDotReads,active:document.activeElement?.tagName,fieldBlank:document.querySelector('[data-private-preparation-token]')?.value==='',saving,saveErr,ready:startupPhase,writers:recordingInboxWriters,canWrite:recordingInboxCanWrite()}))));}
@@ -266,7 +268,7 @@ async function checkDotConnection(page,width){
   const key='private-preparation:read-credential:v1',record=await idbGet(key),token='github_pat_'+'b'.repeat(40);
   return {saved:record?.token===token,stateUnchanged:JSON.stringify(S)===qaDotState,backupClean:!JSON.stringify(backupState()).includes(token),
    domClean:![...document.querySelectorAll('input')].some(el=>el.value.includes(token)),htmlClean:!document.documentElement.outerHTML.includes(token),reads:qaDotReads,
-   fieldBlank:document.querySelector('[data-private-preparation-token]').value==='',closed:!document.querySelector('[data-private-preparation-connection]').open};
+   fieldBlank:!document.querySelector('[data-private-preparation-token]')?.value,closed:!document.querySelector('[data-private-preparation-connection]')};
  });
  assert.equal(check.saved,true);assert.equal(check.stateUnchanged,true);assert.equal(check.backupClean,true);assert.equal(check.domClean,true);assert.equal(check.htmlClean,true);assert.equal(check.fieldBlank,true);assert.equal(check.closed,true);assert(check.reads.includes('dedicated'));
  await assertFits(page);await screenshot(page,width,'dot-connected');

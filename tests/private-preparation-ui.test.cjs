@@ -54,7 +54,7 @@ test('storage failed before commit preserves editor; uncertain committed save bl
  for(const committed of [false,true]){const f=await setup({store:{commit:async()=>({status:committed?'unverified':'rejected',committed})}}),before=f.run('JSON.stringify(S)');const result=await f.c.PrivatePreparationUI.receive(true);assert.equal(result.status,committed?'unverified':'conflict');assert.equal(f.run('JSON.stringify(S)'),before);assert.equal(f.run('startupPhase'),committed?'blocked':'ready');}
 });
 test('unsupported writer ownership never creates a marker, credential, or local change',async()=>{const f=await setup({owner:false}),before=f.run('JSON.stringify(S)'),db=f.idb.snapshot();assert.equal((await f.c.PrivatePreparationUI.receive(true)).status,'unsupported');assert.equal(f.run('JSON.stringify(S)'),before);assert.deepEqual(f.idb.snapshot(),db);assert.equal(f.localWrites.length,0);});
-test('normal settings hook exposes honest source state without auth material',async()=>{const f=await setup({token:''});await f.c.PrivatePreparationUI.receive(true);const html=f.c.PrivatePreparationUI.settingsHTML();assert.match(html,/未接続/);assert.match(html,/private-preparation-check/);assert.match(html,/type="password"/);assert.doesNotMatch(html,/value="[^\"]*synthetic|synthetic-token/);});
+test('normal settings hook exposes honest source state without auth material',async()=>{const f=await setup({token:''});await f.c.PrivatePreparationUI.receive(true);const html=f.c.PrivatePreparationUI.settingsHTML();assert.match(html,/未接続/);assert.match(html,/private-preparation-check/);assert.match(html,/private-preparation-setup/);assert.doesNotMatch(html,/value="[^\"]*synthetic|synthetic-token/);});
 function serviceWorkerFixture(f,replies){
  let count=0;
  f.c.location.href='https://synthetic.invalid/utacheck/';
@@ -242,4 +242,9 @@ test('unverified credential write blocks reception until reopening and never cla
  assert.equal((await f.c.PrivatePreparationUI.connectReadCredential(READ_TOKEN)).status,'connection-error');
  assert.equal(f.run('S.ghToken'),'synthetic-token');const reads=f.reads;
  assert.equal((await f.c.PrivatePreparationUI.receive(true)).status,'deferred');assert.equal(f.reads,reads);
+});
+
+test('closing connection form during source validation leaves saved credentials unchanged',async()=>{
+ let open=true;const f=await setup({source:async({manifest})=>{open=false;return {status:'ready',manifest,sourceSha:'a'.repeat(40)};}});
+ const db=f.idb.snapshot();assert.equal((await f.c.PrivatePreparationUI.connectReadCredential(READ_TOKEN,()=>open)).status,'deferred');assert.deepEqual(f.idb.snapshot(),db);
 });

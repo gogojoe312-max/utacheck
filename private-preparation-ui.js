@@ -89,22 +89,30 @@
  }
  function setStatus(value){
   status=value;document.querySelectorAll?.('[data-private-preparation-status]').forEach(el=>el.textContent=statusText());
-  if(['access','missing-token','invalid-read-token','connection-error'].includes(value.kind))document.querySelectorAll?.('[data-private-preparation-connection]').forEach(el=>el.open=true);
-  if(value.kind==='connected')document.querySelectorAll?.('[data-private-preparation-connection]').forEach(el=>el.open=false);
  }
  function settingsHTML(){
-  const open=['access','missing-token','invalid-read-token','connection-error'].includes(status.kind)?' open':'';
-  const tokenURL='https://github.com/settings/personal-access-tokens/new?name=utacheck-dot-read&target_name=gogojoe312-max&contents=read&expires_in=90';
   return '<button class="ghost" data-act="private-preparation-check">dot経由で更新する</button><p class="note" data-private-preparation-status role="status">'+h(statusText())+'</p>'
-   +'<details data-private-preparation-connection'+open+'><summary>dotの接続設定</summary>'
+   +'<button class="ghost" data-act="private-preparation-setup">dotの接続設定</button>';
+ }
+ function openConnection(){
+  if(document.querySelector('[data-private-preparation-connection]'))return;
+  const dialog=document.createElement('dialog');
+  dialog.setAttribute('data-private-preparation-connection','');dialog.setAttribute('aria-label','dotの接続設定');
+  dialog.style.cssText='width:440px;max-width:calc(100vw - 24px);box-sizing:border-box;max-height:90dvh;overflow:auto;background:#1e1f23;color:#eee;border:1px solid #40434b;border-radius:18px;padding:20px;';
+  const tokenURL='https://github.com/settings/personal-access-tokens/new?name=utacheck-dot-read&target_name=gogojoe312-max&contents=read&expires_in=90';
+  dialog.innerHTML='<h3>dotの接続設定</h3><button class="ghost" data-private-preparation-close>閉じる</button>'
    +'<p class="note">読み取り先：gogojoe312-max / shinkou-data</p>'
    +'<p class="note"><a href="'+tokenURL+'" target="_blank" rel="noopener noreferrer">GitHubで読み取り用キーを作る</a></p>'
    +'<p class="note">Repository access は「Only select repositories」で shinkou-data だけを選び、Contents は「Read-only」にしてください。</p>'
    +'<label>読み取り用キー<input type="password" data-private-preparation-token autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="github_pat_…" style="display:block;width:100%;box-sizing:border-box"></label>'
    +'<button class="ghost" data-act="private-preparation-connect">接続を確認して保存</button>'
-   +'<p class="note">キーはこの端末に保存します。メンバー配信の接続は保持します。</p></details>';
+   +'<p class="note" data-private-preparation-status role="status"></p>'
+   +'<p class="note">キーはこの端末に保存します。メンバー配信の接続は保持します。</p>';
+  dialog.querySelector('[data-private-preparation-close]').onclick=()=>dialog.close();
+  dialog.addEventListener('close',()=>{dialog.querySelector('[data-private-preparation-token]').value='';dialog.remove();});
+  document.body.append(dialog);dialog.showModal();
  }
- async function connectReadCredential(candidate){
+ async function connectReadCredential(candidate,isOpen=()=>true){
   if(running)return {status:'busy'};
   const token=typeof candidate==='string'?candidate.trim():'';
   if(!validReadToken(token)){setStatus({kind:'invalid-read-token'});return {status:'invalid-read-token'};}
@@ -113,7 +121,7 @@
   try{
    await loadCredential();
    const before=JSON.stringify(S),previous=sourceToken();
-   const active=()=>ready()&&JSON.stringify(S)===before&&sourceToken()===previous;
+   const active=()=>isOpen()&&ready()&&JSON.stringify(S)===before&&sourceToken()===previous;
    setStatus({kind:'checking'});
    const result=await PrivatePreparationSource.read({...config,token,isActive:active});
    if(result.status!=='ready'){
@@ -316,6 +324,7 @@
  for(const name of ['click','input','change','keydown','submit','pointerdown','drop'])document.addEventListener(name,event=>{if(applying){event.preventDefault();event.stopImmediatePropagation();}},true);
  document.addEventListener('click',event=>{if(!event.target.closest?.('[data-act="private-preparation-check"]'))return;event.preventDefault();event.stopImmediatePropagation();void receive(true);},true);
  document.addEventListener('click',event=>{if(!event.target.closest?.('[data-act="private-preparation-file"]'))return;event.preventDefault();event.stopImmediatePropagation();chooseFile();},true);
+ document.addEventListener('click',event=>{if(!event.target.closest?.('[data-act="private-preparation-setup"]'))return;event.preventDefault();event.stopImmediatePropagation();openConnection();},true);
  // Keep the password field focused until click captures its value. Blurring on
  // pointerdown can flush a pending app render and replace the field beforehand.
  const keepConnectionTarget=event=>{
@@ -329,17 +338,19 @@
   event.preventDefault();event.stopImmediatePropagation();
   if(connectionPending)return;
   const field=button.closest('[data-private-preparation-connection]')?.querySelector('[data-private-preparation-token]');
+  const dialog=button.closest('[data-private-preparation-connection]');
   const value=field?.value||'';if(field){field.value='';field.blur();}
   // Keep the candidate only in this short-lived closure while a click, scroll
   // or preceding save settles. Do not lose it to the automatic polling timer.
   connectionPending=true;button.disabled=true;
   const tryConnect=async attempt=>{
+   if(!dialog?.isConnected||!dialog.open){connectionPending=false;return;}
    const reason=waitingReason();
    if((running||reason)&&attempt<60&&!['readonly','connection','startup','preview'].includes(reason)){
     setStatus({kind:'deferred',reason:reason||'saving'});setTimeout(()=>{void tryConnect(attempt+1);},180);return;
    }
    connectionPending=false;
-   try{await connectReadCredential(value);}finally{button.disabled=false;}
+   try{const result=await connectReadCredential(value,()=>dialog.isConnected&&dialog.open);if(result.status==='connected')dialog.close();}finally{button.disabled=false;}
   };
   void tryConnect(0);
  },true);
