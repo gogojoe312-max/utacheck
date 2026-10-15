@@ -102,7 +102,7 @@ async function readableTitles(page,rec){
    await info.locator(':scope > summary').click();assert.equal(await info.evaluate(el=>el.open),true);
    await page.evaluate(()=>{renderPointers.clear();scrollingUntil=0;render(true);});assert.equal(await info.evaluate(el=>el.open),true);
    await info.locator('[data-act="app-update-check"]').click();await page.waitForFunction(()=>U.appUpdateVersion==='99.99.99');
-   assert.equal(await info.evaluate(el=>el.open),true);assert.equal(await info.locator('[data-act="app-update-reload"]').isVisible(),true);
+   await info.locator('[data-act="app-update-reload"]').waitFor({state:'visible'});assert.equal(await info.evaluate(el=>el.open),true);
    const beforeReload=await page.evaluate(()=>qaContent()),dialogCount=dialogs.length;
    await page.evaluate(()=>{U.sheet={memo:'未保存の合成入力'};});await info.locator('[data-act="app-update-reload"]').click();
    assert.equal(dialogs.length,dialogCount+1);assert.equal(dialogs.at(-1).type,'alert');assert.equal(await page.evaluate(()=>U.sheet.memo),'未保存の合成入力');assert.equal(await page.evaluate(()=>qaContent()),beforeReload);
