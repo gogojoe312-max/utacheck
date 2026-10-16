@@ -2,6 +2,7 @@
 // Isolated browser checks with synthetic data. Every external request is blocked.
 const playwright=require('playwright'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),http=require('node:http');
 const {checkAbsence}=require('./absence-view-browser-helper.cjs');
+const {checkFolderInteractions}=require('./folder-interactions-browser-helper.cjs');
 const engine=process.env.BROWSER_ENGINE||'chromium';assert(['chromium','webkit'].includes(engine));
 const root=path.resolve(__dirname,'..'),out=process.env.QA_OUTPUT||path.join(require('node:os').tmpdir(),'utacheck-settings-qa',engine);
 fs.mkdirSync(out,{recursive:true});
@@ -87,9 +88,14 @@ async function readableTitles(page,rec){
    const dateOpen=await date.evaluate(el=>el.open),beforeRename=await page.evaluate(()=>JSON.stringify(S));
    await date.locator(':scope > summary [data-act="rec-date-actions"]').click();assert.equal(await date.evaluate(el=>el.open),dateOpen);
    await page.getByRole('dialog',{name:'RECフォルダの操作',exact:true}).locator('[data-act="rec-date-rename"]').click();
-   assert.equal(dialogs.at(-1).type,'prompt');assert.equal(await page.evaluate(()=>JSON.stringify(S)),beforeRename);
-   await mode(page,true);await date.locator(':scope > summary [data-act="rec-date-actions"]').click();promptReply='検証用フォルダ名';
+   assert.equal(await page.locator('#rec-date-name').evaluate(el=>document.activeElement===el),true);
+   await page.locator('#rec-date-name').fill('保存しない名前');
+   await page.getByRole('dialog',{name:'RECフォルダ名を変更',exact:true}).locator('[data-act="closemenu"]').click();
+   assert.equal(await page.evaluate(()=>JSON.stringify(S)),beforeRename);
+   await mode(page,true);await date.locator(':scope > summary [data-act="rec-date-actions"]').click();
    await page.getByRole('dialog',{name:'RECフォルダの操作',exact:true}).locator('[data-act="rec-date-rename"]').click();
+   await page.locator('#rec-date-name').fill('検証用フォルダ名');
+   await page.locator('#rec-date-rename-form button[type="submit"]').click();
    await page.waitForFunction(()=>S.rsongs.find(s=>s.id==='rec-a').recSession.displayLabel==='検証用フォルダ名');
    const expected=JSON.parse(original);for(const song of expected.rsongs)if(['rec-a','rec-b'].includes(song.id))song.recSession.displayLabel='検証用フォルダ名';
    assert.deepEqual(JSON.parse(await page.evaluate(()=>qaContent())),expected);
@@ -111,6 +117,7 @@ async function readableTitles(page,rec){
    await page.evaluate(()=>{U.sheet={lineIdx:0,lineEnd:null,range:null,anchor:null,point:null,quick:true,tags:[],memo:'未保存の合成入力',seq:[],rec:false,sel:['m']};document.querySelector('[data-act="app-update-reload"]').click();});
    assert.equal(dialogs.length,dialogCount+1);assert.equal(dialogs.at(-1).type,'alert');assert.equal(await page.evaluate(()=>U.sheet.memo),'未保存の合成入力');assert.equal(await page.evaluate(()=>qaContent()),beforeReload);
    await page.evaluate(()=>{document.activeElement?.blur();U.sheet=null;renderPointers.clear();scrollingUntil=0;pendingRender=false;render(true);});await page.locator('.note-quick-mask').waitFor({state:'detached'});await info.locator(':scope > summary').click();assert.equal(await info.evaluate(el=>el.open),false);
+   const folderResult=await checkFolderInteractions(page,width,{mode,assertFits,screenshot});
    const absenceResult=await checkAbsence(page,width,{mode,assertFits,screenshot});
    const excelCheck=await checkExcelReattach(page,width,dialogs);
    await page.evaluate(async()=>{await saveNow();saveErr=true;renderPointers.clear();scrollingUntil=0;render(true);});
@@ -118,7 +125,7 @@ async function readableTitles(page,rec){
    assert.equal(await page.locator('[data-settings-panel="data-save"] [data-act="bkfile"]').isVisible(),true);assert.equal(await page.locator('[data-settings-panel="connection-recovery"]').evaluate(el=>el.open),false);
    await assertFits(page);await screenshot(page,width,'save-error');assert.deepEqual(JSON.parse(await page.evaluate(()=>qaContent())),expected);
    const dotConnection=await checkDotConnection(page,width);
-   results.push({width,dotConnection,...absenceResult,excelOriginal:excelCheck,settings:true,pdfLiveRecView:true,fullTitles:true,recFolderRename:true,footer:true,draftPreserved:true,saveErrorVisible:true});await context.close();contexts.delete(context);
+   results.push({width,dotConnection,...folderResult,...absenceResult,excelOriginal:excelCheck,settings:true,pdfLiveRecView:true,fullTitles:true,recFolderRename:true,footer:true,draftPreserved:true,saveErrorVisible:true});await context.close();contexts.delete(context);
   }
   assert.deepEqual(errors,[]);assert.equal(blocked.filter(x=>x.method!=='GET').length,0);
   const report={passed:true,engine,results,errors,blocked,externalRequestsAllowed:0,syntheticDataOnly:true};

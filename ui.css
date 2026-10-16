@@ -334,6 +334,7 @@ select.field{appearance:auto}textarea.field{resize:vertical}
 .performance-folder-actions button{min-height:42px}
 .performance-folder-order{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:0 0 10px;flex-wrap:wrap}
 .performance-folder-order .note{margin:0}
+.performance-folder>summary .grip,.rec-date>summary .grip{flex:0 0 28px;display:flex;align-items:center;justify-content:center;align-self:stretch;min-height:32px;font-size:17px}
 .performance-folder>summary .organize-more,.rec-date>summary .organize-more{flex:none;margin:-7px -7px -7px 0}
 .performance-show-choice{text-align:left;margin-bottom:6px}
 .organize-mask{top:var(--note-vv-top,0px);height:var(--note-vv-height,100dvh);bottom:auto}

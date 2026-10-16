@@ -113,7 +113,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.15";
+const APP_VER = "16.41.58.16";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -301,7 +301,7 @@ let S = {
   groups: [], groupId: "",
   src: "", key: "", keyInLink: true,
   memos: {}, staffMemos: {}, recs: {}, kbps: 128, preroll: 5, viewer: false, srcGroup: "",
-  draws: {}, folders: {}, folderOrder: [], performanceFolderOrders: {}, rfolders: {}, rfolderOrder: [], subs: {}, subsMan: {}, subLib: {}, gsubs: {},
+  draws: {}, folders: {}, folderOrder: [], performanceFolderOrders: {}, rfolders: {}, rfolderOrder: [], recordingDateFolderOrders: {}, subs: {}, subsMan: {}, subLib: {}, gsubs: {},
   recMode: false, recOvSize: 14, rsongs: [], rsongId: "", recBars: true, liveShow: "", recEdit: false, linkSrc: "", groupOrder: [], pubAt: 0, syncAt: 0, seen: {}, planMin: 90, planPrep: 10, rosters: {}, secWords: [], trash: [], secAll: false, secHide: [], tagHide: [],
   plan: { start: "10:00", slots: [] },
   size: 19,
@@ -1317,6 +1317,7 @@ function migrate({preserve = false,keepPublicationBindings = false} = {}) {
   if (!S.performanceFolderOrders || typeof S.performanceFolderOrders !== "object" || Array.isArray(S.performanceFolderOrders)) S.performanceFolderOrders = {};
   if (!S.rfolders) S.rfolders = {};
   if (!S.rfolderOrder) S.rfolderOrder = [];
+  if (!S.recordingDateFolderOrders || typeof S.recordingDateFolderOrders !== "object" || Array.isArray(S.recordingDateFolderOrders)) S.recordingDateFolderOrders = {};
   if (!S.subs) S.subs = {};
   if (!S.subsMan) S.subsMan = {};
   if (!S.subLib) S.subLib = {};
@@ -1564,8 +1565,8 @@ function groupedPerformanceHTML(list, row, options = {}) {
     const key = JSON.stringify([scope, name]);
     const open = remembered?.folders && remembered.showId === S.showId && Object.prototype.hasOwnProperty.call(remembered.folders, key)
       ? remembered.folders[key] : shows.some(show => show.id === S.showId);
-    return `<details class="performance-folder" data-performance-folder="${h(name)}" data-performance-scope="${h(scope)}" ${open ? "open" : ""}>
-      <summary ${editable ? `data-drop="f:${h(name)}"` : ""}><span class="performance-folder-name">${h(name || "フォルダなし")}</span><span class="performance-folder-count">${shows.length ? shows.length + "公演" : "空"}</span>${editable && name ? `<button class="organize-more" data-act="folder-actions" data-id="${h(name)}" aria-label="${h(name)}の操作">⋯</button>` : ""}</summary>
+    return `<details class="performance-folder" data-performance-folder="${h(name)}" data-performance-scope="${h(scope)}" ${editable && name ? `data-folder-drop="pf:${h(name)}"` : ""} ${open ? "open" : ""}>
+      <summary ${editable ? `data-drop="f:${h(name)}"` : ""}>${editable && name ? `<span class="grip" data-drag="performance-folder:${h(name)}" title="ドラッグして並べ替え" aria-label="${h(name)}を並べ替え">⣿</span>` : ""}<span class="performance-folder-name">${h(name || "フォルダなし")}</span><span class="performance-folder-count">${shows.length ? shows.length + "公演" : "空"}</span>${editable && name ? `<button class="organize-more" data-act="folder-actions" data-id="${h(name)}" aria-label="${h(name)}の操作">⋯</button>` : ""}</summary>
       <div class="performance-folder-body">${shows.map(row).join("") || '<p class="note">公演はありません</p>'}
       ${editable && !shows.length ? `<div class="performance-folder-actions"><button class="chip sm" data-act="newshow" data-folder="${h(name)}">ここに公演を追加</button></div>` : ""}</div></details>`;
   }).join("");
@@ -2264,11 +2265,12 @@ const shownNotes = () => (U.allShows ? NOTES() : NOTES().filter((n) => n.showId 
 let pushTimer = null, pushState = "", publishIssues = [];
 let undoStack = [];
 let readTimer = null;
-function pushUndo(songId, notesOnly = false) {
+function pushUndo(songId, notesOnly = false, includeSongOrder = false) {
   const snap = { notes: S.notes };
+  if (includeSongOrder) snap.songOrder = S.songs.map(song => song.id);
   if (!notesOnly) Object.assign(snap, { rsongs: S.rsongs, plan: S.plan,
     shows: S.shows, folders: S.folders, folderOrder: S.folderOrder,
-    performanceFolderOrders: S.performanceFolderOrders || {} });
+    performanceFolderOrders: S.performanceFolderOrders || {}, recordingDateFolderOrders: S.recordingDateFolderOrders || {} });
   // 歌割を差し替える時だけ、その1曲と代役も控える。
   // 全曲を毎回控えるとメモリを食うので、必要な時に限る。
   if (songId) {
@@ -6008,14 +6010,13 @@ function updatePerformanceFolderReference(oldName, newName, scope, allScopes = f
     value.names = [...new Set(value.names.flatMap(name => name === oldName ? (newName ? [newName] : []) : [name]))];
   }
 }
-async function changePerformanceFolderOrder(action, name) {
+async function changePerformanceFolderOrder(action, name, targetName) {
   if (VIEW() || preview || !recordingInboxCanWrite() || U.showFilter === "__archive__") return false;
   const scope = U.showFilter || "", key = JSON.stringify([scope]), menu = U.menu;
-  if (action !== "date" && (U.menu?.mode !== "folder-actions" || U.menu.id !== name || U.menu.scope !== scope)) return false;
   const names = performanceFolderGroups(showsFor(), true, scope).map(([folder]) => folder).filter(Boolean);
   if (action !== "date") {
-    const from = names.indexOf(name), to = from + (action === "up" ? -1 : 1);
-    if (!["up", "down"].includes(action) || from < 0 || to < 0 || to >= names.length) return false;
+    const from = names.indexOf(name), to = names.indexOf(targetName);
+    if (action !== "move" || from < 0 || to < 0 || from === to) return false;
     names.splice(to, 0, names.splice(from, 1)[0]);
   } else if (S.performanceFolderOrders?.[key]?.mode !== "manual") return false;
   const before = JSON.stringify(S);
@@ -6075,10 +6076,7 @@ function organizeSheetHTML(m) {
   const btn = (act,label,extra="") => `<button class="organize-action" data-act="${act}" data-id="${h(m.id || "")}" ${extra}>${label}</button>`;
   let body = "";
   if (m.mode === "folder-actions") {
-    const names = performanceFolderGroups(showsFor(), true, m.scope).map(([name]) => name).filter(Boolean), index = names.indexOf(m.id);
     body = btn("frename", "名前を変更")
-      + btn("fup", "フォルダを1つ上へ", index <= 0 ? "disabled" : "")
-      + btn("fdown", "フォルダを1つ下へ", index < 0 || index === names.length - 1 ? "disabled" : "")
       + btn("fdelete", "フォルダを削除", 'style="color:var(--bad)"')
       + `<p class="note">${m.scope ? "表示中のグループが対象です。" : "全グループの表示中の公演が対象です。"}フォルダを削除しても公演・曲・記録・録音は残ります。</p>`;
   } else if (m.mode === "actions" && item) {
@@ -6088,7 +6086,7 @@ function organizeSheetHTML(m) {
   } else {
     const folder = m.folder ?? folderOf(item), name = m.mode === "folder" ? (m.id || "") : (item?.name || "");
     const nameField = `<label class="organize-field">${m.mode === "folder" ? "フォルダ名" : "公演名"}<input class="field" id="org-name" value="${h(name)}" placeholder="${m.mode === "folder" ? "例：秋ツアー" : "例：9/26 東京 昼公演"}" autocomplete="off" required></label>`;
-    body = `<form id="organize-form">${m.mode !== "move" ? nameField : `<p class="note">${h(item?.name || item?.title || "")}</p>`}`;
+    body = `<form id="organize-form" data-save-on-submit>${m.mode !== "move" ? nameField : `<p class="note">${h(item?.name || item?.title || "")}</p>`}`;
     if (m.mode !== "folder") {
       body += `<label class="organize-field">保存先フォルダ<select class="field" id="org-folder"><option value="">フォルダなし</option>${folderNames(rec).map(n => `<option value="${h(n)}" ${folder === n ? "selected" : ""}>${h(n)}</option>`).join("")}<option value="__new_folder__">＋ 新しいフォルダ</option></select></label>
         <label class="organize-field" id="org-new-folder-row" hidden>新しいフォルダ名<input class="field" id="org-new-folder" autocomplete="off" placeholder="例：秋ツアー"></label>`;
@@ -6154,18 +6152,33 @@ function saveOrganization(m, values) {
   save(); if (m.mode === "show") schedulePush(); return "";
 }
 
+// Keep focus inside the opening tap. Deferring it through a backup, timer or
+// animation frame can prevent iOS from showing its software keyboard.
+function focusSheetTextInput(root, selector) {
+  const field = root?.querySelector(selector);
+  if (!field || !field.isConnected || field.disabled || field.readOnly) return;
+  field.focus({preventScroll:true});
+  field.setSelectionRange?.(0, field.value.length);
+}
+
 function renderSheet() {
   if (typeof NoteVoice !== "undefined") NoteVoice.stop();
   resumeRender();
+  // A select or Save button can blur the text input while its draft is still
+  // open. Keep that form (including IME state) until its menu closes or changes.
+  if (U.menu && overlay?.draftMenu === U.menu && overlay.querySelector("[data-save-on-submit]")) { pendingRender = true; return; }
   // 記録シートの中で打っている最中も、組み直すと文字が飛ぶ
   if (typingNow() && overlay && overlay.contains(document.activeElement)) { pendingRender = true; return; }
   if (overlay) { overlay.remove(); overlay = null; }
 
-  if (U.menu?.kind === "rec-date-actions" && !VIEW()) {
-    const html=recDateActionsHTML(U.menu);
+  if (["rec-date-actions", "rec-date-rename"].includes(U.menu?.kind) && !VIEW()) {
+    const html=U.menu.kind === "rec-date-rename" ? recDateRenameHTML(U.menu) : recDateActionsHTML(U.menu);
     if (!html) { U.menu=null;return; }
-    overlay=document.createElement("div");overlay.className="mask";
-    overlay.innerHTML=html;document.body.appendChild(overlay);return;
+    overlay=document.createElement("div");overlay.className="mask organize-mask";
+    if (U.menu.kind === "rec-date-rename") overlay.draftMenu=U.menu;
+    overlay.innerHTML=html;document.body.appendChild(overlay);
+    if (U.menu.kind === "rec-date-rename") focusSheetTextInput(overlay, "#rec-date-name");
+    return;
   }
 
   if (U.menu?.kind === "rec-song-actions" && !VIEW()) {
@@ -6222,8 +6235,10 @@ function renderSheet() {
 
   if (U.menu && U.menu.kind === "organize" && !VIEW()) {
     overlay = document.createElement("div"); overlay.className = "mask organize-mask";
+    overlay.draftMenu = U.menu;
     overlay.innerHTML = organizeSheetHTML(U.menu);
-    document.body.appendChild(overlay); return;
+    document.body.appendChild(overlay);
+    focusSheetTextInput(overlay, "#org-name"); return;
   }
 
   if (U.menu && U.menu.kind === "show-delivery" && !VIEW()) {
@@ -6501,7 +6516,6 @@ function renderSheet() {
     const many = U.menu.ids && U.menu.ids.length;
     const x = S.songs.find((y) => y.id === (many ? U.menu.ids[0] : U.menu.id));
     const B = (act, label, col) => `<button class="organize-action" data-act="${act}" ${col ? `style="color:${col}"` : ""}>${label}</button>`;
-    const songIndex = !many && x ? SONGS().findIndex(song => song.id === x.id) : -1;
     const inner = U.menu.kind === "group"
       ? `<div class="sec"><h4>どのグループにしますか</h4>
           ${liveGroups().map((g) => `<button class="ghost" data-act="m-setgroup" data-id="${g.id}"
@@ -6513,8 +6527,6 @@ function renderSheet() {
           ${B("m-take", "テイクを増やす")}
           ${many ? "" : B("m-takenum", "テイク番号を変える")}
           ${B("m-pdf", "PDFにする")}
-          ${songIndex > 0 ? `<button class="organize-action" data-act="up" data-i="${songIndex}">曲順を1つ上へ</button>` : ""}
-          ${songIndex >= 0 && songIndex < SONGS().length - 1 ? `<button class="organize-action" data-act="down" data-i="${songIndex}">曲順を1つ下へ</button>` : ""}
           ${many ? "" : B("m-swap", "歌割を差し替える（記録はそのまま）")}
           ${(() => { const n = S.notes.filter((y) => y.songId === U.menu.id && y.showId === S.showId).length;
             return n ? B("m-chk", `チェックをExcelに書き込む（${n}件）`) : ""; })()}
@@ -7685,14 +7697,49 @@ function recordingDateBuckets(list) {
     if (!bucket.artists.has(info.artist)) bucket.artists.set(info.artist,[]);
     bucket.artists.get(info.artist).push(so);
   });
-  return performanceSelectionOrder([...dates.values()],bucket=>bucket.date);
+  const sorted=performanceSelectionOrder([...dates.values()],bucket=>bucket.date);
+  const saved=S.recordingDateFolderOrders?.[JSON.stringify([U.recArtistFilter || ""])];
+  if (!Array.isArray(saved)) return sorted;
+  const order=new Map(saved.map((key,index)=>[key,index]));
+  return sorted.sort((a,b)=>(order.get(a.key) ?? Infinity)-(order.get(b.key) ?? Infinity));
 }
 function recordingDateHeading(bucket) {
   return bucket.displayLabel ? bucket.dateLabel+'　'+bucket.displayLabel : bucket.label;
 }
 function recordingLibraryHTML(list, row, options={}) {
   const editable=!!options.editable && !VIEW() && !preview && S.recMode && recordingInboxCanWrite();
-  return recordingDateBuckets(list).map(date=>'<details class="card rec-date" '+(date.songs.some(so=>so.id===S.rsongId)?'open':'')+'><summary><span class="performance-folder-name">'+h(recordingDateHeading(date))+'</span><span class="performance-folder-count">'+date.songs.length+'曲</span>'+(editable?'<button class="organize-more" data-act="rec-date-actions" data-id="'+h(date.key)+'" aria-label="'+h(recordingDateHeading(date))+'の操作">⋯</button>':'')+'</summary>'+[...date.artists].map(([artist,songs])=>'<section class="rec-artist"><h4 class="head">'+h(artist)+'</h4>'+songs.map(row).join('')+'</section>').join('')+'</details>').join('');
+  return recordingDateBuckets(list).map(date=>'<details class="card rec-date" '+(editable?'data-drop="rd:'+h(date.key)+'" ':'')+(date.songs.some(so=>so.id===S.rsongId)?'open':'')+'><summary>'+(editable?'<span class="grip" data-drag="rec-date:'+h(date.key)+'" aria-label="'+h(recordingDateHeading(date))+'を並べ替え">⣿</span>':'')+'<span class="performance-folder-name">'+h(recordingDateHeading(date))+'</span><span class="performance-folder-count">'+date.songs.length+'曲</span>'+(editable?'<button class="organize-more" data-act="rec-date-actions" data-id="'+h(date.key)+'" aria-label="'+h(recordingDateHeading(date))+'の操作">⋯</button>':'')+'</summary>'+[...date.artists].map(([artist,songs])=>'<section class="rec-artist"><h4 class="head">'+h(artist)+'</h4>'+songs.map(row).join('')+'</section>').join('')+'</details>').join('');
+}
+async function moveRecordingDateFolder(fromKey, toKey) {
+  if (VIEW() || preview || !S.recMode || !recordingInboxCanWrite()) return false;
+  const scope=U.recArtistFilter || '', menu=U.menu, keys=recordingDateBuckets(recordingSelectionSongs()).map(bucket=>bucket.key);
+  const from=keys.indexOf(fromKey), to=keys.indexOf(toKey);
+  if (from<0 || to<0 || from===to) return false;
+  const before=JSON.stringify(S);
+  if (!await automaticBackupBeforeEdit('recording-folder-order')) return false;
+  if (JSON.stringify(S)!==before || (U.recArtistFilter || '')!==scope || U.menu!==menu || VIEW() || preview || !S.recMode || !recordingInboxCanWrite()) return false;
+  keys.splice(to,0,keys.splice(from,1)[0]);pushUndo();
+  S.recordingDateFolderOrders ||= {};
+  S.recordingDateFolderOrders[JSON.stringify([scope])]=keys;
+  save();render();return true;
+}
+async function moveRecordingSong(id, toId) {
+  if (VIEW() || preview || !S.recMode || !recordingInboxCanWrite() || id===toId) return false;
+  const scope=U.recArtistFilter || '', menu=U.menu;
+  const bucket=recordingDateBuckets(recordingSelectionSongs()).find(date=>date.songs.some(song=>song.id===id));
+  const source=bucket?.songs.find(song=>song.id===id);
+  if (!source) return false;
+  const songs=bucket.artists.get(recordingClassification(source).artist), from=songs.findIndex(song=>song.id===id), to=songs.findIndex(song=>song.id===toId);
+  if (from<0 || to<0 || songs.some(song=>S.rsongs.filter(item=>item.id===song.id).length!==1)) return false;
+  const before=JSON.stringify(S);
+  if (!await automaticBackupBeforeEdit('recording-song-order')) return false;
+  if (JSON.stringify(S)!==before || (U.recArtistFilter || '')!==scope || U.menu!==menu || VIEW() || preview || !S.recMode || !recordingInboxCanWrite()) return false;
+  const current=songs.map(song=>S.rsongs.find(item=>item.id===song.id));
+  const slots=current.map(song=>S.rsongs.indexOf(song)), order=current.slice();
+  order.splice(to,0,order.splice(from,1)[0]);pushUndo();
+  slots.forEach((slot,index)=>{S.rsongs[slot]=order[index];});
+  const selected=S.rsongs.findIndex(song=>song.id===S.rsongId);if(selected>=0)U.songIdx=selected;
+  save();render();return true;
 }
 function recordingDateContext(key) {
   if (VIEW() || preview || !S.recMode || !recordingInboxCanWrite()) return null;
@@ -7708,21 +7755,31 @@ function recDateActionsHTML(menu) {
   if (!current || current.artistFilter!==menu.artistFilter || JSON.stringify(current.songIds)!==JSON.stringify(menu.songIds)) return '';
   return '<button class="sp" data-act="closemenu" aria-label="閉じる"></button><div class="sheet organize-sheet" role="dialog" aria-modal="true" aria-label="RECフォルダの操作"><div class="row"><b class="grow settings-song-title">'+h(menu.title)+'</b><button class="chip" data-act="closemenu">閉じる</button></div><button class="organize-action" data-act="rec-date-rename">名前を変更</button><p class="note">表示中の'+menu.songIds.length+'曲'+(menu.artistFilter?'（'+h(menu.artistFilter)+'）':'')+'が対象です。</p></div>';
 }
-async function renameRecordingDateBucket(menu) {
+function recDateRenameHTML(menu) {
+  const current=recordingDateContext(menu.id);
+  if (!current || current.artistFilter!==menu.artistFilter || JSON.stringify(current.songIds)!==JSON.stringify(menu.songIds)) return '';
+  return '<button class="sp" data-act="closemenu" aria-label="閉じる"></button><div class="sheet organize-sheet" role="dialog" aria-modal="true" aria-label="RECフォルダ名を変更"><form id="rec-date-rename-form" data-save-on-submit><label for="rec-date-name">フォルダ名</label><input class="field" id="rec-date-name" name="name" type="text" autocomplete="off" value="'+h(current.displayLabel)+'"><p class="note">日付は変わりません。空欄で元の日付表示に戻ります。</p><div class="row"><button class="ghost" type="button" data-act="closemenu">キャンセル</button><button class="primary" type="submit">保存</button></div></form></div>';
+}
+function openRecordingDateRename(menu) {
+  const current=menu && recordingDateContext(menu.id);
+  if (!current || U.menu!==menu || current.artistFilter!==menu.artistFilter || JSON.stringify(current.songIds)!==JSON.stringify(menu.songIds)) return false;
+  U.menu={...current,kind:'rec-date-rename'};renderSheet();return true;
+}
+async function renameRecordingDateBucket(menu, answer, form=null) {
   const current=menu && recordingDateContext(menu.id);
   if (!current || U.menu!==menu || current.artistFilter!==menu.artistFilter || JSON.stringify(current.songIds)!==JSON.stringify(menu.songIds)) return false;
   const before=JSON.stringify(S);
-  const answer=prompt('フォルダ名（日付は変わりません。空欄で元の日付表示）',current.displayLabel);
-  if (answer===null) return false;
+  if (typeof answer!=='string') return false;
   const name=answer.trim().normalize('NFC');
-  if (name===current.displayLabel) return false;
+  if (name===current.displayLabel) { document.activeElement?.blur();U.menu=null;renderSheet();return true; }
   const ids=new Set(menu.songIds), rawLabel=JSON.parse(menu.id)[0], nextKey=JSON.stringify([rawLabel,name]);
   if (name && recordingDateBuckets(S.rsongs.filter(song=>!ids.has(song.id))).some(bucket=>bucket.key===nextKey)) {
     alert('同じ日付・名前のフォルダがあります。');return false;
   }
   if (!await automaticBackupBeforeEdit('recording-date-folder-name')) return false;
   const checked=recordingDateContext(menu.id);
-  if (JSON.stringify(S)!==before || U.menu!==menu || !checked || checked.artistFilter!==menu.artistFilter || JSON.stringify(checked.songIds)!==JSON.stringify(menu.songIds)) {
+  if (JSON.stringify(S)!==before || U.menu!==menu || !checked || checked.artistFilter!==menu.artistFilter || JSON.stringify(checked.songIds)!==JSON.stringify(menu.songIds)
+      || (form && (!form.isConnected || draftFormIsComposing(form) || form.querySelector('#rec-date-name')?.value!==answer))) {
     alert('保存内容が変わったため、名前の変更を止めました。一覧から操作し直してください。');return false;
   }
   pushUndo();
@@ -7732,7 +7789,15 @@ async function renameRecordingDateBucket(menu) {
     if (name) session.displayLabel=name;else delete session.displayLabel;
     song.recSession=session;
   });
-  U.menu=null;save();renderSheet();render();return true;
+  for (const [scopeKey,order] of Object.entries(S.recordingDateFolderOrders || {})) {
+    if (!Array.isArray(order) || !order.includes(menu.id)) continue;
+    let scope;try { scope=JSON.parse(scopeKey)[0]; } catch { continue; }
+    const relevant=S.rsongs.filter(song=>!scope || recordingClassification(song).artist===scope);
+    if (!relevant.some(song=>ids.has(song.id))) continue;
+    const remains=relevant.some(song=>!ids.has(song.id) && JSON.stringify([recordingClassification(song).label,song.recSession?.displayLabel || ''])===menu.id);
+    S.recordingDateFolderOrders[scopeKey]=[...new Set(order.flatMap(key=>key===menu.id ? (remains?[menu.id,nextKey]:[nextKey]) : [key]))];
+  }
+  document.activeElement?.blur();U.menu=null;save();renderSheet();render();return true;
 }
 function recordingPlanExpired(now=Date.now()) {
   const slots=S.plan?.slots || [];
@@ -9042,7 +9107,7 @@ function viewSetup() {
     </div>` : ""}
     <section data-performance-selector>
     <h4 class="head">公演</h4>
-    <p class="note">フォルダを開いて公演を選択 · フォルダ内は新しい日付順</p>
+    <p class="note">フォルダを開いて公演を選択 · ⣿をドラッグして並べ替え · フォルダ内は新しい日付順</p>
     <div class="organize-create"><button class="primary" data-act="newshow">＋ 公演を追加</button><button class="chip" data-act="newfolder">＋ フォルダ</button></div>
     ${U.showFilter !== "__archive__" ? `<div class="performance-folder-order"><span class="note">フォルダ：${S.performanceFolderOrders?.[JSON.stringify([U.showFilter || ""])]?.mode === "manual" ? "手動順" : "新しい日付順"}</span>${S.performanceFolderOrders?.[JSON.stringify([U.showFilter || ""])]?.mode === "manual" ? '<button class="chip sm" data-act="folder-sort">新しい日付順に戻す</button>' : ""}</div>` : ""}
     ${shows}
@@ -9129,7 +9194,7 @@ function viewSetup() {
 // Hold editable fields until the pre-edit restore point has been verified.
 document.addEventListener('focusin', async event => {
   const field=event.target;
-  if (VIEW() || preview || !field || !/^(INPUT|TEXTAREA)$/.test(field.tagName) || field.type==='file' || field.matches?.('[data-private-preparation-token]') || field.readOnly || field.disabled || ['checkbox','radio','button','submit'].includes(field.type)) return;
+  if (VIEW() || preview || !field || !/^(INPUT|TEXTAREA)$/.test(field.tagName) || field.type==='file' || field.matches?.('[data-private-preparation-token]') || field.closest?.('[data-save-on-submit]') || field.readOnly || field.disabled || ['checkbox','radio','button','submit'].includes(field.type)) return;
   field.readOnly=true;
   if (await automaticBackupBeforeEdit('text-edit') && field.isConnected) field.readOnly=false;
 });
@@ -9147,7 +9212,7 @@ document.addEventListener('click', async event => {
 const verifiedBackupSelectPending = new WeakMap();
 function preserveNativeSelection(event) {
   const field=event.target;
-  if (!field || field.tagName!=='SELECT' || VIEW() || preview || verifiedBackupWidgetReplay.has(field)) return;
+  if (!field || field.tagName!=='SELECT' || VIEW() || preview || field.closest?.('[data-save-on-submit]') || verifiedBackupWidgetReplay.has(field)) return;
   event.stopImmediatePropagation();
   const existing=verifiedBackupSelectPending.get(field);
   if(existing){existing.types.add(event.type);return;}
@@ -9203,7 +9268,7 @@ document.addEventListener("click", async (e) => {
     U.menu=recordingDateContext(id);if(U.menu)renderSheet();return;
   }
   if (a === "rec-date-rename") {
-    e.preventDefault();await renameRecordingDateBucket(U.menu);return;
+    e.preventDefault();openRecordingDateRename(U.menu);return;
   }
   if (a === "folder-actions") {
     e.preventDefault(); e.stopPropagation();
@@ -9211,10 +9276,10 @@ document.addEventListener("click", async (e) => {
     return;
   }
   if (a === "fdelete") { await removePerformanceFolder(U.menu); return; }
-  if (a === "fup" || a === "fdown" || a === "folder-sort") {
-    await changePerformanceFolderOrder(a === "folder-sort" ? "date" : a === "fup" ? "up" : "down", id); return;
+  if (a === "folder-sort") {
+    await changePerformanceFolderOrder("date"); return;
   }
-  if (new Set(['note','draw','word','up','down','toggleabsent','resetsubs','setblock','unassign','setassign','goabsent','assignline','assignblock','assign','absent','absent-clear','newshow','dupshow','newfolder','frename','set-show-delivery','usegroup','m-setgroup','pickgroup','delpicked','deletesong','deleteshow','wordedit','word-save']).has(a) && !VIEW() && !preview) {
+  if (new Set(['note','draw','word','toggleabsent','resetsubs','setblock','unassign','setassign','goabsent','assignline','assignblock','assign','absent','absent-clear','dupshow','set-show-delivery','usegroup','m-setgroup','pickgroup','delpicked','deletesong','deleteshow','wordedit','word-save']).has(a) && !VIEW() && !preview) {
     if (!await automaticBackupBeforeEdit(a)) return;
     if (!b.isConnected) return;
   }
@@ -9343,17 +9408,27 @@ document.addEventListener("click", async (e) => {
         if (Array.isArray(prev)) S.notes = prev;
         else {
           S.notes = prev.notes;
-          if (prev.rsongs) S.rsongs = prev.rsongs;
+          if (prev.rsongs) {
+            S.rsongs = prev.rsongs;
+            if (S.recMode) U.songIdx = Math.max(0, S.rsongs.findIndex(song => song.id === S.rsongId));
+          }
           if (prev.plan) S.plan = prev.plan;
           if (prev.shows) S.shows = prev.shows;
           if (prev.folders) S.folders = prev.folders;
           if (prev.folderOrder) S.folderOrder = prev.folderOrder;
           if (prev.performanceFolderOrders) S.performanceFolderOrders = prev.performanceFolderOrders;
+          if (prev.recordingDateFolderOrders) S.recordingDateFolderOrders = prev.recordingDateFolderOrders;
           if (prev.subs) S.subs = prev.subs;
           if (prev.subsMan) S.subsMan = prev.subsMan;
           if (prev.song) {                                  // 差し替えを元に戻す
             const k = S.songs.findIndex((x) => x.id === prev.song.id);
             if (k >= 0) S.songs[k] = prev.song;
+          }
+          if (prev.songOrder) {
+            const selectedId = SONGS()[U.songIdx]?.id;
+            const order = new Map(prev.songOrder.map((id, index) => [id, index]));
+            S.songs.sort((a, b) => (order.get(a.id) ?? order.size) - (order.get(b.id) ?? order.size));
+            if (selectedId) U.songIdx = Math.max(0, SONGS().findIndex(song => song.id === selectedId));
           }
         }
         save(); schedulePush();
@@ -9574,16 +9649,6 @@ document.addEventListener("click", async (e) => {
     case "allshows": U.allShows = !U.allShows; render(); break;
 
     case "opensong": commitFields(); U.songIdx = i; if (S.recMode && SONGS()[i]) { S.rsongId = SONGS()[i].id; U.secView = ""; save(); } U.view = "live"; render(); break;
-    case "up": case "down": {
-      const cur = SONGS(), at = U.menu?.kind === "song" ? cur.findIndex(song => song.id === U.menu.id) : i;
-      const j = a === "up" ? at - 1 : at + 1;
-      if (at < 0 || at >= cur.length || j < 0 || j >= cur.length) break;
-      const p1 = S.songs.indexOf(cur[at]), p2 = S.songs.indexOf(cur[j]);
-      const tmp = S.songs[p1]; S.songs[p1] = S.songs[p2]; S.songs[p2] = tmp;
-      if (U.songIdx === at) U.songIdx = j; else if (U.songIdx === j) U.songIdx = at;
-      if (U.menu?.kind === "song") { U.menu = null; renderSheet(); }
-      save(); schedulePush(); render(); break;
-    }
     case "pickfile": if (!U.importing) songFileInput().click(); break;
     case "m-swap": {
       if (U.importing) break;
@@ -10346,17 +10411,6 @@ document.addEventListener("click", async (e) => {
     case "rfolder": S.rfolders[id] = !(S.rfolders[id] === true); save(); render(); break;
     case "rfset": U.menu = {kind:"organize",mode:"move",rec:true,id}; renderSheet(); break;
     case "rfrename": U.menu = {kind:"organize",mode:"folder",rec:true,id}; renderSheet(); break;
-    case "rfup": case "rfdown": {
-      const names = groupRSongs(S.rsongs).map(([k]) => k).filter(Boolean);
-      let ord = (S.rfolderOrder || []).filter((x) => names.includes(x));
-      names.forEach((x) => { if (!ord.includes(x)) ord.push(x); });
-      const i2 = ord.indexOf(id);
-      const j2 = a === "rfup" ? i2 - 1 : i2 + 1;
-      if (i2 < 0 || j2 < 0 || j2 >= ord.length) break;
-      ord.splice(j2, 0, ord.splice(i2, 1)[0]);
-      S.rfolderOrder = ord;
-      save(); render(); break;
-    }
     case "rdel": {
       if (confirm(`この曲を消しますか？\nゴミ箱から戻せます。`)) {
         const rs = S.rsongs.find((x) => x.id === id);
@@ -10623,27 +10677,86 @@ document.addEventListener("focusout", () => {
   setTimeout(() => { if (pendingRender && !typingNow()) render(); }, 0);
 });
 
+// These forms contain local drafts only. Their verified restore point is taken
+// on submit, so focus remains editable and native keyboard gestures stay intact.
+const draftFormComposition = new WeakMap(), organizationSubmissions = new WeakSet();
+function draftFormIsComposing(form) {
+  const state = draftFormComposition.get(form);
+  return !!state && (state.composing || Date.now() < state.until);
+}
+for (const type of ["compositionstart", "compositionend", "keydown"]) {
+  document.addEventListener(type, e => {
+    const form = e.target.closest?.("[data-save-on-submit]");
+    if (!form) return;
+    if (type === "compositionstart") draftFormComposition.set(form, {composing:true, until:0});
+    else if (type === "compositionend") draftFormComposition.set(form, {composing:false, until:Date.now() + 100});
+    else if (e.key === "Enter" && (e.isComposing || e.keyCode === 229)) {
+      const state = draftFormComposition.get(form) || {composing:false};
+      state.until = Date.now() + 100; draftFormComposition.set(form, state);
+    }
+  }, true);
+}
+function organizationFormValues(form) {
+  const value = id => form.querySelector("#" + id)?.value || "";
+  const selected = value("org-folder"), fresh = selected === "__new_folder__";
+  return {name:value("org-name"), folder:fresh ? value("org-new-folder") : selected,
+    groupId:value("org-group"), deliveryMode:value("org-delivery") || "show"};
+}
+async function submitOrganizationForm(form) {
+  const m = U.menu;
+  if (!m || m.kind !== "organize" || VIEW() || preview || !recordingInboxCanWrite() || !form.isConnected || draftFormIsComposing(form) || organizationSubmissions.has(form)) return;
+  const values = organizationFormValues(form), out = form.querySelector("#org-error");
+  const report = error => { out.textContent = error; out.hidden = !error; };
+  if (m.mode !== "move" && !values.name.trim()) { report("名前を入力してください。"); return; }
+  if (form.querySelector("#org-folder")?.value === "__new_folder__" && !values.folder.trim()) {
+    report("新しいフォルダ名を入力してください。"); return;
+  }
+  const submit = form.querySelector('[type="submit"]');
+  const before = JSON.stringify(S);
+  organizationSubmissions.add(form); submit.disabled = true; form.setAttribute("aria-busy", "true");
+  try {
+    if (!await automaticBackupBeforeEdit("organization-save")) {
+      if (form.isConnected) report("編集前の保存を確認できませんでした。入力内容は残っています。もう一度保存してください。");
+      return;
+    }
+    if (U.menu !== m || !form.isConnected || VIEW() || preview || !recordingInboxCanWrite()) return;
+    if (JSON.stringify(S) !== before) {
+      report("保存内容が変わりました。画面を開き直して確認してください。"); return;
+    }
+    if (draftFormIsComposing(form) || JSON.stringify(organizationFormValues(form)) !== JSON.stringify(values)) {
+      report("入力内容が変わりました。もう一度保存してください。"); return;
+    }
+    const error = saveOrganization(m, values); report(error);
+    if (error) return;
+    document.activeElement?.blur(); U.menu = null; render();
+  } finally {
+    organizationSubmissions.delete(form); submit.disabled = false; form.removeAttribute("aria-busy");
+  }
+}
 document.addEventListener("submit", e => {
   if (e.target.id !== "organize-form") return;
-  e.preventDefault();
-  const m = U.menu; if (!m || m.kind !== "organize" || VIEW()) return;
-  const selected = document.getElementById("org-folder")?.value || "";
-  const fresh = selected === "__new_folder__";
-  const values = {name:document.getElementById("org-name")?.value || "",
-    folder:fresh ? document.getElementById("org-new-folder").value : selected,
-    groupId:document.getElementById("org-group")?.value || "",
-    deliveryMode:document.getElementById("org-delivery")?.value || "show"};
-  const error = fresh && !values.folder.trim() ? "新しいフォルダ名を入力してください。" : saveOrganization(m,values);
-  const out = document.getElementById("org-error"); out.textContent = error; out.hidden = !error;
-  if (error) return;
-  document.activeElement?.blur(); U.menu = null; render();
+  e.preventDefault(); void submitOrganizationForm(e.target);
+});
+const recordingDateSubmissions=new WeakSet();
+async function submitRecordingDateRename(form) {
+  const menu=U.menu;
+  if (menu?.kind!=='rec-date-rename' || !form.isConnected || draftFormIsComposing(form) || recordingDateSubmissions.has(form)) return false;
+  const input=form.querySelector('#rec-date-name'), submit=form.querySelector('[type="submit"]');
+  if (!input || !submit) return false;
+  recordingDateSubmissions.add(form);submit.disabled=true;form.setAttribute('aria-busy','true');
+  try { return await renameRecordingDateBucket(menu,input.value,form); }
+  finally { recordingDateSubmissions.delete(form);submit.disabled=false;form.removeAttribute('aria-busy'); }
+}
+document.addEventListener('submit',e=>{
+  if(e.target.id!=='rec-date-rename-form')return;
+  e.preventDefault();void submitRecordingDateRename(e.target);
 });
 
 document.addEventListener("change", (e) => {
   if (e.target.id === "org-folder") {
     const fresh = e.target.value === "__new_folder__";
     document.getElementById("org-new-folder-row").hidden = !fresh;
-    if (fresh) document.getElementById("org-new-folder").focus();
+    if (fresh) focusSheetTextInput(e.target.form, "#org-new-folder");
     return;
   }
   if (e.target.id === "summary-member") { selectViewerMember(e.target.value); return; }
@@ -10784,55 +10897,69 @@ function openSheet(lineIdx, range, lineEnd, point) {
 
 /* ---- 公演をつまんでフォルダにまとめる ---- */
 let sdrag = null;
-const clearDrop = () => app.querySelectorAll("[data-drop]").forEach((x) => { x.style.boxShadow = ""; });
+const clearDrop = () => app.querySelectorAll("[data-drop],[data-folder-drop]").forEach((x) => { x.style.boxShadow = ""; });
+function dragTarget(element, from) {
+  const selector = from.startsWith("performance-folder:") ? '[data-folder-drop^="pf:"]'
+    : from.startsWith("rec-date:") ? '[data-drop^="rd:"]' : '[data-drop]';
+  return element?.closest?.(selector) || null;
+}
+function cancelListDrag() {
+  const d = sdrag; sdrag = null;
+  clearDrop();
+  if (d?.el) d.el.style.opacity = "";
+  if (d?.handle.hasPointerCapture?.(d.pointerId)) d.handle.releasePointerCapture(d.pointerId);
+  return d;
+}
+
+// A drag handle is not the folder's disclosure control, including a simple tap.
+document.addEventListener("click", e => {
+  if (e.target.closest?.("[data-drag]")) { e.preventDefault(); e.stopImmediatePropagation(); }
+}, true);
 
 document.addEventListener("pointerdown", (e) => {
   const g = e.target.closest && e.target.closest("[data-drag]");
-  if (!g) return;
+  if (!g || e.button !== 0 || e.isPrimary === false || VIEW() || preview || !recordingInboxCanWrite()) return;
   e.preventDefault();
-  sdrag = { id: g.dataset.drag, y: e.clientY, moved: false, el: g.closest("[data-drop]") };
+  cancelListDrag();
+  sdrag = { id: g.dataset.drag, y: e.clientY, moved: false, el: dragTarget(g, g.dataset.drag), handle:g, pointerId:e.pointerId,
+    scope:U.showFilter || "", artist:U.recArtistFilter || "", rec:!!S.recMode, showId:S.showId };
+  g.setPointerCapture?.(e.pointerId);
   if (sdrag.el) sdrag.el.style.opacity = "0.5";
 }, { passive: false });
 
 document.addEventListener("pointermove", (e) => {
-  if (!sdrag) return;
+  if (!sdrag || e.pointerId !== sdrag.pointerId) return;
   e.preventDefault();
   if (Math.abs(e.clientY - sdrag.y) > 5) sdrag.moved = true;
   clearDrop();
   const el = document.elementFromPoint(e.clientX, e.clientY);
-  const tgt = el && el.closest && el.closest("[data-drop]");
+  const tgt = dragTarget(el, sdrag.id);
   if (tgt && tgt !== sdrag.el) tgt.style.boxShadow = "inset 0 0 0 2px var(--accent)";
 }, { passive: false });
 
 document.addEventListener("pointerup", (e) => {
-  const d = sdrag; sdrag = null;
-  clearDrop();
+  if (!sdrag || e.pointerId !== sdrag.pointerId) return;
+  const d = cancelListDrag();
   if (!d) return;
-  if (d.el) d.el.style.opacity = "";
-  if (!d.moved) return;
+  if (!d.moved || !d.handle.isConnected || d.scope !== (U.showFilter || "") || d.artist !== (U.recArtistFilter || "")
+    || d.rec !== !!S.recMode || d.showId !== S.showId || VIEW() || preview || !recordingInboxCanWrite()) return;
   const el = document.elementFromPoint(e.clientX, e.clientY);
-  const tgt = el && el.closest && el.closest("[data-drop]");
+  const tgt = dragTarget(el, d.id);
   if (!tgt || tgt === d.el) return;
-  onDrop(d.id, tgt.dataset.drop);
+  onDrop(d.id, d.id.startsWith("performance-folder:") ? tgt.dataset.folderDrop : tgt.dataset.drop);
 });
+document.addEventListener("pointercancel", e => { if (sdrag?.pointerId === e.pointerId) cancelListDrag(); });
+document.addEventListener("lostpointercapture", e => { if (sdrag?.pointerId === e.pointerId) cancelListDrag(); });
+window.addEventListener("blur", cancelListDrag);
 
 function onDrop(from, target) {
   if (!from || !target) return;
+  if (from.startsWith("performance-folder:") && target.startsWith("pf:"))
+    return changePerformanceFolderOrder("move", from.slice(19), target.slice(3));
+  if (from.startsWith("rec-date:") && target.startsWith("rd:"))
+    return moveRecordingDateFolder(from.slice(9), target.slice(3));
   if (from.slice(0, 4) === "rec:" && target.slice(0, 2) === "r:") {
-    const a = S.rsongs.findIndex((x) => x.id === from.slice(4));
-    const b = S.rsongs.findIndex((x) => x.id === target.slice(2));
-    if (a < 0 || b < 0 || a === b) return;
-    const me = S.rsongs[a], other = S.rsongs[b];
-    if (folderOf(me) !== folderOf(other)) {
-      // 別のフォルダの曲に重ねたら、そちらへ移す
-      pushUndo();
-      me.folder = other.folder || "";
-      save(); render();
-      return;
-    }
-    S.rsongs.splice(b, 0, S.rsongs.splice(a, 1)[0]);
-    save(); render();
-    return;
+    return moveRecordingSong(from.slice(4), target.slice(2));
   }
   if (from.slice(0, 4) === "sec:" && target.slice(0, 3) === "sc:") {
     const so = recSong(); if (!so) return;
@@ -10870,16 +10997,22 @@ function onDrop(from, target) {
   if (from.slice(0, 5) === "show:") return dropShow(from.slice(5), target);
 }
 // 曲を別の曲の位置へ移す
-function moveSong(id, toId) {
-  if (id === toId) return;
+async function moveSong(id, toId) {
+  if (id === toId || VIEW() || preview || S.recMode || !recordingInboxCanWrite()) return false;
   const cur = SONGS();
   const a = cur.findIndex((x) => x.id === id), b = cur.findIndex((x) => x.id === toId);
-  if (a < 0 || b < 0) return;
-  const order = cur.slice();
+  if (a < 0 || b < 0 || cur.some(song => S.songs.filter(item => item.id === song.id).length !== 1)) return false;
+  const before = JSON.stringify(S), showId = S.showId, scope = U.showFilter || "";
+  if (!await automaticBackupBeforeEdit("song-order")) return false;
+  if (before !== JSON.stringify(S) || showId !== S.showId || scope !== (U.showFilter || "")
+    || VIEW() || preview || S.recMode || !recordingInboxCanWrite()) return false;
+  const current = SONGS(), order = current.slice(), selectedId = current[U.songIdx]?.id;
+  const slots = current.map((x) => S.songs.indexOf(x)).sort((p, q) => p - q);
   order.splice(b, 0, order.splice(a, 1)[0]);
-  const slots = cur.map((x) => S.songs.indexOf(x)).sort((p, q) => p - q);
+  pushUndo(null, true, true);
   slots.forEach((pos, i) => { S.songs[pos] = order[i]; });
-  save(); schedulePush(); render();
+  if (selectedId) U.songIdx = order.findIndex(x => x.id === selectedId);
+  save(); schedulePush(); render(); return true;
 }
 
 function dropShow(id, target) {

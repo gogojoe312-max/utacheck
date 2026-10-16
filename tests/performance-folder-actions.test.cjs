@@ -16,12 +16,12 @@ test('default folder order uses latest parsed performance date, with undated/emp
  const before=JSON.stringify(c.S), groups=json(c.performanceFolderGroups(c.showsFor(),true,'r'));
  assert.deepEqual(groups.map(x=>x[0]),['新しい','共通','日付なし','空','']);assert.equal(JSON.stringify(c.S),before);
 });
-test('manual up/down order is saved only for the current group, with undo and return-to-date order',async()=>{
+test('dragged folder order is saved only for the current group, with undo and return-to-date order',async()=>{
  const c=setup();c.S.performanceFolderOrders['["o"]']={mode:'manual',names:['共通']};const before=JSON.stringify(c.S),hidden=JSON.stringify(c.S.performanceFolderOrders['["o"]']);
- c.open('共通');assert.equal(await c.changePerformanceFolderOrder('up','共通'),true);
+ c.open('共通');assert.equal(await c.changePerformanceFolderOrder('move','共通','新しい'),true);
  assert.deepEqual(json(c.performanceFolderGroups(c.showsFor(),true,'r')).map(x=>x[0]),['共通','新しい','空']);
  assert.equal(JSON.stringify(c.S.performanceFolderOrders['["o"]']),hidden);assert.deepEqual(c.S.folderOrder,['共通','新しい','空']);assert.deepEqual(JSON.parse(c.undoStack[0]).performanceFolderOrders,JSON.parse(before).performanceFolderOrders);
- c.open('共通');assert.equal(await c.changePerformanceFolderOrder('down','共通'),true);assert.deepEqual(json(c.performanceFolderGroups(c.showsFor(),true,'r')).map(x=>x[0]),['新しい','共通','空']);
+ c.open('共通');assert.equal(await c.changePerformanceFolderOrder('move','共通','新しい'),true);assert.deepEqual(json(c.performanceFolderGroups(c.showsFor(),true,'r')).map(x=>x[0]),['新しい','共通','空']);
  assert.equal(await c.changePerformanceFolderOrder('date'),true);assert.equal(c.S.performanceFolderOrders['["r"]'].mode,'date');assert.deepEqual(c.backups,['folder-order','folder-order','folder-order']);
 });
 test('owner picker and summary use matching saved scope, while members use derived dates',()=>{
@@ -70,8 +70,8 @@ test('shared mixed-group performances require explicit warning, while archive an
  const d=setup();d.S.shows.push({id:'r-old',hidden:true,folder:'共通'});assert.equal(d.performanceFolderContext('共通'),null);
 });
 test('manual order rejects backup failure and concurrent group changes without affecting saved content',async()=>{
- for(const variant of ['backup','scope','edit']){const c=setup();c.open('共通');if(variant==='backup')c.backupResult=false;if(variant==='scope')c.duringBackup=()=>c.U.showFilter='o';if(variant==='edit')c.duringBackup=()=>c.S.notes.push({id:'late'});const order=JSON.stringify(c.S.performanceFolderOrders);assert.equal(await c.changePerformanceFolderOrder('up','共通'),false);assert.equal(JSON.stringify(c.S.performanceFolderOrders),order);assert.equal(c.saves,0);}
+ for(const variant of ['backup','scope','edit']){const c=setup();c.open('共通');if(variant==='backup')c.backupResult=false;if(variant==='scope')c.duringBackup=()=>c.U.showFilter='o';if(variant==='edit')c.duringBackup=()=>c.S.notes.push({id:'late'});const order=JSON.stringify(c.S.performanceFolderOrders);assert.equal(await c.changePerformanceFolderOrder('move','共通','新しい'),false);assert.equal(JSON.stringify(c.S.performanceFolderOrders),order);assert.equal(c.saves,0);}
 });
-test('compact folder menu includes rename, scoped reorder and safe delete without a separate management screen',()=>{
- const c=setup();c.open('新しい');const html=c.organizeSheetHTML(c.U.menu);assert.match(html,/data-act="fup"[^>]*disabled/);for(const act of ['frename','fup','fdown','fdelete'])assert(html.includes('data-act="'+act+'"'));assert(!html.includes('manage-folders'));assert.match(html,/公演・曲・記録・録音は残ります/);
+test('folder headers offer drag handles and menus retain rename and safe delete',()=>{
+ const c=setup();c.open('新しい');const html=c.organizeSheetHTML(c.U.menu);assert.doesNotMatch(html,/data-act="f(?:up|down)"/);for(const act of ['frename','fdelete'])assert(html.includes('data-act="'+act+'"'));assert(!html.includes('manage-folders'));assert.match(html,/公演・曲・記録・録音は残ります/);const folders=c.groupedPerformanceHTML(c.showsFor(),x=>x.id,{editable:true});assert.match(folders,/data-drag="performance-folder:共通"/);assert.match(folders,/data-folder-drop="pf:新しい"/);
 });
