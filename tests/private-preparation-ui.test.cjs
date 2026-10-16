@@ -54,7 +54,7 @@ test('storage failed before commit preserves editor; uncertain committed save bl
  for(const committed of [false,true]){const f=await setup({store:{commit:async()=>({status:committed?'unverified':'rejected',committed})}}),before=f.run('JSON.stringify(S)');const result=await f.c.PrivatePreparationUI.receive(true);assert.equal(result.status,committed?'unverified':'conflict');assert.equal(f.run('JSON.stringify(S)'),before);assert.equal(f.run('startupPhase'),committed?'blocked':'ready');}
 });
 test('unsupported writer ownership never creates a marker, credential, or local change',async()=>{const f=await setup({owner:false}),before=f.run('JSON.stringify(S)'),db=f.idb.snapshot();assert.equal((await f.c.PrivatePreparationUI.receive(true)).status,'unsupported');assert.equal(f.run('JSON.stringify(S)'),before);assert.deepEqual(f.idb.snapshot(),db);assert.equal(f.localWrites.length,0);});
-test('normal settings hook exposes honest source state without auth material',async()=>{const f=await setup({token:''});await f.c.PrivatePreparationUI.receive(true);const html=f.c.PrivatePreparationUI.settingsHTML();assert.match(html,/未接続/);assert.match(html,/private-preparation-check/);assert.match(html,/private-preparation-setup/);assert.doesNotMatch(html,/value="[^\"]*synthetic|synthetic-token/);});
+test('normal settings hook exposes honest source state without auth material',async()=>{const f=await setup({token:''});await f.c.PrivatePreparationUI.receive(true);const html=f.c.PrivatePreparationUI.settingsHTML();assert.match(html,/未接続/);assert.doesNotMatch(html,/private-preparation-check|private-preparation-setup|dot/);assert.doesNotMatch(html,/value="[^\"]*synthetic|synthetic-token/);});
 function serviceWorkerFixture(f,replies){
  let count=0;
  f.c.location.href='https://synthetic.invalid/utacheck/';
@@ -189,6 +189,28 @@ test('manual retry after an access failure retains a queued check through intera
 });
 
 const READ_TOKEN='github_pat_'+'q'.repeat(40),AUTH_KEY='private-preparation:read-credential:v1';
+test('progress connection can deliver without a separate token and the obsolete update controls are absent',async()=>{
+ const f=await setup({token:''});let calls=0;
+ f.c.ProgressPreparationSource={read:async()=>{calls++;return {status:'ready',manifest:f.manifest,sourceSha:'a'.repeat(40)};}};
+ const result=await f.c.PrivatePreparationUI.receive(true);
+ assert.equal(result.status,'applied');assert.equal(f.run('S.plan.slots[0].min'),75);assert.equal(calls,2);
+ const html=f.c.PrivatePreparationUI.settingsHTML();
+ assert.doesNotMatch(html,/dot|<button|private-preparation-setup|private-preparation-check/);
+ assert.match(html,/進行アプリ/);assert.equal(f.run('S.ghToken'),'');
+});
+test('an older conflicting addition does not prevent an unrelated next scheduled session',async()=>{
+ const f=await setup();
+ const packet={app:'utacheck-recording-song',version:1,group:{id:'private',name:'配信しない',nopub:true},song:{id:'already-existing',title:'Existing REC',artist:'Original',credit:'',lines:[{t:'Original lyric',parts:[]}]},source:{file:'old.docx',revision:'v1'}};
+ const old={id:'older-addition',type:'recording-song',packet,sha256:await Preparation.digest(packet,webcrypto)};
+ f.run('S.rsongs=[{id:"already-existing",title:"Owner corrected title",groupId:"original-group",lines:[{t:"Owner corrected lyric",parts:[]}]}];U.recArtistFilter="Original"');
+ f.manifest.operations.unshift(old);const original=clone(f.run('S.rsongs'));
+ const next=clone(packet);next.song.id='next-rec';next.song.title='Upcoming REC';
+ f.manifest.operations.push({id:'next-addition',type:'recording-song',packet:next,sha256:await Preparation.digest(next,webcrypto)});
+ const result=await f.c.PrivatePreparationUI.receive(true);
+ assert.equal(result.status,'applied');assert.equal(result.count,2);assert.equal(result.conflicts,1);
+ assert.equal(f.run('S.plan.slots[0].min'),75);assert.deepEqual(clone(f.run('S.rsongs[0]')),original[0]);assert.equal(f.run('S.rsongs[1].title'),'Upcoming REC');assert.equal(f.run('U.recArtistFilter'),'');
+ assert.equal(f.run('S.privatePreparations["older-addition"]'),undefined);
+});
 test('separate dot credential validates the source and persists outside state and backups',async()=>{
  const tokens=[];const f=await setup({source:async({options,manifest})=>{tokens.push(options.token);return {status:'ready',manifest,sourceSha:'a'.repeat(40)};}});
  const before=f.run('JSON.stringify(S)'),slots=[f.idb.record('state:0'),f.idb.record('state:1')],clips=f.idb.snapshot().clips;

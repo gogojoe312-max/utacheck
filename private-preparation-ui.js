@@ -5,6 +5,10 @@
  const credentialKey='private-preparation:read-credential:v1';
  let credentialLoaded=false,dedicatedToken=null,connectionBlocked=false,connectionPending=false;
  const sourceToken=()=>dedicatedToken||S.ghToken;
+ const readSource=async options=>{
+  if(dedicatedToken){const direct=await PrivatePreparationSource.read(options);if(direct.status==='ready'||!root.ProgressPreparationSource)return direct;}
+  return (root.ProgressPreparationSource||PrivatePreparationSource).read(options);
+ };
  const validReadToken=token=>typeof token==='string'&&/^github_pat_[A-Za-z0-9_]{20,300}$/.test(token);
  async function loadCredential(){
   if(credentialLoaded)return;
@@ -52,6 +56,10 @@
  function sourceFailureText(){
   const stage={identity:'GitHubの本人確認',repository:'非公開の保存先の確認',contents:'更新ファイルの確認',blob:'更新ファイル本体の読取'}[status.stage];
   const reasons={
+   PROGRESS_LOCKED:'進行アプリの保存データがロックされています。進行アプリで接続状態を確認してください。',
+   PROGRESS_STORAGE_UNAVAILABLE:'進行アプリの保存内容を読めません。進行アプリと同じブラウザで開いてください。',
+   PROGRESS_UNLINKED:'この端末で進行アプリの接続を確認できません。進行アプリを開いて同期してください。',
+   PROGRESS_MISMATCH:'進行アプリの接続先が準備資料の保存先と一致しません。',
    HTTP_401:'保存済みのGitHub接続を受け付けてもらえませんでした（401）。',
    HTTP_403:'GitHubに拒否されました（403）。アクセスの条件または一時的な制限を確認できません。',
    HTTP_404:'対象が見つからないか、この接続からは読み取れません（404）。',
@@ -66,15 +74,15 @@
    INACTIVE:'確認中に端末の状態が変わったため停止しました。'
   };
   const reason=Object.prototype.hasOwnProperty.call(reasons,status.code)?reasons[status.code]:(/^HTTP_5[0-9]{2}$/.test(status.code||'')?'GitHub側でエラーが発生しました。時間をおいて再確認してください。':'受信内容を安全に確認できなかったため停止しました。');
-  return 'dot経由の更新をまだ受信できません。'+(stage?stage+'：':'')+reason+' 現在の記録と接続情報は保持しています。';
+  return '進行アプリの資料をまだ受信できません。'+(stage?stage+'：':'')+reason+' 現在の記録と接続情報は保持しています。';
  }
  function statusText(){
-  if(status.kind==='connected')return 'dotの読み取り接続を保存しました。更新を自動で確認します。';
+  if(status.kind==='connected')return '進行アプリの読み取り接続を保存しました。更新を自動で確認します。';
   if(status.kind==='connection-error')return '接続を保存できませんでした。アプリを開き直して確認してください。';
   if(status.kind==='invalid-read-token')return 'GitHubで作成した読み取り専用の fine-grained token を入力してください。';
-  if(status.kind==='applied')return 'dot経由の更新をこの端末へ保存しました。クラウドバックアップ・メンバー配信は別に確認してください。';
-  if(status.kind==='current')return 'dot経由の更新は、この端末に反映済みです。';
-  if(status.kind==='checking')return 'dot経由の更新を確認しています…';
+  if(status.kind==='applied')return '進行アプリから資料を取り込みました。'+(status.conflicts?'既存の内容と重なる資料は保留しています。':'');
+  if(status.kind==='current')return '進行アプリの資料は、この端末に反映済みです。';
+  if(status.kind==='checking')return '進行アプリの資料を確認しています…';
   if(status.kind==='active-plan')return '進行中の枠が残っているため、予定の反映を待っています。実際には未開始なら、その枠の「その他」から開始状態だけ解除できます。';
   if(status.kind==='deferred')return waitingText(status.reason);
   if(status.kind==='missing-token')return '本人用の自動受信は未接続です。この端末のGitHub接続を確認する必要があります。';
@@ -85,22 +93,21 @@
   if(status.kind==='unsupported')return 'このブラウザでは安全な自動反映を確認できません。現在の記録は保持しています。';
   if(status.kind==='unverified')return '更新内容の保存後確認が必要です。アプリを開き直してください。';
   if(status.kind==='offline')return sourceFailureText();
-  return 'dot経由の更新を、録音・入力をしていないときに自動で確認します。';
+  return '進行アプリの資料を、録音・入力をしていないときに自動で確認します。';
  }
  function setStatus(value){
   status=value;document.querySelectorAll?.('[data-private-preparation-status]').forEach(el=>el.textContent=statusText());
  }
  function settingsHTML(){
-  return '<button class="ghost" data-act="private-preparation-check">dot経由で更新する</button><p class="note" data-private-preparation-status role="status">'+h(statusText())+'</p>'
-   +'<button class="ghost" data-act="private-preparation-setup">dotの接続設定</button>';
+  return '<p class="note" data-private-preparation-status role="status">'+h(statusText())+'</p>';
  }
  function openConnection(){
   if(document.querySelector('[data-private-preparation-connection]'))return;
   const dialog=document.createElement('dialog');
-  dialog.setAttribute('data-private-preparation-connection','');dialog.setAttribute('aria-label','dotの接続設定');
+  dialog.setAttribute('data-private-preparation-connection','');dialog.setAttribute('aria-label','進行アプリの接続設定');
   dialog.style.cssText='width:440px;max-width:calc(100vw - 24px);box-sizing:border-box;max-height:90dvh;overflow:auto;background:#1e1f23;color:#eee;border:1px solid #40434b;border-radius:18px;padding:20px;';
-  const tokenURL='https://github.com/settings/personal-access-tokens/new?name=utacheck-dot-read&target_name=gogojoe312-max&contents=read&expires_in=90';
-  dialog.innerHTML='<h3>dotの接続設定</h3><button class="ghost" data-private-preparation-close>閉じる</button>'
+  const tokenURL='https://github.com/settings/personal-access-tokens/new?name=utacheck-preparation-read&target_name=gogojoe312-max&contents=read&expires_in=90';
+  dialog.innerHTML='<h3>進行アプリの接続設定</h3><button class="ghost" data-private-preparation-close>閉じる</button>'
    +'<p class="note">読み取り先：gogojoe312-max / shinkou-data</p>'
    +'<p class="note"><a href="'+tokenURL+'" target="_blank" rel="noopener noreferrer">GitHubで読み取り用キーを作る</a></p>'
    +'<p class="note">Repository access は「Only select repositories」で shinkou-data だけを選び、Contents は「Read-only」にしてください。</p>'
@@ -225,8 +232,8 @@
     const matched=fresh.operations.find(op=>op.id===operation.id);
     if(!matched||JSON.stringify(matched)!==JSON.stringify(operation))throw failure('PREPARATION_SOURCE_CHANGED');
     if(!active())throw failure('DEFERRED');
-   }else if(operation.type==='material-update'||operation.type==='recording-song'){
-    const fresh=await PrivatePreparationSource.read({...config,token,isActive:active});
+   }else if(root.ProgressPreparationSource||operation.type==='material-update'||operation.type==='recording-song'){
+    const fresh=await readSource({...config,token,isActive:active});
     if(fresh.status!=='ready'||fresh.sourceSha!==sourceSha)throw failure('PREPARATION_SOURCE_CHANGED');
     await PrivatePreparation.validate(fresh.manifest,config.owner);
     if(!active())throw failure('DEFERRED');
@@ -258,9 +265,9 @@
   manualPending=false;lastAttempt=Date.now();running=true;let token;
   try{
    await loadCredential();token=sourceToken();
-   if(!token){setStatus({kind:'missing-token'});return {status:'missing-token'};}
+   if(!token&&!root.ProgressPreparationSource){setStatus({kind:'missing-token'});return {status:'missing-token'};}
    setStatus({kind:'checking'});
-   const source=await PrivatePreparationSource.read({...config,token,isActive:()=>startupPhase==='ready'&&!document.hidden&&recordingInboxCanWrite()&&sourceToken()===token});
+   const source=await readSource({...config,token,isActive:()=>startupPhase==='ready'&&!document.hidden&&recordingInboxCanWrite()&&sourceToken()===token});
    if(source.status!=='ready'){
     const code=source.code,stage=['identity','repository','contents','blob'].includes(source.stage)?source.stage:undefined;setStatus({kind:code==='MISSING_TOKEN'?'missing-token':['OWNER_MISMATCH','REPOSITORY_NOT_PRIVATE','REPOSITORY_MISMATCH','HTTP_401','HTTP_403','HTTP_404'].includes(code)?'access':code==='UNSUPPORTED'?'unsupported':'offline',code,stage});
     return {status:status.kind,code};
@@ -272,14 +279,20 @@
    // Lyrics-only additions preserve the active plan, selected song and recordings.
    // All older operations retain their existing active-plan deferral.
    const eligible=unapplied.filter(op=>!activePlan||op.type==='recording-song');
-   const additions=eligible.filter(op=>op.type==='recording-song');
-   const pending=additions.length?additions:eligible;
+   const pending=eligible;
    if(unapplied.length&&!pending.length){setStatus({kind:'active-plan'});return {status:'deferred'};}
    if(!pending.length){setStatus({kind:'current',sourceSha:source.sourceSha});return {status:'current'};}
    await establishOwner();if(sourceToken()!==token)throw failure('DEFERRED');
-   let count=0;
-   for(const operation of pending){if(await applyOne(operation,token,source.sourceSha))count++;}
-   setStatus({kind:count?'applied':'current',count,sourceSha:source.sourceSha});return {status:status.kind,count};
+   let count=0,conflicts=0,addedRecording=false;
+   for(const operation of pending){
+    // Check each independent addition against the current device. An older
+    // conflicting packet must not keep a later, unrelated session out forever.
+    try{PrivatePreparation.apply(S,operation,{schedule:RecordingScheduleUpdate.apply,recording:mergeRecordingAddition});}
+    catch(error){if(error.preparationCode==='OPERATION_ID_REUSED')throw error;conflicts++;continue;}
+    if(await applyOne(operation,token,source.sourceSha)){count++;if(['recording-song','recording-addition'].includes(operation.type))addedRecording=true;}
+   }
+   if(addedRecording){U.recArtistFilter='';render();}
+   setStatus({kind:count?'applied':conflicts?'conflict':'current',count,conflicts,sourceSha:source.sourceSha});return {status:status.kind,count,conflicts};
   }catch(error){const code=error.preparationCode||error.code||'PREPARATION_CONFLICT';
    setStatus({kind:code==='CREDENTIAL_UNREADABLE'?'connection-error':code==='DEFERRED'?'deferred':code==='MULTIPLE_WINDOWS'?'multiple-windows':code==='OWNER_REQUIRED'?'owner-required':code==='UNSUPPORTED'?'unsupported':code==='SAVE_UNVERIFIED'?'unverified':'conflict',code,reason:code==='DEFERRED'?waitingReason():undefined});return {status:status.kind,code};
   }finally{running=false;}

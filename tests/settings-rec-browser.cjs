@@ -1,6 +1,7 @@
 'use strict';
 // Isolated browser checks with synthetic data. Every external request is blocked.
 const playwright=require('playwright'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),http=require('node:http');
+const {checkProgressPreparation}=require('./progress-preparation-browser-helper.cjs');
 const {checkAbsence}=require('./absence-view-browser-helper.cjs');
 const {checkFolderInteractions}=require('./folder-interactions-browser-helper.cjs');
 const engine=process.env.BROWSER_ENGINE||'chromium';assert(['chromium','webkit'].includes(engine));
@@ -128,8 +129,8 @@ async function readableTitles(page,rec){
    await page.waitForSelector('[data-settings-panel="storage"][open]');assert.equal(await page.getByText('いま保存できていません',{exact:false}).isVisible(),true);
    assert.equal(await page.locator('[data-settings-panel="data-save"] [data-act="bkfile"]').isVisible(),true);assert.equal(await page.locator('[data-settings-panel="connection-recovery"]').evaluate(el=>el.open),false);
    await assertFits(page);await screenshot(page,width,'save-error');assert.deepEqual(JSON.parse(await page.evaluate(()=>qaContent())),expected);
-   const dotConnection=await checkDotConnection(page,width);
-   results.push({width,dotConnection,...folderResult,...absenceResult,excelOriginal:excelCheck,settings:true,pdfLiveRecView:true,fullTitles:true,recFolderRename:true,footer:true,draftPreserved:true,saveErrorVisible:true});await context.close();contexts.delete(context);
+   const progressConnection=await checkProgressPreparation(page);
+   results.push({width,progressConnection,...folderResult,...absenceResult,excelOriginal:excelCheck,settings:true,pdfLiveRecView:true,fullTitles:true,recFolderRename:true,footer:true,draftPreserved:true,saveErrorVisible:true});await context.close();contexts.delete(context);
   }
   assert.deepEqual(errors,[]);assert.equal(blocked.filter(x=>x.method!=='GET').length,0);
   const report={passed:true,engine,results,errors,blocked,externalRequestsAllowed:0,syntheticDataOnly:true};
@@ -245,45 +246,4 @@ async function checkExcelReattach(page,width,dialogs){
   assert.equal(await page.evaluate(()=>JSON.stringify(S)),saved.state,'Excel check restores exact prior application state');
  }
  return {reattach:true,wrongWorkbookRejected:true,oldWorkbookPreserved:true,idsLyricsNotesPreserved:true,export:true,batchReattach:true};
-}
-
-async function checkDotConnection(page,width){
- const token='github_pat_'+'b'.repeat(40);
- await mode(page,false,false);
- await page.evaluate(async()=>{
-  saveErr=false;await saveNow();recordingInboxProfileRequired=true;recordingInboxOwner={canWrite:true};
-  recordingInboxIntegration=setupRecordingInboxIntegration();
-  window.qaDotState=JSON.stringify(S);window.qaDotReads=[];
-  window.qaOldSource=PrivatePreparationSource;
-  window.PrivatePreparationSource={read:async options=>{
-   qaDotReads.push(options.token===('github_pat_'+'b'.repeat(40))?'dedicated':'other');
-   return {status:'ready',sourceSha:'a'.repeat(40),manifest:{app:'utacheck-private-preparation',version:1,owner:'gogojoe312-max',revision:'qa-empty',createdAt:'2031-01-01T00:00:00Z',operations:[]}};
-  }};
-  renderPointers.clear();scrollingUntil=0;render(true);
- });
- await page.locator('[data-act="private-preparation-setup"]').click();
- const settings=page.getByRole('dialog',{name:'dotの接続設定',exact:true});
- const link=await settings.locator('a').getAttribute('href'),url=new URL(link);
- assert.equal(url.origin,'https://github.com');assert.equal(url.searchParams.get('contents'),'read');
- assert.equal(url.searchParams.get('target_name'),'gogojoe312-max');
- assert((await settings.innerText()).includes('shinkou-data'));
- await settings.locator('[data-private-preparation-token]').fill(token);
- assert.equal(await settings.locator('[data-private-preparation-token]').inputValue(),token,'Credential input must not be intercepted as a song edit');
- assert.equal(await settings.locator('[data-private-preparation-token]').getAttribute('type'),'password');
- await assertFits(page);
- await page.evaluate(()=>{document.activeElement?.blur();renderPointers.clear();scrollingUntil=0;render(true);});
- assert.equal(await settings.locator('[data-private-preparation-token]').inputValue(),token,'A settings render must preserve the independent connection input');
- await settings.locator('[data-act="private-preparation-connect"]').click();
- try{await page.waitForFunction(()=>['connected','current'].includes(PrivatePreparationUI.getStatus().kind));}
- catch(error){throw Error('Dot connection did not complete: '+JSON.stringify(await page.evaluate(()=>({status:PrivatePreparationUI.getStatus(),reads:qaDotReads,active:document.activeElement?.tagName,fieldBlank:document.querySelector('[data-private-preparation-token]')?.value==='',saving,saveErr,ready:startupPhase,writers:recordingInboxWriters,canWrite:recordingInboxCanWrite()}))));}
- const check=await page.evaluate(async()=>{
-  const key='private-preparation:read-credential:v1',record=await idbGet(key),token='github_pat_'+'b'.repeat(40);
-  return {saved:record?.token===token,stateUnchanged:JSON.stringify(S)===qaDotState,backupClean:!JSON.stringify(backupState()).includes(token),
-   domClean:![...document.querySelectorAll('input')].some(el=>el.value.includes(token)),htmlClean:!document.documentElement.outerHTML.includes(token),reads:qaDotReads,
-   fieldBlank:!document.querySelector('[data-private-preparation-token]')?.value,closed:!document.querySelector('[data-private-preparation-connection]')};
- });
- assert.equal(check.saved,true);assert.equal(check.stateUnchanged,true);assert.equal(check.backupClean,true);assert.equal(check.domClean,true);assert.equal(check.htmlClean,true);assert.equal(check.fieldBlank,true);assert.equal(check.closed,true);assert(check.reads.includes('dedicated'));
- await assertFits(page);await screenshot(page,width,'dot-connected');
- await page.evaluate(()=>{PrivatePreparationSource=qaOldSource;delete window.qaOldSource;delete window.qaDotState;delete window.qaDotReads;});
- return {separateReadCredential:true,deliveryStatePreserved:true,backupExcludesCredential:true,fieldCleared:true};
 }

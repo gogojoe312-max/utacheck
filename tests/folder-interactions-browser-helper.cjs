@@ -93,6 +93,7 @@ async function checkCommonFolderManagement(page,width,{mode,assertFits,screensho
   confirmNext();await menu.getByRole('button',{name:'フォルダを削除',exact:true}).click();await page.waitForFunction(()=>!U.menu);
   if(rec){
    for(const song of before.rsongs.filter(song=>['rec-a','rec-b'].includes(song.id))){delete song.recSession.displayLabel;song.recSession.folderless=true;}
+   await page.waitForFunction(()=>[...document.querySelectorAll('.rec-date')].some(folder=>folder.querySelector('[data-act="ruse"][data-id="rec-a"]')&&folder.querySelector(':scope > summary .performance-folder-name')?.textContent==='フォルダなし'));
    assert.equal(await page.locator('.rec-date').filter({has:page.locator('[data-act="ruse"][data-id="rec-a"]')}).locator(':scope > summary .performance-folder-name').innerText(),'フォルダなし');
   }
   assert.deepEqual(JSON.parse(await page.evaluate(()=>qaContent())),before,'Folder deletion retains every song and recording');

@@ -6,18 +6,25 @@ repository. The public member-delivery path is not a preparation destination.
 
 ## Private source contract
 
-The receiver can use a separate device-local, fine-grained read credential.
-The owner creates it on GitHub for only `shinkou-data`, with Contents: read-only;
-the setup link pre-fills the owner and read permission, but repository selection
-must be made on GitHub. The application cannot create tokens or expand their
-permissions. If no dedicated credential is saved, existing installations continue
-using the editor's already-stored GitHub token. It reads the authenticated identity,
+The settings screen displays automatic reception status. The obsolete dot update
+and connection controls are removed. The receiver reuses the connection explicitly
+configured in 進行 in the same browser storage: only IndexedDB `shinkou`, store
+`kv`, record `state`, and its `settings.sync` fields. The enabled connection must
+match `gogojoe312-max/shinkou-data`, `data.json`, and branch `main`. It uses the
+credential transiently; it is never copied into 歌チェック state or backups.
+Missing databases are not created. Locked, disabled or mismatched connections
+are reported, and changed connections invalidate an in-flight read.
+
+A previously saved device-local read credential continues to work. If that read
+fails, the receiver can try the configured 進行 connection. When 進行 has no saved
+connection, the existing editor token remains a compatibility fallback. The
+application cannot create tokens or expand permissions. It reads the authenticated identity,
 verifies the configured repository is private and owned by that identity, then
 reads the fixed `utacheck/prepared.json` path. Large files use the exact verified
 blob SHA in the same repository. Redirects and alternate/public URLs are rejected.
 Missing access is reported without applying or publishing data.
 
-The connection form validates the identity, private repository, fixed manifest
+The retained legacy connection handler validates the identity, private repository, fixed manifest
 path and manifest before storing the credential. It uses the exclusive writer
 gate, saves under IndexedDB state key `private-preparation:read-credential:v1`,
 and rereads the saved record before reporting success. The credential never
@@ -109,6 +116,13 @@ Receipts make retries idempotent. Inconclusive committed writes block further
 editing until reload. The old recovery network hold, clips, unrelated songs,
 notes, actual takes and sharing settings are retained.
 
+Each pending operation is checked against the current state independently. An
+older operation conflicting with a local edit stays pending without blocking a
+later compatible addition. Failed operations get no receipt; reused operation
+IDs with changed hashes still stop reception. Newly added REC songs clear the
+artist filter so the new artist is visible. Each write rechecks the private
+source before committing.
+
 Prepared content remains personal. New groups/shows are non-publishing. After
 private preparation, the existing full-cloud-backup path permits only the
 existing nonpublic Gist and verified encryption under the existing backup key;
@@ -118,7 +132,8 @@ whole-state backup missing preparation receipts cannot silently replace them.
 ## Verification boundary
 
 A published app and saved queue do not prove a particular phone has received
-anything. The phone must have suitable existing private-repository access, be
+anything. The phone must have suitable existing private-repository access (or
+the configured, unlocked 進行 connection in the same browser storage), be
 online and reach a safe editor state. The settings status distinguishes applied,
 unconnected, deferred, conflicting and unverified outcomes. No new permissions
 are silently acquired to hide that boundary.
