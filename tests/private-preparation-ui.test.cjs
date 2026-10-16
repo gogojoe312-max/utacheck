@@ -270,3 +270,42 @@ test('closing connection form during source validation leaves saved credentials 
  let open=true;const f=await setup({source:async({manifest})=>{open=false;return {status:'ready',manifest,sourceSha:'a'.repeat(40)};}});
  const db=f.idb.snapshot();assert.equal((await f.c.PrivatePreparationUI.connectReadCredential(READ_TOKEN,()=>open)).status,'deferred');assert.deepEqual(f.idb.snapshot(),db);
 });
+
+test('repository 404 with no shared progress storage uses the owner relay and rechecks it before saving',async()=>{
+ const f=await setup({source:async()=>({status:'unavailable',code:'HTTP_404',stage:'repository'})});
+ const before=clone(f.run('S'));let localReads=0,relayReads=0;
+ f.c.ProgressPreparationSource={read:async()=>{localReads++;return {status:'unavailable',code:'HTTP_404',stage:'repository'};}};
+ f.c.PreparationRelaySource={read:async options=>{relayReads++;assert.equal(options.token,before.ghToken);return {status:'ready',manifest:f.manifest,sourceSha:'a'.repeat(40),sourcePath:'utacheck/prepared.json'};}};
+ const result=await f.c.PrivatePreparationUI.receive(true);assert.equal(result.status,'applied');assert.equal(localReads,1);assert.equal(relayReads,2);
+ assert.equal(f.run('S.plan.slots[0].min'),75);assert.deepEqual(clone(f.run('S.notes')),before.notes);assert.deepEqual(clone(f.run('S.recs')),before.recs);
+ assert.equal((await f.c.PrivatePreparationUI.receive(true)).status,'current');assert.equal(localReads,1);assert.equal(relayReads,3);
+ assert.equal(f.run('S.ghToken'),before.ghToken);
+});
+test('unconfigured relay exposes the actual delivery blocker without changing state',async()=>{
+ const f=await setup({source:async()=>({status:'unavailable',code:'HTTP_404',stage:'repository'})}),before=f.run('JSON.stringify(S)');
+ f.c.PreparationRelaySource={read:async()=>({status:'unavailable',code:'RELAY_NOT_CONFIGURED',stage:'relay'})};
+ const result=await f.c.PrivatePreparationUI.receive(true);assert.equal(result.code,'RELAY_NOT_CONFIGURED');assert.equal(f.run('JSON.stringify(S)'),before);
+ assert(f.c.PrivatePreparationUI.settingsHTML().includes('サーバーの接続設定が未完了'));assert(!f.c.PrivatePreparationUI.settingsHTML().includes('404'));
+});
+test('source owner mismatch and cancellation never fall back to the relay',async()=>{
+ for(const code of ['OWNER_MISMATCH','INACTIVE','ABORTED']){
+  const f=await setup({source:async()=>({status:'unavailable',code})});let calls=0;f.c.PreparationRelaySource={read:async()=>{calls++;}};
+  await f.c.PrivatePreparationUI.receive(true);assert.equal(calls,0);
+ }
+});
+test('an unfinished past slot does not block a separate future REC session, and same-day/unknown dates still wait',async()=>{
+ for(const mode of ['future','same-day','unknown']){
+  const f=await setup();f.run('S.plan.slots[0].a1=null;S.rsongId="existing-selection";S.planFocus="slot"');
+  if(mode==='unknown')f.run('delete S.plan.slots[0].date');
+  const before=clone(f.run('S')),date=mode==='same-day'?'2031-02-03':'2031-02-04',day=mode==='same-day'?'2/3':'2/4';
+  const packet={app:'utacheck-recording-addition',version:1,group:{id:'future-private',name:'Synthetic future REC',nopub:true},members:[],roster:[],
+   songs:[{id:'future-song',groupId:'future-private',title:'Synthetic future song',roster:[],blocks:{},lines:[{t:'Future lyric',parts:[],main:[],extra:[]}]}],
+   plan:{year:2031,timezone:'Asia/Tokyo',start:'11:00',slots:[{id:'future-slot',songId:'future-song',date,day,at:660,min:75,kind:'member',name:'Synthetic upcoming singer',place:'Synthetic studio'}]}};
+  f.manifest.operations=[{id:'future-op',type:'recording-addition',packet,sha256:await Preparation.digest(packet,webcrypto)}];
+  const result=await f.c.PrivatePreparationUI.receive(true),after=clone(f.run('S'));
+  if(mode==='future'){
+   assert.equal(result.status,'applied',JSON.stringify(result));assert.equal(after.plan.slots.length,2);assert.deepEqual(after.plan.slots[0],before.plan.slots[0]);
+   for(const key of ['rsongId','planFocus','notes','recs'])assert.deepEqual(after[key],before[key],key);
+  }else{assert.equal(result.status,'deferred');assert.deepEqual(after,before);}
+ }
+});

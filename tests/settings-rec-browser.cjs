@@ -129,7 +129,7 @@ async function readableTitles(page,rec){
    await page.waitForSelector('[data-settings-panel="storage"][open]');assert.equal(await page.getByText('いま保存できていません',{exact:false}).isVisible(),true);
    assert.equal(await page.locator('[data-settings-panel="data-save"] [data-act="bkfile"]').isVisible(),true);assert.equal(await page.locator('[data-settings-panel="connection-recovery"]').evaluate(el=>el.open),false);
    await assertFits(page);await screenshot(page,width,'save-error');assert.deepEqual(JSON.parse(await page.evaluate(()=>qaContent())),expected);
-   const progressConnection=await checkProgressPreparation(page);
+   const progressConnection=await checkProgressPreparation(page,{relay:width===390});
    results.push({width,progressConnection,...folderResult,...absenceResult,excelOriginal:excelCheck,settings:true,pdfLiveRecView:true,fullTitles:true,recFolderRename:true,footer:true,draftPreserved:true,saveErrorVisible:true});await context.close();contexts.delete(context);
   }
   assert.deepEqual(errors,[]);assert.equal(blocked.filter(x=>x.method!=='GET').length,0);

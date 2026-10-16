@@ -5,9 +5,20 @@
  const credentialKey='private-preparation:read-credential:v1';
  let credentialLoaded=false,dedicatedToken=null,connectionBlocked=false,connectionPending=false;
  const sourceToken=()=>dedicatedToken||S.ghToken;
+ let relayToken=null;
  const readSource=async options=>{
+  // Once this login has reached the owned relay, avoid repeating a known
+  // repository-permission failure for every operation and refresh.
+  if(root.PreparationRelaySource&&options.token&&relayToken===options.token){
+   const relayed=await root.PreparationRelaySource.read(options);if(relayed.status==='ready')return relayed;
+   relayToken=null;return relayed;
+  }
   if(dedicatedToken){const direct=await PrivatePreparationSource.read(options);if(direct.status==='ready'||!root.ProgressPreparationSource)return direct;}
-  return (root.ProgressPreparationSource||PrivatePreparationSource).read(options);
+  const direct=await (root.ProgressPreparationSource||PrivatePreparationSource).read(options);
+  if(direct.status==='ready'||!root.PreparationRelaySource||!options.token||['ABORTED','INACTIVE','OWNER_MISMATCH','INVALID_CONFIG'].includes(direct.code))return direct;
+  const relayed=await root.PreparationRelaySource.read(options);
+  if(relayed.status==='ready')relayToken=options.token;
+  return relayed;
  };
  const validReadToken=token=>typeof token==='string'&&/^github_pat_[A-Za-z0-9_]{20,300}$/.test(token);
  async function loadCredential(){
@@ -54,12 +65,14 @@
   return messages[reason]||'更新を反映できる状態になるのを待っています。';
  }
  function sourceFailureText(){
-  const stage={identity:'GitHubの本人確認',repository:'非公開の保存先の確認',contents:'更新ファイルの確認',blob:'更新ファイル本体の読取'}[status.stage];
+  const stage={identity:'GitHubの本人確認',repository:'非公開の保存先の確認',contents:'更新ファイルの確認',blob:'更新ファイル本体の読取',relay:'進行アプリからの受信'}[status.stage];
   const reasons={
    PROGRESS_LOCKED:'進行アプリの保存データがロックされています。進行アプリで接続状態を確認してください。',
    PROGRESS_STORAGE_UNAVAILABLE:'進行アプリの保存内容を読めません。進行アプリと同じブラウザで開いてください。',
    PROGRESS_UNLINKED:'この端末で進行アプリの接続を確認できません。進行アプリを開いて同期してください。',
    PROGRESS_MISMATCH:'進行アプリの接続先が準備資料の保存先と一致しません。',
+   RELAY_NOT_CONFIGURED:'資料を届けるサーバーの接続設定が未完了です。端末での入れ直しは不要です。',
+   SOURCE_UNAVAILABLE:'資料を届けるサーバーが保存先を読み取れていません。現在の記録は保持しています。',
    HTTP_401:'保存済みのGitHub接続を受け付けてもらえませんでした（401）。',
    HTTP_403:'GitHubに拒否されました（403）。アクセスの条件または一時的な制限を確認できません。',
    HTTP_404:'対象が見つからないか、この接続からは読み取れません（404）。',
@@ -269,16 +282,19 @@
    setStatus({kind:'checking'});
    const source=await readSource({...config,token,isActive:()=>startupPhase==='ready'&&!document.hidden&&recordingInboxCanWrite()&&sourceToken()===token});
    if(source.status!=='ready'){
-    const code=source.code,stage=['identity','repository','contents','blob'].includes(source.stage)?source.stage:undefined;setStatus({kind:code==='MISSING_TOKEN'?'missing-token':['OWNER_MISMATCH','REPOSITORY_NOT_PRIVATE','REPOSITORY_MISMATCH','HTTP_401','HTTP_403','HTTP_404'].includes(code)?'access':code==='UNSUPPORTED'?'unsupported':'offline',code,stage});
+    const code=source.code,stage=['identity','repository','contents','blob','relay'].includes(source.stage)?source.stage:undefined;setStatus({kind:code==='MISSING_TOKEN'?'missing-token':['OWNER_MISMATCH','REPOSITORY_NOT_PRIVATE','REPOSITORY_MISMATCH','HTTP_401','HTTP_403','HTTP_404'].includes(code)?'access':code==='UNSUPPORTED'?'unsupported':'offline',code,stage});
     return {status:status.kind,code};
    }
    const manifest=await PrivatePreparation.validate(source.manifest,config.owner);
    if(!ready()||sourceToken()!==token)throw failure('DEFERRED');
-   const activePlan=(S.plan?.slots||[]).some(x=>x.a0!=null&&x.a1==null);
+   const activeSlots=(S.plan?.slots||[]).filter(x=>x.a0!=null&&x.a1==null),activePlan=activeSlots.length>0;
    const unapplied=manifest.operations.filter(op=>!S.privatePreparations?.[op.id]||S.privatePreparations[op.id].sha256!==op.sha256||S.privatePreparations[op.id].type!==op.type);
-   // Lyrics-only additions preserve the active plan, selected song and recordings.
-   // All older operations retain their existing active-plan deferral.
-   const eligible=unapplied.filter(op=>!activePlan||op.type==='recording-song');
+   // A past slot left started must not hide an independent future session.
+   // Append-only future dates preserve every existing slot and selected song.
+   // Same-day corrections and dates we cannot compare still wait.
+   const futureAddition=op=>op.type==='recording-addition'&&Array.isArray(op.packet.plan?.slots)&&op.packet.plan.slots.length>0
+    &&activeSlots.every(current=>/^\d{4}-\d{2}-\d{2}$/.test(current.date||'')&&op.packet.plan.slots.every(next=>/^\d{4}-\d{2}-\d{2}$/.test(next.date||'')&&next.date>current.date));
+   const eligible=unapplied.filter(op=>!activePlan||op.type==='recording-song'||futureAddition(op));
    const pending=eligible;
    if(unapplied.length&&!pending.length){setStatus({kind:'active-plan'});return {status:'deferred'};}
    if(!pending.length){setStatus({kind:'current',sourceSha:source.sourceSha});return {status:'current'};}

@@ -113,7 +113,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.18";
+const APP_VER = "16.41.58.19";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -7645,7 +7645,7 @@ function recSongActionsHTML(id) {
   const action = (act, label, danger = false) => `<button class="organize-action" data-act="${act}" data-id="${h(so.id)}"${danger ? ' style="color:var(--bad)"' : ""}>${label}</button>`;
   return `<button class="sp" data-act="closemenu" aria-label="閉じる"></button><div class="sheet organize-sheet" role="dialog" aria-modal="true" aria-label="曲の操作">
     <div class="row"><b class="grow settings-song-title">${h(so.title)}</b><button class="chip" data-act="closemenu">閉じる</button></div>
-    ${action("song-rename", "曲名を変更")}${action("rpdf", "PDFにする")}${action("rec-classify", "日付・アーティストを変更")}${action("rfset", "保存フォルダを変更")}${action("rdel", "曲を削除", true)}
+    ${(S.plan?.slots || []).some(slot => slot.songId === so.id) ? action("rec-song-plan", "進行表をひらく") : ""}${action("song-rename", "曲名を変更")}${action("rpdf", "PDFにする")}${action("rec-classify", "日付・アーティストを変更")}${action("rfset", "保存フォルダを変更")}${action("rdel", "曲を削除", true)}
   </div>`;
 }
 
@@ -8009,6 +8009,7 @@ function selectRecordingGroup(id) {
   const list = recordingSelectionSongs();
   if (!list.some(x => x.id === S.rsongId) && list.length) {
     S.rsongId = list[0].id; U.songIdx = SONGS().findIndex(x => x.id === S.rsongId); U.secView = "";
+    U.planSongId = ""; chooseRecordingSongPlanDay(S.rsongId);
   }
   render(); if (U.picker) renderSheet();
 }
@@ -8200,6 +8201,44 @@ function recScheduleClock(at = Date.now()) {
   const parts = new Intl.DateTimeFormat("en-CA", {timeZone:"Asia/Tokyo", year:"numeric", month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit", second:"2-digit", hourCycle:"h23"}).formatToParts(new Date(at));
   const p = Object.fromEntries(parts.map(x => [x.type,x.value]));
   return {day:p.year+"-"+p.month+"-"+p.day, year:Number(p.year), month:Number(p.month), date:Number(p.day), seconds:Number(p.hour)*3600+Number(p.minute)*60+Number(p.second)};
+}
+// A song's imported schedule is linked by its exact ID, independently of the
+// older session that may still be selected in the global progression table.
+function chooseRecordingSongPlanDay(id, at = Date.now(), scoped = false) {
+  const slots = S.plan?.slots || [];
+  if (!scoped && slots.some(slot => slot.a0 != null && slot.a1 == null)) return false;
+  const linked = slots.filter(slot => {
+    if (slot.songId !== id || !slot.day || !/^\d{4}-\d{2}-\d{2}$/.test(slot.date || "")) return false;
+    const date = new Date(slot.date + "T00:00:00Z");
+    return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === slot.date;
+  });
+  const currentDay = scoped ? U.planSongDay : U.planDay;
+  if (!linked.length || linked.some(slot => slot.day === currentDay)) return false;
+  const today = recScheduleClock(at).day;
+  const ordered = linked.slice().sort((a, b) => a.date.localeCompare(b.date) || Number(a.at || 0) - Number(b.at || 0));
+  const next = ordered.find(slot => slot.date >= today) || ordered.at(-1);
+  if (scoped) U.planSongDay = next.day;
+  else U.planDay = next.day;
+  return true;
+}
+function recordingPlanSongCanSelect(id) {
+  if (S.rsongId === id) return true;
+  return !(S.plan?.slots || []).some(slot => slot.a0 != null && slot.a1 == null)
+    && !REC && !recordingStartPending && !recordingFinalizePending && !pitchStartPending && !PT.on && !micStream;
+}
+function openRecordingSongPlan(id) {
+  if (VIEW() || preview || !S.recMode || S.rsongs.filter(so => so.id === id).length !== 1 || !(S.plan?.slots || []).some(slot => slot.songId === id)) return false;
+  if (U.planSongId !== id) U.planSongDay = U.planDay;
+  const canSelect = recordingPlanSongCanSelect(id);
+  if (canSelect) {
+    S.rsongId = id; U.songIdx = SONGS().findIndex(so => so.id === id);
+    chooseRecordingSongPlanDay(id);
+  }
+  chooseRecordingSongPlanDay(id, Date.now(), true);
+  U.planSongId = id; U.planSec = ""; U.secOrd = false; U.menu = null; U.view = "recplan";
+  if (canSelect) save();
+  renderSheet(); render();
+  return true;
 }
 function recScheduledRow(at = Date.now()) {
   if (recordingPlanExpired(at)) return null;
@@ -8698,12 +8737,15 @@ function applySchedule(text) {
 }
 
 function viewPlan() {
-  const allRows = planRows();
+  const scopedSong = U.planSongId ? S.rsongs.find(so => so.id === U.planSongId) : null;
+  const readOnlyScope = !!scopedSong && (S.rsongId !== scopedSong.id || !recordingPlanSongCanSelect(scopedSong.id));
+  const allRows = planRows().filter(row => !scopedSong || row.s.songId === scopedSong.id);
   const dayKey=s=>{const m=/^(\d{1,2})\/(\d{1,2})$/.exec(s.day||"");return m?Number(m[1])*100+Number(m[2]):null;};
   if(allRows.every(r=>dayKey(r.s)!==null&&Number.isFinite(r.s.at)))allRows.sort((a,b)=>dayKey(a.s)-dayKey(b.s)||a.pS-b.pS);
   const dayList = [...new Set(allRows.map((r) => r.s.day).filter(Boolean))];
   // 日付が複数ある時は、その日だけを見られるようにする
-  const pickDay = dayList.length > 1 && U.planDay && dayList.includes(U.planDay) ? U.planDay : "";
+  const selectedDay = scopedSong ? U.planSongDay : U.planDay;
+  const pickDay = dayList.length > 1 && selectedDay && dayList.includes(selectedDay) ? selectedDay : "";
   /* 終わった枠は隠す。ただし今日の分は、終わっても残しておく。 */
   const td = new Date();
   const todayStr = `${td.getMonth() + 1}/${td.getDate()}`;
@@ -8712,7 +8754,7 @@ function viewPlan() {
   const now = nowMin();
   // 配分を開く枠。何も開いていなければ、今やっている枠を開いておく。
   const liveSlotId = (rows.find((r) => r.live) || { s: {} }).s.id || "";
-  const openSlot = U.planSec && rows.some((r) => r.s.id === U.planSec) ? U.planSec : "";
+  const openSlot = !scopedSong && U.planSec && rows.some((r) => r.s.id === U.planSec) ? U.planSec : "";
   const liveIdx = rows.findIndex((r) => r.live);
   const nextIdx = rows.findIndex((r) => !r.done && !r.live);
   const last = rows[rows.length - 1];
@@ -8729,8 +8771,8 @@ function viewPlan() {
     const diff = r.done ? (r.aE - r.aS) - Number(s.min || 0) : 0;
     const rest = r.live ? r.aE - now : 0;
     return `${dayHead}<div class="row card plan-row${r.live ? " is-live" : ""}${isBreak ? " is-break" : ""}" data-drop="p:${s.id}" style="margin-bottom:8px;padding:11px 12px;flex-wrap:wrap;max-width:100%;${r.live ? "outline:1px solid var(--accent)" : ""}">
-      <span class="grip" data-drag="plan:${s.id}">⣿</span>
-      <button class="grow" style="text-align:left;min-width:0" data-act="psecgo" data-id="${s.id}">
+      ${scopedSong ? "" : `<span class="grip" data-drag="plan:${s.id}">⣿</span>`}
+      <button class="grow" style="text-align:left;min-width:0" data-act="psecgo" data-id="${s.id}"${readOnlyScope ? " disabled" : ""}>
         <div class="row" style="gap:8px;min-width:0">
           <span style="font-size:12px;color:var(--dim);font-variant-numeric:tabular-nums;flex:0 0 auto">${min2hm(r.aS)}–${min2hm(r.aE)}</span>
           <span class="trunc" style="color:${col};font-weight:${r.live ? 700 : 400}">${h(compactMemberLabel(s.name || (isBreak ? "休憩" : "—")))}</span>
@@ -8742,14 +8784,14 @@ function viewPlan() {
           ${!r.done && !r.live && i === nextIdx ? `　<span style="color:var(--accent)">次</span>` : ""}
         </div>
       </button>
-      ${isBreak ? "" : `<button class="chip sm" data-act="psecopen" data-id="${s.id}"
+      ${isBreak || scopedSong ? "" : `<button class="chip sm" data-act="psecopen" data-id="${s.id}"
         style="${openSlot === s.id ? "background:var(--panel2);color:var(--accent);border:1px solid var(--accent)" : "color:var(--dim)"}">配分</button>`}
-      ${isBreak ? `<button class="chip sm" data-act="peditbreak" data-id="${s.id}">時間</button>` : ""}
-      ${r.live ? `<button class="chip sm rec-primary" data-act="pnext" data-id="${s.id}">${isBreak ? "休憩終了" : "終了"}</button>`
+      ${isBreak && !scopedSong ? `<button class="chip sm" data-act="peditbreak" data-id="${s.id}">時間</button>` : ""}
+      ${readOnlyScope ? "" : r.live ? `<button class="chip sm rec-primary" data-act="pnext" data-id="${s.id}">${isBreak ? "休憩終了" : "終了"}</button>`
         : !r.done ? `<button class="chip sm rec-primary" data-act="pstart" data-id="${s.id}">${isBreak ? "休憩開始" : "今から開始"}</button>`
         : `<button class="chip sm" data-act="pundo" data-id="${s.id}">戻す</button>`}
-      ${!r.done && !r.live && Number.isInteger(s.at) && (s.date || s.day) ? `<details class="plan-more"><summary>時刻を調整</summary><span class="note">この枠以降・同日の未開始枠</span><button data-act="pshift" data-id="${s.id}|-5">5分早める</button><button data-act="pshift" data-id="${s.id}|5">5分遅らせる</button></details>` : ""}
-      ${r.live ? `<details class="plan-more"><summary>その他</summary><button data-act="pretry" data-id="${s.id}">やり直す</button><button data-act="pcancel" data-id="${s.id}">開始状態だけ解除</button></details>` : ""}
+      ${!scopedSong && !r.done && !r.live && Number.isInteger(s.at) && (s.date || s.day) ? `<details class="plan-more"><summary>時刻を調整</summary><span class="note">この枠以降・同日の未開始枠</span><button data-act="pshift" data-id="${s.id}|-5">5分早める</button><button data-act="pshift" data-id="${s.id}|5">5分遅らせる</button></details>` : ""}
+      ${!readOnlyScope && r.live ? `<details class="plan-more"><summary>その他</summary><button data-act="pretry" data-id="${s.id}">やり直す</button><button data-act="pcancel" data-id="${s.id}">開始状態だけ解除</button></details>` : ""}
     </div>
     ${openSlot === s.id && sectionsOf(s).length ? (() => {
       const sum = secSum(s);
@@ -8835,10 +8877,12 @@ function viewPlan() {
     <span style="font-size:12px;color:${gap > 0 ? "var(--bad)" : gap < 0 ? "var(--good)" : "var(--dim)"}">
       ${last ? (gap ? dmin(gap) : "予定どおり") : ""}</span></div>
   <div class="scroll pad">
-    <div class="plan-song">${h((recSong() || {}).title || "曲を選択してください")}</div>
-    ${U.planShiftUndo ? '<button class="ghost" data-act="pshiftundo">直前の時刻調整を戻す</button>' : ""}
+    <div class="plan-song">${h((scopedSong || recSong() || {}).title || "曲を選択してください")}</div>
+    ${scopedSong ? '<button class="ghost" data-act="plan-all">すべての進行表</button>' : ""}
+    ${readOnlyScope ? '<p class="note">録音画面は切り替えず、この曲の予定を表示しています。</p>' : ""}
+    ${!scopedSong && U.planShiftUndo ? '<button class="ghost" data-act="pshiftundo">直前の時刻調整を戻す</button>' : ""}
     ${dayBar}${list || `<p class="note">予定はまだありません</p>`}
-    <details class="plan-settings"><summary>進行表を編集</summary>
+    ${scopedSong ? "" : `<details class="plan-settings"><summary>進行表を編集</summary>
     <div class="card">
       <div class="row" style="gap:10px;margin-bottom:10px">
         <span style="font-size:11px;color:var(--dim);width:40px">開始</span>
@@ -8879,7 +8923,7 @@ function viewPlan() {
       <button class="ghost" data-act="pbreak" style="margin-top:8px">休憩を入れる</button>
       <button class="ghost" data-act="pastesched" style="margin-top:8px;color:var(--accent)">予定表を貼って組む</button>
     </div>
-    </details>
+    </details>`}
     <div style="height:40px"></div>
   </div>`;
 }
@@ -9486,7 +9530,7 @@ document.addEventListener("click", async (e) => {
 
   // The compact REC menu delegates to the same existing actions. Close only
   // its own overlay before a PDF, prompt, move dialog or delete confirmation.
-  if (U.menu?.kind === "rec-song-actions" && ["rpdf", "rec-classify", "rfset", "rdel"].includes(a)) {
+  if (U.menu?.kind === "rec-song-actions" && ["rec-song-plan", "rpdf", "rec-classify", "rfset", "rdel"].includes(a)) {
     if (U.menu.id !== id) return;
     U.menu = null; renderSheet();
   }
@@ -10080,7 +10124,9 @@ document.addEventListener("click", async (e) => {
       U.songIdx = 0; U.view = "setup"; save(); render();
       break;
     }
-    case "recback": U.view = U.pdfBack || "live"; U.pdfBack = ""; render(); break;
+    case "recback":
+      if (U.planSongId) { U.planSongId = ""; U.planSongDay = ""; }
+      U.view = U.pdfBack || "live"; U.pdfBack = ""; render(); break;
     case "rbars": S.recBars = !S.recBars; save(); render(); break;
     case "rintro": {
       const so = recSong(); if (!so) break;
@@ -10240,7 +10286,12 @@ document.addEventListener("click", async (e) => {
       U.view = "recprint"; render();
       break;
     }
-    case "goplan": U.view = "recplan"; render(); break;
+    case "goplan":
+      if (U.planSongId) { U.planSongId = ""; U.planSongDay = ""; }
+      U.view = "recplan"; render(); break;
+    case "rec-song-plan": openRecordingSongPlan(id); break;
+    case "plan-all":
+      U.planSongId = ""; U.planSongDay = ""; U.planDay = ""; U.planSec = ""; U.secOrd = false; render(); break;
     case "psec": {
       const ps = String(id).split("|");
       const dv = Number(ps.pop());
@@ -10279,6 +10330,10 @@ document.addEventListener("click", async (e) => {
     case "psecgo": {
       // 人名を押したら、その人の歌詞画面へ行く。テイクは自分で選ぶ。
       const sl = (S.plan.slots || []).find((x) => x.id === id);
+      if (sl?.songId && S.rsongs.filter(so => so.id === sl.songId).length === 1) {
+        if (!recordingPlanSongCanSelect(sl.songId)) break;
+        S.rsongId = sl.songId; U.songIdx = SONGS().findIndex(so => so.id === sl.songId); U.secView = "";
+      }
       if (sl) { pauseRecSchedule(); S.planFocus = sl.id; U.recFocusId = ""; U.view = "live"; save(); render(); }
       break;
     }
@@ -10403,7 +10458,10 @@ document.addEventListener("click", async (e) => {
       break;
     }
     case "pastesched": U.menu = { kind: "sched" }; renderSheet(); break;
-    case "planday": U.planDay = id || ""; render(); break;
+    case "planday":
+      if (U.planSongId) U.planSongDay = id || "";
+      else U.planDay = id || "";
+      render(); break;
     case "autotoggle": {
       S.planAuto = false;
       autoMsg = "";
@@ -10595,6 +10653,7 @@ document.addEventListener("click", async (e) => {
     case "ruse": {
       U.secView = "";
       S.rsongId = id;
+      U.planSongId = ""; chooseRecordingSongPlanDay(id);
       const k = SONGS().findIndex((x) => x.id === id);
       if (k >= 0) U.songIdx = k;
       U.menu = null; save(); U.view = "live"; render();

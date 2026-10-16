@@ -6,6 +6,15 @@ repository. The public member-delivery path is not a preparation destination.
 
 ## Private source contract
 
+If the device cannot read the private repository or share 進行 browser storage,
+it can use the owned `https://shinkou-secure.onrender.com/utacheck/prepared` relay.
+The existing login is used only for fixed-owner identity verification. The relay
+reads via its configured private repository credential, or decrypts a deployed
+AES-GCM bundle using a separate server key. No GitHub credential is embedded in
+the public app or bundle. Each received manifest is validated and rechecked before
+the existing transactional commit. An unavailable relay is reported as a server
+delivery problem; it is not disguised as a successful receipt.
+
 The settings screen displays automatic reception status. The obsolete dot update
 and connection controls are removed. The receiver reuses the connection explicitly
 configured in 進行 in the same browser storage: only IndexedDB `shinkou`, store
@@ -122,6 +131,13 @@ later compatible addition. Failed operations get no receipt; reused operation
 IDs with changed hashes still stop reception. Newly added REC songs clear the
 artist filter so the new artist is visible. Each write rechecks the private
 source before committing.
+
+A recording addition entirely on explicit dates after an unfinished earlier
+slot can be appended without closing or rewriting that slot. Actual recording
+and editing still defer writes, as do same-day corrections or unknown dates.
+Each REC song with exact linked slot IDs offers its own progression table.
+Its date filter is transient and independent of the global table; an active
+recording can preview it without changing the selected song, focus or takes.
 
 Prepared content remains personal. New groups/shows are non-publishing. After
 private preparation, the existing full-cloud-backup path permits only the

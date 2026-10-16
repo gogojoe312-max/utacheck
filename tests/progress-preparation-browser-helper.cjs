@@ -3,12 +3,12 @@ const assert=require('node:assert/strict');
 
 // Native IndexedDB and the real receiver/source/commit path; GitHub responses
 // and credentials are synthetic and cannot leave this isolated browser.
-async function checkProgressPreparation(page,{manifest=null}={}){
- const result=await page.evaluate(async supplied=>{
+async function checkProgressPreparation(page,{manifest=null,relay=false}={}){
+ const result=await page.evaluate(async({supplied,relay})=>{
   const oldFetch=window.fetch,token='qa-progress-token',oldToken='qa-gist-only-token';
   const reads=[];
-  const db=await new Promise((resolve,reject)=>{const r=indexedDB.open('shinkou',2);r.onupgradeneeded=()=>r.result.createObjectStore('kv');r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});
-  await new Promise((resolve,reject)=>{const tx=db.transaction('kv','readwrite');tx.objectStore('kv').put({settings:{sync:{on:true,owner:'gogojoe312-max',repo:'shinkou-data',path:'data.json',branch:'main',token}}},'state');tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);});db.close();
+  if(!relay){const db=await new Promise((resolve,reject)=>{const r=indexedDB.open('shinkou',2);r.onupgradeneeded=()=>r.result.createObjectStore('kv');r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});
+  await new Promise((resolve,reject)=>{const tx=db.transaction('kv','readwrite');tx.objectStore('kv').put({settings:{sync:{on:true,owner:'gogojoe312-max',repo:'shinkou-data',path:'data.json',branch:'main',token}}},'state');tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);});db.close();}
   document.activeElement?.blur();saveErr=false;S.viewer=false;S.recMode=true;S.ghToken=oldToken;
   recordingInboxProfileRequired=true;recordingInboxOwner={canWrite:true};recordingInboxIntegration=setupRecordingInboxIntegration();
   startupRecoveryNetworkHold=true;
@@ -31,7 +31,12 @@ async function checkProgressPreparation(page,{manifest=null}={}){
   const raw=JSON.stringify(manifest),bytes=new TextEncoder().encode(raw);
   const encoded=btoa(Array.from(bytes,b=>String.fromCharCode(b)).join(''));
   window.fetch=async(url,options={})=>{
-   const u=new URL(url,location.href);if(u.origin!=='https://api.github.com')return oldFetch(url,options);
+   const u=new URL(url,location.href);
+   if(relay&&u.href==='https://shinkou-secure.onrender.com/utacheck/prepared'){
+    if(options.headers?.Authorization!=='Bearer '+oldToken)throw Error('Relay must use the existing login');
+    reads.push({path:u.pathname,relay:true});return new Response(JSON.stringify({status:'ready',manifest,sourceSha:'a'.repeat(40),sourcePath:'utacheck/prepared.json'}),{headers:{'Content-Type':'application/json'}});
+   }
+   if(u.origin!=='https://api.github.com')return oldFetch(url,options);
    const allowed=options.headers?.Authorization==='Bearer '+token;
    reads.push({path:u.pathname,progress:allowed});
    let body,status=200;
@@ -59,12 +64,13 @@ async function checkProgressPreparation(page,{manifest=null}={}){
     credentialLeaked:JSON.stringify(S).includes(token)||JSON.stringify(backupState()).includes(token)||document.documentElement.outerHTML.includes(token),
     status:PrivatePreparationUI.getStatus(),visibleArtist:!!added&&document.getElementById('app').textContent.includes(added.recArtist||added.artist)};
   }finally{window.fetch=oldFetch;}
- },manifest);
+ },{supplied:manifest,relay});
  assert.equal(result.legacy.code,'HTTP_404');assert.equal(result.legacy.stage,'repository');
  assert.equal(result.received.status,'applied',JSON.stringify(result.status));assert.equal(result.saved,true);assert.equal(result.receipt,true);
  assert.equal(result.preserved,true);assert.equal(result.filter,'');assert.equal(result.visibleArtist,true);
  assert.equal(result.obsoleteControls,0);assert.equal(result.credentialLeaked,false);
- assert(result.reads.slice(2).length>=6);assert(result.reads.slice(2).every(r=>r.progress));
+ if(relay){assert(result.reads.filter(r=>r.relay).length>=2);assert(!result.reads.some(r=>r.progress));}
+ else{assert(result.reads.slice(2).length>=6);assert(result.reads.slice(2).every(r=>r.progress));}
  return result;
 }
 module.exports={checkProgressPreparation};
