@@ -15,7 +15,7 @@ function fixture(){
   save:()=>calls.push({save:true}),render:()=>calls.push({render:true}),renderSheet:()=>calls.push({menu:clone(c.U.menu)}),
   confirm:()=>false,recSong:()=>S.rsongs.find(s=>s.id===S.rsongId),SONGS:()=>S.rsongs,
   editRecordingClassification:id=>calls.push({classify:id,menu:clone(c.U.menu)}),toTrash(){throw Error('Unexpected deletion');}});
- for(const name of ['performanceDateOrder','performanceSelectionOrder','recordingClassification','recordingSelectionSongs','recordingDateInfo','recordingDateBuckets','recordingDateHeading','recordingLibraryHTML','recordingGroupSelector','recSongActionsHTML','viewSetupRec'])vm.runInContext(read(name),c);
+ for(const name of ['performanceDateOrder','performanceSelectionOrder','recordingClassification','recordingSelectionSongs','recordingDateInfo','canonicalRecordingFolderKey','recordingFolderKey','recordingDateBuckets','recordingDateHeading','recordingLibraryHTML','recordingGroupSelector','recSongActionsHTML','viewSetupRec'])vm.runInContext(read(name),c);
  const branch=(name,next)=>{const start=source.indexOf('case "'+name+'":');return source.slice(start,source.indexOf('case "'+next+'":',start));};
  const cleanupStart=source.indexOf('  // The compact REC menu delegates'),cleanupEnd=source.indexOf('  switch (a)',cleanupStart);
  vm.runInContext('function action(a,id){'+source.slice(cleanupStart,cleanupEnd)+'switch(a){'+[
@@ -27,14 +27,14 @@ test('REC settings give every full title one selection action and one menu witho
  const f=fixture(),before=JSON.stringify(f.S),html=f.c.viewSetupRec();
  assert.equal((html.match(/class="settings-song-title"/g)||[]).length,2);
  for(const song of f.S.rsongs){assert(html.includes(f.c.h(song.title)));assert(html.includes('data-act="ruse" data-id="'+song.id+'"'));assert(html.includes('data-act="rec-song-actions" data-id="'+song.id+'"'));}
- for(const action of ['rpdf','rec-classify','rfset','rdel','newfolder'])assert(!html.includes('data-act="'+action+'"'));
- assert(!html.includes('RECはすべて本人用'));assert(!html.includes('日付 → アーティスト → 曲'));assert(html.includes('LIVEへ切替'));
+ for(const action of ['rpdf','rec-classify','rfset','rdel'])assert(!html.includes('data-act="'+action+'"'));
+ assert(html.includes('data-act="newfolder" data-rec="1"'));assert(!html.includes('RECはすべて本人用'));assert(!html.includes('日付 → アーティスト → 曲'));assert(html.includes('LIVEへ切替'));
  assert(html.includes('歌割り・歌詞ファイルを読み込む（Word/PDF/Excel）'));assert(html.includes('2026/10/8'));assert(html.includes('Singer'));
  assert.equal(JSON.stringify(f.S),before);assert.deepEqual(f.calls,[]);
 });
-test('REC action menu retains PDF, explicit classification, legacy folder movement and confirmed deletion',()=>{
+test('REC action menu uses shared rename and visible-folder operations alongside recording metadata',()=>{
  const f=fixture(),before=JSON.stringify(f.S),html=f.c.recSongActionsHTML('one');
- for(const action of ['rpdf','rec-classify','rfset','rdel'])assert.equal((html.match(new RegExp('data-act="'+action+'"','g'))||[]).length,1);
+ for(const action of ['song-rename','rpdf','rec-classify','rfset','rdel'])assert.equal((html.match(new RegExp('data-act="'+action+'"','g'))||[]).length,1);
  assert(html.includes('PDFにする'));assert(html.includes('日付・アーティストを変更'));assert(html.includes('保存フォルダを変更'));assert(html.includes('曲を削除'));
  assert(html.includes('class="sheet organize-sheet"'));assert(html.includes(f.c.h(f.S.rsongs[0].title)));assert(!html.includes('<first>'));
  assert.equal(f.c.recSongActionsHTML('missing'),'');f.c.VIEW=()=>true;assert.equal(f.c.recSongActionsHTML('one'),'');
@@ -47,7 +47,7 @@ test('REC menu routes to the original actions and closes before another screen, 
   assert.equal(f.calls[1].menu,null,'old menu closes first');
   if(action==='rpdf'){assert.equal(f.c.U.view,'recprint');assert.equal(f.c.U.pdfBack,'setup');assert.equal(f.c.U.menu,null);}
   if(action==='rec-classify')assert.deepEqual(f.calls.find(x=>x.classify),{classify:'one',menu:null});
-  if(action==='rfset')assert.deepEqual(clone(f.c.U.menu),{kind:'organize',mode:'move',rec:true,id:'one'});
+  if(action==='rfset')assert.deepEqual(clone(f.c.U.menu),{kind:'rec-folder-move',id:'one',artistFilter:''});
   if(action==='rdel')assert.equal(f.c.U.menu,null,'cancelled deletion stays cancelled');
   assert.equal(JSON.stringify(f.S),before,action);
  }

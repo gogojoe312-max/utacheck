@@ -1,6 +1,6 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 const source=fs.readFileSync(__dirname+'/../app.js','utf8');const read=n=>{const a=source.indexOf('function '+n+'(');return source.slice(a,source.indexOf('\n}',a)+2);};
-function fixture(){const c=vm.createContext({Date,S:{rsongId:'new',groups:[],plan:{slots:[]}},U:{},h:x=>String(x)});for(const n of ['performanceDateOrder','performanceSelectionOrder','recordingClassification','recordingDateInfo','recordingDateBuckets','recordingDateHeading','recordingLibraryHTML','recordingPlanExpired','recordingPlanEntryHTML'])vm.runInContext(read(n),c);return c;}
+function fixture(){const c=vm.createContext({Date,S:{rsongId:'new',groups:[],plan:{slots:[]}},U:{},h:x=>String(x)});for(const n of ['performanceDateOrder','performanceSelectionOrder','recordingClassification','recordingDateInfo','canonicalRecordingFolderKey','recordingFolderKey','recordingDateBuckets','recordingDateHeading','recordingLibraryHTML','recordingPlanExpired','recordingPlanEntryHTML'])vm.runInContext(read(n),c);return c;}
 test('REC mixed known and unknown years have the same stable chronological order for every insertion order',()=>{
  const c=fixture(),labels=['2025/12/1','6/1','2026/1/1'];
  for(const order of [[0,1,2],[1,2,0],[2,0,1],[2,1,0],[1,0,2],[0,2,1]]){
