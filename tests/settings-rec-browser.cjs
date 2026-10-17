@@ -4,6 +4,7 @@ const playwright=require('playwright'),assert=require('node:assert/strict'),fs=r
 const {checkProgressPreparation}=require('./progress-preparation-browser-helper.cjs');
 const {checkAbsence}=require('./absence-view-browser-helper.cjs');
 const {checkFolderInteractions}=require('./folder-interactions-browser-helper.cjs');
+const {checkLyricBreaks}=require('./lyric-break-browser-helper.cjs');
 const engine=process.env.BROWSER_ENGINE||'chromium';assert(['chromium','webkit'].includes(engine));
 const root=path.resolve(__dirname,'..'),out=process.env.QA_OUTPUT||path.join(require('node:os').tmpdir(),'utacheck-settings-qa',engine);
 fs.mkdirSync(out,{recursive:true});
@@ -124,13 +125,14 @@ async function readableTitles(page,rec){
    await page.evaluate(()=>{document.activeElement?.blur();U.sheet=null;renderPointers.clear();scrollingUntil=0;pendingRender=false;render(true);});await page.locator('.note-quick-mask').waitFor({state:'detached'});await info.locator(':scope > summary').click();assert.equal(await info.evaluate(el=>el.open),false);
    const folderResult=await checkFolderInteractions(page,width,{mode,assertFits,screenshot,confirmNext:()=>{confirmReply=true;}});
    const absenceResult=await checkAbsence(page,width,{mode,assertFits,screenshot});
+   const lyricBreakResult=await checkLyricBreaks(page,width,{mode,assertFits,screenshot});
    const excelCheck=await checkExcelReattach(page,width,dialogs);
    await page.evaluate(async()=>{await saveNow();saveErr=true;renderPointers.clear();scrollingUntil=0;render(true);});
    await page.waitForSelector('[data-settings-panel="storage"][open]');assert.equal(await page.getByText('いま保存できていません',{exact:false}).isVisible(),true);
    assert.equal(await page.locator('[data-settings-panel="data-save"] [data-act="bkfile"]').isVisible(),true);assert.equal(await page.locator('[data-settings-panel="connection-recovery"]').evaluate(el=>el.open),false);
    await assertFits(page);await screenshot(page,width,'save-error');assert.deepEqual(JSON.parse(await page.evaluate(()=>qaContent())),expected);
    const progressConnection=await checkProgressPreparation(page,{relay:width===390,automaticInteraction:width===390});
-   results.push({width,progressConnection,...folderResult,...absenceResult,excelOriginal:excelCheck,settings:true,pdfLiveRecView:true,fullTitles:true,recFolderRename:true,footer:true,draftPreserved:true,saveErrorVisible:true});await context.close();contexts.delete(context);
+   results.push({width,progressConnection,...folderResult,...absenceResult,...lyricBreakResult,excelOriginal:excelCheck,settings:true,pdfLiveRecView:true,fullTitles:true,recFolderRename:true,footer:true,draftPreserved:true,saveErrorVisible:true});await context.close();contexts.delete(context);
   }
   assert.deepEqual(errors,[]);assert.equal(blocked.filter(x=>x.method!=='GET').length,0);
   const report={passed:true,engine,results,errors,blocked,externalRequestsAllowed:0,syntheticDataOnly:true};

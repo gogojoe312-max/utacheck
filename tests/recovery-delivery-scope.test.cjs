@@ -646,6 +646,28 @@ function equivalentMergeFixture(){
   }
   return {target:target(),remote,local};
 }
+test('recovery publication validates display breaks as unique sorted Unicode positions',()=>{
+ const valid=[{lineIdx:0,offsets:[1,3]}],remote=publication(),local=publication(true);
+ remote.lib[0].lyricBreaks=clone(valid);local.lib[0].lyricBreaks=clone(valid);
+ assert.equal(API.verifyPublication(target(),remote,local).ok,true);
+ const length=Array.from(local.lib[0].lines[0][1]).length;
+ for(const lyricBreaks of [null,{},[{lineIdx:1,offsets:[1]}],[{lineIdx:0,offsets:[]}],[{lineIdx:0,offsets:[0]}],
+  [{lineIdx:0,offsets:[length]}],[{lineIdx:0,offsets:[length+1]}],[{lineIdx:0,offsets:[1.5]}],[{lineIdx:0,offsets:['1']}],
+  [{lineIdx:0,offsets:[2,1]}],[{lineIdx:0,offsets:[1,1]}],[...valid,...valid],[{lineIdx:0,offsets:[1],extra:true}]]){
+  const p=publication(true);p.lib[0].lyricBreaks=lyricBreaks;
+  fails('payload-publication-invalid',()=>API.verifyPublication(target(),publication(),p));
+ }
+});
+test('recovery equivalence preserves display differences and treats absent and empty metadata equally',()=>{
+ const empty=equivalentMergeFixture();empty.local.lib[0].lyricBreaks=[];
+ assert.deepEqual(API.mergePublication(empty.target,empty.remote,empty.local).preservedShowIds,[]);
+ const changed=equivalentMergeFixture();changed.remote.lib[0].lyricBreaks=[{lineIdx:0,offsets:[1]}];changed.local.lib[0].lyricBreaks=[{lineIdx:0,offsets:[3]}];
+ const result=API.mergePublication(changed.target,changed.remote,changed.local);
+ assert.deepEqual(result.preservedShowIds,['SOURCE_ONE']);assert.deepEqual(result.heldLocalShowIds,['LOCAL_ONE']);
+ assert.deepEqual(result.payload.lib[0].lyricBreaks,[{lineIdx:0,offsets:[1]}]);
+ const equal=equivalentMergeFixture();equal.remote.lib[0].lyricBreaks=[{lineIdx:0,offsets:[1,3]}];equal.local.lib[0].lyricBreaks=clone(equal.remote.lib[0].lyricBreaks);
+ assert.deepEqual(API.mergePublication(equal.target,equal.remote,equal.local).preservedShowIds,[]);
+});
 test('initial exact shared baselines become managed and later new notes are published',()=>{
   const f=equivalentMergeFixture(),beforeRemote=clone(f.remote),beforeLocal=clone(f.local);
   const first=API.mergePublication(frozen(f.target),frozen(f.remote),frozen(f.local));

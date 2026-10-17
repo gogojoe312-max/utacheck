@@ -190,7 +190,7 @@
     publication:['version','authorId','src','groupName','members','rosters','alert','groupOrder','folderOrder','lib','songs','shows','gsubs','subs','notes','memos','focusShow'],
     show:['id','name','ts','folder','from','nopub','hidden','absent','recoveredSourceShowId','recoverySource'],
     song:['showId','libIdx','take','fromIdx'],
-    library:['title','credit','groups','order','lines','sections','groupRows'],
+    library:['title','credit','groups','order','lines','sections','lyricBreaks','groupRows'],
     note:['songIdx','lineIdx','memberNames','tags','memo','hand','pitch','lineEnd','from','to','showId','at'],
     memo:['showId','songIdx','text'],sub:['showId','songIdx','lineIdx','names'],gsub:['showId','songIdx','block','names']
   };
@@ -252,6 +252,18 @@
       if(own(entry,'sections')){
         if(!Array.isArray(entry.sections))fail(bad);
         for(const section of entry.sections){only(section,['lineIdx','name'],bad);if(!Number.isSafeInteger(section.lineIdx)||section.lineIdx<0||section.lineIdx>=entry.lines.length||typeof section.name!=='string')fail(bad);}
+      }
+      if(own(entry,'lyricBreaks')){
+        if(!Array.isArray(entry.lyricBreaks))fail(bad);
+        const seen=new Set();
+        for(const row of entry.lyricBreaks){
+          only(row,['lineIdx','offsets'],bad);
+          if(!Number.isSafeInteger(row.lineIdx)||row.lineIdx<0||row.lineIdx>=entry.lines.length||seen.has(row.lineIdx)||!Array.isArray(row.offsets)||!row.offsets.length)fail(bad);
+          seen.add(row.lineIdx);
+          const length=Array.from(entry.lines[row.lineIdx][1]).length;
+          let prior=0;
+          for(const offset of row.offsets){if(!Number.isSafeInteger(offset)||offset<=prior||offset>=length)fail(bad);prior=offset;}
+        }
       }
       if(own(entry,'groupRows')){
         if(!Array.isArray(entry.groupRows))fail(bad);
@@ -400,7 +412,8 @@
       // Block insertion order can affect performer ordering, so retain it too.
       groups:Object.entries(entry.groups||{}),order:entry.order||[],
       lines:entry.lines.map(row=>Array.from({length:9},(_,index)=>index===1?row[index]:empty(row[index]))),
-      sections:entry.sections||[],groupRows:(entry.groupRows||[]).map(row=>({b:row.b,ncell:empty(row.ncell),lcell:empty(row.lcell)}))});
+      sections:entry.sections||[],lyricBreaks:(entry.lyricBreaks||[]).slice().sort((a,b)=>a.lineIdx-b.lineIdx),
+      groupRows:(entry.groupRows||[]).map(row=>({b:row.b,ncell:empty(row.ncell),lcell:empty(row.lcell)}))});
       // Intern full strings across both sides, without lossy hashes or expanding
       // a large aliased library again for every show/song that references it.
       if(!libraryIdentities.has(content))libraryIdentities.set(content,libraryIdentities.size);

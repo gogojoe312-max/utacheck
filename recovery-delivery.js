@@ -107,7 +107,7 @@
       const entries=indexes.map(i=>data.lib?.[data.songs[i].libIdx]);
       if(entries.some(entry=>!entry||!Array.isArray(entry.lines)))return null;
       return {titles:entries.map(entry=>entry.title),lyrics:entries.map(entry=>entry.lines.map(row=>row[1])),
-        parts:entries.map(entry=>({groups:entry.groups||{},order:entry.order||[],sections:entry.sections||[],groupRows:entry.groupRows||[],lines:entry.lines.map(row=>row.map((cell,i)=>i===1?null:cell))})),
+        parts:entries.map(entry=>({groups:entry.groups||{},order:entry.order||[],sections:entry.sections||[],lyricBreaks:(entry.lyricBreaks||[]).slice().sort((a,b)=>a.lineIdx-b.lineIdx),groupRows:entry.groupRows||[],lines:entry.lines.map(row=>row.map((cell,i)=>i===1?null:cell))})),
         notes:records(data,'notes',indexes),memos:records(data,'memos',indexes),subs:records(data,'subs',indexes),gsubs:records(data,'gsubs',indexes)};
     };
     return (target.heldLocalShowIds||[]).map(id=>{

@@ -299,6 +299,14 @@ test('held difference view identifies section metadata and refuses duplicate loc
  f.c.S.songs.push({...f.c.S.songs[0],id:'duplicate-song',showId:'duplicate'});
  rows=await f.c.RecoveryDelivery.inspectHeldDifferences('g');assert.match(rows[0].status,/照合できません/);assert.equal(f.patches(),0);
 });
+test('held difference view identifies display-only lyric breaks without reporting changed lyric text',async()=>{
+ const f=await fixture();enablePreviewBinding(f);f.c.S.shows[0].nopub=false;
+ Object.assign(f.c.S.recoveryDelivery.targets[0],{status:'blocked',heldLocalShowIds:['show']});
+ const before=JSON.stringify(f.c.S),remote=JSON.parse(f.remote());remote.lib[0].lyricBreaks=[{lineIdx:0,offsets:[2]}];
+ f.c.fetch=async()=>({ok:true,text:async()=>JSON.stringify(remote)});
+ const rows=await f.c.RecoveryDelivery.inspectHeldDifferences('g');assert.equal(rows[0].status,'相違：歌割・区切り');
+ assert.equal(JSON.stringify(f.c.S),before);assert.equal(f.patches(),0);
+});
 
 test('duplicate matching song titles are unresolved rather than falsely reported as a changed setlist',async()=>{
  const f=await fixture(),src=enablePreviewBinding(f);f.c.S.shows[0].nopub=false;Object.assign(f.c.S.recoveryDelivery.targets[0],{status:'blocked',heldLocalShowIds:['show']});

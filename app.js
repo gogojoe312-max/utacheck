@@ -113,7 +113,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.20";
+const APP_VER = "16.41.58.21";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -269,6 +269,7 @@ function renderQuickMenu(sh, contextText) {
   overlay.innerHTML = `<button class="quick-backdrop" data-act="cancel" aria-label="指摘画面を閉じる"></button>
     <section class="quick-note" role="dialog" aria-modal="true" aria-label="指摘">
       <button class="quick-context" data-act="note-detail" data-id="range" aria-label="歌詞の範囲・メモ・記録"><span>${h(contextText)}</span><b id="note-recognized" aria-live="polite" hidden></b><i aria-hidden="true">›</i></button>
+      ${!VIEW() && song()?.lines[sh.rangeLine ?? sh.lineIdx]?.t ? `<button class="chip sm" data-act="lyric-breaks" data-i="${sh.rangeLine ?? sh.lineIdx}">歌詞の改行</button>` : ""}
       <div class="quick-four">
         ${[["pitch","音程"],["rhythm","リズム"],["nuance","ニュアンス"],["good","良い"]].map(([id, label]) => `<button data-act="tag-choice" data-id="${id}" style="--tag-color:${CATCOL[catOf(id)]}">${label}</button>`).join("")}
       </div>
@@ -2552,6 +2553,18 @@ function buildSong(parsed, local) {
       lines[section.lineIdx].sec = section.name.trim();
     }
   });
+  // Display-only wrapping keeps the lyric text and annotation offsets intact.
+  (Array.isArray(parsed.lyricBreaks) ? parsed.lyricBreaks : []).forEach(row => {
+    if (!row || !Number.isInteger(row.lineIdx) || !lines[row.lineIdx] || !Array.isArray(row.offsets)) return;
+    const line = lines[row.lineIdx];
+    const original = parsed.lines[row.lineIdx]?.[1];
+    const text = typeof original === "string" ? original : line.t;
+    const offsets = lyricBreakOffsets({t:text, lyricBreaks:[...(line.lyricBreaks || []), ...row.offsets]});
+    if (offsets.length) {
+      line.t = text; line.lyricBreaks = offsets;
+      if (text) delete line.gap;
+    }
+  });
   so.sig = songSig(so);
   return so;
 }
@@ -4193,11 +4206,35 @@ async function parseDocx(file, buf) {
   return { id: uid(), title, credit, intro: 8, lines, cols, colBreaks, perLine, rowsPerCol, at: Date.now() };
 }
 
+// Empty Word paragraphs arrive without a gap flag. Keep stored indexes intact;
+// only plain empty rows without musical or assignment data can be omitted.
+function recordingEmptyTextLine(line) {
+  if (!line || String(line.t ?? "").trim()) return false;
+  if (line.gap || line.at != null || line.bars != null || line.add || line.cut || line.skip || line.brk || line.cont || line.solo || line.vh) return false;
+  if (["sec", "tag", "vt", "label", "labelRaw", "extraRaw", "raw"].some(key => String(line[key] ?? "").trim())) return false;
+  return !["parts", "main", "extra"].some(key => (line[key] || []).length);
+}
+function recordingHiddenLineIndexes(so) {
+  const hidden = new Set();
+  // Freehand ink uses page coordinates rather than line anchors. Preserve its
+  // layout in every take, including before the first stroke is captured.
+  if (U.draw || Object.entries(S.draws || {}).some(([key, strokes]) => key.split("|")[1] === so.id && strokes?.length)) return hidden;
+  const notes = [...(S.notes || []), ...(S.pubNotes || [])].filter(note => note.songId === so.id);
+  const assigned = new Set();
+  for (const field of [S.subs, S.subsMan]) for (const [key, lines] of Object.entries(field || {})) {
+    if (key.split("|")[1] === so.id) Object.keys(lines || {}).forEach(index => assigned.add(Number(index)));
+  }
+  (so.lines || []).forEach((line, index) => {
+    if (recordingEmptyTextLine(line) && !assigned.has(index) && !notes.some(note => index >= note.lineIdx && index <= (note.lineEnd ?? note.lineIdx))) hidden.add(index);
+  });
+  return hidden;
+}
+
 // 1行4小節を基本に、直した行を基点にして振り直す
 function barsOf(so) {
   let b = Number(so.intro || 0) + 1;
   return (so.lines || []).map((l) => {
-    if (l.gap) return null;
+    if (l.gap || recordingEmptyTextLine(l)) return null;
     if (l.add) return null;                    // 足した行は小節を数えない
     if (l.cut) return null;                    // カット（グレー）の行も数えない
     if (l.at != null) b = Number(l.at);
@@ -5573,6 +5610,58 @@ function printTitle() {
 }
 
 /* ---- live ---- */
+// Display breaks leave original text and character/line note anchors intact.
+function lyricBreakOffsets(line) {
+  const length = Array.from(String(line?.t || "")).length;
+  return [...new Set((Array.isArray(line?.lyricBreaks) ? line.lyricBreaks : [])
+    .filter(n => Number.isSafeInteger(n) && n > 0 && n < length))].sort((a, b) => a - b);
+}
+function lyricBreakDraft(line) {
+  const breaks = new Set(lyricBreakOffsets(line));
+  return Array.from(String(line?.t || "")).map((ch, i) => (breaks.has(i) ? "\n" : "") + (/^[\r\n]$/.test(ch) ? "" : ch)).join("");
+}
+function lyricBreaksFromDraft(line, value) {
+  const chars = Array.from(String(line?.t || "")), draft = String(value).replace(/\r\n?/g, "\n");
+  const positions = chars.flatMap((ch, i) => /^[\r\n]$/.test(ch) ? [] : [i]);
+  if (draft.replace(/\n/g, "") !== positions.map(i => chars[i]).join("")) return null;
+  let cursor = 0; const offsets = [];
+  for (const ch of Array.from(draft)) {
+    if (ch === "\n") { if (cursor > 0 && cursor < positions.length) offsets.push(positions[cursor]); }
+    else cursor++;
+  }
+  return lyricBreakOffsets({t:line.t, lyricBreaks:offsets});
+}
+function lyricTextHTML(line, added = false) {
+  const breaks = new Set(lyricBreakOffsets(line));
+  const text = Array.from(String(line?.t || "")).map((ch, i) => (breaks.has(i) ? "<br>" : "") + h(ch)).join("");
+  return added ? "（" + text + "）" : text;
+}
+function lyricBreakTarget(menu) {
+  if (menu?.kind !== "lyric-breaks" || VIEW() || preview || !recordingInboxCanWrite() || !!S.recMode !== menu.rec) return null;
+  const so = song(), line = so?.lines[menu.i];
+  if (!so || so.id !== menu.id || !line || JSON.stringify(line) !== menu.originalLine) return null;
+  return {so, line};
+}
+function openLyricBreaks(i) {
+  const so = song(), line = so?.lines[i];
+  if (VIEW() || preview || !recordingInboxCanWrite() || !Number.isInteger(i) || !line?.t || line.gap
+    || REC || recordingStartPending || recordingFinalizePending || pitchStartPending || PT.on || micStream) return false;
+  commitFields(); flushSheet(); clearTimeout(sheetTimer); document.activeElement?.blur(); U.sheet = null;
+  U.menu = {kind:"lyric-breaks", id:so.id, i, rec:!!S.recMode, originalLine:JSON.stringify(line)};
+  renderSheet(); return true;
+}
+function lyricBreakSheetHTML(menu) {
+  const target = lyricBreakTarget(menu); if (!target) return "";
+  return `<button class="sp" data-act="closemenu" aria-label="閉じる"></button><div class="sheet organize-sheet" role="dialog" aria-modal="true" aria-label="歌詞の改行">
+    <div class="row"><b class="grow">歌詞の改行</b><button class="chip" data-act="closemenu">閉じる</button></div>
+    <form id="lyric-break-form" data-save-on-submit>
+      <label class="organize-field" for="lyric-break-text">改行したい位置をタップしてください<textarea class="field" id="lyric-break-text" rows="5" autocorrect="off" autocapitalize="off" spellcheck="false" style="resize:vertical;line-height:1.7">${h(lyricBreakDraft(target.line))}</textarea></label>
+      <div class="row"><button class="chip" type="button" data-act="lyric-break-insert">改行を入れる</button><button class="chip" type="button" data-act="lyric-break-clear">改行を解除</button></div>
+      <p class="note">キーボードの改行も使えます。歌詞の文字はそのまま残ります。</p>
+      <p id="lyric-break-error" class="organize-error" role="alert" hidden></p><button class="primary" type="submit">保存</button>
+    </form></div>`;
+}
+
 // 何行にまたがる歌割かを求める。1行目に名前、続きは括弧で束ねる。
 function groupPos(lines) {
   const pos = lines.map(() => "single");
@@ -5638,6 +5727,7 @@ function viewLive() {
     body = `<div style="padding:64px 26px;text-align:center;color:var(--dim);font-size:14px">曲がありません</div>`;
   } else {
     const allNotes = NOTES();
+    const hiddenRecLines = S.recMode ? recordingHiddenLineIndexes(s) : new Set();
     const ns0 = allNotes.filter((n) => n.songId === s.id && n.showId === S.showId && inTake(n));
     const previous = S.recMode ? null : prevSongOf(s);
     const pastByLine = new Map();
@@ -5655,6 +5745,7 @@ function viewLive() {
       s.lines.forEach((l, k) => { if (l.tag && tg.includes(l.tag) && tanc[l.tag] == null) tanc[l.tag] = k; });
     }
     body = s.lines.map((l, i) => {
+      if (hiddenRecLines.has(i)) return "";
       if (fset && !fset.has(i)) return "";
       if (l.gap) {
         const gns = ns0.filter((n) => covers(n, i));
@@ -5684,11 +5775,12 @@ function viewLive() {
           : `<b class="mk" style="background:${c}">${body}</b>`;
         return n.ro ? main : `<span class="mark-edit">${main}<button class="mark-del" data-act="delnote" data-id="${n.id}" aria-label="${h(txt)}を削除">×</button></span>`;
       };
+      const lineBreaks = new Set(lyricBreakOffsets(l).map(n => n + (S.recMode && l.add ? 1 : 0)));
       let cells = chars.map((ch, ci) => {
         const mk = ns.find((n) => n.from != null && ci >= n.from && ci <= n.to);
         const st = mk ? markStyle(mk) : "border-bottom-color:transparent";
         const tail = ns.filter((n) => n.from != null && n.to === ci).map(badge).join("");
-        return `<span data-c="${ci}" style="${st}">${ch === " " ? "&nbsp;" : h(ch)}</span>${tail}`;
+        return `${lineBreaks.has(ci) ? "<br>" : ""}<span data-c="${ci}" style="${st}">${ch === " " ? "&nbsp;" : h(ch)}</span>${tail}`;
       }).join("");
       cells += ns.filter((n) => n.from == null && n.lineIdx === i).map(badge).join("");
       const past = pastByLine.get(i);
@@ -5834,9 +5926,10 @@ function viewOverview(s) {
     }
     const ns = ns0.filter((n) => covers(n, i));
     const chars = Array.from(l.t);
+    const lineBreaks = new Set(lyricBreakOffsets(l));
     const cells = chars.map((ch, ci) => {
       const mk = ns.find((n) => n.from != null && ci >= n.from && ci <= n.to);
-      return mk ? `<span style="${markStyle(mk)}">${ch === " " ? "&nbsp;" : h(ch)}</span>` : (ch === " " ? "&nbsp;" : h(ch));
+      return (lineBreaks.has(ci) ? "<br>" : "") + (mk ? `<span style="${markStyle(mk)}">${ch === " " ? "&nbsp;" : h(ch)}</span>` : (ch === " " ? "&nbsp;" : h(ch)));
     }).join("");
     const tail = ns.map((n) => {
       const c = noteColor(n);
@@ -5864,8 +5957,10 @@ function viewOverview(s) {
   if (S.recMode) {
     const bars = barsOf(s);
     const vm2 = vtMarks(s);
+    const hiddenRecLines = recordingHiddenLineIndexes(s);
     const nc = Math.max(1, Math.min(4, Number(s.cols || 1)));
     const one = (l, i) => {
+      if (hiddenRecLines.has(i)) return "";
       if (l.gap) return `<div style="height:1em"></div>`;
       const newSec = l.sec && l.sec !== (s.lines[i - 1] || {}).sec;
       const vh2 = vm2.info[i];
@@ -5874,7 +5969,7 @@ function viewOverview(s) {
         <button class="ovw ${recLineFocus(s, i)}${l.add ? " lnadd" : ""}${S.recMode && l.skip ? " lnskip" : ""}${l.cut ? " lncut" : ""}" data-act="jumpline" data-i="${i}"
           style="${vtColor(vtOf(l)) ? `box-shadow:inset 3px 0 0 ${vtColor(vtOf(l))}` : ""}">
           <span class="ovwn">${l.tag ? `<b class="tagmk">${h(l.tag)}</b>` : ""}${S.recBars && bars[i] != null ? bars[i] : ""}</span>
-          <span>${h(l.add ? "（" + l.t + "）" : l.t)}</span></button>`;
+          <span>${lyricTextHTML(l, !!l.add)}</span></button>`;
     };
     const brks = (s.colBreaks || []).filter((x) => x > 0 && x < s.lines.length);
     if (nc > 1 && brks.length) {
@@ -6176,6 +6271,16 @@ function renderSheet() {
   if (typingNow() && overlay && overlay.contains(document.activeElement)) { pendingRender = true; return; }
   if (overlay) { overlay.remove(); overlay = null; }
 
+  if (U.menu?.kind === "lyric-breaks" && !VIEW()) {
+    const html = lyricBreakSheetHTML(U.menu);
+    if (!html) { U.menu = null; return; }
+    overlay = document.createElement("div"); overlay.className = "mask organize-mask";
+    overlay.draftMenu = U.menu; overlay.innerHTML = html; document.body.appendChild(overlay);
+    focusSheetTextInput(overlay, "#lyric-break-text");
+    const field = overlay.querySelector("#lyric-break-text"); field?.setSelectionRange(field.value.length, field.value.length);
+    return;
+  }
+
   if (["rec-date-actions", "rec-date-rename", "rec-folder-create", "rec-folder-move"].includes(U.menu?.kind) && !VIEW()) {
     const html=U.menu.kind === "rec-date-actions" ? recDateActionsHTML(U.menu) : U.menu.kind === "rec-date-rename" ? recDateRenameHTML(U.menu)
       : organizeSheetHTML({mode:U.menu.kind === "rec-folder-move" ? "move" : "folder",rec:true,id:U.menu.id || "",recordingFolders:U.menu.kind === "rec-folder-move"});
@@ -6419,6 +6524,7 @@ function renderSheet() {
         <button data-act="closemenu" style="width:36px;height:36px;border-radius:10px;background:var(--panel2);font-size:17px">✕</button>
       </div>
 
+      ${l?.t ? `<button class="chip" data-act="lyric-breaks" data-i="${U.menu.i}">歌詞の改行</button>` : ""}
       ${hdr2("区切り", "sec", S.secHide || [])}
       <div class="chips">
         ${secs.map((x) => `<button class="chip sm" data-act="${edSec ? "rworddel" : "rsecq"}" data-id="${edSec ? "sec|" : ""}${h(x)}"
@@ -8427,12 +8533,12 @@ function vtTargets(so, i) {
   const out = [];
   if (U.vtN === "sec") {
     const [a, b] = secRange(so, i);
-    for (let k = a; k <= b; k++) if (!ls[k].gap && !ls[k].add) out.push(k);
+    for (let k = a; k <= b; k++) if (!ls[k].gap && !ls[k].add && !recordingEmptyTextLine(ls[k])) out.push(k);
     return out.length ? out : [i];
   }
   const want = Math.max(1, Number(U.vtN || 1));
   for (let k = i; k < ls.length && out.length < want; k++) {
-    if (ls[k].gap || ls[k].add) continue;
+    if (ls[k].gap || ls[k].add || recordingEmptyTextLine(ls[k])) continue;
     out.push(k);
   }
   return out.length ? out : [i];
@@ -8488,7 +8594,7 @@ function secBars() {
   const tg = tagSecNames();
   let cur = "";
   (so2.lines || []).forEach((l) => {
-    if (l.gap || l.cut) return;                // カット（グレー）の行は小節に数えない
+    if (l.gap || l.cut || recordingEmptyTextLine(l)) return; // カットと余白は小節に数えない
     const b = Number(l.bars || 4);
     // 表記が付いている行は、その表記の枠にも小節を足す（本編の分はそのまま）
     if (l.tag && tg.includes(l.tag)) {
@@ -8934,11 +9040,13 @@ function viewRecPrint() {
   if (!so) return `<div class="hd"><button class="ic" data-act="recback">‹</button><b>PDF</b></div>`;
   const bars = barsOf(so);
   const vm3 = vtMarks(so);
+  const hiddenRecLines = recordingHiddenLineIndexes(so);
   const trs = so.lines.map((l, i) => {
+    if (hiddenRecLines.has(i)) return "";
     if (l.gap) return `<tr class="prz"><td class="prn"></td><td class="prx"></td></tr>`;
     const vh3 = vm3.info[i];
     const hd = vh3 ? `<tr class="prv"><td class="prn"></td><td class="prx"><b>${h(vh3.vt)}</b></td></tr>` : "";
-    return hd + `<tr><td class="prn">${l.tag ? "［" + h(l.tag) + "］" : ""}${l.sec ? h(l.sec) + " " : ""}${S.recBars && bars[i] != null ? bars[i] : ""}</td><td class="prx">${h(l.add ? "（" + l.t + "）" : l.t)}</td></tr>`;
+    return hd + `<tr><td class="prn">${l.tag ? "［" + h(l.tag) + "］" : ""}${l.sec ? h(l.sec) + " " : ""}${S.recBars && bars[i] != null ? bars[i] : ""}</td><td class="prx">${lyricTextHTML(l, !!l.add)}</td></tr>`;
   });
   return `
   <div class="hd noprint"><button class="ic" data-act="recback">‹</button><b>PDF・印刷</b>
@@ -9055,8 +9163,8 @@ function viewPrint() {
     // cs: 文字ごとの書式（Excelの見た目のとき）。rawHTML: 印が無ければそのまま使う元の書式付き文字。
     const cellHTML = (l, i, cs, rawHTML) => {
       const ns = ns0.filter((n) => covers(n, i));
-      if (l.cut && !cs) return `<s style="color:#888">${h(l.t)}</s>` + cellMarks(l, i, ns);
-      if (rawHTML && !ns.length && !pastHits(so.id, i).count) return rawHTML;
+      if (l.cut && !cs) return `<s style="color:#888">${lyricTextHTML(l)}</s>` + cellMarks(l, i, ns);
+      if (rawHTML && !ns.length && !pastHits(so.id, i).count && !lyricBreakOffsets(l).length) return rawHTML;
       const chars = Array.from(l.t);
       const wrapCS = (x, ci) => (cs && cs[ci] ? `<span style="${cs[ci]}">${x}</span>` : x);
       const mark = (n) => {
@@ -9066,10 +9174,11 @@ function viewPrint() {
       // 文字を選ばずに行ごと指摘したものは、その行の歌詞ぜんぶに下線を引く。
       // タグだけだとどの行か紙の上で追いにくいため。
       const wholeLine = ns.some((n) => n.from == null);
+      const lineBreaks = new Set(lyricBreakOffsets(l));
       let cells = chars.map((ch, ci) => {
         const mk = wholeLine || ns.find((n) => n.from != null && ci >= n.from && ci <= n.to);
         const tail = ns.filter((n) => n.from != null && n.to === ci).map((n) => `<b class="prt">${h(mark(n))}</b>`).join("");
-        return wrapCS(mk ? `<u>${ch === " " ? "&nbsp;" : h(ch)}</u>` : (ch === " " ? "&nbsp;" : h(ch)), ci) + tail;
+        return (lineBreaks.has(ci) ? "<br>" : "") + wrapCS(mk ? `<u>${ch === " " ? "&nbsp;" : h(ch)}</u>` : (ch === " " ? "&nbsp;" : h(ch)), ci) + tail;
       }).join("");
       return cells + cellMarks(l, i, ns);
     };
@@ -9499,6 +9608,15 @@ document.addEventListener("click", async (e) => {
   if (a === 'publication-inspect') { void inspectPublication(id); return; }
   if (a === 'app-update-check') { void checkAppUpdate(); return; }
   if (a === 'app-update-reload') { void reloadForAppUpdate(); return; }
+  if (a === "lyric-breaks") { e.preventDefault(); openLyricBreaks(i); return; }
+  if (a === "lyric-break-insert" || a === "lyric-break-clear") {
+    e.preventDefault();
+    const field = document.getElementById("lyric-break-text"), target = lyricBreakTarget(U.menu);
+    if (!field || !target) return;
+    if (a === "lyric-break-clear") field.value = lyricBreakDraft({t:target.line.t});
+    else field.setRangeText("\n", field.selectionStart, field.selectionStart, "end");
+    field.focus({preventScroll:true}); return;
+  }
   if (a === "rec-date-actions") {
     e.preventDefault();e.stopPropagation();
     U.menu=recordingDateContext(id);if(U.menu)renderSheet();return;
@@ -11011,6 +11129,49 @@ document.addEventListener("submit", e => {
   else void submitOrganizationForm(e.target);
 });
 const songRenameSubmissions = new WeakSet();
+const lyricBreakSubmissions = new WeakSet();
+async function submitLyricBreakForm(form) {
+  const menu = U.menu;
+  if (menu?.kind !== "lyric-breaks" || !form.isConnected || draftFormIsComposing(form) || lyricBreakSubmissions.has(form)) return false;
+  const input = form.querySelector("#lyric-break-text"), out = form.querySelector("#lyric-break-error"), submit = form.querySelector('[type="submit"]');
+  if (!input || !out || !submit) return false;
+  const report = text => { out.textContent = text; out.hidden = !text; };
+  const target = lyricBreakTarget(menu);
+  if (!target) { report("歌詞が変わりました。画面を開き直してください。"); return false; }
+  if (REC || recordingStartPending || recordingFinalizePending || pitchStartPending || PT.on || micStream) {
+    report("録音・マイクの使用が終わってから保存してください。"); return false;
+  }
+  const value = input.value, offsets = lyricBreaksFromDraft(target.line, value);
+  if (!offsets) { report("歌詞の文字を変えずに、改行だけを入れてください。"); return false; }
+  if (JSON.stringify(offsets) === JSON.stringify(lyricBreakOffsets(target.line))) {
+    document.activeElement?.blur(); U.menu = null; renderSheet(); return true;
+  }
+  if (Object.entries(S.draws || {}).some(([key, strokes]) => key.split("|")[1] === target.so.id && Array.isArray(strokes) && strokes.length)) {
+    report("手書きの位置がずれるため、手書きのある曲では改行を変更できません。"); return false;
+  }
+  const before = JSON.stringify(S);
+  lyricBreakSubmissions.add(form); submit.disabled = true; form.setAttribute("aria-busy", "true");
+  try {
+    if (!await automaticBackupBeforeEdit("lyric-breaks")) {
+      if (form.isConnected) report("編集前の保存を確認できませんでした。入力内容は残っています。もう一度保存してください。");
+      return false;
+    }
+    if (U.menu !== menu || !form.isConnected) return false;
+    if (JSON.stringify(S) !== before || !lyricBreakTarget(menu) || REC || recordingStartPending || recordingFinalizePending || pitchStartPending || PT.on || micStream) {
+      report("保存内容や録音状態が変わりました。入力内容を確認して、もう一度保存してください。"); return false;
+    }
+    if (draftFormIsComposing(form) || input.value !== value) { report("入力内容が変わりました。もう一度保存してください。"); return false; }
+    pushUndo(menu.rec ? undefined : target.so.id);
+    if (offsets.length) target.line.lyricBreaks = offsets; else delete target.line.lyricBreaks;
+    document.activeElement?.blur(); U.menu = null; save();
+    if (!menu.rec) schedulePush(); renderSheet(); render(); return true;
+  } finally { lyricBreakSubmissions.delete(form); submit.disabled = false; form.removeAttribute("aria-busy"); }
+}
+document.addEventListener("submit", e => {
+  if (e.target.id !== "lyric-break-form") return;
+  e.preventDefault(); void submitLyricBreakForm(e.target);
+});
+
 async function submitSongRenameForm(form) {
   const menu = U.menu;
   if (menu?.kind !== "song-rename" || !form.isConnected || draftFormIsComposing(form) || songRenameSubmissions.has(form)) return false;
@@ -12202,7 +12363,12 @@ function publicationData(gid, previous, isolatedLibraries = false) {
            (l.extra || []).length ? "ハモ " + (l.extra || []).map((m) => (member(m) || {}).name).filter(Boolean).join("・") : "",
            l.extraCell || "", l.labelRaw || l.raw || "", l.extraRaw || ""]));
       const sections = x.lines.flatMap((l, lineIdx) => typeof l.sec === "string" && l.sec.trim() ? [{lineIdx, name:l.sec.trim()}] : []);
-      const key = (isolatedLibraries ? x.id + "\u0001" : "") + x.title + "\u0001" + JSON.stringify(lines) + "\u0001" + JSON.stringify(sections);
+      const lyricBreaks = x.lines.flatMap((l, lineIdx) => {
+        const offsets = !l.gap && Array.isArray(l.lyricBreaks) ? lyricBreakOffsets(l) : [];
+        return offsets.length ? [{lineIdx, offsets}] : [];
+      });
+      const key = (isolatedLibraries ? x.id + "\u0001" : "") + x.title + "\u0001" + JSON.stringify(lines) + "\u0001" + JSON.stringify(sections)
+        + (lyricBreaks.length ? "\u0001" + JSON.stringify(lyricBreaks) : "");
       if (libKey.has(key)) return libKey.get(key);
       const gs = {};
       Object.keys(x.blocks || {}).forEach((b) => {
@@ -12210,6 +12376,7 @@ function publicationData(gid, previous, isolatedLibraries = false) {
       });
       lib.push({ title: x.title, credit: x.credit, groups: gs, order: orderOf(x), lines,
         ...(sections.length ? {sections} : {}),
+        ...(lyricBreaks.length ? {lyricBreaks} : {}),
         groupRows: (x.blockRows || []).map((br) => ({ b: br.b, ncell: br.ncell || "", lcell: br.lcell || "" })) });
       libKey.set(key, lib.length - 1);
       return lib.length - 1;
