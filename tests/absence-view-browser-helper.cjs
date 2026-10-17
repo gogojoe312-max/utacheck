@@ -18,10 +18,10 @@ async function checkAbsence(page,width,{mode,assertFits,screenshot}){
    ];
    const before=[
     ['m1','m2','m3'],['m1','m2'],['m1'],
-    ['m1','m2','m3'],['m2','m3'],['m1','m2','m3']
+    ['m1','m2','m3'],['m2','m3'],['m1','m2','m3'],['m1'],['m1']
    ],after=[
     ['m2','m3'],['m2'],['m4'],
-    ['m2','m3','m4'],['m3','m2'],['m2']
+    ['m2','m3','m4'],['m3','m2'],['m2'],['m1']
    ];
    const names=ids=>ids.map(id=>members.find(m=>m.id===id).name).join('・');
    S=Object.assign(structuredClone(S0),{
@@ -50,6 +50,9 @@ async function checkAbsence(page,width,{mode,assertFits,screenshot}){
   });
   await expectLines([0,1,2,3,5]);
   assert.equal(await page.locator('.member-song').count(),1);
+  assert.equal(await page.locator('.member-absence-change').first().evaluate(el=>getComputedStyle(el).borderLeftColor),'rgb(255, 145, 131)');
+  const quiet=await page.evaluate(()=>{const prior=S.subs;try{S.subs={};return summaryHeader();}finally{S.subs=prior;}});
+  assert(!quiet.includes('data-act="goabsent"'),'No change action without actual assignment changes');
   const row1=await page.locator('.member-absence-change[data-i="1"]').innerText();
   assert(row1.includes('検証甲')&&row1.includes('検証乙'));
   const row2=await page.locator('.member-absence-change[data-i="2"]').innerText();
@@ -88,8 +91,21 @@ async function checkAbsence(page,width,{mode,assertFits,screenshot}){
   await mode(page,false,false,'absent');
   const candidates=await page.locator('[data-act="toggleabsent"]').evaluateAll(nodes=>nodes.map(el=>el.dataset.id).sort());
   assert.deepEqual(candidates,['m1','m2','m3','m4']);
-  assert.deepEqual(await page.evaluate(()=>[0,1,2,3,4,5].map(i=>lineStatus(S.songs[0],i))),Array(6).fill('changed'));
+  assert.deepEqual(await page.evaluate(()=>[0,1,2,3,4,5,6,7].map(i=>lineStatus(S.songs[0],i))),['changed','changed','changed','changed','','changed','need','need']);
   assert.equal(await page.evaluate(()=>window.__absenceQA.content()),await page.evaluate(()=>window.__absenceQA.before));
+  const received=await page.evaluate(()=>{
+   const before=JSON.stringify(S),ui=JSON.stringify(U);
+   try{
+    S.groups[0].nopub=false;S.shows[0].nopub=false;
+    const wire=publicationData('qa-absence');S.groups[0].nopub=true;S.shows[0].nopub=true;
+    S.viewer=true;applySetlist(wire);
+    const song=S.songs[0],changes=memberAbsenceChanges(song);
+    return {lines:changes.map(x=>x.lineIdx).sort((a,b)=>a-b),statuses:changes.map(x=>x.status),unresolved:[6,7].map(i=>lineStatus(song,i)),names:changes.find(x=>x.lineIdx===2).after.map(id=>member(id).name)};
+   }finally{S=JSON.parse(before);U=JSON.parse(ui);renderPointers.clear();scrollingUntil=0;pendingRender=false;render(true);}
+  });
+  assert.deepEqual(received.lines,[0,1,2,3,5]);assert(received.statuses.every(status=>status==='changed'));
+  assert.deepEqual(received.unresolved,['','']);assert.deepEqual(received.names,['検証丁']);
+
  }finally{
   await page.evaluate(async()=>{
    const saved=window.__absenceQA;if(!saved)return;
@@ -102,6 +118,6 @@ async function checkAbsence(page,width,{mode,assertFits,screenshot}){
    delete window.__absenceQA;
   });
  }
- return {absenceAll:true,absencePersonal:true,absenceQuietReduction:true,absenceOwnerGuestPreserved:true,absenceLyricNavigation:true};
+ return {absenceAll:true,absencePersonal:true,absenceQuietReduction:true,absenceOwnerGuestPreserved:true,absenceLyricNavigation:true,confirmedChangesOnly:true,publicationRoundtrip:true};
 }
 module.exports={checkAbsence};

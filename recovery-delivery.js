@@ -494,30 +494,51 @@
       throw new Error(message(e));
     }finally{release?.();pushing=false;}
   }
-  async function reconcile(){
+  async function reconcile({silent=false,onlyUncertain=false,groupId}={}){
     if(!ready()||session||pushing||publishInFlight||S.recoveryDelivery?.version!==2)return;pushing=true;let release;
-    const resolvedIssues=new Set();
+    const resolvedIssues=new Set();let confirmed=0;
     try{
       release=recordingInboxAdmitWriter();
-      RecoveryDeliveryScope.plan(S,packetForBindings());
+      RecoveryDeliveryScope.plan(S,packetForBindings(groupId));
       for(const target of S.recoveryDelivery?.targets||[]){
+        if(groupId&&target.groupId!==groupId)continue;
+        if(onlyUncertain&&!['sending','uncertain'].includes(target.status))continue;
         if(target.status==='ready')continue;if(target.status==='prepared')fail('storage');if(!target.pendingDigest&&target.status!=='blocked')fail('unknown');
-        const token=S.ghToken,active=()=>ready()&&!session&&S.ghToken===token&&currentBinding(target.groupId)===target;
+        const token=S.ghToken,group=S.groups.find(g=>g.id===target.groupId),key=group?.key;
+        const active=()=>ready()&&!session&&S.ghToken===token&&currentBinding(target.groupId)===target
+          &&S.groups.find(g=>g.id===target.groupId)===group&&!group?.nopub&&group?.gistId===target.gistId&&group?.src===target.src&&group?.key===key;
         const remote=await readTarget(target,token,active);
         if(remote.digest!==target.pendingDigest&&remote.digest!==target.expectedRemoteSha256)fail('source-changed');
         const prior=copy(target),g=S.groups.find(g=>g.id===target.groupId),priorKey=g?.lastKey,priorPending=g?.publishKeyPending;
         if(remote.digest===target.pendingDigest){target.expectedRemoteSha256=remote.digest;if(g){g.lastKey=target.pendingKey;g.publishKeyPending=false;}}
         target.status='ready';delete target.pendingDigest;delete target.pendingKey;
         try{await persist();}catch(error){Object.keys(target).forEach(k=>delete target[k]);Object.assign(target,prior);if(g){g.lastKey=priorKey;g.publishKeyPending=priorPending;}throw error;}
+        confirmed++;
         const name=g?.name||target.groupName||'配信先';
         if(S.groups.filter(group=>(group.name||'配信先')===name).length===1)for(const reason of ['配信結果の確認待ち','接続設定の保存確認待ち','配信保留（復旧状況を確認してください）',message({reconnectCode:'unknown'})])resolvedIssues.add(name+'：'+reason);
       }
-      alert('既存先の送信結果を確認しました。この確認では再送していません。');render();
-    }catch(e){alert(message(e));}finally{
+      if(!silent)alert('既存先の送信結果を確認しました。この確認では再送していません。');render(true);
+      return confirmed>0;
+    }catch(e){if(!silent)alert(message(e));return confirmed>0;}finally{
       if(typeof publishIssues!=='undefined'&&resolvedIssues.size)publishIssues=publishIssues.filter(issue=>!resolvedIssues.has(issue));
       release?.();pushing=false;
       if(typeof renderPublishStatus==='function')renderPublishStatus();
     }
+  }
+  let lastPendingCheck=0;
+  async function reconcilePending(){
+    if(!ready()||session||pushing||publishInFlight||!S.ghToken||S.recoveryDelivery?.version!==2
+      ||REC||saving||U.sheet||U.menu||U.busy||U.picker
+      ||typeof typingNow==='function'&&typingNow()
+      ||!(S.recoveryDelivery.targets||[]).some(t=>['sending','uncertain'].includes(t.status)&&t.pendingDigest&&t.pendingKey))return false;
+    if(Date.now()-lastPendingCheck<30000)return false;
+    lastPendingCheck=Date.now();
+    let confirmed=false;
+    for(const target of S.recoveryDelivery.targets||[]){
+      if(['sending','uncertain'].includes(target.status)&&target.pendingDigest&&target.pendingKey)
+        confirmed=await reconcile({silent:true,onlyUncertain:true,groupId:target.groupId})||confirmed;
+    }
+    return confirmed;
   }
   document.addEventListener('click',e=>{
     const field=e.target,s=session;
@@ -534,6 +555,6 @@
   document.addEventListener('input',e=>{if(session&&!session.busy&&['rd-file','rd-token','rd-group'].includes(e.target.id)){session.prepared=null;session.token='';session.node.querySelector('#rd-preview').innerHTML='';status('入力が変わりました。もう一度接続先を確認してください。');}},true);
   document.addEventListener('change',e=>{if(session&&!session.busy&&['rd-file','rd-group'].includes(e.target.id)){session.prepared=null;session.token='';session.node.querySelector('#rd-preview').innerHTML='';status('選択が変わりました。もう一度接続先を確認してください。');}},true);
   document.addEventListener('visibilitychange',()=>{if(document.hidden&&!session?.committing)close();});
-  root.RecoveryDelivery=Object.freeze({settingsHTML,open,close,canPublish,hasResumed,pending,push,reconcile,readPreview,inspectHeldDifferences});
+  root.RecoveryDelivery=Object.freeze({settingsHTML,open,close,canPublish,hasResumed,pending,push,reconcile,reconcilePending,readPreview,inspectHeldDifferences});
 })(globalThis);
 

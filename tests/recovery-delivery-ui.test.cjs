@@ -573,3 +573,22 @@ test('display proposal groups only exact title and added-name matches without ch
  assert(html.includes('末尾に A、C'));assert(html.includes('末尾に B、A'));assert(html.includes('Repeated long title ：'));
  assert.equal((html.match(/id="rd-alignment-/g)||[]).length,1);assert.equal(JSON.stringify(changes),before);
 });
+
+test('automatic readback clears accepted uncertain delivery without sending again or alerting',async()=>{
+ const options={unknownPatch:true},f=await fixture(options);await f.check();f.modal().querySelector('#rd-approve').checked=true;f.modal().querySelector('#rd-exclusive').checked=true;f.click('rd-commit');await f.until(()=>f.calls.some(x=>x.action==='pushOne'));
+ await assert.rejects(()=>f.c.RecoveryDelivery.push('g',true));const alerts=f.alerts.length;
+ assert.equal(await f.c.RecoveryDelivery.reconcilePending(),true);
+ assert.equal(f.patches(),1);assert.equal(f.alerts.length,alerts);assert.equal(f.c.S.recoveryDelivery.targets[0].status,'ready');assert.equal(f.c.RecoveryDelivery.pending('g'),false);
+ options.unknownPatch=false;f.c.S.subs['show|song']={0:[]};f.c.S.shows[0].absent=['m'];f.c.save();await f.c.saveNow();
+ assert.equal(f.c.RecoveryDelivery.pending('g'),true);assert.equal(await f.c.RecoveryDelivery.push('g',true),'sent');assert.equal(f.patches(),2);
+ assert.deepEqual(JSON.parse(f.remote()).subs,[{showId:'show',songIdx:0,lineIdx:0,names:[]}]);
+});
+
+test('automatic readback waits during editing and holds changed remote content without retry storms',async()=>{
+ const f=await fixture({unknownPatch:true});await f.check();f.modal().querySelector('#rd-approve').checked=true;f.modal().querySelector('#rd-exclusive').checked=true;f.click('rd-commit');await f.until(()=>f.calls.some(x=>x.action==='pushOne'));
+ await assert.rejects(()=>f.c.RecoveryDelivery.push('g',true));const before=f.calls.length,alerts=f.alerts.length;
+ f.c.U.sheet='editing';assert.equal(await f.c.RecoveryDelivery.reconcilePending(),false);assert.equal(f.calls.length,before);f.c.U.sheet=null;
+ f.setRemote(f.remote()+' ');assert.equal(await f.c.RecoveryDelivery.reconcilePending(),false);const after=f.calls.length;assert(after>before);
+ assert.equal(f.c.S.recoveryDelivery.targets[0].status,'uncertain');assert.equal(f.patches(),1);assert.equal(f.alerts.length,alerts);
+ assert.equal(await f.c.RecoveryDelivery.reconcilePending(),false);assert.equal(f.calls.length,after);
+});

@@ -81,7 +81,7 @@ function reconcileFixture(kind){
  vm.runInContext(recoverySlice(deliverySource,'function canPublish(','\n  // Preview')+'\n'+
   recoverySlice(deliverySource,'function pending(','function packetForBindings(')+'\nglobalThis.RecoveryDelivery={pending,hasResumed};\n'+
   recoverySlice(source,'function recoveryPublicationHolds()','async function pushOne(')+'\n'+
-  recoverySlice(deliverySource,'async function reconcile(){',"\n  document.addEventListener('click'"),c);
+  recoverySlice(deliverySource,'async function reconcile({',"\n  document.addEventListener('click'"),c);
  c.renderPublishStatus();
  return {c,S,calls,screen,draft,privateBefore,rosyBefore,key};
 }

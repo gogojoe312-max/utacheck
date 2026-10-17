@@ -69,6 +69,17 @@ async function readableTitles(page,rec){
    page.on('pageerror',e=>errors.push(e.stack||e.message));
    page.on('dialog',async dialog=>{dialogs.push({type:dialog.type(),message:dialog.message()});if(dialog.type()==='confirm'&&confirmReply){confirmReply=false;await dialog.accept();}else if(dialog.type()==='prompt'&&promptReply!==null){const reply=promptReply;promptReply=null;await dialog.accept(reply);}else await dialog.dismiss();});
    await page.goto(origin);await page.waitForFunction(()=>typeof normalStartupInitialized!=='undefined'&&normalStartupInitialized);await page.evaluate(seed);
+   const startupTheme=await page.evaluate(()=>{
+    const prior={profile:recordingInboxProfileRequired,stale:recordingInboxStale,owner:recordingInboxOwner};
+    try{
+     recordingInboxProfileRequired=true;recordingInboxStale=false;recordingInboxOwner=null;recordingInboxOwnerUI();
+     const loading=document.getElementById('recording-inbox-readonly'),color=getComputedStyle(loading).backgroundColor,text=loading.textContent;
+     recordingInboxOwner={status:'secondary',canWrite:false};recordingInboxOwnerUI();
+     const denied=document.getElementById('recording-inbox-readonly');return {color,text,deniedColor:getComputedStyle(denied).backgroundColor,deniedText:denied.textContent};
+    }finally{recordingInboxProfileRequired=prior.profile;recordingInboxStale=prior.stale;recordingInboxOwner=prior.owner;recordingInboxOwnerUI();}
+   });
+   assert.equal(startupTheme.color,'rgb(17, 18, 21)');assert(startupTheme.text.includes('読み込み中'));
+   assert.equal(startupTheme.deniedColor,'rgb(17, 18, 21)');assert(startupTheme.deniedText.includes('読み取り専用'));
    const original=await page.evaluate(()=>qaContent()),data=page.locator('[data-settings-panel="data-save"]');
    assert.equal(await data.count(),1);assert.equal(await page.getByText('データの保存',{exact:true}).count(),1);
    assert.equal(await page.getByText('歌割をPDFにする',{exact:true}).count(),0);assert.equal(await page.locator('[data-act="gopdf"]').count(),0);

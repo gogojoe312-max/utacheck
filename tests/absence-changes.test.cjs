@@ -36,7 +36,7 @@ test('addition and replacement remain visible; reorder and no absence do not cre
  assert.equal(Changes.classify(['a','b','c'],['b','c','d'],['a'],true).status,'changed');
  assert.equal(Changes.classify(['a'],['d'],['a'],true).status,'changed');
  assert.equal(Changes.classify(['b','c'],['c','b'],['a'],true),null);
- assert.equal(Changes.classify(['a'],['d'],[],true),null);
+ assert.equal(Changes.classify(['a'],['d'],[],true).status,'changed');
 });
 test('unresolved and empty assignments are not mistaken for quiet completion',()=>{
  assert.equal(Changes.classify(['a'],['a'],['a'],false).status,'need');
@@ -121,10 +121,19 @@ test('personal tabs exclude large unisons even before a member is selected',()=>
  c.U.mode='song';c.U.absenceMode='all';
  for(const html of [c.viewerSummaryBody(),c.viewMemberAbsence()])assert.equal((html.match(/member-absence-change/g)||[]).length,4);
 });
-test('unresolved personal assignments say adjusting instead of claiming a confirmed change',()=>{
+test('unresolved or unchanged assignments stay out of member changes and lyric emphasis',()=>{
  const c=fixture(),song=c.S.songs[0];delete c.S.subs['show|song'][2];
- const entry=c.memberAbsenceChanges(song,'m1').find(e=>e.lineIdx===2),html=c.memberAbsenceRows(song,[entry],'m1');
- assert(html.includes('調整中'));assert(!html.includes('新しく担当'));assert(!html.includes('一緒に歌うメンバーが変更'));
+ assert(!c.memberAbsenceChanges(song).some(e=>e.lineIdx===2));assert.equal(c.lineStatus(song,2),'');
+ c.S.subs['show|song'][2]=['m1'];assert(!c.memberAbsenceChanges(song).some(e=>e.lineIdx===2));assert.equal(c.lineStatus(song,2),'');
+ assert(!c.viewMemberAbsence().includes('調整中'));assert(!c.viewerSummaryBody().includes('調整中'));
+ c.S.subs['show|song'][2]=['m4'];assert(c.memberAbsenceChanges(song).some(e=>e.lineIdx===2));assert.equal(c.lineStatus(song,2),'changed');
+ c.S.shows[0].absent=[];assert(c.memberAbsenceChanges(song).some(e=>e.lineIdx===2));
+ c.viewer=false;c.S.subs['show|song'][2]=['m1'];assert.equal(c.lineStatus(song,2),'');
+});
+test('an unchanged solo role does not inherit a large unison change',()=>{
+ const song={id:'s',lines:[{parts:['a','b','c','h'],main:['a','b','c'],extra:['h'],t:'synthetic'}]};
+ const entry=Changes.line(song,0,{absent:['a'],subs:{0:['b','c','h','d']}});
+ assert.equal(Changes.forMember(entry,'h'),false);
 });
 test('member screens expose no edit controls and rendering never changes saved data',()=>{
  const c=fixture(),before=JSON.stringify(c.S),html=c.viewAbsent()+c.viewerSummaryBody();

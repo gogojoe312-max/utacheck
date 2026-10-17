@@ -39,13 +39,18 @@ function recordingInboxOwnerUI() {
   if (appElement) appElement.inert = !recordingInboxCanWrite();
   let notice = document.getElementById('recording-inbox-readonly');
   if (!denied) { if (notice) notice.remove(); return; }
-  if (notice || !document.body) return;
+  const checking = !recordingInboxStale && (!recordingInboxOwner || ['pending','reloading'].includes(recordingInboxOwner.status));
+  const ownerStatus = checking ? 'loading' : 'denied';
+  if (notice?.dataset.ownerStatus === ownerStatus || !document.body) return;
+  if (notice) notice.remove();
   notice = document.createElement('div'); notice.id = 'recording-inbox-readonly';
-  notice.setAttribute('role', 'alert');
-  notice.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:#fff;color:#222;padding:32px;overflow:auto';
+  notice.dataset.ownerStatus = ownerStatus;
+  notice.setAttribute('role', checking ? 'status' : 'alert');
+  notice.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:#111215;color:#f3f4f7;padding:32px;overflow:auto;color-scheme:dark';
   const message = document.createElement('p');
-  message.textContent = 'この画面は読み取り専用です。ほかの歌チェックのタブを閉じてから、この画面を再読み込みしてください。自動受信には対応ブラウザが必要です。';
+  message.textContent = checking ? '読み込み中…' : 'この画面は読み取り専用です。ほかの歌チェックのタブを閉じてから、この画面を再読み込みしてください。自動受信には対応ブラウザが必要です。';
   const reload = document.createElement('button'); reload.dataset.inboxOwnerReload = '1'; reload.textContent = '再読み込み'; reload.onclick = () => location.reload();
+  reload.hidden = checking;
   notice.append(message, reload); document.body.appendChild(notice);
 }
 async function recordingInboxDenyAndDrain() {
@@ -113,7 +118,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.31";
+const APP_VER = "16.41.58.32";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -2010,13 +2015,14 @@ function labelOf(so, i) {
 
 // 赤＝まだ決まっていない、黄＝変更済み
 function lineStatus(so, i) {
-  if (VIEW() && typeof AbsenceChanges !== "undefined") return AbsenceChanges.line(so,i,memberAbsenceContext(so))?.status || "";
+  if (VIEW() && typeof AbsenceChanges !== "undefined") return AbsenceChanges.line(so,i,memberAbsenceContext(so))?.status === "changed" ? "changed" : "";
   const l = so.lines[i] || {};
   if (l.gap || l.cut) return "";                            // カット（グレー）の行は歌わないので触らない
   if (/^(?:全|zenn\b)/i.test(l.labelRaw || l.label || "")) return "";   // 「全」は見れば分かるので触らない
   // 歌割が書かれていない行（カットした所など）は触らない
   if (!(l.parts || []).length && !(l.labelRaw || l.label)) return "";
-  if (subOf(so.id, i)) return "changed";
+  const sub = subOf(so.id, i);
+  if (sub && (new Set(sub).size !== new Set(l.parts || []).size || sub.some(id=>!(l.parts || []).includes(id)))) return "changed";
   const ab = absentIds();
   if (!ab.length) return "";
   if (blockOf(so, i)) return "";   // A/B の行は「全」と同じ。ブロックの中身の方を直す。
@@ -2024,10 +2030,11 @@ function lineStatus(so, i) {
 }
 // ブロックの状態
 function blockStatus(so, b) {
-  if (VIEW() && typeof AbsenceChanges !== "undefined") return AbsenceChanges.block(so,b,memberAbsenceContext(so))?.status || "";
+  if (VIEW() && typeof AbsenceChanges !== "undefined") return AbsenceChanges.block(so,b,memberAbsenceContext(so))?.status === "changed" ? "changed" : "";
   const ab = absentIds();
+  const sub = gsubOf(so.id, b), original = so.blocks?.[b] || [];
+  if (sub && (new Set(sub).size !== new Set(original).size || sub.some(id=>!original.includes(id)))) return "changed";
   if (!ab.length) return "";
-  if (gsubOf(so.id, b)) return "changed";
   return ((so.blocks && so.blocks[b]) || []).some((p) => ab.includes(p)) ? "need" : "";
 }
 const blocksOf = (so) => Object.keys((so && so.blocks) || {});
@@ -6249,7 +6256,7 @@ function viewLive() {
       const st2 = lineStatus(s, i);
       const newSec = S.recMode && l.sec && l.sec !== (s.lines[i - 1] || {}).sec;
       const foc = S.recMode ? recLineFocus(s, i) === "rec-focus-own" : U.focus && partsOf(s, i).includes(U.focus);
-      const tint = st2 === "need" ? "var(--bad)" : st2 === "changed" ? "#F0B23C"
+      const tint = st2 === "need" ? "var(--bad)" : st2 === "changed" ? (VIEW() ? "#ff9183" : "#F0B23C")
         : foc ? "#4C9BFF" : (ns.length ? noteColor(ns[0]) : "");
       const strength = (st2 || foc) ? 18 : 9;
       const vtc = S.recMode ? vtColor(vtOf(l)) : "";
@@ -6259,7 +6266,7 @@ function viewLive() {
       <div data-lyric-line="${i}" class="ln ${S.recMode ? recLineFocus(s, i) : ""}${S.recMode && l.add ? " lnadd" : ""}${S.recMode && l.skip ? " lnskip" : ""}${l.cut ? " lncut" : ""}${isAgeri(l) ? " lnage" : ""}"${
         l.tag && tanc[l.tag] === i ? ` id="sec-${h(l.tag)}"` : ""} style="${tint ? `background:color-mix(in srgb,${tint} ${strength}%,transparent);` : ""}${vtc ? `box-shadow:inset 3px 0 0 ${vtc}` : ""}">
         <button class="lbl" data-act="${S.recMode ? "rbar" : "noteblock"}" data-i="${i}"${S.recMode ? ' data-segment="0"' : ""}${S.recMode || VIEW() ? "" : ` data-hold="assignline"`}
-          style="${st2 ? `color:${st2 === "need" ? "var(--bad)" : "#F0B23C"}` : ""}">${S.recMode && l.tag ? `<b class="tagmk">${h(l.tag)}</b>` : ""}${l.cut ? `<b class="cutmk">カット</b>` : ""}${labelHTML(s, i)}</button>
+          style="${st2 ? `color:${st2 === "need" ? "var(--bad)" : "#F0B23C"}` : ""}">${S.recMode && l.tag ? `<b class="tagmk">${h(l.tag)}</b>` : ""}${l.cut ? `<b class="cutmk">カット</b>` : ""}${VIEW() && st2 === "changed" ? '<b class="member-change-badge">歌割変更</b>' : ""}${labelHTML(s, i)}</button>
         <div class="brk ${gp[i]}"></div>
         <div class="grow" style="min-width:0">
           <div class="txt" data-l="${i}" style="font-size:${S.size + 6}px;line-height:${S.lyricLineHeight === 1.8 ? 1.8 : S.lyricLineHeight === 1.5 ? 1.5 : 1.6}">${cells}</div>${pills}
@@ -7416,7 +7423,7 @@ function viewerSummaryBody() {
     return `<section class="card member-song">
       <div class="member-song-head"><div class="grow">${U.allShows ? `<div class="member-caption">${h(showName(so.showId))}</div>` : ""}<h3>${h(songName(so))}</h3></div></div>
       ${memo ? `<div class="song-summary"><h4>総括 <span>全員共通</span></h4><div>${h(memo)}</div></div>` : ""}
-      ${changes.length ? `<h4 class="member-notes-title">歌割の変更<span>${changes.length}件</span></h4>${memberAbsenceRows(so,changes,byMember && selected ? selected.id : "")}` : ""}
+      ${changes.length ? `<h4 class="member-notes-title member-change-title">歌割の変更<span>${changes.length}件</span></h4>${memberAbsenceRows(so,changes,byMember && selected ? selected.id : "")}` : ""}
       ${notes.length ? `<h4 class="member-notes-title">${byMember && selected ? h(compactMemberLabel(selected.name)) + "さんへの指摘" : "指摘"}<span>${notes.length}件</span></h4>
         ${notes.map(n => `<button class="member-note member-note-link" data-act="summary-note" data-id="${h(so.id)}" data-i="${n.lineIdx}" data-note="${h(n.id || "")}"><span class="member-note-arrow" aria-hidden="true">›</span>${memberNoteBody(n, !byMember || !selected || !(n.memberIds || []).length)}<span class="sr-only">歌詞で見る</span></button>`).join("")}`
         : `<p class="member-hint">${byMember && selected ? h(compactMemberLabel(selected.name)) + "さんへの個別の指摘はありません。" : "個別の指摘はありません。"}</p>`}
@@ -7502,7 +7509,7 @@ function summaryHeader() {
     ${preview ? '<button class="chip sm" data-act="endpv">確認を終わる</button>' : ""}
     <span class="grow"></span>
     <span style="font-size:11px;color:var(--dim)" class="trunc">${h(U.allShows ? "全公演" : showName())}</span></div>
-  <div class="tabs summary-tabs">${tab("member", VIEW() ? "人ごと" : "メンバー別")}${tab("song", VIEW() ? "曲ごと" : "曲別")}${VIEW() ? "" : tab("show", "公演別")}${tab("diff", "前回との差")}${VIEW() ? '<button class="chip sm" data-act="goabsent">歌割の変更</button><button class="chip sm" data-act="summary-lyrics">歌詞</button>' : ""}</div>
+  <div class="tabs summary-tabs">${tab("member", VIEW() ? "人ごと" : "メンバー別")}${tab("song", VIEW() ? "曲ごと" : "曲別")}${VIEW() ? "" : tab("show", "公演別")}${tab("diff", "前回との差")}${VIEW() ? ((summarySongs().some(so=>memberAbsenceChanges(so).length) ? '<button class="chip sm member-change-alert" data-act="goabsent">歌割の変更</button>' : '') + '<button class="chip sm" data-act="summary-lyrics">歌詞</button>') : ""}</div>
   ${summaryShowPicker()}
 `;
 }
@@ -8064,6 +8071,7 @@ function memberAbsenceContext(so) {
 function memberAbsenceChanges(so, memberId="", byMember=false) {
   if (typeof AbsenceChanges === "undefined") return [];
   return AbsenceChanges.entries(so,{...memberAbsenceContext(so),includeGroupReductions:true})
+    .filter(entry=>entry.status === "changed")
     .filter(entry=>memberId ? AbsenceChanges.forMember(entry,memberId)
       : !byMember || entry.involved.some(id=>AbsenceChanges.forMember(entry,id)));
 }
@@ -13860,6 +13868,11 @@ function hasPending() {
 setInterval(() => {
   if (!recordingInboxCanWrite() || document.hidden || preview || (typeof previewLoading!=='undefined' && previewLoading) || renderPointers.size || Date.now() < scrollingUntil || typingNow()) return;
   if (S.ghToken && S.groups.some((g) => g.gistId)) {
+    if (typeof RecoveryDelivery !== "undefined" && RecoveryDelivery.reconcilePending) {
+      void RecoveryDelivery.reconcilePending().then(confirmed=>{
+        if (confirmed && recordingInboxCanWrite() && S.autoPub && !publishInFlight && !pushTimer && hasPending()) schedulePush();
+      });
+    }
     if (S.autoPub && !publishInFlight && !pushTimer && Date.now() - lastPushAt >= 8000 && hasPending()) doPush(true);
   } else if (S.src) {
     if (syncBackoff && Date.now() < syncBackoff) return;

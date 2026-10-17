@@ -17,7 +17,7 @@
   }
   function classify(beforeValue, afterValue, absentValue, explicit, options={}) {
     const before=ids(beforeValue), after=ids(afterValue), absent=ids(absentValue);
-    if (!absent.length || !before.length) return null;
+    if (!before.length) return null;
     const added=after.filter(id=>!before.includes(id)), removed=before.filter(id=>!after.includes(id));
     const affected=before.some(id=>absent.includes(id));
     let status="";
@@ -79,7 +79,7 @@
   function forMember(entry, memberId) {
     // A solo harmony remains personal even when the main melody has 3+ singers.
     return [[entry.beforeMain,entry.afterMain],[entry.beforeExtra,entry.afterExtra]].some(([before,after])=>
-      (before.includes(memberId) || after.includes(memberId)) && before.length < 3 && after.length < 3);
+      !same(before,after) && (before.includes(memberId) || after.includes(memberId)) && before.length < 3 && after.length < 3);
   }
   return Object.freeze({placeholderName,eligibleMembers,classify,line,block,entries,forMember});
 });
