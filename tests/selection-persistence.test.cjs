@@ -69,10 +69,10 @@ test('viewer sources are isolated and preferences cannot select another group or
   a.c.S.groupId='rose';assert.equal(a.run('restoreViewSelection()'),false);assert.equal(a.c.S.showId,'r');assert.equal(a.c.S.groupId,'rose');
   a.c.S.shows[0].hidden=true;a.c.S.showId='';assert.equal(a.run('restoreViewSelection()'),false);assert.equal(a.c.S.showId,'');
 });
-test('preview and recording keep their original state and never read or overwrite preferences',()=>{
-  const a=setup();a.run("selectShow('o')");const saved=JSON.stringify([...a.storage]);
+test('preview remains isolated and REC restores only the LIVE filter without replacing either song',()=>{
+  const a=setup();a.run("selectShow('o');setShowFilter('ocha')");const saved=JSON.stringify([...a.storage]);
   a.c.preview='{}';a.c.S.showId='r';a.run('rememberViewSelection();restoreViewSelection()');assert.equal(a.c.S.showId,'r');
-  a.c.preview=null;a.c.S.recMode=true;a.c.S.showId='rec';a.c.S.liveShow='o';a.run('rememberViewSelection();restoreViewSelection()');
+  a.c.preview=null;a.c.S.recMode=true;a.c.S.showId='rec';a.c.S.liveShow='o';a.c.U.showFilter='';a.run('rememberViewSelection();restoreViewSelection()');assert.equal(a.c.U.showFilter,'ocha');
   assert.equal(a.c.S.showId,'rec');assert.equal(a.c.S.liveShow,'o');assert.equal(JSON.stringify([...a.storage]),saved);
 });
 test('blocked or malformed storage cannot stop the app or rewrite content',()=>{
@@ -118,4 +118,53 @@ test('source replacement clears temporary navigation before applying the new sou
   Object.assign(a.c,{uid:()=> 'placeholder',todayLabel:()=> '今日',delClip(){}});
   vm.runInContext(block('function resetForNewSource()', 'function applySetlist(d)'),a.c);a.run('resetForNewSource()');
   assert.equal(a.c.U.summaryReturn,null);assert.equal(a.c.U.lyricTarget,null);assert.equal(a.c.U.summaryScroll,null);
+});
+
+function recordingFixture(storage) {
+  const f=setup(storage),c=f.c;
+  Object.assign(c.S,{recMode:true,rsongId:'rec-r',rsongs:[
+    {id:'rec-r',recArtist:'ロージー',lines:[{t:'保持する歌詞'}]},
+    {id:'rec-o',recArtist:'OCHA NORMA',lines:[{t:'別の歌詞'}]}],plan:{slots:[{id:'keep',songId:'rec-r'}]},planFocus:'keep'});
+  for(const name of ['recordingClassification','recordingSelectionSongs','chooseRecordingSongPlanDay','selectRecordingGroup']) {
+    const i=source.indexOf('function '+name+'(');vm.runInContext(source.slice(i,source.indexOf('\n}',i)+2),c);
+  }
+  c.SONGS=()=>c.S.rsongs;
+  return f;
+}
+test('REC artist and selected song survive an immediate restart independently from LIVE',()=>{
+  const a=recordingFixture();a.c.S.recMode=false;a.run("setShowFilter('rose')");a.c.S.recMode=true;
+  a.run("selectRecordingGroup('OCHA NORMA')");
+  const b=recordingFixture(a.storage),before=snapshot(b.c),plan=JSON.stringify(b.c.S.plan);
+  b.run('restoreViewSelection();restoreRecordingSelection()');
+  assert.equal(b.c.U.showFilter,'rose');assert.equal(b.c.U.recArtistFilter,'OCHA NORMA');assert.equal(b.c.S.rsongId,'rec-o');assert.equal(b.c.U.songIdx,1);
+  assert.equal(b.c.S.groupId,'rose');assert.equal(b.c.S.showId,'r');assert.equal(snapshot(b.c),before);assert.equal(JSON.stringify(b.c.S.plan),plan);assert.equal(b.c.S.planFocus,'keep');
+  assert.equal(b.writes(),0);assert.equal(b.pushes(),0);
+});
+test('REC All is a persistent choice and does not narrow to the selected song artist',()=>{
+  const a=recordingFixture();a.run("selectRecordingGroup('OCHA NORMA');selectRecordingGroup('')");
+  const b=recordingFixture(a.storage);b.run('restoreRecordingSelection()');
+  assert.equal(b.c.U.recArtistFilter,'');assert.equal(b.c.S.rsongId,'rec-o');assert.equal(b.run('recordingSelectionSongs().length'),2);
+});
+test('LIVE startup restores the REC artist without changing the current REC song or plan',()=>{
+  const a=recordingFixture();a.run("selectRecordingGroup('OCHA NORMA')");
+  const b=recordingFixture(a.storage);b.c.S.recMode=false;const before=JSON.stringify(b.c.S);
+  b.run('restoreRecordingSelection()');assert.equal(b.c.U.recArtistFilter,'OCHA NORMA');assert.equal(JSON.stringify(b.c.S),before);
+  b.c.S.recMode=true;b.run('restoreRecordingSelection()');assert.equal(b.c.S.rsongId,'rec-o');
+});
+test('missing REC artists fall back to available songs without overwriting the saved choice',()=>{
+  const a=recordingFixture();a.run("selectRecordingGroup('OCHA NORMA')");
+  const b=recordingFixture(a.storage),absent=b.c.S.rsongs.pop(),saved=JSON.stringify([...a.storage]);
+  b.run('restoreRecordingSelection()');assert.equal(b.c.U.recArtistFilter,'');assert.equal(b.c.S.rsongId,'rec-r');assert.equal(JSON.stringify([...b.storage]),saved);
+  b.c.S.rsongs.push(absent);b.run('restoreRecordingSelection()');assert.equal(b.c.U.recArtistFilter,'OCHA NORMA');assert.equal(b.c.S.rsongId,'rec-o');
+  b.run("selectRecordingGroup('')");b.run('restoreRecordingSelection()');assert.equal(b.c.U.recArtistFilter,'');
+});
+test('REC storage errors, malformed values and viewer/preview modes cannot corrupt navigation data',()=>{
+  const a=recordingFixture();a.run("selectRecordingGroup('OCHA NORMA')");
+  const saved=JSON.stringify([...a.storage]),before=JSON.stringify(a.c.S);
+  a.c.preview='preview';a.run('rememberRecordingSelection();restoreRecordingSelection()');a.c.preview=null;a.c.S.viewer=true;a.run('rememberRecordingSelection();restoreRecordingSelection()');a.c.S.viewer=false;
+  assert.equal(JSON.stringify([...a.storage]),saved);assert.equal(JSON.stringify(a.c.S),before);
+  a.c.localStorage.setItem=()=>{throw Error('full');};a.run("selectRecordingGroup('ロージー');restoreRecordingSelection()");assert.equal(a.c.U.recArtistFilter,'ロージー');
+  for(const raw of ['{','null','[]','{"version":1,"artist":{},"songId":"rec-r"}']){
+    a.run('viewSelections.clear()');a.c.localStorage={getItem:()=>raw};assert.equal(a.run('restoreRecordingSelection()'),false);
+  }
 });

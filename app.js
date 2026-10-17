@@ -113,7 +113,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.23";
+const APP_VER = "16.41.58.24";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1717,11 +1717,13 @@ function rememberViewSelection() {
   } catch (_) { /* The normal state save remains available when storage is blocked. */ }
 }
 function restoreViewSelection(previousShowId = S.showId, initial = false) {
-  if (preview || S.recMode) return false;
+  if (preview) return false;
   const saved = readViewSelection();
   if (!saved) return false;
   const validGroup = id => S.groups.some(g => g.id === id);
   U.showFilter = saved.showFilter === "__unassigned__" || saved.showFilter === "__archive__" && !VIEW() || liveGroups().some(g => g.id === saved.showFilter) ? saved.showFilter : "";
+  // Restore the LIVE artist even when booting in REC, without changing its song.
+  if (S.recMode) return false;
   // A viewer can only reopen a performance included in this source's data.
   const available = S.shows.filter(sw => (!sw.hidden || U.showFilter === "__archive__" && !VIEW() && recoveryMaterialShow(sw)) && (!VIEW() || S.songs.some(so =>
     so.showId === sw.id && (!so.groupId || so.groupId === S.groupId))));
@@ -1741,6 +1743,36 @@ function restoreViewSelection(previousShowId = S.showId, initial = false) {
   if (S.showId !== previousShowId) U.songIdx = 0;
   // Keep a missing preference: its show may arrive with the next cloud read.
   // Only a new deliberate selection replaces it.
+  return !!selected;
+}
+function readRecordingSelection() {
+  if (preview || VIEW()) return null;
+  const key = viewSelectionKey() + ":recording";
+  if (viewSelections.has(key)) return viewSelections.get(key);
+  let saved;
+  try { saved = JSON.parse(localStorage.getItem(key) || "null"); } catch (_) { return null; }
+  if (!saved || saved.version !== 1 || typeof saved.artist !== "string" || typeof saved.songId !== "string") return null;
+  viewSelections.set(key, saved); return saved;
+}
+function rememberRecordingSelection() {
+  if (preview || VIEW() || !S.recMode) return;
+  const key = viewSelectionKey() + ":recording";
+  const saved = {version:1, artist:U.recArtistFilter || "", songId:S.rsongId || ""};
+  viewSelections.set(key, saved);
+  try { recordingInboxStorageSet(key, JSON.stringify(saved)); } catch (_) {}
+}
+function restoreRecordingSelection() {
+  const saved = readRecordingSelection();
+  if (!saved) return false;
+  const songs = S.rsongs || [];
+  U.recArtistFilter = songs.some(song => recordingClassification(song).artist === saved.artist) ? saved.artist : "";
+  if (!S.recMode) return false;
+  const candidates = songs.filter(song => !U.recArtistFilter || recordingClassification(song).artist === U.recArtistFilter);
+  const selected = candidates.find(song => song.id === saved.songId) || candidates.find(song => song.id === S.rsongId) || candidates[0];
+  if (selected) {
+    S.rsongId = selected.id; U.songIdx = songs.indexOf(selected);
+  }
+  // Missing materials can arrive later; only a new deliberate choice replaces this preference.
   return !!selected;
 }
 
@@ -5925,7 +5957,7 @@ function viewLive() {
     <button class="song-heading" data-act="picker">
       <div class="t2">${s && s.mark ? `<b style="color:var(--accent)">★</b> ` : ""}${s && !S.recMode && takeLabel(s) ? `<b class="tkmk">${h(takeLabel(s))}</b>` : ""}${h(s ? s.title : "曲がありません")}</div>
       <div class="t1">${S.recMode
-        ? `録音${s ? " ・ " + h((S.groups.find((x) => x.id === s.groupId) || {}).name || s.folder || "") : ""}`
+        ? `録音${s ? " ・ " + h(recordingClassification(s).artist) : ""}`
         : `${s ? h((S.groups.find((x) => x.id === (VIEW() ? s.groupId : songDeliveryGroupId(s))) || {}).name || "") + " ・ " : ""}${h(showName() || "公演名未設定")}${SONGS().length ? ` ・ ${U.songIdx + 1}/${SONGS().length}` : ""}${showNoPub() ? ` ・ <span style="color:var(--dim)">配信しない</span>` : `<span data-push-state style="color:${/未送信|保留|一部送信|確認待ち|確認事項|結果不明/.test(publicationStatus) ? "var(--bad)" : "var(--dim)"}">${publicationStatus ? " ・ " + h(publicationStatus) : ""}</span>`}`}${recWho()}${S.recMode ? `<span id="pcd2" style="margin-left:8px;font-variant-numeric:tabular-nums"></span>` : ""}</div>
       ${VIEW() && S.pubAt ? `<div class="song-freshness">${freshLine()}</div>` : ""}
     </button>
@@ -8308,12 +8340,13 @@ function recordingGroupSelector() {
 }
 function selectRecordingGroup(id) {
   if (VIEW()) return;
-  U.recArtistFilter = id;
+  U.recArtistFilter = S.rsongs.some(song => recordingClassification(song).artist === id) ? id : "";
   const list = recordingSelectionSongs();
   if (!list.some(x => x.id === S.rsongId) && list.length) {
     S.rsongId = list[0].id; U.songIdx = SONGS().findIndex(x => x.id === S.rsongId); U.secView = "";
     U.planSongId = ""; chooseRecordingSongPlanDay(S.rsongId);
   }
+  rememberRecordingSelection();
   render(); if (U.picker) renderSheet();
 }
 function recordingClassificationTarget(menu) {
@@ -10426,19 +10459,21 @@ document.addEventListener("click", async (e) => {
       break;
     }
     case "recon": {
+      U.songIdx = 0;
       if (!S.recMode) {
         S.liveShow = S.showId;
         S.showId = REC_SHOW;
         if (!S.shows.some((x) => x.id === REC_SHOW)) S.shows.push({ id: REC_SHOW, name: "レコーディング", ts: 0, hidden: 1 });
         S.recMode = true;
+        restoreRecordingSelection();
       } else {
         S.recMode = false;
         S.showId = S.liveShow || (showsNewestFirst().find((x) => x.id !== REC_SHOW) || {}).id || "";
         // REC selection must not become the live performance's import group.
         // Resolve the saved live destination without rewriting any ownership.
-        syncShowGroup(); rememberViewSelection();
+        restoreViewSelection(); syncShowGroup();
       }
-      U.songIdx = 0; U.view = "setup"; save(); render();
+      U.view = "setup"; save(); render();
       break;
     }
     case "recback":
@@ -10967,6 +11002,7 @@ document.addEventListener("click", async (e) => {
       U.planSongId = ""; chooseRecordingSongPlanDay(id);
       const k = SONGS().findIndex((x) => x.id === id);
       if (k >= 0) U.songIdx = k;
+      rememberRecordingSelection();
       U.menu = null; save(); U.view = "live"; render();
       break;
     }
@@ -11434,7 +11470,9 @@ async function submitRecordingClassificationForm(form) {
     }
     pushUndo(); so.recArtist = artist;
     so.recSession = {...(so.recSession || {}), id:so.recSession?.id || (label ? artist + ":" + label : "undated:" + so.id), label:label || "日付未設定"};
-    document.activeElement?.blur(); U.menu = null; U.recArtistFilter = "";
+    document.activeElement?.blur(); U.menu = null;
+    U.recArtistFilter = U.recArtistFilter ? artist : "";
+    rememberRecordingSelection();
     save(); renderSheet(); render(); return true;
   } finally {
     recordingClassificationSubmissions.delete(form); submit.disabled = false; form.removeAttribute("aria-busy");
@@ -14799,6 +14837,7 @@ function copyText(t, msg) {
   }
   if(startupRecoveryRestoredView){U.view='setup';U.showFilter='';U.songIdx=0;rememberViewSelection();}
   else{restoreViewSelection(S.showId, true);if (!readViewSelection()) rememberViewSelection();}
+  restoreRecordingSelection();
   if (VIEW() || /^#g=/.test(location.hash)) { U.view = "summary"; U.mode = "member"; }
   if (VIEW()) restoreViewerMember();
   // Keep the original localStorage copy for recovery after a successful import.

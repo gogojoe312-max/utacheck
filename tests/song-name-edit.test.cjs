@@ -11,7 +11,7 @@ function fixture(rec=false){
  for(const selector of ['#song-name','#song-name-error','#rec-classification-artist','#rec-classification-date','#rec-classification-error','[type="submit"]'])fields[selector]={value:'',hidden:true,disabled:false};
  const c=vm.createContext({S,U:{menu:{kind:rec?'rec-song-actions':'song',id:rec?'rec':'live'}},VIEW:()=>false,preview:null,recordingInboxCanWrite:()=>true,
   h:s=>String(s).replace(/[<>&"]/g,x=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[x])),WeakSet,document:{activeElement:{blur(){}}},draftFormIsComposing:()=>false,
-  renderSheet(){calls.sheet++;},render(){calls.render++;},save(){calls.save++;},schedulePush(){calls.publish++;},pushUndo(id){calls.undo.push(id);},
+  rememberRecordingSelection(){},renderSheet(){calls.sheet++;},render(){calls.render++;},save(){calls.save++;},schedulePush(){calls.publish++;},pushUndo(id){calls.undo.push(id);},
   automaticBackupBeforeEdit(){calls.backup++;return new Promise(resolve=>{finish=resolve;});}});
  vm.runInContext('const songRenameSubmissions=new WeakSet(),recordingClassificationSubmissions=new WeakSet();',c);
  for(const name of ['songRenameTarget','openSongRename','songRenameSheetHTML','submitSongRenameForm','recordingClassification','recordingClassificationTarget','editRecordingClassification','recordingClassificationSheetHTML','submitRecordingClassificationForm'])vm.runInContext(read(name),c);

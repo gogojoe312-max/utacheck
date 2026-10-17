@@ -11,7 +11,7 @@ function fixture(){
   notes:[{songId:'a',memo:'keep'}],recs:{'rec|a|1':{clip:'keep'}},plan:{slots:[{id:'slot',songId:'a'}]}};
  const c=vm.createContext({S,U:{recArtistFilter:'A',menu:null},preview:null,VIEW:()=>false,recordingInboxCanWrite:()=>true,
   h:s=>String(s??'').replace(/[<>&"]/g,k=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[k])),
-  document:{activeElement:null},folderOf:x=>x?.folder || '',draftFormIsComposing:()=>false,prompt:()=> 'New REC',confirm:()=>true,alert:s=>calls.alerts.push(s),save:()=>calls.save++,pushUndo:()=>calls.undo++,render(){},renderSheet(){},
+  document:{activeElement:null},folderOf:x=>x?.folder || '',draftFormIsComposing:()=>false,prompt:()=> 'New REC',confirm:()=>true,alert:s=>calls.alerts.push(s),save:()=>calls.save++,pushUndo:()=>calls.undo++,rememberRecordingSelection(){},render(){},renderSheet(){},
   automaticBackupBeforeEdit:async()=>{calls.backup++;return true;}});
  for(const name of ['performanceDateOrder','performanceSelectionOrder','recordingClassification','recordingSelectionSongs',
   'recordingDateInfo','canonicalRecordingFolderKey','recordingFolderKey','recordingDateBuckets','recordingDateHeading','recordingLibraryHTML','recordingDateContext',

@@ -15,7 +15,7 @@ function fixture(){
   h:x=>String(x??''),hm2min:x=>Number(x.split(':')[0])*60+Number(x.split(':')[1]),nowMin:()=>600,
   min2hm:x=>Math.floor(x/60)+':'+String(x%60).padStart(2,'0'),dmin:x=>String(x),compactMemberLabel:x=>x,
   sectionsOf:()=>[],SONGS:()=>S.rsongs,recSong:()=>S.rsongs.find(x=>x.id===S.rsongId),
-  save:()=>calls.push('save'),render:()=>calls.push('render'),renderSheet:()=>calls.push('sheet'),pauseRecSchedule:()=>calls.push('pause'),
+  rememberRecordingSelection(){},save:()=>calls.push('save'),render:()=>calls.push('render'),renderSheet:()=>calls.push('sheet'),pauseRecSchedule:()=>calls.push('pause'),
   alert:message=>calls.push(message)});
  for(const name of ['recScheduleClock','chooseRecordingSongPlanDay','recordingPlanSongCanSelect','openRecordingSongPlan','recSongActionsHTML','planRows','viewPlan'])vm.runInContext(read(name),c);
  const branch=(name,next)=>{const i=source.indexOf('case "'+name+'":');return source.slice(i,source.indexOf('case "'+next+'":',i));};
