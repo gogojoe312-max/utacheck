@@ -91,7 +91,7 @@ test('pre-live changes are separate from notes, with only actual changes exposin
  const c=fixture();delete c.S.songs[0].blocks.A;delete c.S.gsubs['show|song'].A;
  assert(!c.viewerSummaryBody().includes('member-absence-change'));
  assert(!c.viewerSummaryBody().includes('歌割の変更'));
- assert(c.memberReviewNav().includes('歌割変更（ライブ前）'));assert(c.memberReviewNav().includes('指摘'));
+ assert(c.memberReviewNav().includes('歌割変更'));assert(c.memberReviewNav().includes('指摘'));
  c.U.absenceMode='all';let html=c.viewMemberAbsence();assert.equal((html.match(/member-absence-change/g)||[]).length,4);
  c.U.absenceMode='member';c.selected=c.member('m4');html=c.viewMemberAbsence();assert.equal((html.match(/member-absence-change/g)||[]).length,1);assert(html.includes('新しく担当'));
  c.S.subs={};c.S.gsubs={};assert.equal(c.memberReviewNav(),'');assert(!c.viewerSummaryBody().includes('member-absence-change'));

@@ -50,7 +50,7 @@ async function checkAbsence(page,width,{mode,assertFits,screenshot}){
   });
   assert.equal(await page.locator('.member-absence-change').count(),0,'Notes do not contain pre-live changes');
   assert.equal(await page.locator('.summary-tabs [data-act="goabsent"]').count(),0);
-  assert.equal(await page.locator('.member-review-nav [data-act="goabsent"]').innerText(),'歌割変更（ライブ前）');
+  assert.equal(await page.locator('.member-review-nav [data-act="goabsent"]').innerText(),'歌割変更');
   await page.locator('.member-review-nav [data-act="goabsent"]').click();await page.waitForFunction(()=>U.view==='absent');
   await expectLines([0,1,2,3,5]);
   assert.equal(await page.locator('.member-song').count(),1);
@@ -64,7 +64,7 @@ async function checkAbsence(page,width,{mode,assertFits,screenshot}){
   assert.deepEqual(await page.evaluate(()=>[0,1,2,3,4,5].map(i=>lineStatus(S.songs[0],i))),['','changed','changed','changed','','']);
   assert.equal(await page.locator('[data-act="toggleabsent"],[data-act="setassign"],[data-act="setblock"]').count(),0);
   await assertFits(page);await screenshot(page,width,'absence-summary-all');
-  assert.equal(await page.locator('[data-act="goabsent"]').innerText(),'歌割変更（ライブ前）');
+  assert.equal(await page.locator('[data-act="goabsent"]').innerText(),'歌割変更');
   assert.equal(await page.locator('.summary-tabs>button').evaluateAll(nodes=>nodes.every(el=>el.scrollWidth<=el.clientWidth+1&&el.getBoundingClientRect().right<=innerWidth)),true,'Summary actions stay readable');
   await page.locator('[data-act="goabsent"]').click();
   await page.waitForFunction(()=>U.view==='absent');
