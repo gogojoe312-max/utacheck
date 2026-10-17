@@ -359,3 +359,14 @@ select.field{appearance:auto}textarea.field{resize:vertical}
 .settings-song-title{display:block;white-space:normal;overflow:visible;overflow-wrap:anywhere;text-overflow:clip;-webkit-line-clamp:unset;max-height:none;font-size:15px;line-height:1.55}
 #app .row.card.settings-song-row>.organize-more{flex:0 0 44px;width:44px;min-width:44px;min-height:44px;padding:0!important}
 }
+
+/* Pending operations keep their feedback across screen and sheet rerenders. */
+@media screen {
+ #operation-progress[hidden]{display:none}
+ #operation-progress{position:fixed;inset:0;z-index:2147483000;display:flex;align-items:center;justify-content:center;padding:24px;background:#111215b8;cursor:progress;touch-action:none}
+ .operation-progress-card{display:flex;align-items:center;gap:14px;max-width:min(90vw,420px);padding:22px 24px;border:1px solid #ffffff16;border-radius:18px;background:#1c1e23;color:#f3f4f7;font-size:15px;overflow-wrap:anywhere;box-shadow:0 12px 40px #0005}
+ .operation-progress-spinner{flex:0 0 26px;width:26px;height:26px;border:3px solid #a6c8ff40;border-top-color:#a6c8ff;border-radius:50%;animation:operation-progress-spin .8s linear infinite}
+ @keyframes operation-progress-spin{to{transform:rotate(360deg)}}
+ @media(prefers-reduced-motion:reduce){.operation-progress-spinner{animation:none}}
+}
+@media print{#operation-progress{display:none!important}}

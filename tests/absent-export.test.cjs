@@ -49,6 +49,44 @@ test('share happens immediately on the explicit click and cancel keeps the downl
  c.presentExcelExport('公演.zip',new Blob(['abc'],{type:'application/zip'}),1,[]);
  const promise=c.shareExcelExport();assert.equal(shared,true);await promise;assert(c.U.excelExport.url);assert.equal(c.U.sharingExcel,false);
 });
+test('Excel export opens native sharing directly without an intermediate result sheet',async()=>{
+ let c,shares=0;
+ c=setup({navigator:{canShare:()=>true,share:async({files})=>{
+  shares++;assert.notEqual(c.U.menu?.kind,'excel-export');assert.equal(c.U.busy,'');
+  assert.equal(files.length,1);const wb=XLSX.read(new Uint8Array(await files[0].arrayBuffer()),{type:'array'});
+  assert.equal(wb.Sheets['欠席ver'].A1.v,'橋田');assert.equal(wb.Sheets['歌割'].A1.v,'相馬');
+ }},alert:m=>assert.fail(m),absentIds:()=>['a'],absentTab:()=> '欠席ver',showName:()=> '公演',
+ absentEdits:()=>({A1:'橋田'}),getClip:async()=>new Blob([fixture()]),micEdits:()=>({})});
+ await c.runAbsentExport([{id:'one',title:'曲',sheetName:'歌割'}],false);
+ assert.equal(shares,1);assert.equal(c.U.excelExport,null);assert.notEqual(c.U.menu?.kind,'excel-export');assert.equal(c.U.exportingExcel,false);
+});
+test('automatic sharing cancel returns to the app; denied tap permission keeps a direct retry and partial failures remain visible',async()=>{
+ for(const name of ['AbortError','NotAllowedError']){
+  const c=setup({navigator:{canShare:()=>true,share:async()=>{throw Object.assign(Error(),{name});}},alert:m=>assert.fail(m)});
+  c.presentExcelExport('曲.xlsx',new Blob(['file']),1,[],[],false);
+  await c.shareExcelExport({automatic:true});
+  assert.equal(c.U.sharingExcel,false);
+  if(name==='AbortError')assert.equal(c.U.excelExport,null);
+  else {assert.equal(c.U.menu.kind,'excel-export');assert(c.U.excelExport.blob);}
+ }
+ const c=setup({navigator:{canShare:()=>true,share:async()=>{}},alert:m=>assert.fail(m)});
+ c.presentExcelExport('公演.zip',new Blob(['file']),1,['出力できない曲'],['missing'],false);
+ await c.shareExcelExport({automatic:true});assert.equal(c.U.menu.kind,'excel-export');assert.deepEqual(Array.from(c.U.excelExport.missingExcelIds),['missing']);
+});
+test('local idle preparation has no UI or network effects and sharing unchanged prepared files starts inside the tap',async()=>{
+ let shares=0,reads=0;
+ const so={id:'one',title:'曲',sheetName:'歌割'},c=setup({navigator:{canShare:()=>true,share:async()=>{shares++;}},
+  alert:m=>assert.fail(m),absentIds:()=>['a'],absentTab:()=> '欠席ver',showName:()=> '公演',
+  absentEdits:()=>({A1:'橋田'}),getClip:async()=>new Blob([fixture()]),micEdits:()=>({})});
+ c.S.songs=[so];const before=JSON.stringify(c.S);
+ c.originalExcelExportSource=async()=>{reads++;throw Error('No background download allowed');};
+ await c.runAbsentExport([so],true,{prepareOnly:true});
+ assert.equal(shares,0);assert.equal(reads,0);assert.equal(c.U.excelExport,undefined);assert.equal(c.U.busy,undefined);assert.equal(JSON.stringify(c.S),before);
+ const sharing=c.runAbsentExport([so],false);assert.equal(shares,1,'Native sharing is invoked before the click yields');await sharing;
+ so.title='変更後';await c.runAbsentExport([so],false);
+ assert.equal(shares,1,'Changed state cannot reuse the prepared file');assert.equal(reads,1);
+ assert.equal(c.U.fileReport.failed.length,1);assert.equal(c.U.exportingExcel,false);
+});
 
 test('repeated exports preserve existing version tabs and use unique worksheet names',async()=>{
  const c=setup();let data=fixture();

@@ -268,6 +268,49 @@ async function checkExcelReattach(page,width,dialogs){
   assert.equal(restoredBatch.state,restoredBefore);assert.equal(restoredBatch.count,1);assert.equal(restoredBatch.files,1);assert.deepEqual(restoredBatch.failures,[]);assert(restoredBatch.name.endsWith('.zip'));
   assert.equal(restoredBatch.cover,'Synthetic cover to preserve');assert.equal(restoredBatch.original,'甲');assert.equal(restoredBatch.replacement,'乙');
 
+  // A slow original lookup must show feedback immediately, then share directly.
+  await page.getByRole('dialog',{name:'Excelの保存'}).locator('[data-act="excel-export-close"]').click();
+  await page.evaluate(()=>{
+   window.qaShareDescriptors={share:Object.getOwnPropertyDescriptor(navigator,'share'),canShare:Object.getOwnPropertyDescriptor(navigator,'canShare')};
+   window.qaNativeShares=[];window.qaOriginalExportSource=originalExcelExportSource;runAbsentExport.prepared=new Map();
+   Object.defineProperty(navigator,'canShare',{configurable:true,value:()=>true});
+   Object.defineProperty(navigator,'share',{configurable:true,value:async({files})=>{
+    qaNativeShares.push({name:files[0].name,resultSheet:U.menu?.kind==='excel-export',loading:!document.getElementById('operation-progress').hidden});
+   }});
+   originalExcelExportSource=async(...args)=>{await new Promise(resolve=>window.qaReleaseExcel=resolve);return qaOriginalExportSource(...args);};
+  });
+  try{
+   await exportButton.click();await page.locator('#operation-progress').waitFor({state:'visible'});
+   assert.match(await page.locator('#operation-progress').innerText(),/Excel/);
+   assert.equal(await page.getByRole('dialog',{name:'Excelの保存'}).count(),0);
+   await page.waitForFunction(()=>typeof window.qaReleaseExcel==='function');await page.evaluate(()=>qaReleaseExcel());await page.waitForFunction(()=>qaNativeShares.length===1&&!U.exportingExcel);
+   const shared=await page.evaluate(()=>({shares:qaNativeShares,state:JSON.stringify(S),file:U.excelExport}));
+   assert.equal(shared.shares[0].resultSheet,false);assert.equal(shared.shares[0].loading,false);assert(shared.shares[0].name.endsWith('.xlsx'));
+   assert.equal(shared.state,restoredBefore);assert.equal(shared.file,null);await page.locator('#operation-progress').waitFor({state:'hidden'});
+   // The next tap must invoke sharing inside the tap, using unchanged prepared bytes.
+   await page.evaluate(()=>{originalExcelExportSource=async()=>{throw Error('Prepared export must not reread');};});
+   await exportButton.click();await page.waitForFunction(()=>qaNativeShares.length===2&&!U.exportingExcel);
+   assert.equal(await page.getByRole('dialog',{name:'Excelの保存'}).count(),0);
+   assert.equal(await page.evaluate(()=>JSON.stringify(S)),restoredBefore);
+
+  const progressLifecycle=await page.evaluate(()=>{
+   const input=document.createElement('input');input.readOnly=true;document.body.appendChild(input);input.focus();
+   const first=OperationProgress.begin('読み込み中…'),second=OperationProgress.begin('保存中…');
+   first();const pending=!document.getElementById('operation-progress').hidden;
+   const focused=document.activeElement===input;second();
+   const finished=document.getElementById('operation-progress').hidden;input.remove();return {pending,focused,finished};
+  });
+  assert.deepEqual(progressLifecycle,{pending:true,focused:true,finished:true});
+
+  }finally{
+   await page.evaluate(()=>{
+    originalExcelExportSource=qaOriginalExportSource;
+    for(const key of ['share','canShare']){const descriptor=qaShareDescriptors[key];if(descriptor)Object.defineProperty(navigator,key,descriptor);else delete navigator[key];}
+    delete window.qaOriginalExportSource;delete window.qaShareDescriptors;delete window.qaNativeShares;delete window.qaReleaseExcel;
+   });
+  }
+
+
  }finally{
   await page.evaluate(async saved=>{
    closeExcelExport();S=JSON.parse(saved.state);Object.keys(U).forEach(key=>delete U[key]);Object.assign(U,JSON.parse(saved.ui));
@@ -276,5 +319,5 @@ async function checkExcelReattach(page,width,dialogs){
   },saved);
   assert.equal(await page.evaluate(()=>JSON.stringify(S)),saved.state,'Excel check restores exact prior application state');
  }
- return {reattach:true,wrongWorkbookRejected:true,oldWorkbookPreserved:true,idsLyricsNotesPreserved:true,export:true,batchReattach:true,onDemandOriginal:true,restoredSongIndividualAndBatch:true};
+ return {reattach:true,wrongWorkbookRejected:true,oldWorkbookPreserved:true,idsLyricsNotesPreserved:true,export:true,batchReattach:true,onDemandOriginal:true,restoredSongIndividualAndBatch:true,directNativeShareAndLoading:true};
 }

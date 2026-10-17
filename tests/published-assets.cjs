@@ -2,7 +2,7 @@
 // Read-only verification of the existing site. No user data or credentials.
 const fs=require('node:fs'),assert=require('node:assert/strict'),{createHash}=require('node:crypto');
 const base='https://gogojoe312-max.github.io/utacheck/';
-const paths=['index.html','app.js','sw.js','recovery-delivery.js','ui.js','ui.css','absence-changes.js','private-preparation-source.js','private-preparation-ui.js'];
+const paths=['index.html','app.js','sw.js','operation-progress.js','manifest.webmanifest','startup/iphone-1206x2622.png','recovery-delivery.js','ui.js','ui.css','absence-changes.js','private-preparation-source.js','private-preparation-ui.js'];
 const hash=content=>createHash('sha256').update(content).digest('hex');
 (async()=>{
  const expected=new Map(paths.map(path=>[path,hash(fs.readFileSync(require('node:path').join(__dirname,'..',path)))]));

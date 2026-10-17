@@ -113,7 +113,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.30";
+const APP_VER = "16.41.58.31";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1498,8 +1498,10 @@ async function automaticBackupBeforeEdit(reason) {
     }
   });
   const checkpointSnapshot=backupState();
+  const finishProgress=typeof OperationProgress!=="undefined" ? OperationProgress.begin("保存中…") : ()=>{};
   try { await verifiedEditBackup.checkpoint(reason); U.backupError=''; U.backupFailureCode=''; return true; }
   catch(error) { const after=backupState();U.backupChangedFields=Object.keys({...checkpointSnapshot,...after}).filter(k=>JSON.stringify(checkpointSnapshot[k])!==JSON.stringify(after[k])); U.backupFailureCode=error.backupCode||error.name||'BACKUP_FAILED'; U.backupError='編集前の保存を確認できないため、変更を止めました。空き容量・ほかの画面の編集中の状態を確認し、画面を開き直してください。'; alert(U.backupError); return false; }
+  finally { finishProgress(); }
 }
 
 function ensurePersonalPrivateGroup() {
@@ -4119,6 +4121,7 @@ const footerHTML = () => `
     </div>`;
 
 async function checkAppUpdate() {
+  const finishProgress = typeof OperationProgress !== "undefined" ? OperationProgress.begin("更新を確認中…") : ()=>{};
   try {
     const url = new URL('./index.html', location.href); url.searchParams.set('app-update-check', Date.now());
     const response = await fetch(url.href, {cache:'no-store'});
@@ -4130,6 +4133,7 @@ async function checkAppUpdate() {
     U.appUpdateText = match[1] === APP_VER ? 'この画面は公開版 ' + APP_VER + ' を読み込んでいます。'
       : 'この画面は ' + APP_VER + '、公開版は ' + match[1] + ' です。録音・入力を終えてから開き直してください。';
   } catch (_) { U.appUpdateVersion = ''; U.appUpdateText = '公開版を確認できませんでした。オンラインで再確認してください。この画面は ' + APP_VER + ' です。'; }
+  finally { finishProgress(); }
   U.appInfoOpen = true;
   render();
 }
@@ -5961,6 +5965,7 @@ function typingNow() {
   return true;
 }
 function render(background = false) {
+  if (typeof OperationProgress !== "undefined") OperationProgress.sync(U.busy);
   if (U.view !== "absent" || VIEW() || preview || absenceEditBatch && !absenceEditScopeMatches(absenceEditBatch)) resetAbsenceEditBatch();
   if (!recordingInboxCanWrite()) return;
   // Cached member data may have the same version as the server (or be offline),
@@ -6027,6 +6032,7 @@ function render(background = false) {
       : U.view === "print" ? printTitle() : "歌チェック";
   } catch (e) { /* 名前を変えられない場合は既定のまま */ }
   if (U.view === "setup") setTimeout(() => showPianoAtC4(app), 0);
+  if (typeof warmAbsentExcelExports === "function") warmAbsentExcelExports();
 }
 
 // 今日の日付（ファイル名用）
@@ -6708,6 +6714,7 @@ function focusSheetTextInput(root, selector) {
 }
 
 function renderSheet() {
+  if (typeof OperationProgress !== "undefined") OperationProgress.sync(U.busy);
   if (typeof NoteVoice !== "undefined") NoteVoice.stop();
   resumeRender();
   // A select or Save button can blur the text input while its draft is still
@@ -6795,8 +6802,8 @@ function renderSheet() {
     const item = U.excelExport;
     overlay = document.createElement("div"); overlay.className = "mask";
     overlay.innerHTML = `<button class="sp" data-act="excel-export-close" aria-label="閉じる"></button><div class="sheet organize-sheet" role="dialog" aria-modal="true" aria-label="Excelの保存">
-      <div class="row"><b class="grow">${item.count}曲のExcelを作成しました</b><button class="chip" data-act="excel-export-close">閉じる</button></div>
-      <p>成功 ${item.count}曲　失敗 ${item.failures.length}曲</p><p class="note" style="overflow-wrap:anywhere">${h(item.name)}</p>
+      <div class="row"><b class="grow">Excelを保存・共有</b><button class="chip" data-act="excel-export-close">閉じる</button></div>
+      <p class="note" style="overflow-wrap:anywhere">${h(item.name)}</p>
       <button class="primary" data-act="excel-export-share">保存・共有</button>
       <a class="organize-action" href="${h(item.url)}" download="${h(item.name)}">ダウンロードして保存</a>
       ${item.name.endsWith(".zip") ? '<p class="note">曲ごとのExcelをZIPにまとめています。iPhoneでは「ファイルに保存」後、ZIPをタップすると開けます。</p>' : ""}
@@ -7814,6 +7821,7 @@ async function sharePdfExport() {
 async function savePrintPDF() {
   if(U.pdfBuilding||!["print","recprint"].includes(U.view))return;
   U.pdfBuilding=true;
+  const finishProgress=typeof OperationProgress!=="undefined" ? OperationProgress.begin("PDFを準備中…") : ()=>{};
   const view=U.view,before=JSON.stringify(S),buttons=Array.from(document.querySelectorAll('[data-act="doprint"]'));
   buttons.forEach(b=>{b.disabled=true;b.textContent="PDF作成中…";});
   try{
@@ -7828,7 +7836,7 @@ async function savePrintPDF() {
     closePdfExport();U.pdfExport={blob:result.blob,name:result.filename,pages:result.pages,url:URL.createObjectURL(result.blob)};
     U.menu={kind:"pdf-export"};renderSheet();
   }catch(e){alert("PDFを作成できませんでした。\n"+(e.message||"時間をおいてもう一度お試しください。"));}
-  finally{U.pdfBuilding=false;buttons.forEach(b=>{b.disabled=false;b.textContent="PDFで保存";});}
+  finally{finishProgress();U.pdfBuilding=false;buttons.forEach(b=>{b.disabled=false;b.textContent="PDFで保存";});}
 }
 
 function closeExcelExport() {
@@ -7836,21 +7844,33 @@ function closeExcelExport() {
   U.excelExport = null;
   if (U.menu?.kind === "excel-export") U.menu = null;
 }
-function presentExcelExport(name, blob, count, failures, missingExcelIds = []) {
+function presentExcelExport(name, blob, count, failures, missingExcelIds = [], open = true) {
   closeExcelExport();
   U.excelExport = {name, blob, count, failures, missingExcelIds, url:URL.createObjectURL(blob)};
-  U.menu = {kind:"excel-export"}; renderSheet();
+  if (open) { U.menu = {kind:"excel-export"}; renderSheet(); }
 }
-async function shareExcelExport() {
+async function shareExcelExport({automatic = false} = {}) {
   const item = U.excelExport;
   if (!item || U.sharingExcel) return;
   try {
     const file = new File([item.blob], item.name, {type:item.blob.type});
-    if (!navigator.canShare?.({files:[file]})) { downloadBlob(item.name, item.blob); return; }
+    if (!navigator.canShare?.({files:[file]})) {
+      if (automatic) { U.menu = {kind:"excel-export"}; renderSheet(); }
+      else downloadBlob(item.name, item.blob);
+      return;
+    }
     U.sharingExcel = true;
     await navigator.share({files:[file]});
+    if (automatic && !item.failures.length) { closeExcelExport(); renderSheet(); }
+    else if (automatic) { U.menu = {kind:"excel-export"}; renderSheet(); }
   } catch (e) {
-    if (e.name !== "AbortError") alert("共有を開けませんでした。「ダウンロードして保存」をお使いください。");
+    if (automatic) {
+      // A long first download can outlast Safari's tap permission. Keep a
+      // direct share button for that case, without a success/result screen.
+      if (e.name === "AbortError" && !item.failures.length) closeExcelExport();
+      else U.menu = {kind:"excel-export"};
+      renderSheet();
+    } else if (e.name !== "AbortError") alert("共有を開けませんでした。「ダウンロードして保存」をお使いください。");
   } finally { U.sharingExcel = false; }
 }
 function hasAbsentExportChanges(so) {
@@ -7887,22 +7907,43 @@ async function buildAbsentWorkbook(so, tab, edits, originalSource) {
 function absentExportFilename(title, tab) {
   return `${title}_${tab}`.replace(/[\\/:*?"<>|\x00-\x1f]/g, "_").slice(0,180) + ".xlsx";
 }
-async function runAbsentExport(songs, bundle) {
+async function runAbsentExport(songs, bundle, {prepareOnly = false} = {}) {
   if (U.exportingExcel) return;
-  if (!absentIds().length) { alert("欠席者が設定されていません。"); return; }
+  if (!absentIds().length) { if (!prepareOnly) alert("欠席者が設定されていません。"); return; }
+  const cacheKey = (bundle ? "bundle:" : "single:") + songs.map(so=>so.id).join("|");
+  const cached = !prepareOnly && runAbsentExport.prepared?.get(cacheKey);
+  if (cached) {
+    try {
+      cached.context.assertUnchanged();
+      if (cached.targets !== JSON.stringify(songs)) throw new Error("changed");
+    } catch (_) { runAbsentExport.prepared.delete(cacheKey); }
+    if (runAbsentExport.prepared.has(cacheKey)) {
+      U.exportingExcel = true;
+      try {
+        presentExcelExport(cached.name,cached.blob,cached.count,cached.failures,cached.missingExcelIds,false);
+        await shareExcelExport({automatic:true});
+      } finally { U.exportingExcel = false; render(); }
+      return;
+    }
+  }
   const tab = absentTab(), title = showName() || "公演";
   const targets = songs.slice(), sourceContext = originalExcelExportContext();
-  U.exportingExcel = true;
-  closeExcelExport();
+  if (!prepareOnly) { U.exportingExcel = true; closeExcelExport(); }
   const files = Object.create(null), failures = [], missingExcelIds = [];
+  const prepared = new Map();
   try {
     for (let i = 0; i < targets.length; i++) {
       const so = targets[i];
-      U.busy = `Excel作成 ${i + 1}/${targets.length} ${so.title}`; render();
-      await new Promise(resolve => setTimeout(resolve, 0));
+      if (prepareOnly && U.exportingExcel) return;
+      if (!prepareOnly) { U.busy = `Excel作成 ${i + 1}/${targets.length} ${so.title}`; render(); }
+      await new Promise(resolve => setTimeout(resolve, prepareOnly ? 0 : 20));
       try {
         if (!Object.keys(absentEdits(so)).length && !hasAbsentExportChanges(so)) continue;
-        const original = await originalExcelExportSource(so,sourceContext);
+        // Idle preparation uses already linked local originals only. A tap
+        // performs any missing authenticated download with visible progress.
+        const local = prepareOnly && await getOriginalExcel(so,false,sourceContext.isActive);
+        if (prepareOnly && !local) return;
+        const original = local ? {blob:local,song:so} : await originalExcelExportSource(so,sourceContext);
         const edits = absentEdits(original.song);
         const data = await buildAbsentWorkbook(original.song, tab, edits,original);
         sourceContext.assertUnchanged();
@@ -7910,10 +7951,13 @@ async function runAbsentExport(songs, bundle) {
         let name = base, suffix = 2;
         while (files[name]) name = base.replace(/\.xlsx$/, ` (${suffix++}).xlsx`);
         files[name] = data;
+        prepared.set("single:"+so.id,{name:base,blob:new Blob([data],{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}),count:1,failures:[],missingExcelIds:[],context:sourceContext,targets:JSON.stringify([so])});
       } catch (e) { failures.push(`${so.title}（Excel出力）\n${fileFailureReason(e)}`); if (e.originalExcelMissing) missingExcelIds.push(so.id); }
     }
     const names = Object.keys(files);
+    if (prepareOnly && failures.length) return;
     if (!names.length) {
+      if (prepareOnly) return;
       if (failures.length) showFileReport("Excel出力結果", [], failures, [], missingExcelIds);
       else alert("変更された行がありません。");
       return;
@@ -7921,10 +7965,23 @@ async function runAbsentExport(songs, bundle) {
     const data = bundle ? await zip(files, null, false) : files[names[0]];
     const name = bundle ? absentExportFilename(title,tab).replace(/\.xlsx$/, ".zip") : names[0];
     sourceContext.assertUnchanged();
+    const item = {name,blob:new Blob([data], {type:bundle ? "application/zip" : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}),count:names.length,failures,missingExcelIds,context:sourceContext,targets:JSON.stringify(songs)};
+    if (!failures.length) prepared.set(cacheKey,item);
+    runAbsentExport.prepared = prepared;
+    if (prepareOnly) return;
     U.busy = ""; render();
-    presentExcelExport(name, new Blob([data], {type:bundle ? "application/zip" : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}), names.length, failures, missingExcelIds);
-  } catch (e) { alert("Excelを作れませんでした。\n" + e.message); }
-  finally { U.busy = ""; U.exportingExcel = false; render(); }
+    presentExcelExport(item.name,item.blob,item.count,failures,missingExcelIds,false);
+    await shareExcelExport({automatic:true});
+  } catch (e) { if (!prepareOnly) alert("Excelを作れませんでした。\n" + e.message); }
+  finally { if (!prepareOnly) { U.busy = ""; U.exportingExcel = false; render(); } }
+}
+function warmAbsentExcelExports() {
+  if (U.view !== "absent" || U.busy || U.absencePending || U.exportingExcel || U.menu || U.sheet || VIEW() || preview || typingNow() || !absentIds().length) { clearTimeout(warmAbsentExcelExports.timer); warmAbsentExcelExports.signature = null; return; }
+  const songs = SONGS().slice(), signature = JSON.stringify([stateRevision,S.showId,S.groupId,songs.map(so=>so.id)]);
+  if (warmAbsentExcelExports.state === S && warmAbsentExcelExports.signature === signature) return;
+  clearTimeout(warmAbsentExcelExports.timer);
+  warmAbsentExcelExports.state = S; warmAbsentExcelExports.signature = signature;
+  warmAbsentExcelExports.timer = setTimeout(()=>{ if (warmAbsentExcelExports.state === S && warmAbsentExcelExports.signature === signature && !U.busy && !U.exportingExcel && U.view === "absent") void runAbsentExport(songs,true,{prepareOnly:true}); },600);
 }
 async function exportAllAbsentXlsx() {
   return runAbsentExport(SONGS().slice(), true);
@@ -7995,6 +8052,7 @@ async function toggleAbsenceMember(id, button) {
     U.absencePending = false;
     document.querySelectorAll('[data-act="toggleabsent"]').forEach(el=>{el.disabled=false;});
     if (button?.isConnected) { button.textContent=label; button.removeAttribute("aria-busy"); }
+    if (typeof warmAbsentExcelExports === "function") warmAbsentExcelExports();
   }
 }
 
@@ -10256,6 +10314,9 @@ document.addEventListener("click", async (e) => {
   if (e.target.closest("[data-r]") && U.sheet) return;   // 文字の選択はなぞりで扱う
   if (!b) return;
   const a = b.dataset.act, i = +b.dataset.i, id = b.dataset.id;
+  const operationLabels = {toggleabsent:"欠席対応を保存中…",ghpush:"送信中…",bknow:"バックアップを確認中…",bkfile:"保存用ファイルを準備中…",syncnow:"読み込み中…",synow:"読み込み中…",bkrestore:"データを読み込み中…",bkfind:"保存データを検索中…",bkfromid:"データを読み込み中…",bkfrompub:"配信データを読み込み中…","backup-restore":"保存データを確認中…"};
+  const finishProgress = operationLabels[a] && typeof OperationProgress !== "undefined" ? OperationProgress.begin(operationLabels[a]) : ()=>{};
+  try {
   if (a === "toggleabsent") { await toggleAbsenceMember(id,b); return; }
   resetAbsenceEditBatch();
   // Diagnostics must not commit or blur unsaved input through the generic button path.
@@ -10753,7 +10814,7 @@ document.addEventListener("click", async (e) => {
       startPreview(g.src, g.key || "");
       break;
     }
-    case "synow": syncSetlist(true); break;
+    case "synow": await syncSetlist(true); break;
     case "pastelink": {
       // ホーム画面に追加すると、Safariで開いた時の接続情報が引き継がれない。
       // その場でリンクを貼って つなぎ直せるようにする。
@@ -11461,21 +11522,21 @@ document.addEventListener("click", async (e) => {
     case "doprint": void savePrintPDF(); break;
     case "prlook": setPrLook(prLook() === "plain" ? "xl" : "plain"); render(); break;
     case "ghstart": gistStart(id); break;
-    case "ghpush": doPush("force"); break;
+    case "ghpush": await doPush("force"); break;
     case "ghverify": verifyToken(); break;
-    case "backup-restore": if (S.bkGistId) restoreBackup(); else findBackup(); break;
-    case "bknow": backupWithCloudCheck(); break;
+    case "backup-restore": if (S.bkGistId) await restoreBackup(); else await findBackup(); break;
+    case "bknow": await backupWithCloudCheck(); break;
     case "backup-check": inspectCloudBackup(); break;
     case "backup-inspect": inspectCloudBackup(); break;
-    case "bkfile": backupToFile(); break;
+    case "bkfile": await backupToFile(); break;
     case "backup-file-restore": chooseBackupFile(); break;
     case "recording-addition": chooseRecordingAddition(); break;
-    case "bkrestore": restoreBackup(); break;
-    case "bkfind": findBackup(); break;
+    case "bkrestore": await restoreBackup(); break;
+    case "bkfind": await findBackup(); break;
     case "bkpick": pickTarget(); break;
-    case "syncnow": syncNow(); break;
-    case "bkfromid": restoreFromId(); break;
-    case "bkfrompub": recoverFromDelivery(); break;
+    case "syncnow": await syncNow(); break;
+    case "bkfromid": await restoreFromId(); break;
+    case "bkfrompub": await recoverFromDelivery(); break;
     case "alertok": {
       const a = S.pubAlert;
       if (a && a.id) { S.alertSeen = a.id; save(); }
@@ -11678,6 +11739,7 @@ document.addEventListener("click", async (e) => {
 
 
   }
+  } finally { finishProgress(); }
 });
 
 // Folder expansion is a local navigation preference, never saved into content
