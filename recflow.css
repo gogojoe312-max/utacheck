@@ -25,6 +25,16 @@
 .plan-more button{min-height:44px;padding:8px 12px}
 .plan-settings{margin-top:20px;border-top:1px solid var(--line)}.plan-settings>summary{padding:16px 4px;min-height:48px;font-size:14px;cursor:pointer;color:var(--accent)}
 .plan-settings .row{flex-wrap:wrap}.plan-settings .row>input.grow{min-width:100px}
+.rec-browse-tools{margin:12px 0}
+.rec-browse-tools [aria-pressed="true"]{background:var(--accent);color:#101113;font-weight:700}
+.rec-browse-tools button{min-height:44px;min-width:88px}
+.rec-browse-tools .note{margin:6px 0 0}
+.rec-browse-date{margin:20px 0}
+.rec-browse-date-heading{display:flex;align-items:baseline;gap:12px;margin:0 0 10px}
+.rec-browse-date-heading h4{flex:1;font-size:17px;margin:0;overflow-wrap:anywhere}
+.rec-browse-date-heading>span{font-size:12px;color:var(--dim);white-space:nowrap}
+.rec-browse-meta{display:block;font-size:12px;line-height:1.6;color:var(--dim);white-space:normal;overflow-wrap:anywhere;margin:4px 0}
+.rec-browse-choice{display:block;width:100%;text-align:left;margin-bottom:8px}
 @media print{.rec-tools,.rec-break-bar{display:none!important}}
 
 /* 録音中の主要操作は、共通のコンパクト表示より優先する。 */

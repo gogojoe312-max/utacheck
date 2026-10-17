@@ -113,7 +113,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.22";
+const APP_VER = "16.41.58.23";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -6760,7 +6760,8 @@ function renderSheet() {
 
       <div class="sec"><h4>曲</h4>
         ${recordingGroupSelector()}
-        ${recordingLibraryHTML(recordingSelectionSongs(), x => `<button class="ghost" data-act="ruse" data-id="${h(x.id)}" style="text-align:left;margin-bottom:6px;${x.id === S.rsongId ? "background:var(--accent);color:#0A0A0A" : ""}">${h(x.title)}</button>`) || `<p class="note">曲がありません</p>`}
+        ${recordingBrowseControlsHTML()}
+        ${recordingBrowseHTML(recordingSelectionSongs(), (x, dates) => `<button class="ghost rec-browse-choice" data-rec-song="${h(x.id)}" data-act="ruse" data-id="${h(x.id)}" style="${x.id === S.rsongId ? "outline:1px solid var(--accent)" : ""}"><span class="settings-song-title">${h(x.title)}</span>${recordingBrowseSongMeta(x, dates)}</button>`) || `<p class="note">曲がありません</p>`}
       </div>
       <div class="sec">${recordingPlanEntryHTML()}</div>
       ${VIEW() && unreadSongs().length ? `<div class="sec">
@@ -7829,21 +7830,21 @@ function recSongActionsHTML(id) {
   const action = (act, label, danger = false) => `<button class="organize-action" data-act="${act}" data-id="${h(so.id)}"${danger ? ' style="color:var(--bad)"' : ""}>${label}</button>`;
   return `<button class="sp" data-act="closemenu" aria-label="閉じる"></button><div class="sheet organize-sheet" role="dialog" aria-modal="true" aria-label="曲の操作">
     <div class="row"><b class="grow settings-song-title">${h(so.title)}</b><button class="chip" data-act="closemenu">閉じる</button></div>
-    ${(S.plan?.slots || []).some(slot => slot.songId === so.id) ? action("rec-song-plan", "進行表をひらく") : ""}${action("song-rename", "曲名を変更")}${action("rpdf", "PDFにする")}${action("rec-classify", "日付・アーティストを変更")}${action("rfset", "保存フォルダを変更")}${action("rdel", "曲を削除", true)}
+    ${(S.plan?.slots || []).some(slot => slot.songId === so.id) ? action("rec-song-plan", "進行表をひらく") : ""}${action("song-rename", "曲名を変更")}${action("rpdf", "PDFにする")}${action("rec-classify", "日付・アーティストを変更")}${action("rdel", "曲を削除", true)}
   </div>`;
 }
 
 function viewSetupRec() {
   const cur = recordingSelectionSongs();
-  const songRow = (x) => `<div class="row card settings-song-row" data-drop="r:${x.id}" style="margin-bottom:8px;padding:10px 12px;${x.id === S.rsongId ? "outline:1px solid var(--accent)" : ""}">
-      <span class="grip" data-drag="rec:${x.id}">⣿</span>
+  const songRow = (x, dates) => `<div class="row card settings-song-row" data-rec-song="${h(x.id)}" style="margin-bottom:8px;padding:10px 12px;${x.id === S.rsongId ? "outline:1px solid var(--accent)" : ""}">
       <button class="grow settings-song-select" data-act="ruse" data-id="${x.id}">
         <div class="settings-song-title" style="${x.id === S.rsongId ? "color:var(--accent)" : ""}">${h(x.title)}</div>
+        ${recordingBrowseSongMeta(x, dates)}
         <div class="trunc" style="font-size:11px;color:var(--dim)">${x.lines.filter((l) => !l.gap).length}行${x.cols > 1 ? ` ・ ${x.cols}段` : ""}</div>
       </button>
       <button class="organize-more" data-act="rec-song-actions" data-id="${x.id}" aria-label="${h(x.title)}の操作">⋯</button>
     </div>`;
-  const list = recordingLibraryHTML(cur, songRow, {editable:true});
+  const list = recordingBrowseHTML(cur, songRow);
 
   return `
   <div class="hd"><button class="ic" data-act="go-live">‹</button><b>設定</b>
@@ -7854,9 +7855,7 @@ function viewSetupRec() {
     <section data-settings-panel="rec-materials">
     ${recordingGroupSelector()}
     <h4 class="head">曲</h4>
-    <p class="note">フォルダを開いて曲を選択 · ⣿をドラッグして並べ替え</p>
-    <div class="organize-create"><button class="chip" data-act="newfolder" data-rec="1">＋ フォルダ</button></div>
-    <div class="performance-folder-order"><span class="note">フォルダ：${S.recordingDateFolderOrders?.[JSON.stringify([U.recArtistFilter || ""])]?.length ? "手動順" : "新しい日付順"}</span>${S.recordingDateFolderOrders?.[JSON.stringify([U.recArtistFilter || ""])]?.length ? '<button class="chip sm" data-act="rec-folder-sort">新しい日付順に戻す</button>' : ""}</div>
+    ${recordingBrowseControlsHTML()}
     ${list || `<p class="note">曲がありません</p>`}
     <div class="card"><button class="primary" data-act="rpick">歌割り・歌詞ファイルを読み込む（Word/PDF/Excel）</button>${typeof PrivatePreparationUI !== "undefined" ? PrivatePreparationUI.settingsHTML() : ""}</div>
 
@@ -7880,6 +7879,33 @@ function viewSetupRec() {
     ${footerHTML()}
     <div style="height:40px"></div>
   </div>`;
+}
+
+// REC list layout is a local viewing preference; switching never edits songs.
+function recordingBrowseMode() {
+  if (["song", "date"].includes(U.recBrowseMode)) return U.recBrowseMode;
+  let mode = "song";
+  try { if (localStorage.getItem("utacheck.recBrowseMode") === "date") mode = "date"; } catch (_) {}
+  U.recBrowseMode = mode; return mode;
+}
+function selectRecordingBrowseMode(mode) {
+  if (!S.recMode || !["song", "date"].includes(mode)) return false;
+  U.recBrowseMode = mode;
+  try { recordingInboxStorageSet("utacheck.recBrowseMode", mode); } catch (_) {}
+  render(); if (U.picker) renderSheet(); return true;
+}
+function recordingBrowseControlsHTML() {
+  const mode = recordingBrowseMode();
+  return `<div class="rec-browse-tools"><div class="chips" role="group" aria-label="RECの表示">${[["song", "曲ごと"], ["date", "REC日"]].map(([id, label]) => `<button class="chip" data-act="rec-browse-mode" data-id="${id}" aria-pressed="${mode === id}">${label}</button>`).join("")}</div><p class="note">新しいREC日から表示</p></div>`;
+}
+function recordingBrowseSongMeta(song, dates) {
+  const artist = recordingClassification(song).artist;
+  return `<span class="rec-browse-meta">${h(artist)}${dates?.length ? " · " + dates.map(date => h(date.label)).join("・") : ""}</span>`;
+}
+function recordingBrowseHTML(list, row) {
+  if (!list.length) return "";
+  if (recordingBrowseMode() === "song") return `<div data-rec-browse="song">${recordingBrowseEntries(list).map(entry => row(entry.song, entry.dates)).join("")}</div>`;
+  return `<div data-rec-browse="date">${recordingBrowseDateGroups(list).map(group => `<section class="rec-browse-date" data-rec-date="${h(group.key)}"><div class="rec-browse-date-heading"><h4>${h(group.label)}</h4><span>${group.songs.length}曲</span></div>${group.songs.map(song => row(song, [])).join("")}</section>`).join("")}</div>`;
 }
 
 // REC browsing is personal and independent of LIVE delivery destinations.
@@ -7918,6 +7944,99 @@ function recordingDateInfo(label) {
   const day=n=>(first.year ? String(first.year)+'/' : '')+String(first.month).padStart(2,'0')+'/'+String(n).padStart(2,'0');
   const dateLabel=day(first.day)+(range ? range[1].trim()+day(last) : '')+(first.year ? '' : '（年未設定）');
   return {label:text.slice(0,start)+dateLabel+(range ? range[3] || '' : after),dateLabel,date:{...first,day:last}};
+}
+function recordingBrowseDate(year, month, day) {
+  const y = year == null ? null : Number(year), m = Number(month), d = Number(day);
+  if ((y != null && (!Number.isInteger(y) || y < 2000 || y > 2099)) || !Number.isInteger(m) || !Number.isInteger(d)) return null;
+  const stamp = new Date(Date.UTC(y || 2000, m - 1, d));
+  if (stamp.getUTCFullYear() !== (y || 2000) || stamp.getUTCMonth() !== m - 1 || stamp.getUTCDate() !== d) return null;
+  const md = String(m).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+  return {key: y == null ? '--' + md : y + '-' + md, label: (y == null ? '' : y + '/') + md.replace('-', '/') + (y == null ? '（年未設定）' : ''), date: {year:y, month:m, day:d}};
+}
+function recordingBrowseDateCompare(a, b) {
+  if (!a?.date || !b?.date) return Number(!!b?.date) - Number(!!a?.date);
+  return Number(!!b.date.year) - Number(!!a.date.year) || Number(b.date.year || 0) - Number(a.date.year || 0)
+    || b.date.month - a.date.month || b.date.day - a.date.day;
+}
+// Parse only explicit dates. A middle dot lists days; a range includes its
+// intervening days. Invalid or incomplete expressions never yield partial dates.
+function recordingBrowseLabelDates(label) {
+  const text = String(label || '').normalize('NFKC').replace(/[（(][月火水木金土日](?:曜(?:日)?)?[)）]/g, '').trim();
+  const start = /(?:^|[^0-9])((?:\d{4}[年/.-]\d{1,2}[月/.-]\d{1,2}|\d{1,2}[月/]\d{1,2}|^\d{6})(?:日)?)(?!\d)/.exec(text);
+  if (!start) return [];
+  let rest = text.slice(start.index + start[0].length - start[1].length), previous = null;
+  const dates = [];
+  function take() {
+    let match, date;
+    if ((match = /^(\d{4})[年/.-](\d{1,2})[月/.-](\d{1,2})日?(?!\d)/.exec(rest))) date = recordingBrowseDate(match[1], match[2], match[3]);
+    else if (!previous && (match = /^(\d{2})(\d{2})(\d{2})(?!\d)/.exec(rest))) date = recordingBrowseDate(2000 + Number(match[1]), match[2], match[3]);
+    else if ((match = /^(\d{1,2})[月/](\d{1,2})日?(?!\d)/.exec(rest))) date = recordingBrowseDate(previous?.date.year, match[1], match[2]);
+    else if (previous && (match = /^(\d{1,2})日?(?!\d)/.exec(rest))) date = recordingBrowseDate(previous.date.year, previous.date.month, match[1]);
+    if (!match || !date) return null;
+    rest = rest.slice(match[0].length);
+    return date;
+  }
+  previous = take();
+  if (!previous) return [];
+  dates.push(previous);
+  while (rest.trim()) {
+    if (!/[0-9]/.test(rest)) {
+      if (/[・、,.\/〜~～–—-]/.test(rest)) return [];
+      break;
+    }
+    const separator = /^\s*([・、,.〜~～–—-])\s*/.exec(rest);
+    if (!separator) return [];
+    rest = rest.slice(separator[0].length);
+    const next = take();
+    if (!next) return [];
+    if (/[〜~～–—-]/.test(separator[1])) {
+      if (!!previous.date.year !== !!next.date.year) return [];
+      const first = Date.UTC(previous.date.year || 2000, previous.date.month - 1, previous.date.day);
+      const last = Date.UTC(next.date.year || 2000, next.date.month - 1, next.date.day);
+      const days = (last - first) / 86400000;
+      if (days < 0 || days > 366) return [];
+      for (let day = 1; day <= days; day++) {
+        const date = new Date(first + day * 86400000);
+        dates.push(recordingBrowseDate(previous.date.year == null ? null : date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate()));
+      }
+    } else dates.push(next);
+    previous = next;
+  }
+  return [...new Map(dates.map(date => [date.key, date])).values()].sort(recordingBrowseDateCompare);
+}
+function recordingBrowseDates(song) {
+  const labeled = recordingBrowseLabelDates(recordingClassification(song).label);
+  const dated = labeled.filter(item => item.date.year != null);
+  if (dated.length) return dated;
+  const planned = [];
+  for (const slot of S.plan?.slots || []) {
+    if (!song.id || slot.songId !== song.id) continue;
+    let match, date;
+    if (slot.date) {
+      match = /^(20\d{2})-(\d{2})-(\d{2})$/.exec(String(slot.date));
+      if (match) date = recordingBrowseDate(match[1], match[2], match[3]);
+    } else if ((match = /^(\d{1,2})\/(\d{1,2})$/.exec(String(slot.day || ''))) && Number.isInteger(Number(S.plan.year)) && Number(S.plan.year) >= 2000 && Number(S.plan.year) <= 2099) {
+      date = recordingBrowseDate(Number(S.plan.year), match[1], match[2]);
+    }
+    if (date) planned.push(date);
+  }
+  if (planned.length) return [...new Map(planned.map(date => [date.key, date])).values()].sort(recordingBrowseDateCompare);
+  return labeled.length ? labeled : [{key:'undated', label:'日付未設定', date:null}];
+}
+function recordingBrowseEntries(list) {
+  const newest = song => Math.max(0, ...[song.at, song.impAt].map(value => Number.isFinite(Number(value)) ? Number(value) : 0));
+  return list.map((song, index) => ({song, dates:recordingBrowseDates(song), index})).sort((a, b) =>
+    recordingBrowseDateCompare(a.dates[0], b.dates[0]) || newest(b.song) - newest(a.song) || b.index - a.index
+  ).map(({song, dates}) => ({song, dates}));
+}
+function recordingBrowseDateGroups(list) {
+  const groups = new Map();
+  for (const entry of recordingBrowseEntries(list)) for (const date of entry.dates) {
+    if (!groups.has(date.key)) groups.set(date.key, {...date, songs:[]});
+    const songs = groups.get(date.key).songs;
+    if (!songs.some(song => song.id === entry.song.id)) songs.push(entry.song);
+  }
+  return [...groups.values()].sort(recordingBrowseDateCompare);
 }
 function canonicalRecordingFolderKey(key) {
   try {
@@ -9686,6 +9805,7 @@ document.addEventListener("click", async (e) => {
   if (a === 'publication-inspect') { void inspectPublication(id); return; }
   if (a === 'app-update-check') { void checkAppUpdate(); return; }
   if (a === 'app-update-reload') { void reloadForAppUpdate(); return; }
+  if (a === "rec-browse-mode") { e.preventDefault(); selectRecordingBrowseMode(id); return; }
   if (a === "lyric-breaks") { e.preventDefault(); openLyricBreaks(i); return; }
   if (a === "lyric-break-insert" || a === "lyric-break-clear") {
     e.preventDefault();
