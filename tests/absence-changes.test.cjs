@@ -96,7 +96,7 @@ test('pre-live changes are separate from notes, with only actual changes exposin
  const c=fixture();delete c.S.songs[0].blocks.A;delete c.S.gsubs['show|song'].A;
  assert(!c.viewerSummaryBody().includes('member-absence-change'));
  assert(!c.viewerSummaryBody().includes('歌割の変更'));
- assert(c.memberReviewNav().includes('担当の変更があります'));assert(!c.memberReviewNav().includes('>歌割変更<'));
+ assert(c.memberReviewNav().includes('歌割変更があります'));assert(!c.memberReviewNav().includes('>歌割変更<'));
  c.U.absenceMode='all';let html=c.viewMemberAbsence();assert.equal((html.match(/member-absence-change/g)||[]).length,4);
  c.U.absenceMode='member';c.selected=c.member('m4');html=c.viewMemberAbsence();assert.equal((html.match(/member-absence-change/g)||[]).length,1);assert(html.includes('新しく担当'));
  c.S.subs={};c.S.gsubs={};assert.equal(c.memberReviewNav(),'');assert(!c.viewerSummaryBody().includes('member-absence-change'));
@@ -160,7 +160,7 @@ test('VIEW style uses the pure comparison and owner toggle validates allowed IDs
 test('legacy, automatic and inherited substitutions never expose a member change notice',()=>{
  const c=fixture(),song=c.S.songs[0],before=json(c.S.subs);c.S.assignmentEdits={};c.S.subsMan={'show|song':{0:1,1:1,2:1,3:1}};
  assert.deepEqual(json(c.memberAbsenceChanges(song)),[]);assert.equal(c.memberReviewNav(),'');assert.equal(c.lineStatus(song,2),'');assert.deepEqual(json(c.S.subs),before);
- c.recordAssignmentChange(song,'lines',2,['m4']);assert.equal(c.memberAbsenceChanges(song).length,1);assert(c.memberReviewNav().includes('担当の変更があります（1件）'));
+ c.recordAssignmentChange(song,'lines',2,['m4']);assert.equal(c.memberAbsenceChanges(song).length,1);assert(c.memberReviewNav().includes('歌割変更があります（1件）'));
  c.S.subs['show|song'][2]=['m3'];assert.equal(c.memberReviewNav(),'','A stale receipt is not a new manual change');
  c.recordAssignmentChange(song,'lines',2,['m3']);assert.equal(c.memberAbsenceChanges(song).length,1);
  c.S.subs['show|song'][2]=['m1'];c.recordAssignmentChange(song,'lines',2,['m1']);assert.equal(c.memberReviewNav(),'','Reverting to original removes the notice');

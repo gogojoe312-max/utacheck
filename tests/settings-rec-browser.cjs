@@ -114,6 +114,7 @@ async function readableTitles(page,rec){
    await page.evaluate(()=>{U.sheet={lineIdx:0,lineEnd:null,range:null,anchor:null,point:null,quick:true,tags:[],memo:'未保存の合成入力',seq:[],rec:false,sel:['m']};document.querySelector('[data-act="app-update-reload"]').click();});
    assert.equal(dialogs.length,dialogCount+1);assert.equal(dialogs.at(-1).type,'alert');assert.equal(await page.evaluate(()=>U.sheet.memo),'未保存の合成入力');assert.equal(await page.evaluate(()=>qaContent()),beforeReload);
    await page.evaluate(()=>{document.activeElement?.blur();U.sheet=null;renderPointers.clear();scrollingUntil=0;pendingRender=false;render(true);});await page.locator('.note-quick-mask').waitFor({state:'detached'});await info.locator(':scope > summary').click();assert.equal(await info.evaluate(el=>el.open),false);
+   await checkMemberPreviewLoading(page,width,{screenshot,assertFits});
    const folderResult=await checkFolderInteractions(page,width,{mode,assertFits,screenshot,confirmNext:()=>{confirmReply=true;}});
    const recordingBrowseResult=await checkRecordingBrowse(page,width,{mode,assertFits,screenshot});
    const absenceResult=await checkAbsence(page,width,{mode,assertFits,screenshot});
@@ -133,6 +134,47 @@ async function readableTitles(page,rec){
 })().catch(error=>{console.error(error);process.exitCode=1;});
 
 
+async function checkMemberPreviewLoading(page,width,{screenshot,assertFits}){
+ try{
+  await page.evaluate(()=>{
+   window.__previewQA={state:S,ui:structuredClone(U),hold:startupRecoveryNetworkHold,fetch:fetchSetlist};
+   S=structuredClone(S);U=structuredClone(U);
+   const g=S.groups[0];g.name='ロージークロニクル';g.src='https://gist.githubusercontent.com/synthetic/'+'b'.repeat(32)+'/raw/utacheck.json';g.gistId='b'.repeat(32);g.nopub=false;
+   S.shows.find(s=>s.groupId===g.id).nopub=false;S.autoPub=false;
+   window.__previewQA.wire=publicationData(g.id,undefined,true);
+   window.__previewQA.before=JSON.stringify(S);window.__previewQA.reads=0;
+   startupRecoveryNetworkHold=false;
+   fetchSetlist=()=>{window.__previewQA.reads++;return new Promise(resolve=>{window.__previewQA.finish=resolve;});};
+   U.view='setup';renderPointers.clear();scrollingUntil=0;pendingRender=false;render(true);
+  });
+  const button=page.locator('[data-act="pvnow"][data-id="group-a"]');
+  await button.click();
+  const progress=page.locator('#operation-progress');
+  await progress.waitFor({state:'visible'});
+  assert.equal(await progress.innerText(),'メンバー画面を読み込み中…');
+  assert.equal(await page.locator('#app').getAttribute('aria-busy'),'true');
+  await button.dispatchEvent('click');
+  assert.equal(await page.evaluate(()=>window.__previewQA.reads),1,'Repeated taps do not start another read');
+  assert.equal(await progress.isVisible(),true,'A duplicate tap cannot dismiss the pending indicator');
+  await assertFits(page);await screenshot(page,width,'member-preview-loading');
+  await page.evaluate(()=>window.__previewQA.finish(window.__previewQA.wire));
+  await page.waitForFunction(()=>U.view==='summary'&&!!preview);
+  await progress.waitFor({state:'hidden'});
+  await page.locator('[data-act="endpv"]').first().click();
+  await page.waitForFunction(()=>!preview&&U.view==='setup');
+  assert.equal(await page.evaluate(()=>JSON.stringify(S)),await page.evaluate(()=>window.__previewQA.before));
+  await button.click();await progress.waitFor({state:'visible'});
+  await page.evaluate(()=>window.__previewQA.finish(null));
+  await progress.waitFor({state:'hidden'});
+  assert.equal(await page.evaluate(()=>JSON.stringify(S)),await page.evaluate(()=>window.__previewQA.before),'Failed read preserves all editor data');
+ }finally{
+  await page.evaluate(()=>{
+   const q=window.__previewQA;if(!q)return;
+   S=q.state;U=q.ui;startupRecoveryNetworkHold=q.hold;fetchSetlist=q.fetch;preview=null;
+   delete window.__previewQA;renderPointers.clear();scrollingUntil=0;pendingRender=false;render(true);
+  });
+ }
+}
 async function checkExcelReattach(page,width,dialogs){
  const saved=await page.evaluate(()=>({state:JSON.stringify(S),ui:JSON.stringify(U),hold:startupRecoveryNetworkHold,saveErr}));
  const songId='qa-excel-song',showId='qa-excel-show';
@@ -229,7 +271,7 @@ async function checkExcelReattach(page,width,dialogs){
     return {count:memberAbsenceChanges(S.songs[0]).length,notice:memberReviewNav(),notes:S.pubNotes.map(n=>n.memo)};
    }finally{S=original;U=JSON.parse(ui);}
   });
-  assert.equal(exportedMemberChange.count,1);assert(exportedMemberChange.notice.includes('担当の変更があります'));assert.deepEqual(exportedMemberChange.notes,['合成指摘を保持']);
+  assert.equal(exportedMemberChange.count,1);assert(exportedMemberChange.notice.includes('歌割変更があります'));assert.deepEqual(exportedMemberChange.notes,['合成指摘を保持']);
   assert.equal(exported.count,1);assert.deepEqual(exported.failures,[]);assert(exported.name.endsWith('.xlsx'));
   assert.deepEqual(exported.sheets,[exported.tab,'表紙','歌割']);assert.equal(exported.cover,'Synthetic cover to preserve');
   assert.equal(exported.originalName,'甲');assert.equal(exported.originalLyric,'Synthetic lyric one to preserve');

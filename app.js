@@ -118,7 +118,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.37";
+const APP_VER = "16.41.58.38";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -8086,7 +8086,7 @@ function memberReviewNav() {
   if (!VIEW()) return "";
   const count=SONGS().reduce((n,so)=>n+memberAbsenceChanges(so).length,0);
   if (!count) return "";
-  return '<div class="member-review-nav"><button class="member-change-alert" data-act="goabsent">担当の変更があります（'+count+'件）</button></div>';
+  return '<div class="member-review-nav"><button class="member-change-alert" data-act="goabsent">歌割変更があります（'+count+'件）</button></div>';
 }
 
 function recordAssignmentChange(so,kind,index,after) {
@@ -8174,7 +8174,7 @@ function viewMemberAbsence() {
     const changes=memberAbsenceChanges(so,memberId,byMember);
     return changes.length ? '<section class="card member-song"><div class="member-song-head"><h3>'+h(songName(so))+'</h3></div>'+memberAbsenceRows(so,changes,memberId)+'</section>' : '';
   }).join("");
-  return '<div class="hd"><button class="ic" data-act="go-live" aria-label="歌詞に戻る">‹</button><b>担当の変更</b><span class="grow"></span><span class="trunc">'+h(showName())+'</span></div>'
+  return '<div class="hd"><button class="ic" data-act="go-live" aria-label="歌詞に戻る">‹</button><b>歌割変更</b><span class="grow"></span><span class="trunc">'+h(showName())+'</span></div>'
     +'<div class="scroll pad"><p class="member-hint">変更後の担当を確認してください。</p>'+picker
     +(byMember ? '<p class="member-hint">3人以上のユニゾンは「全員」で確認できます。</p>' : '')
     +'<div class="card member-hint">'+h(absentIds().map(id=>(member(id) || {}).name).filter(Boolean).join("・") || "欠席なし")+(absentIds().length ? " が欠席" : "")+'</div>'
@@ -10388,7 +10388,7 @@ document.addEventListener("click", async (e) => {
   if (e.target.closest("[data-r]") && U.sheet) return;   // 文字の選択はなぞりで扱う
   if (!b) return;
   const a = b.dataset.act, i = +b.dataset.i, id = b.dataset.id;
-  const operationLabels = {toggleabsent:"欠席対応を保存中…",ghpush:"送信中…",bknow:"バックアップを確認中…",bkfile:"保存用ファイルを準備中…",syncnow:"読み込み中…",synow:"読み込み中…",bkrestore:"データを読み込み中…",bkfind:"保存データを検索中…",bkfromid:"データを読み込み中…",bkfrompub:"配信データを読み込み中…","backup-restore":"保存データを確認中…"};
+  const operationLabels = {pvnow:"メンバー画面を読み込み中…",toggleabsent:"欠席対応を保存中…",ghpush:"送信中…",bknow:"バックアップを確認中…",bkfile:"保存用ファイルを準備中…",syncnow:"読み込み中…",synow:"読み込み中…",bkrestore:"データを読み込み中…",bkfind:"保存データを検索中…",bkfromid:"データを読み込み中…",bkfrompub:"配信データを読み込み中…","backup-restore":"保存データを確認中…"};
   const finishProgress = operationLabels[a] && typeof OperationProgress !== "undefined" ? OperationProgress.begin(operationLabels[a]) : ()=>{};
   try {
   if (a === "toggleabsent") { await toggleAbsenceMember(id,b); return; }
@@ -10890,7 +10890,7 @@ document.addEventListener("click", async (e) => {
     case "pvnow": {
       const g = group(id) || group(S.groupId);
       if (!g || !g.src) { alert("先にこのグループの自動公開を始めてください。"); break; }
-      startPreview(g.src, g.key || "");
+      await startPreview(g.src, g.key || "");
       break;
     }
     case "synow": await syncSetlist(true); break;
