@@ -19,7 +19,7 @@ function setup() {
   document:{...eventTarget,hidden:false,activeElement:null,getElementById:id=>elements[id],createElement:()=>({innerHTML:'',remove(){}}),body:{appendChild(el){c.html=el.innerHTML;}}},
   window:{...eventTarget,SpeechRecognition:Recognition},VIEW:()=>false,song:()=>({id:'song'}),
   setTimeout(fn){timers.set(++timerId,fn);return timerId;},clearTimeout(id){timers.delete(id);},
-  commitFields(){},typingNow:()=>!!c.document.activeElement,
+  commitFields(){},resetAbsenceEditBatch(){},typingNow:()=>!!c.document.activeElement,
   scheduleCommit(){commits.push(JSON.parse(JSON.stringify(c.U.sheet)));c.U.sheet=null;},
  });
  vm.runInContext(appSrc.slice(appSrc.indexOf('const KEY ='),appSrc.indexOf('/* ---------------- state')),c);

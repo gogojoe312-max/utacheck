@@ -4,9 +4,9 @@ const {indexedFixture}=require('./startup-file-restoration-fixture.cjs');
 const {appContext,settle,clone}=require('./startup-excel-recovery-fixture.cjs');
 const Store=require('../recovery-delivery-store.js'),Preparation=require('../private-preparation.js');
 const rawDigest=bytes=>require('node:crypto').createHash('sha256').update(bytes).digest('hex');
-async function setup({hold=true,store=Store,owner=true,source,token='synthetic-token'}={}){
+async function setup({hold=true,store=Store,owner=true,source,token='synthetic-token',idbOptions={}}={}){
  const held={v:1,seq:1,slot:1,copyKey:'preserved:recovery:v1:'+'a'.repeat(64),sourceKind:'cloud-publication'};
- const idb=indexedFixture({state:hold?{'recovery:network-hold:v1':held}:{},clips:{audio:new Blob(['original audio'])}});
+ const idb=indexedFixture({state:hold?{'recovery:network-hold:v1':held}:{},clips:{audio:new Blob(['original audio'])}},idbOptions);
  const f=appContext(idb),state=clone(f.run('S0'));
  Object.assign(state,{deviceId:'test-private-owner',ghToken:token,groups:[{id:'original-group',name:'Original'}],groupId:'original-group',showId:'show',shows:[{id:'show',groupId:'original-group',name:'Original'}],songs:[{id:'song',showId:'show',groupId:'original-group',title:'Existing song',roster:[],lines:[{t:'Existing lyric',parts:[]}],blocks:{}}],notes:[{id:'note',songId:'song',showId:'show',memo:'Keep original note',tags:[],memberIds:[]}],recs:{audio:{dur:30}},plan:{year:2031,timezone:'Asia/Tokyo',start:'10:00',slots:[{id:'slot',name:'Synthetic singer',kind:'member',date:'2031-02-03',day:'2/3',place:'Synthetic studio',at:600,min:90,a0:601,a1:691,takes:{A:2}}]}});
  idb.replace('state:0',{seq:2,at:1,txt:JSON.stringify(state)});idb.replace('state:1',{seq:1,at:1,txt:JSON.stringify(state)});
@@ -28,7 +28,7 @@ async function originalOperation(name='original.xlsx',contents='synthetic origin
 function prepareOriginalFixture(f,options={}){
  let calls=0;
  f.c.prepareOriginalExcelAttachment=async(current,packet,{isActive})=>{
-  calls++;assert.equal(f.run('recordingInboxIntegration.gate.applying'),true);assert.equal(isActive(),true);
+  calls++;assert.equal(f.run('recordingInboxIntegration.gate.applying'),false);assert.equal(f.app.inert,false);assert.equal(isActive(),true);
   await options.before?.({current,packet,isActive});
   for(const file of [packet,...(packet.exportFile?[packet.exportFile]:[])]){
    const blob=new Blob([Buffer.from(file.base64,'base64')]);await f.c.putClip('xls:sha256-'+file.sha256,blob);
@@ -42,13 +42,27 @@ function prepareOriginalFixture(f,options={}){
  };
  return {get calls(){return calls;}};
 }
-test('original reception verifies files under the writer gate, preserves annotations and reuses one confirmed source snapshot',async()=>{
- const f=await setup(),first=await originalOperation(),second=await originalOperation('other.xlsx','other synthetic bytes');f.manifest.operations=[first,second];
+test('original reception prepares files before the short writer transaction and reuses one confirmed source snapshot',async()=>{
+ let commits=0;const f=await setup({store:{commit:options=>{commits++;return Store.commit(options);}}}),first=await originalOperation(),second=await originalOperation('other.xlsx','other synthetic bytes');f.manifest.operations=[first,second];
  f.run('S.plan.slots[0].a1=null');const before=clone(f.run('S')),prepared=prepareOriginalFixture(f);
  const result=await f.c.PrivatePreparationUI.receive(true);assert.equal(result.status,'applied',JSON.stringify(result));assert.equal(result.count,2);assert.equal(prepared.calls,2);assert.equal(f.reads,2);
  const after=clone(f.run('S'));for(const key of Object.keys(before).filter(key=>!['songs','privatePreparations'].includes(key)))assert.deepEqual(after[key],before[key],key);
- assert.deepEqual(after.songs[0].lines,before.songs[0].lines);assert.equal(after.privatePreparations[first.id].stored,1);
+ assert.deepEqual(after.songs[0].lines,before.songs[0].lines);assert.equal(after.privatePreparations[first.id].stored,1);assert.equal(commits,1);
+ assert.equal(after.privatePreparations[first.id].targetSha256,after.privatePreparations[second.id].targetSha256);
  const db=f.idb.snapshot();assert.equal((await f.c.PrivatePreparationUI.receive(true)).status,'current');assert.equal(prepared.calls,2);assert.deepEqual(f.idb.snapshot(),db);
+});
+test('a multi-original batch interruption or quota failure leaves no partial links, receipts or durable state',async()=>{
+ for(const mode of ['input','quota']){
+  const idbOptions={};let commits=0;
+  const f=await setup({idbOptions,store:{commit:options=>{commits++;if(mode==='quota')idbOptions.failWrite=f.idb.writeCount()+2;return Store.commit(options);}}});
+  f.manifest.operations=[await originalOperation(),await originalOperation('second.xlsx','second synthetic bytes')];
+  const before=clone(f.run('S')),durable=f.idb.snapshot().state;let prepared=0;
+  prepareOriginalFixture(f,{after:()=>{if(++prepared===2&&mode==='input')f.run('U.menu={kind:"person-selection"}');}});
+  const result=await f.c.PrivatePreparationUI.receive(true);
+  assert.equal(result.status,mode==='input'?'deferred':'conflict');assert.equal(prepared,2);assert.equal(commits,mode==='input'?0:1);
+  assert.deepEqual(clone(f.run('S')),before);assert.deepEqual(f.idb.snapshot().state,durable);assert.equal(f.run('S.privatePreparations'),undefined);assert.equal(f.app.inert,false);
+  for(const op of f.manifest.operations)assert(await f.c.getClip('xls:sha256-'+op.packet.sha256),'verified immutable blobs may remain for retry');
+ }
 });
 test('a restored original receipt with missing export bytes restores both files and retains its prior counts and timestamp',async()=>{
  const f=await setup(),op=await originalOperation('legacy.xls'),converted=await originalOperation('converted.xlsx','converted synthetic bytes');
@@ -76,6 +90,14 @@ test('cancelled preparation and a failed state transaction leave no original rec
   const before=clone(f.run('S'));prepareOriginalFixture(f,{after:()=>{if(mode==='cancelled')f.c.document.hidden=true;}});
   const result=await f.c.PrivatePreparationUI.receive(true);assert.equal(result.status,mode==='cancelled'?'deferred':'conflict');assert.deepEqual(clone(f.run('S')),before);
   assert(await f.c.getClip('xls:sha256-'+op.packet.sha256),'only the verified immutable blob can remain');
+ }
+});
+test('original preparation leaves navigation responsive and complete snapshots reject even an unversioned edit',async()=>{
+ for(const mode of ['menu','edit']){
+  const f=await setup(),op=await originalOperation();f.manifest.operations=[op];
+  prepareOriginalFixture(f,{before:()=>{assert.equal(f.c.PrivatePreparationUI.isApplying(),false);assert.equal(f.app.inert,false);if(mode==='menu')f.run('U.menu={kind:"person-selection"}');else f.run('S.notes[0].memo="Owner edit during matching"');}});
+  const result=await f.c.PrivatePreparationUI.receive(true);assert.equal(result.status,'deferred');assert.equal(f.run('S.privatePreparations'),undefined);assert.equal(f.run('S.songs[0].xlsSourceId'),undefined);
+  if(mode==='menu')assert.equal(f.run('U.menu.kind'),'person-selection');else assert.equal(f.run('S.notes[0].memo'),'Owner edit during matching');
  }
 });
 test('a changed confirmation source prevents original receipts even after immutable blob storage',async()=>{
@@ -111,6 +133,19 @@ test('member names, assignments and exact cell metadata invalidate original matc
   f.run(change);assert.equal((await f.c.PrivatePreparationUI.receive(true)).status,'applied');assert.equal((await f.c.PrivatePreparationUI.receive(true)).status,'current');
  }
  assert.equal(prepared.calls,4);
+});
+test('export-only original reads work during a busy export and open menu without applying state or receipts',async()=>{
+ const f=await setup(),op=await originalOperation();f.manifest.operations.push(op);f.run('U.busy="exporting";U.menu={kind:"export-result"};U.sheet={kind:"selected-source"}');
+ const before=f.run('JSON.stringify(S)'),view=f.run('JSON.stringify(U)'),db=f.idb.snapshot(),status=clone(f.c.PrivatePreparationUI.getStatus());
+ const result=await f.c.PrivatePreparationUI.readOriginalExcelPackets({isActive:()=>true});assert.equal(result.status,'ready');assert.equal(result.operations.length,1);assert.equal(result.operations[0].id,op.id);assert.equal(result.sourceSha,'a'.repeat(40));
+ assert.equal(f.run('JSON.stringify(S)'),before);assert.equal(f.run('JSON.stringify(U)'),view);assert.deepEqual(f.idb.snapshot(),db);assert.deepEqual(clone(f.c.PrivatePreparationUI.getStatus()),status);assert.equal(f.reads,1);
+});
+test('export-only original reads reject an obsolete export or changed login and invalid packet hashes',async()=>{
+ for(const mode of ['inactive','token','hash']){
+  let active=true;const f=await setup({source:async({f,manifest})=>{if(mode==='inactive')active=false;if(mode==='token')f.run('S.ghToken="changed-token"');if(mode==='hash')manifest.operations[0].sha256='0'.repeat(64);return {status:'ready',manifest,sourceSha:'a'.repeat(40)};}});
+  const op=await originalOperation();f.manifest.operations=[op];const db=f.idb.snapshot();
+  const result=await f.c.PrivatePreparationUI.readOriginalExcelPackets({isActive:()=>active});assert.equal(result.status,'unavailable');assert.equal(result.code,mode==='hash'?'HASH_MISMATCH':'DEFERRED');assert.equal(result.operations,undefined);assert.deepEqual(f.idb.snapshot(),db);
+ }
 });
 for(const hold of [true,false])test('private schedule automatic atomic save works with hold '+hold+' and is idempotent',async()=>{
  const f=await setup({hold}),before=clone(f.run('S')),clips=f.idb.snapshot().clips;

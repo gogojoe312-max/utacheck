@@ -79,12 +79,19 @@ Supported types:
 Original workbooks use one rechecked private source snapshot per reception batch,
 with a validated immutable packet hash for every file. This avoids repeatedly
 transferring all workbooks and exceeding the relay's request limit. Each file
-still gets a separate local concurrency check, exact match, verified blob save,
-state backup and receipt transaction. Other preparation types retain their
+gets an exact match and verified immutable blob save while the editor remains
+interactive, yielding between workbooks. Any concurrent edit cancels the staged
+batch. One short exclusive state backup and receipt transaction commits all
+original links, with one final target fingerprint shared by the batch receipts.
+An interruption or quota failure leaves no partial links or receipts. Other preparation types retain their
 per-operation source check. A changed source at snapshot confirmation aborts the
 batch. Matching original receipts do not hide missing or corrupted file blobs:
 the device checks both original and export hashes and receives them again when
 needed, preserving the existing receipt and later song edits.
+
+An export can call `readOriginalExcelPackets({isActive})` while its result menu
+or busy state is open. This uses the same owner-only source authentication and
+packet validation, but never changes songs, receipts, menus or editor storage.
 
 ## Existing LIVE correction contract
 

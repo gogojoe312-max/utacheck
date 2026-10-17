@@ -219,6 +219,27 @@ async function checkExcelReattach(page,width,dialogs){
   assert.equal(newBatch.songs.find(s=>s.id==='qa-excel-copy').xlsSourceId,newBatch.songs.find(s=>s.id==='qa-excel-song').xlsSourceId);
   assert.equal(newBatch.songs.find(s=>s.id==='qa-excel-other-group').xlsSourceId,'missing-batch-original');
   await assertFits(page);
+  const onDemand=await page.evaluate(async()=>{
+   const so=S.songs.find(song=>song.id==='qa-excel-song'),key='xls:'+so.xlsSourceId;
+   await new Promise((resolve,reject)=>{const tx=DB.transaction('clips','readwrite');tx.objectStore('clips').delete(key);tx.oncomplete=resolve;tx.onerror=tx.onabort=()=>reject(tx.error);});
+   originalExcelExportSource.cache=new WeakMap();
+   const originalUI=PrivatePreparationUI,bytes=qaExcelBytes.correct,blob=new Blob([bytes]);let requests=0;
+   const packet={app:'utacheck-original-excel',version:1,name:so.title+'.xlsx',size:bytes.length,sha256:await startupExcelDigest(blob),base64:btoa(Array.from(bytes,c=>String.fromCharCode(c)).join(''))};
+   window.PrivatePreparationUI={...originalUI,readOriginalExcelPackets:async()=>{
+    requests++;if(!U.busy)throw Error('Demand read must run during the export, without waiting for background idle');
+    return {status:'ready',operations:[{packet}]};
+   }};
+   try{
+    const before=JSON.stringify(S);U.menu={kind:'file-report'};
+    await exportAbsentXlsx(so.id);
+    if(!U.excelExport?.blob)throw Error('On-demand original did not produce Excel');
+    const wb=XLSX.read(new Uint8Array(await U.excelExport.blob.arrayBuffer()),{type:'array'});
+    const replacement=wb.Sheets[absentTab()].A1.v,original=wb.Sheets['歌割'].A1.v;
+    await exportAbsentXlsx(so.id);
+    return {requests,replacement,original,stateUnchanged:JSON.stringify(S)===before,receipt:S.privatePreparations?.['synthetic-demand-original']||null};
+   }finally{window.PrivatePreparationUI=originalUI;}
+  });
+  assert.deepEqual(onDemand,{requests:1,replacement:'乙',original:'甲',stateUnchanged:true,receipt:null},'An export recovers its verified original without waiting for the background receiver and reuses it');
 
  }finally{
   await page.evaluate(async saved=>{
@@ -228,5 +249,5 @@ async function checkExcelReattach(page,width,dialogs){
   },saved);
   assert.equal(await page.evaluate(()=>JSON.stringify(S)),saved.state,'Excel check restores exact prior application state');
  }
- return {reattach:true,wrongWorkbookRejected:true,oldWorkbookPreserved:true,idsLyricsNotesPreserved:true,export:true,batchReattach:true};
+ return {reattach:true,wrongWorkbookRejected:true,oldWorkbookPreserved:true,idsLyricsNotesPreserved:true,export:true,batchReattach:true,onDemandOriginal:true};
 }

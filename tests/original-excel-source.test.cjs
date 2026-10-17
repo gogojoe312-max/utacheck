@@ -14,7 +14,7 @@ function fixture({text='合成歌詞',who='甲',sheet='歌割',cover='表紙'}={
 function setup(extra={}){
  const clips=new Map(),alerts=[],stats={save:0,backup:0,writes:0,release:0};
  const so=song(),S={songs:[so],shows:[{id:'show',groupId:'rosy'}],rsongs:[],trash:[],members:[{id:'member-a',name:'甲'}],notes:[{id:'note',songId:'song',lineIdx:0,memo:'保持'}],memos:{song:'保持'}};
- const c=vm.createContext({S,U:{},Blob,setTimeout,clearTimeout,typingNow:()=>false,Uint8Array,DataView,TextEncoder,TextDecoder,crypto,XLSX,console,atob,btoa,preview:false,saveErr:false,XLOOK:{song:{cached:true}},
+ const c=vm.createContext({S,U:{},Blob,setTimeout,clearTimeout,typingNow:()=>false,Uint8Array,DataView,TextEncoder,TextDecoder,crypto,XLSX,console,atob,btoa,stateRevision:0,preview:false,saveErr:false,XLOOK:{song:{cached:true}},
   member:id=>S.members.find(m=>m.id===id),VIEW:()=>false,recordingInboxCanWrite:()=>true,
   enterRecordingInboxEditor:()=>()=>stats.release++,automaticBackupBeforeEdit:async()=>{stats.backup++;return true;},
   save(){stats.save++;},saveNow:async()=>{},packState:s=>copy(s),loadRaw:async()=>JSON.stringify(S),render(){},alert:m=>alerts.push(m),h:String,songName:s=>s.title,
@@ -28,7 +28,7 @@ function setup(extra={}){
   },
   buildSong:parsed=>parsed,getClip:async key=>clips.get(key),putClip:async(key,blob)=>{stats.writes++;clips.set(key,blob);},
   storedOriginalExcelEntries:async()=>[...clips].map(([key,blob])=>({key,blob})),importTimeout:async p=>p,fileFailureReason:e=>e.message,showFileReport:(title,succeeded,failed,warnings)=>{c.report={title,succeeded,failed,warnings};},...extra});
- for(const name of ['startupExcelDigest','startupExcelWithinBudget','excelSourceCandidates','originalExcelLayout','originalExcelSourceGroupAllowed','readOriginalExcel','originalExcelSheet','inspectOriginalExcel','originalExcelAttachment','attachOriginalExcelMetadata','getOriginalExcel','storeOriginalExcel','originalExcelRepairHTML','reattachOriginalExcel','originalExcelGroupTargets','reattachOriginalExcelBatch','prepareOriginalExcelAttachment'])vm.runInContext(fn(name),c);
+ for(const name of ['startupExcelDigest','startupExcelWithinBudget','excelSourceCandidates','originalExcelLayout','originalExcelSourceGroupAllowed','readOriginalExcel','originalExcelSheet','inspectOriginalExcel','originalExcelAttachment','attachOriginalExcelMetadata','getOriginalExcel','originalExcelExportContext','originalExcelExportSource','storeOriginalExcel','originalExcelRepairHTML','reattachOriginalExcel','originalExcelGroupTargets','reattachOriginalExcelBatch','prepareOriginalExcelAttachment'])vm.runInContext(fn(name),c);
  return {c,clips,alerts,stats,so:c.S.songs[0]};
 }
 test('same-sheet exact original passes without modifying IDs, lyrics, members or notes',async()=>{
@@ -265,5 +265,55 @@ test('automatic originals preserve a verified existing format while repairing mi
   const packet=await packetFor(c,b),result=await c.prepareOriginalExcelAttachment(c.S,packet);
   assert.equal(result.state.songs[0].xlsSourceId,present?oldId:'sha256-'+packet.sha256);
   assert.equal(result.linked,present?0:1);
+ }
+});
+test('export fetches the matching authenticated original before background receipt even while the export menu is open',async()=>{
+ const {c,so,clips}=setup();c.U.busy='Excel作成';c.U.menu={kind:'excel-export'};
+ const packet=await packetFor(c,fixture(),so.title+'.xlsx');let requests=0;
+ c.PrivatePreparationUI={readOriginalExcelPackets:async()=>{requests++;return {status:'ready',operations:[{packet}]};}};
+ const before=JSON.stringify(c.S),source=await c.originalExcelExportSource(so);
+ assert.equal(await c.startupExcelDigest(source.blob),packet.sha256);assert.equal(JSON.stringify(c.S),before);assert.equal(requests,1);
+ assert(clips.has('xls:sha256-'+packet.sha256));assert.equal(c.S.privatePreparations,undefined);
+ const again=await c.originalExcelExportSource(so);assert.equal(await c.startupExcelDigest(again.blob),packet.sha256);assert.equal(requests,1);
+});
+test('export narrows by filename but requires matching cells and reuses one source request and workbook parse per batch',async()=>{
+ const {c,so}=setup(),packet=await packetFor(c,fixture(),so.title+'.xlsx');let requests=0,parses=0;
+ const parse=c.parseXLSX;c.parseXLSX=async(...args)=>{parses++;return parse(...args);};
+ const other=await packetFor(c,fixture({text:'unrelated lyric'}),'別の曲.xlsx');
+ c.PrivatePreparationUI={readOriginalExcelPackets:async()=>{requests++;return {status:'ready',operations:[{packet:other},{packet}]};}};
+ const context={};await c.originalExcelExportSource(so,context);await c.originalExcelExportSource({...copy(so),id:'copy'},context);
+ assert.equal(requests,1);assert.equal(parses,1);
+ const wrong=setup(),bad=await packetFor(wrong.c,fixture({text:'unrelated lyric'}),wrong.so.title+'.xlsx');
+ wrong.c.PrivatePreparationUI={readOriginalExcelPackets:async()=>({status:'ready',operations:[{packet:bad}]})};
+ await assert.rejects(wrong.c.originalExcelExportSource(wrong.so),/一致を確認できません/);assert.equal(wrong.clips.size,0);
+});
+test('export rejects tampered private bytes, cancellation, and unavailable authentication without claiming missing uploads',async()=>{
+ const {c,so,clips}=setup(),packet=await packetFor(c,fixture());
+ c.PrivatePreparationUI={readOriginalExcelPackets:async()=>({status:'ready',operations:[{packet:{...packet,sha256:'0'.repeat(64)}}]})};
+ await assert.rejects(c.originalExcelExportSource(so),/内容が一致しません/);assert.equal(clips.size,0);
+ await assert.rejects(c.originalExcelExportSource(so,{isActive:()=>false}),/画面の状態が変わりました/);
+ c.PrivatePreparationUI={readOriginalExcelPackets:async()=>({status:'unavailable',code:'HTTP_401'})};
+ await assert.rejects(c.originalExcelExportSource(so),/受信できません.*HTTP_401/);assert.equal(clips.size,0);
+});
+test('legacy missing raw name metadata is recoverable only with identical lyrics, assignments and cell addresses',async()=>{
+ const {c,so}=setup();delete so.lines[0].raw;delete so.lines[0].labelRaw;so.lines[0].label='表示用の担当';
+ const repaired=await c.originalExcelAttachment(so,fixture());assert(repaired);assert.equal(repaired.lines[0].raw,'甲');assert.equal(so.lines[0].raw,undefined);
+ so.lines[0].parts=[];assert.equal(await c.originalExcelAttachment(so,fixture()),null);
+});
+test('byte-addressed workbook parsing cache reuses verified originals but does not accept changed bytes',async()=>{
+ const {c,so}=setup(),blob=fixture();let parses=0;const parse=c.parseXLSX;c.parseXLSX=async(...args)=>{parses++;return parse(...args);};
+ assert.equal(await c.inspectOriginalExcel(so,blob),true);assert.equal(await c.inspectOriginalExcel(so,new Blob([await blob.arrayBuffer()])),true);assert.equal(parses,1);
+ assert.equal(await c.inspectOriginalExcel(so,fixture({text:'changed'})),false);assert.equal(parses,2);
+});
+test('export chooses an available pinned original before a filename-matching different format',async()=>{
+ const {c,so}=setup(),pinned=await packetFor(c,fixture({cover:'Pinned format'}),'retained-name.xlsx'),other=await packetFor(c,fixture({cover:'Different format'}),so.title+'.xlsx');
+ so.xlsSourceId='sha256-'+pinned.sha256;c.PrivatePreparationUI={readOriginalExcelPackets:async()=>({status:'ready',operations:[{packet:other},{packet:pinned}]})};
+ const source=await c.originalExcelExportSource(so);assert.equal(await c.startupExcelDigest(source.blob),pinned.sha256);
+});
+test('export snapshot refuses show switches and unsaved assignment edits during an original read',async()=>{
+ for(const change of [c=>c.S.showId='other-show',c=>c.S.subs={song:{0:['someone-else']}}]){
+  const {c,so}=setup(),packet=await packetFor(c,fixture(),so.title+'.xlsx');
+  c.PrivatePreparationUI={readOriginalExcelPackets:async()=>{change(c);return {status:'ready',operations:[{packet}]};}};
+  await assert.rejects(c.originalExcelExportSource(so,c.originalExcelExportContext()),/変わりました/);
  }
 });

@@ -267,7 +267,7 @@
    if(!object(result)||!object(result.state)||!Number.isSafeInteger(result.linked)||result.linked<0
     ||result.stored!==(operation.packet.exportFile?2:1)||![0,1].includes(result.unmatched)||result.unmatched!==(result.linked===0?1:0)
     ||own(result,'targetSha256')&&(typeof result.targetSha256!=='string'||!/^[a-f0-9]{64}$/.test(result.targetSha256)))fail('INVALID_OPERATION');
-   if(receipt&&(!result.targetSha256||result.targetSha256===receipt.targetSha256)&&JSON.stringify(result.state)===JSON.stringify(current))return {...result,state:current,status:'already-applied'};
+   if(receipt&&(!result.targetSha256||result.targetSha256===receipt.targetSha256)&&(result.state===current||JSON.stringify(result.state)===JSON.stringify(current)))return {...result,state:current,status:'already-applied'};
   }
   else fail('INVALID_OPERATION');
   if(!result?.state||result.state===current&&!['recording-schedule','original-excel'].includes(operation.type))fail('INVALID_OPERATION');

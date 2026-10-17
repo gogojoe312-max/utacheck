@@ -134,5 +134,5 @@ test('member screens expose no edit controls and rendering never changes saved d
 });
 test('VIEW style uses the pure comparison and owner toggle validates allowed IDs',()=>{
  assert(source.includes('if (VIEW() && typeof AbsenceChanges !== "undefined") return AbsenceChanges.line'));
- assert(source.includes('if (VIEW() || preview || !absenceSelectableMembers().some(m=>m.id===id)) break;'));
+ assert(source.includes('if (VIEW() || preview || !absenceSelectableMembers().some(m=>m.id===id)) return false;'));
 });

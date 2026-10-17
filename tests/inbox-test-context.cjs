@@ -12,6 +12,10 @@ module.exports = function createUnenrolledContext(sandbox = {}, options) {
     // publication-preservation.test.cjs and full browser tests use its real body.
     verifyPublicationSnapshot: async () => {},
     automaticBackupBeforeEdit: async () => true,
+    // These extracted render/click tests do not exercise absence batches.
+    // absence-edit-batch.test.cjs covers their real state and invalidation.
+    absenceEditBatch: null,
+    resetAbsenceEditBatch: () => {},
     ...sandbox,
   };
   if (!('recordingInboxStorageSet' in context)) context.recordingInboxStorageSet = (key, value) => context.localStorage.setItem(key, value);

@@ -37,6 +37,17 @@ test('existing owner identity reads only the fixed private file and returns its 
   }
   assert.ok(!JSON.stringify(result).includes(TOKEN));
 });
+test('multi-megabyte authenticated blobs use bounded base64 validation without recursive-regex stack overflow',async()=>{
+ const manifest={...MANIFEST,padding:'x'.repeat(6*1024*1024)},raw=JSON.stringify(manifest),encoded=Buffer.from(raw).toString('base64'),size=Buffer.byteLength(raw);
+ const f=fixture({file:{encoding:'none',content:'',size},blob:{size,content:encoded}}),result=await read(f.options);
+ assert.equal(result.status,'ready',JSON.stringify(result));assert.deepEqual(result.manifest,manifest);assert.equal(f.calls.length,4);
+});
+test('noncanonical base64 pad bits are rejected before JSON parsing',async()=>{
+ for(const content of ['AB==','AAB=']){
+  const f=fixture({file:{content,size:content.endsWith('==')?1:2}}),result=await read(f.options);
+  assert.equal(result.code,'INVALID_BASE64');
+ }
+});
 test('missing token performs no network access', async () => {
   for (const token of ['', undefined, null]) { const f = fixture(); const result = await read({...f.options, token});
     assert.equal(result.code, 'MISSING_TOKEN'); assert.equal(f.calls.length, 0); }

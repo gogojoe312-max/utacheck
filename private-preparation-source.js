@@ -106,7 +106,11 @@
       }
       if (typeof blob.content !== 'string' || blob.content.length > MAX_BYTES) fail('INVALID_FILE_CONTENT');
       const encoded = blob.content.replace(/[\r\n]/g, '');
-      if (!encoded || encoded.length % 4 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encoded)) fail('INVALID_BASE64');
+      // Repeated regex groups can exhaust the engine stack on valid large
+      // manifests. Check the alphabet once, then validate padding and pad bits.
+      if (!encoded || encoded.length % 4 || !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) fail('INVALID_BASE64');
+      const padding=encoded.endsWith('==')?2:encoded.endsWith('=')?1:0;
+      if (padding && ('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'.indexOf(encoded.at(-padding-1)) & ((1 << (padding*2))-1))) fail('INVALID_BASE64');
       let decoded;
       try { decoded = root.atob(encoded); } catch (_) { fail('INVALID_BASE64'); }
       if (decoded.length !== file.size || decoded.length > MAX_FILE_BYTES) fail('FILE_SIZE_MISMATCH');

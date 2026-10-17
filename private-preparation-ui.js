@@ -254,10 +254,91 @@
   }
   return result;
  }
- async function applyOne(operation,token,sourceSha,localSource,originalBatch){
+ async function readOriginalExcelPackets(options={}){
+  const unavailable=(code,stage)=>({status:'unavailable',code,...(stage?{stage}:{})});
+  if(!options||typeof options!=='object'||options.isActive!==undefined&&typeof options.isActive!=='function')return unavailable('INVALID_CONFIG');
+  try{
+   if(connectionBlocked)throw failure('CREDENTIAL_UNREADABLE');
+   await loadCredential();const token=sourceToken();
+   const active=()=>startupPhase==='ready'&&!document.hidden&&!VIEW()&&!preview&&!previewLoading&&sourceToken()===token&&(!options.isActive||options.isActive());
+   if(!active())throw failure('DEFERRED');
+   if(!token&&!root.ProgressPreparationSource)return unavailable('MISSING_TOKEN');
+   // Exports may already own the editor gate or display a result menu. This
+   // path only verifies and returns owner-only bytes; it never applies a state
+   // operation, saves a receipt, closes a menu, or changes an export selection.
+   const source=await readSource({...config,token,isActive:active});
+   if(source.status!=='ready')return unavailable(source.code,source.stage);
+   const manifest=await PrivatePreparation.validate(source.manifest,config.owner);
+   if(!active())throw failure('DEFERRED');
+   return {status:'ready',operations:manifest.operations.filter(op=>op.type==='original-excel'),sourceSha:source.sourceSha,sourcePath:source.sourcePath||'utacheck/prepared.json'};
+  }catch(error){return unavailable(error?.preparationCode||'PREPARATION_CONFLICT');}
+ }
+ async function confirmOriginalSource(operation,token,sourceSha,batch,isActive){
+  if(batch?.confirmed?.get(operation.id)!==JSON.stringify(operation)){
+   const fresh=await readSource({...config,token,isActive});
+   if(!isActive())throw failure('DEFERRED');
+   if(fresh.status!=='ready'||fresh.sourceSha!==sourceSha)throw failure('PREPARATION_SOURCE_CHANGED');
+   const checked=await PrivatePreparation.validate(fresh.manifest,config.owner);
+   const confirmed=new Map(checked.operations.filter(op=>op.type==='original-excel').map(op=>[op.id,JSON.stringify(op)]));
+   if(confirmed.get(operation.id)!==JSON.stringify(operation))throw failure('PREPARATION_SOURCE_CHANGED');
+   if(batch)batch.confirmed=confirmed;
+  }
+  if(!isActive())throw failure('DEFERRED');
+ }
+ async function applyOriginalBatch(operations,token,sourceSha){
+  if(!ready()||sourceToken()!==token||!operations.length)throw failure('DEFERRED');
+   if(typeof prepareOriginalExcelAttachment!=='function')throw failure('UNSUPPORTED');
+   const state=S,revision=stateRevision,viewState=U,original=JSON.stringify(S),view=JSON.stringify(U);
+   // Parsing and immutable blob storage do not modify the editor. Let a click,
+   // input or another edit interrupt this work instead of freezing the page.
+   // Cheap checks run inside the song loop; complete snapshots are checked at
+   // its boundaries and again under the exclusive gate before committing.
+   const responsive=()=>ready()&&sourceToken()===token&&S===state&&stateRevision===revision&&U===viewState;
+   const unchanged=()=>responsive()&&JSON.stringify(S)===original&&JSON.stringify(U)===view;
+  let next=state;const preparedResults=[];
+  for(const operation of operations){
+   if(!responsive())throw failure('DEFERRED');
+   const prepared=await prepareOriginalExcelAttachment(next,operation.packet,{isActive:responsive});
+   next=PrivatePreparation.apply(next,operation,{originalExcel:()=>prepared}).state;
+   preparedResults.push({operation,prepared});
+   // Give pending pointer/input events a turn between workbooks. An input
+   // invalidates the whole staged state, while verified blobs remain reusable.
+   await new Promise(resolve=>setTimeout(resolve,0));
+  }
+  if(!unchanged())throw failure('DEFERRED');
+  const targetSha256=await originalTargetFingerprint(next);
+  for(const {operation,prepared}of preparedResults)next=PrivatePreparation.apply(next,operation,{originalExcel:()=>({...prepared,state:next,targetSha256})}).state;
+  const batch={};await confirmOriginalSource(operations[0],token,sourceSha,batch,responsive);
+  for(const operation of operations)if(batch.confirmed.get(operation.id)!==JSON.stringify(operation))throw failure('PREPARATION_SOURCE_CHANGED');
+  if(!unchanged())throw failure('DEFERRED');
+  const gate=recordingInboxIntegration?.gate,releaseGate=gate?.acquire();if(!releaseGate)throw failure('DEFERRED');
+  let release,committed=false;applying=true;const app=document.getElementById('app');if(app)app.inert=true;
+  try{
+   release=recordingInboxAdmitWriter();await saveNow();if(saveErr)throw failure('LOCAL_SAVE_UNCONFIRMED');
+   const active=()=>startupPhase==='ready'&&recordingInboxCanWrite()&&recordingInboxOwner?.canWrite&&!document.hidden&&sourceToken()===token&&S===state&&stateRevision===revision&&JSON.stringify(S)===original&&JSON.stringify(U)===view&&!REC&&!recordingStartPending&&!recordingFinalizePending&&!pitchStartPending&&!saving&&!syncing&&!manualSync&&!backupInFlight&&!publishInFlight&&!U.busy&&!U.importing&&!U.sheet&&!U.menu&&!U.showRecovery;
+   if(!active())throw failure('DEFERRED');
+   // Recheck originals after acquiring the gate: a cleanup could run during
+   // the responsive phase. The one transaction owns all links and receipts.
+   for(const operation of operations)if(!await originalExcelPresent(operation.packet))throw failure('ORIGINAL_EXCEL_NOT_SAVED');
+   if(!active())throw failure('DEFERRED');
+   if(JSON.stringify(next)===original)return operations.length;
+   const selectedSongId=!S.recMode&&typeof song==='function'?song()?.id:null;
+   const slots=await Promise.all([idbGet('state:0'),idbGet('state:1')]),hold=await idbGet('recovery:network-hold:v1'),legacy=localStorage.getItem(KEY);
+   const nextRaw=JSON.stringify(packState(next));recoveryValidateCloudState(JSON.parse(nextRaw));
+   const stored=await RecoveryDeliveryStore.commit({database:()=>DB,hash:backupDigest,isActive:active,readLegacy:()=>localStorage.getItem(KEY),expectedLegacyRaw:legacy,
+    expectedSlotsRaw:JSON.stringify(slots),expectedHoldRaw:JSON.stringify(hold),allowMissingHold:true,originalStateRaw:original,nextStateRaw:nextRaw,remoteCopies:[]});
+   committed=stored.committed===true;
+   if(stored.status!=='committed'||!active())throw failure(committed?'SAVE_UNVERIFIED':'LOCAL_SAVE_UNCONFIRMED');
+   S=next;saveSeq=stored.seq;stateRevision++;saveDirty=false;savePend=null;
+   if(selectedSongId&&typeof SONGS==='function'){const selectedIndex=SONGS().findIndex(x=>x.id===selectedSongId);if(selectedIndex>=0)U.songIdx=selectedIndex;}
+   U.recScheduleInputUntil=Date.now()+2000;render();return operations.length;
+  }catch(error){if(committed){startupPhase='blocked';setStatus({kind:'unverified'});throw failure('SAVE_UNVERIFIED');}throw error;}
+  finally{release?.();releaseGate();applying=false;if(app)app.inert=!recordingInboxCanWrite();}
+ }
+ async function applyOne(operation,token,sourceSha,localSource){
   if(!ready()||sourceToken()!==token)throw failure('DEFERRED');
   const receipt=S.privatePreparations?.[operation.id];
-  if(receipt){if(receipt.sha256!==operation.sha256||receipt.type!==operation.type)throw failure('OPERATION_ID_REUSED');if(operation.type!=='original-excel')return false;}
+  if(receipt){if(receipt.sha256!==operation.sha256||receipt.type!==operation.type)throw failure('OPERATION_ID_REUSED');return false;}
   const gate=recordingInboxIntegration?.gate,releaseGate=gate?.acquire();if(!releaseGate)throw failure('DEFERRED');
   let release,committed=false;applying=true;const app=document.getElementById('app');if(app)app.inert=true;
   try{
@@ -267,15 +348,7 @@
    const original=JSON.stringify(S),revision=stateRevision,view=JSON.stringify(U);
    const selectedSongId=!S.recMode && typeof song==='function' ? song()?.id : null;
    const active=()=>startupPhase==='ready'&&recordingInboxCanWrite()&&recordingInboxOwner?.canWrite&&!document.hidden&&sourceToken()===token&&stateRevision===revision&&JSON.stringify(S)===original&&JSON.stringify(U)===view&&!REC&&!recordingStartPending&&!recordingFinalizePending&&!pitchStartPending&&!saving&&!syncing&&!manualSync&&!backupInFlight&&!publishInFlight&&!U.busy&&!U.importing&&!U.sheet&&!U.menu&&!U.showRecovery;
-   let prepared;
-   if(operation.type==='original-excel'){
-    if(typeof prepareOriginalExcelAttachment!=='function')throw failure('UNSUPPORTED');
-    prepared=await prepareOriginalExcelAttachment(S,operation.packet,{isActive:active});
-    if(!active())throw failure('DEFERRED');
-    prepared={...prepared,targetSha256:await originalTargetFingerprint(prepared.state)};
-    if(!active())throw failure('DEFERRED');
-   }
-   const applied=PrivatePreparation.apply(S,operation,{schedule:RecordingScheduleUpdate.apply,recording:mergeRecordingAddition,originalExcel:()=>prepared}),next=applied.state;
+   const next=PrivatePreparation.apply(S,operation,{schedule:RecordingScheduleUpdate.apply,recording:mergeRecordingAddition}).state;
    const slots=await Promise.all([idbGet('state:0'),idbGet('state:1')]),hold=await idbGet('recovery:network-hold:v1'),legacy=localStorage.getItem(KEY);
    if(!active())throw failure('DEFERRED');
    if(localSource){
@@ -286,25 +359,12 @@
     const matched=fresh.operations.find(op=>op.id===operation.id);
     if(!matched||JSON.stringify(matched)!==JSON.stringify(operation))throw failure('PREPARATION_SOURCE_CHANGED');
     if(!active())throw failure('DEFERRED');
-   }else if(operation.type==='original-excel'&&originalBatch?.confirmed?.get(operation.id)===JSON.stringify(operation)){
-    // Original bytes and packet hashes are immutable. Reuse the one confirmed
-    // source snapshot only within this reception batch; every local match,
-    // content-addressed blob and editor revision is still checked separately.
-    if(!active())throw failure('DEFERRED');
-   }else if(root.ProgressPreparationSource||['material-update','recording-song','original-excel'].includes(operation.type)){
+   }else if(root.ProgressPreparationSource||['material-update','recording-song'].includes(operation.type)){
     const fresh=await readSource({...config,token,isActive:active});
     if(fresh.status!=='ready'||fresh.sourceSha!==sourceSha)throw failure('PREPARATION_SOURCE_CHANGED');
-    const checked=await PrivatePreparation.validate(fresh.manifest,config.owner);
-    if(operation.type==='original-excel'){
-     const confirmed=new Map(checked.operations.filter(op=>op.type==='original-excel').map(op=>[op.id,JSON.stringify(op)]));
-     if(confirmed.get(operation.id)!==JSON.stringify(operation))throw failure('PREPARATION_SOURCE_CHANGED');
-     if(originalBatch)originalBatch.confirmed=confirmed;
-    }
+    await PrivatePreparation.validate(fresh.manifest,config.owner);
     if(!active())throw failure('DEFERRED');
    }
-   // Restoring a JSON backup can restore a receipt without its Excel blobs.
-   // Preparation has independently verified those blobs before this no-op.
-   if(operation.type==='original-excel'&&applied.status==='already-applied')return true;
    const nextRaw=JSON.stringify(packState(next));recoveryValidateCloudState(JSON.parse(nextRaw));
    const stored=await RecoveryDeliveryStore.commit({database:()=>DB,hash:backupDigest,isActive:active,readLegacy:()=>localStorage.getItem(KEY),expectedLegacyRaw:legacy,
     expectedSlotsRaw:JSON.stringify(slots),expectedHoldRaw:JSON.stringify(hold),allowMissingHold:true,originalStateRaw:original,nextStateRaw:nextRaw,remoteCopies:[]});
@@ -359,19 +419,16 @@
    if(unapplied.length&&!pending.length){setStatus({kind:'active-plan'});return {status:'deferred'};}
    if(!pending.length){setStatus({kind:'current',sourceSha:source.sourceSha,originals:originalSummary(manifest)});return {status:'current'};}
    await establishOwner();if(sourceToken()!==token)throw failure('DEFERRED');
-   let count=0,conflicts=0,addedRecording=false;const originalBatch={};
-   for(const operation of pending){
+   let count=0,conflicts=0,addedRecording=false;
+   for(const operation of pending.filter(op=>op.type!=='original-excel')){
     // Check each independent addition against the current device. An older
     // conflicting packet must not keep a later, unrelated session out forever.
-    try{
-     if(operation.type==='original-excel'){
-      PrivatePreparation.checkOriginalExcel(operation.packet);
-      const receipt=S.privatePreparations?.[operation.id];if(receipt&&(receipt.sha256!==operation.sha256||receipt.type!==operation.type))throw failure('OPERATION_ID_REUSED');
-     }else PrivatePreparation.apply(S,operation,{schedule:RecordingScheduleUpdate.apply,recording:mergeRecordingAddition});
-    }
+    try{PrivatePreparation.apply(S,operation,{schedule:RecordingScheduleUpdate.apply,recording:mergeRecordingAddition});}
     catch(error){if(error.preparationCode==='OPERATION_ID_REUSED')throw error;conflicts++;continue;}
-    if(await applyOne(operation,token,source.sourceSha,undefined,originalBatch)){count++;if(['recording-song','recording-addition'].includes(operation.type))addedRecording=true;}
+    if(await applyOne(operation,token,source.sourceSha)){count++;if(['recording-song','recording-addition'].includes(operation.type))addedRecording=true;}
    }
+   const originalOperations=pending.filter(op=>op.type==='original-excel');
+   if(originalOperations.length)count+=await applyOriginalBatch(originalOperations,token,source.sourceSha);
    if(addedRecording){U.recArtistFilter='';render();}
    const originals=originalSummary(manifest);setStatus({kind:count?'applied':conflicts?'conflict':'current',count,conflicts,sourceSha:source.sourceSha,originals});return {status:status.kind,count,conflicts,originals};
   }catch(error){const code=error.preparationCode||error.code||'PREPARATION_CONFLICT';
@@ -444,7 +501,7 @@
   void tryConnect(0);
  },true);
  function start(){if(started)return;started=true;setInterval(()=>{void receive();},10000);setTimeout(()=>{void receive();},1200);navigator.serviceWorker?.addEventListener?.('controllerchange',()=>{lastAttempt=0;void receive();});window.addEventListener('online',()=>{lastAttempt=0;void receive();});document.addEventListener('visibilitychange',()=>{if(!document.hidden){lastAttempt=0;void receive();}});}
- root.PrivatePreparationUI=Object.freeze({settingsHTML,receive,importFile,connectReadCredential,start,isApplying:()=>applying,getStatus:()=>({...status})});start();
+ root.PrivatePreparationUI=Object.freeze({settingsHTML,receive,readOriginalExcelPackets,importFile,connectReadCredential,start,isApplying:()=>applying,getStatus:()=>({...status})});start();
 })(globalThis);
 
 

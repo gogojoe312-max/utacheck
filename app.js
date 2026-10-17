@@ -113,7 +113,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.27";
+const APP_VER = "16.41.58.28";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -5237,6 +5237,12 @@ async function readOriginalExcel(blob, prepared = {}) {
   if (!(blob instanceof Blob) || !blob.size || blob.size > 16 * 1024 * 1024) return null;
   if (prepared.validated) return prepared;
   const bytes = prepared.bytes || new Uint8Array(await blob.arrayBuffer());
+  // Byte-addressed parsing cache: IDB reads return fresh Blob objects, but the
+  // same verified workbook need not be decompressed for every tap or song.
+  const digest = await startupExcelDigest(blob), cache = readOriginalExcel.cache ||= new Map();
+  if (cache.has(digest)) {
+    const source = cache.get(digest); cache.delete(digest); cache.set(digest,source); return source;
+  }
   if (!startupExcelWithinBudget(bytes)) return null;
   let wb = prepared.workbook;
   if (!wb) {
@@ -5259,6 +5265,8 @@ async function readOriginalExcel(blob, prepared = {}) {
   }
   Object.assign(prepared,{bytes,workbook:wb,validated:true});
   prepared.songs ||= new Map(); prepared.layouts ||= new Map();
+  cache.set(digest,prepared);
+  while (cache.size > 12 || [...cache.values()].reduce((n,value) => n + value.bytes.byteLength,0) > 32*1024*1024) cache.delete(cache.keys().next().value);
   return prepared;
 }
 async function originalExcelSheet(prepared, sheetName, current = S) {
@@ -5300,7 +5308,8 @@ async function originalExcelAttachment(so, blob, prepared = {}, current = S) {
       blockCells:{...candidate.blockCells,...so.blockCells},
       blockRows:so.blockRows?.length ? so.blockRows : candidate.blockRows,
       lines:so.lines.map((line,i) => ({...line,cell:line.cell || candidate.lines[i].cell,
-        lcell:line.lcell || candidate.lines[i].lcell,extraCell:line.extraCell || candidate.lines[i].extraCell}))};
+        lcell:line.lcell || candidate.lines[i].lcell,extraCell:line.extraCell || candidate.lines[i].extraCell,
+        raw:line.raw ?? candidate.lines[i].raw,labelRaw:line.labelRaw ?? candidate.lines[i].labelRaw,extraRaw:line.extraRaw ?? candidate.lines[i].extraRaw}))};
     if (originalExcelLayout(repaired,id => (current.members || []).find(m => m.id === id)?.name) === source.layouts.get(sheetName)) candidates.push(repaired);
   }
   return candidates.length === 1 ? candidates[0] : null;
@@ -5311,7 +5320,7 @@ function attachOriginalExcelMetadata(so, repaired, sourceId, at) {
     if (JSON.stringify(so[key]) !== JSON.stringify(repaired[key])) so[key] = repaired[key];
   }
   so.lines.forEach((line,i) => {
-    for (const key of ["cell","lcell","extraCell"]) if (repaired.lines[i][key] && line[key] !== repaired.lines[i][key]) line[key] = repaired.lines[i][key];
+    for (const key of ["cell","lcell","extraCell","raw","labelRaw","extraRaw"]) if (repaired.lines[i][key] != null && line[key] !== repaired.lines[i][key]) line[key] = repaired.lines[i][key];
   });
   so.xlsSourceId = sourceId; so.xls = 1; so.xlsAt = at;
 }
@@ -5372,6 +5381,106 @@ async function getOriginalExcel(so, searchStored = false, isActive = () => true)
   }
   return found;
 }
+function originalExcelExportContext() {
+  const state = S, revision = stateRevision, showId = S.showId, groupId = S.groupId, snapshot = JSON.stringify(S);
+  const isActive = () => S === state && stateRevision === revision && S.showId === showId && S.groupId === groupId
+    && recordingInboxCanWrite() && !VIEW() && !preview;
+  return {isActive,assertUnchanged:() => {
+    if (!isActive() || JSON.stringify(S) !== snapshot) throw new Error("確認中に公演・歌割・記録が変わりました。Excel出力をもう一度押してください。");
+  }};
+}
+
+async function originalExcelExportSource(so, context = {}) {
+  const active = () => !context.isActive || context.isActive();
+  const assertActive = () => { if (!active()) throw new Error("確認中に画面の状態が変わりました。Excel出力をもう一度押してください。"); };
+  const complete = value => { assertActive(); context.assertUnchanged?.(); return value; };
+  assertActive();
+  const local = await getOriginalExcel(so,false,active); assertActive();
+  if (local) return complete({blob:local,song:so});
+  const signature = JSON.stringify([so,(S.members || []).map(m => [m.id,m.name])]);
+  const cache = originalExcelExportSource.cache ||= new WeakMap(), prior = cache.get(so);
+  if (prior?.signature === signature) {
+    const blob = await getClip("xls:"+prior.id); assertActive();
+    if (blob instanceof Blob && await startupExcelDigest(blob) === prior.id.slice(7)) { return complete({blob,song:prior.song}); }
+    cache.delete(so);
+  }
+  let remote;
+  if (typeof PrivatePreparationUI !== "undefined" && PrivatePreparationUI.readOriginalExcelPackets) {
+    // This owner-authenticated read is allowed while the export dialog is open.
+    // It does not apply schedules or acquire the editor's state transaction.
+    context.originals ||= PrivatePreparationUI.readOriginalExcelPackets({isActive:active});
+    remote = await context.originals; assertActive();
+  }
+  const remember = async (blob,repaired) => {
+    assertActive(); const id = await storeOriginalExcel(blob); assertActive();
+    const result = complete({blob,song:repaired}); cache.set(so,{signature,id,song:repaired}); return result;
+  };
+  const normalize = value => String(value || "").normalize("NFC").replace(/\.(xlsx|xlsb|xls)$/i,"").trim().toLowerCase();
+  const stem = value => normalize(value).replace(/^(?:m|en)\d+[_\s]*/i,"").replace(/[_\s]*(?:new)?(?:歌割り?|唄割り?)$/i,"").replace(/[\s_]+/g,"");
+  const packetMatch = async operation => {
+    assertActive(); const packet = operation.packet;
+    const decode = async file => {
+      const blob = new Blob([Uint8Array.from(atob(file.base64),c => c.charCodeAt(0))]);
+      if (blob.size !== file.size || await startupExcelDigest(blob) !== file.sha256) throw new Error("受信した元Excelの内容が一致しません。");
+      return blob;
+    };
+    const original = await decode(packet), repaired = await originalExcelAttachment(so,original,{},S); assertActive();
+    if (!repaired) return null;
+    const blob = packet.exportFile ? await decode(packet.exportFile) : original;
+    const outputSong = packet.exportFile ? await originalExcelAttachment(repaired,blob,{},S) : repaired; assertActive();
+    if (!outputSong) return null;
+    return {blob,song:outputSong,original,id:"sha256-"+(packet.exportFile || packet).sha256};
+  };
+  if (remote?.status === "ready") {
+    const all = remote.operations || [];
+    const pinned = all.filter(op => "sha256-"+(op.packet.exportFile || op.packet).sha256 === so.xlsSourceId);
+    const exact = all.filter(op => normalize(op.packet.name) === normalize(so.title));
+    const named = exact.length ? exact : all.filter(op => stem(op.packet.name) === stem(so.title));
+    // A unique source filename narrows the search; lyrics, singers and cells
+    // still have to match. It never authorizes a title-only attachment.
+    const primary = pinned.length ? pinned : named;
+    const sets = primary.length ? [primary,all.filter(op => !primary.includes(op))] : [all];
+    for (const operations of sets) {
+      const matches = [];
+      for (const op of operations) {
+        const match = await packetMatch(op); if (match) matches.push(match);
+        await new Promise(resolve => setTimeout(resolve,0)); assertActive();
+      }
+      if (!matches.length) continue;
+      const pinned = matches.find(match => match.id === so.xlsSourceId);
+      const unique = new Map(matches.map(match => [match.id,match]));
+      if (!pinned && unique.size !== 1) throw Object.assign(new Error("一致する元Excelが複数あるため、原本を一意に決められません。曲・指摘は保持しています。"),{originalExcelMissing:true});
+      const match = pinned || unique.values().next().value;
+      if (match.original !== match.blob) { await storeOriginalExcel(match.original); assertActive(); }
+      return remember(match.blob,match.song);
+    }
+  }
+  // Older local uploads may predate the immutable link metadata.
+  let found = null, digest = "";
+  for (const item of await storedOriginalExcelEntries()) {
+    assertActive(); if (!originalExcelSourceGroupAllowed(so,item.key)) continue;
+    const expected = /^(?:xls:sha256-|preserved:excel:v1:)([a-f0-9]{64})$/.exec(item.key)?.[1];
+    const pinned = /^sha256-([a-f0-9]{64})$/.exec(so.xlsSourceId || "")?.[1];
+    if (expected || pinned) {
+      const actual = await startupExcelDigest(item.blob);
+      if (expected && actual !== expected || pinned && actual !== pinned) continue;
+    }
+    const repaired = await originalExcelAttachment(so,item.blob,{},S).catch(() => null);
+    if (repaired) {
+      const nextDigest = await startupExcelDigest(item.blob);
+      if (found && nextDigest !== digest) { found = null; break; }
+      found = {blob:item.blob,song:repaired}; digest = nextDigest;
+    }
+    await new Promise(resolve => setTimeout(resolve,0));
+  }
+  assertActive(); if (found) return remember(found.blob,found.song);
+  const message = remote?.status === "ready"
+    ? "原本を確認しましたが、この曲の歌詞・担当・セル位置との一致を確認できません。曲・指摘は保持しています。"
+    : remote ? "元Excelを受信できませんでした（" + (remote.code || "通信未完了") + "）。接続が戻ってからExcel出力を押してください。曲・指摘は保持しています。"
+    : "端末に一致する元Excelがありません。元Excelを再添付してください。曲・歌詞・指摘はそのまま残っています。";
+  throw Object.assign(new Error(message),{originalExcelMissing:true});
+}
+
 async function storeOriginalExcel(blob) {
   if (!(blob instanceof Blob) || !blob.size || blob.size > 16 * 1024 * 1024
     || !startupExcelWithinBudget(new Uint8Array(await blob.arrayBuffer()))) throw new Error("元Excelを安全に保管できるサイズ・形式ではありません。");
@@ -5805,6 +5914,7 @@ function typingNow() {
   return true;
 }
 function render(background = false) {
+  if (U.view !== "absent" || VIEW() || preview || absenceEditBatch && !absenceEditScopeMatches(absenceEditBatch)) resetAbsenceEditBatch();
   if (!recordingInboxCanWrite()) return;
   // Cached member data may have the same version as the server (or be offline),
   // so applySetlist need not run. Member screens always use LIVE navigation.
@@ -7535,10 +7645,15 @@ const CHKCOL = { "音程": "FFFFD5CC", "タイミング": "FFFDEBC7", "出音": 
   "表情": "FFE7DEFF", "ミス": "FFFFD3DE", "バランス": "FFD6E8FF", "良い": "FFD6F2E2" };
 
 async function exportCheckXlsx(songId) {
-  const so = S.songs.find((x) => x.id === songId);
+  let so = S.songs.find((x) => x.id === songId);
   if (!so) return;
-  const blob = await getOriginalExcel(so,true).catch(() => null);
-  if (!blob) { showFileReport("Excel出力結果", [], ["一致する元Excelがありません。元Excelを再添付してください。"], [], [so.id]); return; }
+  let original;
+  const sourceContext = originalExcelExportContext();
+  U.busy = "元Excelを確認しています…"; render();
+  try { original = await originalExcelExportSource(so,sourceContext); }
+  catch (error) { showFileReport("Excel出力結果", [], [fileFailureReason(error)], [], [so.id]); return; }
+  finally { U.busy = ""; render(); }
+  const blob = original.blob; so = original.song;
   const ns0 = NOTES().filter((n) => n.songId === so.id && n.showId === S.showId);
   if (!ns0.length) { alert("この曲に記録がありません。"); return; }
 
@@ -7576,6 +7691,7 @@ async function exportCheckXlsx(songId) {
 
     const tab = "チェック " + (showName() || "").slice(0, 18);
     const res = await addVersionTab(buf, tab, edits, so.sheetName);
+    sourceContext.assertUnchanged();
     downloadBlob(`${so.title}_チェック.xlsx`,
       new Blob([res.data], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
     U.busy = ""; render();
@@ -7696,12 +7812,9 @@ function hasAbsentExportChanges(so) {
     return partsOf(so, i).slice().sort().join("|") !== before;
   });
 }
-async function buildAbsentWorkbook(so, tab, edits) {
-  let blob, sourceSearchActive = true;
-  try { blob = await importTimeout(getOriginalExcel(so,true,() => sourceSearchActive), 30000, "元のExcelの確認に時間がかかっています。元Excelを再添付して再実行してください。"); }
-  catch (error) { error.originalExcelMissing = true; throw error; }
-  finally { sourceSearchActive = false; }
-  if (!blob) { const error = new Error("端末に一致する元Excelがありません。元Excelを再添付してください。曲・歌詞・指摘はそのまま残っています。"); error.originalExcelMissing = true; throw error; }
+async function buildAbsentWorkbook(so, tab, edits, originalSource) {
+  const source = originalSource?.blob && originalSource?.song ? originalSource : await originalExcelExportSource(so);
+  const blob = source.blob; so = source.song;
   let data = new Uint8Array(await importTimeout(blob.arrayBuffer(), 10000, "元のExcelを読み込めませんでした。"));
   // XLS / XLSB / CSV also need an XML workbook before adding a version tab.
   if (!(data[0] === 0x50 && data[1] === 0x4b) || !XLSX.CFB.read(data, {type:"array"}).FullPaths.some(p => p.endsWith('/xl/workbook.xml'))) {
@@ -7731,7 +7844,7 @@ async function runAbsentExport(songs, bundle) {
   if (U.exportingExcel) return;
   if (!absentIds().length) { alert("欠席者が設定されていません。"); return; }
   const tab = absentTab(), title = showName() || "公演";
-  const targets = songs.slice();
+  const targets = songs.slice(), sourceContext = originalExcelExportContext();
   U.exportingExcel = true;
   closeExcelExport();
   const files = Object.create(null), failures = [], missingExcelIds = [];
@@ -7741,9 +7854,11 @@ async function runAbsentExport(songs, bundle) {
       U.busy = `Excel作成 ${i + 1}/${targets.length} ${so.title}`; render();
       await new Promise(resolve => setTimeout(resolve, 0));
       try {
-        const edits = absentEdits(so);
-        if (!Object.keys(edits).length && !hasAbsentExportChanges(so)) continue;
-        const data = await buildAbsentWorkbook(so, tab, edits);
+        if (!Object.keys(absentEdits(so)).length && !hasAbsentExportChanges(so)) continue;
+        const original = await originalExcelExportSource(so,sourceContext);
+        const edits = absentEdits(original.song);
+        const data = await buildAbsentWorkbook(original.song, tab, edits,original);
+        sourceContext.assertUnchanged();
         const base = absentExportFilename(so.title, tab);
         let name = base, suffix = 2;
         while (files[name]) name = base.replace(/\.xlsx$/, ` (${suffix++}).xlsx`);
@@ -7758,6 +7873,7 @@ async function runAbsentExport(songs, bundle) {
     }
     const data = bundle ? await zip(files, null, false) : files[names[0]];
     const name = bundle ? absentExportFilename(title,tab).replace(/\.xlsx$/, ".zip") : names[0];
+    sourceContext.assertUnchanged();
     U.busy = ""; render();
     presentExcelExport(name, new Blob([data], {type:bundle ? "application/zip" : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}), names.length, failures, missingExcelIds);
   } catch (e) { alert("Excelを作れませんでした。\n" + e.message); }
@@ -7787,6 +7903,52 @@ function micEdits(so, edits) {
     out[ref] = { v: nums.join("・"), fill: (e && e.fill) || "FFFFF3B0" };
   });
   return out;
+}
+
+// Keep one verified restore point for consecutive selections in this editor.
+let absenceEditBatch = null, absenceEditEpoch = 0;
+function resetAbsenceEditBatch() { absenceEditBatch = null; absenceEditEpoch++; }
+function absenceEditScopeMatches(batch) {
+  return !!batch && batch.epoch === absenceEditEpoch && batch.state === S && batch.showId === S.showId && batch.groupId === S.groupId
+    && U.view === "absent" && !S.recMode && !VIEW() && !preview
+    && recordingInboxCanWrite() && booted && !bootErr && !syncing && !manualSync && !backupInFlight && !publishInFlight;
+}
+function absenceEditSnapshot() {
+  // packState is read-only; no extra full-state clone is needed for comparison.
+  const state = packState(S);
+  delete state.ghToken; delete state.bkPendingParts;
+  return JSON.stringify(state);
+}
+async function toggleAbsenceMember(id, button) {
+  if (VIEW() || preview || !absenceSelectableMembers().some(m=>m.id===id)) return false;
+  if (U.view !== "absent" || S.recMode || U.absencePending) return false;
+  const scope = {state:S,showId:S.showId,groupId:S.groupId,epoch:absenceEditEpoch};
+  const label = button?.textContent;
+  U.absencePending = true;
+  document.querySelectorAll('[data-act="toggleabsent"]').forEach(el=>{el.disabled=true;});
+  if (button) { button.textContent = label + " 確認中…"; button.setAttribute("aria-busy","true"); }
+  try {
+    const reuse = absenceEditScopeMatches(absenceEditBatch) && absenceEditBatch.revision === stateRevision
+      && absenceEditBatch.snapshot === absenceEditSnapshot();
+    absenceEditBatch = null;
+    if (!reuse && !await automaticBackupBeforeEdit("toggleabsent")) return false;
+    if (!absenceEditScopeMatches(scope) || button && !button.isConnected) return false;
+    if (typingNow()) { commitFields(); document.activeElement.blur(); }
+    const sw = S.shows.find(x=>x.id===S.showId);
+    if (!sw) return false;
+    sw.absent = (sw.absent || []).includes(id) ? sw.absent.filter(x=>x!==id) : (sw.absent || []).concat(id);
+    rebuildSubs();
+    save(); schedulePush(); render();
+    const expected = {...scope,revision:stateRevision,snapshot:absenceEditSnapshot()};
+    await saveNow();
+    if (!saveErr && absenceEditScopeMatches(expected) && stateRevision === expected.revision) absenceEditBatch = expected;
+    if (saveErr) render();
+    return !saveErr;
+  } finally {
+    U.absencePending = false;
+    document.querySelectorAll('[data-act="toggleabsent"]').forEach(el=>{el.disabled=false;});
+    if (button?.isConnected) { button.textContent=label; button.removeAttribute("aria-busy"); }
+  }
 }
 
 // Read-only view of absence substitutions; use each song's own performance.
@@ -7845,7 +8007,7 @@ function viewAbsent() {
   if (VIEW()) return viewMemberAbsence();
   const ab = absentIds();
   const chips = absenceSelectableMembers()
-    .map((m) => `<button class="chip sm" data-act="toggleabsent" data-id="${m.id}"
+    .map((m) => `<button class="chip sm" data-act="toggleabsent" data-id="${m.id}" ${U.absencePending ? "disabled" : ""}
       style="${ab.includes(m.id) ? "background:var(--bad);color:#0A0A0A" : ""}">${h(compactMemberLabel(m.name))}</button>`).join("");
 
   const body = !ab.length ? `<p style="padding:40px;text-align:center;color:var(--dim);font-size:14px">${VIEW() ? "歌割の変更はありません" : "上から欠席者を選んでください"}</p>`
@@ -10047,6 +10209,8 @@ document.addEventListener("click", async (e) => {
   if (e.target.closest("[data-r]") && U.sheet) return;   // 文字の選択はなぞりで扱う
   if (!b) return;
   const a = b.dataset.act, i = +b.dataset.i, id = b.dataset.id;
+  if (a === "toggleabsent") { await toggleAbsenceMember(id,b); return; }
+  resetAbsenceEditBatch();
   // Diagnostics must not commit or blur unsaved input through the generic button path.
   if (a === 'publication-inspect') { void inspectPublication(id); return; }
   if (a === 'app-update-check') { void checkAppUpdate(); return; }
@@ -10079,7 +10243,7 @@ document.addEventListener("click", async (e) => {
   if (a === "folder-sort") {
     await changePerformanceFolderOrder("date"); return;
   }
-  if (new Set(['note','draw','word','toggleabsent','resetsubs','setblock','unassign','setassign','goabsent','assignline','assignblock','assign','absent','absent-clear','dupshow','set-show-delivery','usegroup','m-setgroup','pickgroup','delpicked','deletesong','deleteshow','wordedit','word-save']).has(a) && !VIEW() && !preview) {
+  if (new Set(['note','draw','word','resetsubs','setblock','unassign','setassign','goabsent','assignline','assignblock','assign','absent','absent-clear','dupshow','set-show-delivery','usegroup','m-setgroup','pickgroup','delpicked','deletesong','deleteshow','wordedit','word-save']).has(a) && !VIEW() && !preview) {
     if (!await automaticBackupBeforeEdit(a)) return;
     if (!b.isConnected) return;
   }
@@ -10468,15 +10632,6 @@ document.addEventListener("click", async (e) => {
     }
     case "absence-scope": if (VIEW()) { U.absenceMode = id === "member" ? "member" : "all"; render(); } break;
     case "goabsent": commitFields(); U.view = "absent"; render(); break;
-    case "toggleabsent": {
-      if (VIEW() || preview || !absenceSelectableMembers().some(m=>m.id===id)) break;
-      const sw = S.shows.find((x) => x.id === S.showId);
-      if (!sw) break;
-      sw.absent = (sw.absent || []).includes(id) ? sw.absent.filter((x) => x !== id) : (sw.absent || []).concat(id);
-      rebuildSubs();
-      save(); schedulePush(); render();
-      break;
-    }
     case "resetsubs":
       if (confirm("この公演の振り替えをすべてやり直しますか？")) {
         SONGS().forEach((so) => {

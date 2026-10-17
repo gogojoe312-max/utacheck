@@ -7,9 +7,9 @@ const source=fs.readFileSync(require('node:path').join(__dirname,'../app.js'),'u
 function fn(name){const i=source.indexOf('function '+name+'(');assert(i>=0,name);return source.slice(source.lastIndexOf('\n',i)+1,source.indexOf('\n}',i)+2);}
 function setup(extra={}){
  const c=testContext({XLSX,Uint8Array,Uint32Array,DataView,TextEncoder,TextDecoder,Blob,File,Response,setTimeout,clearTimeout,console,
- U:{},S:{songs:[]},inspectOriginalExcel:async()=>true,startupExcelDigest:async blob=>Buffer.from(await blob.arrayBuffer()).toString("base64"),storedOriginalExcelEntries:async()=>[],originalExcelSourceGroupAllowed:()=>true,save(){},render(){},renderSheet(){},URL:{createObjectURL:()=> 'blob:test',revokeObjectURL(){}},...extra});
+ U:{},S:{songs:[]},stateRevision:0,VIEW:()=>false,preview:false,inspectOriginalExcel:async()=>true,startupExcelDigest:async blob=>Buffer.from(await blob.arrayBuffer()).toString("base64"),storedOriginalExcelEntries:async()=>[],originalExcelSourceGroupAllowed:()=>true,save(){},render(){},renderSheet(){},URL:{createObjectURL:()=> 'blob:test',revokeObjectURL(){}},...extra});
  vm.runInContext(source.slice(source.indexOf('const CRCT ='),source.indexOf('\n\n',source.indexOf('  return { data: await zip(files, names), changed };'))),c);
- for(const n of ['fileFailureReason','showFileReport','importTimeout','closeExcelExport','presentExcelExport','excelSourceCandidates','getOriginalExcel','hasAbsentExportChanges','buildAbsentWorkbook','absentExportFilename','runAbsentExport','shareExcelExport'])vm.runInContext(fn(n),c);
+ for(const n of ['fileFailureReason','showFileReport','importTimeout','closeExcelExport','presentExcelExport','excelSourceCandidates','getOriginalExcel','originalExcelExportContext','originalExcelExportSource','hasAbsentExportChanges','buildAbsentWorkbook','absentExportFilename','runAbsentExport','shareExcelExport'])vm.runInContext(fn(n),c);
  return c;
 }
 function fixture(type='xlsx'){
