@@ -5,7 +5,7 @@ const read=name=>{const i=source.indexOf('function '+name+'(');assert(i>=0,name)
 function fixture(lines){
  const song={id:'rec',intro:8,lines},S={rsongs:[song],notes:[],pubNotes:[],draws:{},subs:{},subsMan:{},recs:{take:{duration:30}},plan:{slots:[{id:'member',takes:{A:3},a0:600,a1:660}]}};
  const c=vm.createContext({S,U:{},recSong:()=>song,tagSecNames:()=>[]});
- for(const name of ['recordingEmptyTextLine','recordingHiddenLineIndexes','barsOf','secRange','vtTargets','secBars'])vm.runInContext(read(name),c);
+ for(const name of ['recordingEmptyTextLine','recordingHiddenLineIndexes','lyricBreakOffsets','recordingLineSegments','recordingBarRows','barsOf','secRange','vtTargets','secBars'])vm.runInContext(read(name),c);
  return {c,S,song,hidden:()=>Array.from(c.recordingHiddenLineIndexes(song))};
 }
 test('empty Word paragraphs are hidden without removing or renumbering stored lyric rows',()=>{

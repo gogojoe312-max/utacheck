@@ -17,7 +17,7 @@ function fixture(rec=false){
   commitFields(){},flushSheet(){},clearTimeout(){},sheetTimer:null,renderSheet(){},render(){},save(){calls.save++;},schedulePush(){calls.publish++;},pushUndo(id){calls.undo.push(id);},
   automaticBackupBeforeEdit(){calls.backup++;return new Promise(resolve=>{finish=resolve;});}});
  vm.runInContext('const lyricBreakSubmissions=new WeakSet();',c);
- for(const name of ['lyricBreakOffsets','lyricBreakDraft','lyricBreaksFromDraft','lyricTextHTML','lyricBreakTarget','openLyricBreaks','lyricBreakSheetHTML','submitLyricBreakForm'])vm.runInContext(read(name),c);
+ for(const name of ['lyricBreakOffsets','pruneRecordingBarOverrides','lyricBreakDraft','lyricBreaksFromDraft','lyricTextHTML','lyricBreakTarget','openLyricBreaks','lyricBreakSheetHTML','submitLyricBreakForm'])vm.runInContext(read(name),c);
  return {c,S,form,fields,calls,line:S[rec?'rsongs':'songs'][0].lines[0],finish:value=>finish(value),open(){assert(c.openLyricBreaks(0));fields['#lyric-break-text'].value=c.lyricBreakDraft(c.song().lines[0]);},draft(){fields['#lyric-break-text'].value='合成😀\n歌詞を保持';}};
 }
 test('Unicode positions preserve lyric characters and normalize repeated or edge blank lines',()=>{
@@ -47,6 +47,14 @@ test('saving waits for backup and changes only display offsets, retaining lyric 
 test('removing breaks deletes only the display metadata',async()=>{
  const f=fixture(true);f.line.lyricBreaks=[3];const expected=clone(f.S);delete expected.rsongs[0].lines[0].lyricBreaks;
  f.open();f.fields['#lyric-break-text'].value=f.line.t;const pending=f.c.submitLyricBreakForm(f.form);f.finish(true);assert.equal(await pending,true);assert.deepEqual(clone(f.S),expected);
+});
+test('changing REC breaks keeps bar overrides at retained character offsets and removes vanished rows',async()=>{
+ const f=fixture(true);f.line.lyricBreaks=[3,6];f.line.recBarOverrides={3:{at:20,bars:2},6:{at:30,bars:8}};
+ const expected=clone(f.S);expected.rsongs[0].lines[0].lyricBreaks=[2,6];expected.rsongs[0].lines[0].recBarOverrides={6:{at:30,bars:8}};
+ f.open();f.fields['#lyric-break-text'].value='合成\n😀歌詞を\n保持';const pending=f.c.submitLyricBreakForm(f.form);f.finish(true);
+ assert.equal(await pending,true);assert.deepEqual(clone(f.S),expected);
+ f.open();f.fields['#lyric-break-text'].value=f.line.t;const remove=f.c.submitLyricBreakForm(f.form);f.finish(true);assert.equal(await remove,true);
+ delete expected.rsongs[0].lines[0].lyricBreaks;delete expected.rsongs[0].lines[0].recBarOverrides;assert.deepEqual(clone(f.S),expected);
 });
 test('unchanged, composing or altered lyric text cannot mutate or create unnecessary backups',async()=>{
  for(const rec of [false,true]){const f=fixture(rec),before=JSON.stringify(f.S);f.open();f.fields['#lyric-break-text'].value='違う歌詞';assert.equal(await f.c.submitLyricBreakForm(f.form),false);assert.equal(f.fields['#lyric-break-error'].hidden,false);

@@ -51,6 +51,8 @@
 #app[data-rec="1"] .rec-tools-actions .tkbtn{flex:0 0 52px}
 #app[data-rec="1"][data-screen="live"] .sectabs{padding-top:2px;padding-bottom:2px}
 #app[data-rec="1"][data-screen="live"] .txt{line-height:1.6}
+/* Each intentional lyric break starts another numbered REC row. */
+#app[data-rec="1"][data-screen="live"] .txt .rec-lyric-number{display:block;width:100%;text-align:left;font-size:10px;line-height:1.4;min-height:14px;margin:12px 0 0;padding:0;color:var(--dim);font-weight:400;letter-spacing:0}
 /* 歌詞や指摘を残し、選択した人の歌割を見分けやすくする。 */
 .rec-member-focus { padding: 8px 12px; border-top: 1px solid var(--line); }
 .rec-member-focus > span { font-size: 12px; color: var(--dim); }

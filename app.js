@@ -113,7 +113,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.21";
+const APP_VER = "16.41.58.22";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -4230,18 +4230,81 @@ function recordingHiddenLineIndexes(so) {
   return hidden;
 }
 
-// 1行4小節を基本に、直した行を基点にして振り直す
-function barsOf(so) {
-  let b = Number(so.intro || 0) + 1;
-  return (so.lines || []).map((l) => {
-    if (l.gap || recordingEmptyTextLine(l)) return null;
-    if (l.add) return null;                    // 足した行は小節を数えない
-    if (l.cut) return null;                    // カット（グレー）の行も数えない
-    if (l.at != null) b = Number(l.at);
-    const cur = b;
-    b += Number(l.bars || 4);
-    return cur;
+// 改行は元の歌詞・指摘の位置を保ち、追加行の小節設定だけを文字位置に保存する。
+function recordingLineSegments(line) {
+  const chars = Array.from(String(line?.t || ""));
+  const starts = [0, ...lyricBreakOffsets(line)];
+  return starts.map((from, index) => {
+    const to = starts[index + 1] ?? chars.length;
+    const override = index ? line?.recBarOverrides?.[from] : null;
+    const bars = Number.isSafeInteger(override?.bars) && override.bars > 0 ? override.bars : Number(line?.bars || 4);
+    const at = index ? (Number.isSafeInteger(override?.at) && override.at > 0 ? override.at : null) : (line?.at == null ? null : Number(line.at));
+    return { index, from, to, text: chars.slice(from, to).join(""), bars, at };
   });
+}
+function recordingBarRows(so) {
+  let next = Number(so.intro || 0) + 1;
+  return (so.lines || []).map(line => {
+    const counted = !line.gap && !line.add && !line.cut && !recordingEmptyTextLine(line);
+    return recordingLineSegments(line).map(segment => {
+      if (!counted) return { ...segment, number: null };
+      if (segment.at != null) next = segment.at;
+      const number = next;
+      next += segment.bars;
+      return { ...segment, number };
+    });
+  });
+}
+// 従来の呼び出し元には元の各行の先頭番号を返す。
+function barsOf(so) {
+  return recordingBarRows(so).map(segments => segments[0].number);
+}
+function pruneRecordingBarOverrides(line) {
+  const kept = {};
+  for (const offset of lyricBreakOffsets(line)) {
+    const old = line.recBarOverrides?.[offset], entry = {};
+    for (const field of ["at", "bars"]) if (Number.isSafeInteger(old?.[field]) && old[field] > 0) entry[field] = old[field];
+    if (Object.keys(entry).length) kept[offset] = entry;
+  }
+  if (Object.keys(kept).length) line.recBarOverrides = kept;
+  else delete line.recBarOverrides;
+}
+function setRecordingSegmentBar(line, segmentIndex, field, value) {
+  const segment = recordingLineSegments(line)[segmentIndex];
+  if (!segment || !["at", "bars"].includes(field) || (value != null && (!Number.isSafeInteger(value) || value < 1))) return false;
+  if (!segment.index) {
+    if (value == null) delete line[field]; else line[field] = value;
+  } else {
+    pruneRecordingBarOverrides(line);
+    const entries = line.recBarOverrides || {}, entry = entries[segment.from] || {};
+    if (value == null) delete entry[field]; else entry[field] = value;
+    entries[segment.from] = entry; line.recBarOverrides = entries;
+    pruneRecordingBarOverrides(line);
+  }
+  return true;
+}
+function recordingBarMenuTarget() {
+  const so = recSong(), menu = U.menu;
+  if (!so || menu?.kind !== "rbar" || !Number.isSafeInteger(menu.i)) return null;
+  const line = so.lines[menu.i], segmentIndex = menu.segment ?? 0;
+  if (!line || !Number.isSafeInteger(segmentIndex) || segmentIndex < 0) return null;
+  const segment = recordingBarRows(so)[menu.i]?.[segmentIndex];
+  return segment ? { so, line, segment, lineIndex: menu.i } : null;
+}
+function setRecordingBarLengths(so, lineIndex, segmentIndex, bars) {
+  if (!Number.isSafeInteger(lineIndex) || lineIndex < 0 || !so.lines[lineIndex] || !Number.isSafeInteger(segmentIndex) || segmentIndex < 0 || !Number.isSafeInteger(bars) || bars < 1 || !recordingLineSegments(so.lines[lineIndex])[segmentIndex]) return false;
+  for (let i = lineIndex; i < so.lines.length; i++) {
+    const line = so.lines[i];
+    if (line.gap || line.add || line.cut || recordingEmptyTextLine(line)) continue;
+    if (i === lineIndex && segmentIndex > 0) {
+      recordingLineSegments(line).forEach(segment => { if (segment.index >= segmentIndex) setRecordingSegmentBar(line, segment.index, "bars", bars); });
+    } else {
+      line.bars = bars;
+      for (const entry of Object.values(line.recBarOverrides || {})) if (entry && typeof entry === "object") delete entry.bars;
+      pruneRecordingBarOverrides(line);
+    }
+  }
+  return true;
 }
 const recSong = () => S.recMode ? (S.rsongs.find((x) => x.id === S.rsongId) || S.rsongs[0] || null) : null;
 
@@ -5636,6 +5699,10 @@ function lyricTextHTML(line, added = false) {
   const text = Array.from(String(line?.t || "")).map((ch, i) => (breaks.has(i) ? "<br>" : "") + h(ch)).join("");
   return added ? "（" + text + "）" : text;
 }
+function recordingLegacyLyricInk(so) {
+  return !!so && Object.entries(S.draws || {}).some(([key, strokes]) => key.split("|")[1] === so.id
+    && Array.isArray(strokes) && strokes.some(stroke => stroke.recNumberedLyrics !== 1));
+}
 function lyricBreakTarget(menu) {
   if (menu?.kind !== "lyric-breaks" || VIEW() || preview || !recordingInboxCanWrite() || !!S.recMode !== menu.rec) return null;
   const so = song(), line = so?.lines[menu.i];
@@ -5728,6 +5795,8 @@ function viewLive() {
   } else {
     const allNotes = NOTES();
     const hiddenRecLines = S.recMode ? recordingHiddenLineIndexes(s) : new Set();
+    const numberedRows = S.recMode ? recordingBarRows(s) : [];
+    const preserveInkLayout = S.recMode && recordingLegacyLyricInk(s);
     const ns0 = allNotes.filter((n) => n.songId === s.id && n.showId === S.showId && inTake(n));
     const previous = S.recMode ? null : prevSongOf(s);
     const pastByLine = new Map();
@@ -5776,11 +5845,16 @@ function viewLive() {
         return n.ro ? main : `<span class="mark-edit">${main}<button class="mark-del" data-act="delnote" data-id="${n.id}" aria-label="${h(txt)}を削除">×</button></span>`;
       };
       const lineBreaks = new Set(lyricBreakOffsets(l).map(n => n + (S.recMode && l.add ? 1 : 0)));
+      const numberedBreaks = new Map((numberedRows[i] || []).slice(1).map(segment => [segment.from + (l.add ? 1 : 0), segment]));
       let cells = chars.map((ch, ci) => {
         const mk = ns.find((n) => n.from != null && ci >= n.from && ci <= n.to);
         const st = mk ? markStyle(mk) : "border-bottom-color:transparent";
         const tail = ns.filter((n) => n.from != null && n.to === ci).map(badge).join("");
-        return `${lineBreaks.has(ci) ? "<br>" : ""}<span data-c="${ci}" style="${st}">${ch === " " ? "&nbsp;" : h(ch)}</span>${tail}`;
+        const segment = numberedBreaks.get(ci);
+        const separator = segment && !preserveInkLayout
+          ? `<button class="rec-lyric-number" data-act="rbar" data-i="${i}" data-segment="${segment.index}" aria-label="${segment.number == null ? "この行の小節" : "小節 " + segment.number}">${S.recBars && segment.number != null ? segment.number : ""}</button>`
+          : lineBreaks.has(ci) ? "<br>" : "";
+        return `${separator}<span data-c="${ci}" style="${st}">${ch === " " ? "&nbsp;" : h(ch)}</span>${tail}`;
       }).join("");
       cells += ns.filter((n) => n.from == null && n.lineIdx === i).map(badge).join("");
       const past = pastByLine.get(i);
@@ -5806,7 +5880,7 @@ function viewLive() {
       ${vh ? `<div class="vtdiv" style="color:${vh.c}"><span>${h(vh.vt)}</span></div>` : ""}
       <div data-lyric-line="${i}" class="ln ${S.recMode ? recLineFocus(s, i) : ""}${S.recMode && l.add ? " lnadd" : ""}${S.recMode && l.skip ? " lnskip" : ""}${l.cut ? " lncut" : ""}${isAgeri(l) ? " lnage" : ""}"${
         l.tag && tanc[l.tag] === i ? ` id="sec-${h(l.tag)}"` : ""} style="${tint ? `background:color-mix(in srgb,${tint} ${strength}%,transparent);` : ""}${vtc ? `box-shadow:inset 3px 0 0 ${vtc}` : ""}">
-        <button class="lbl" data-act="${S.recMode ? "rbar" : "noteblock"}" data-i="${i}"${S.recMode || VIEW() ? "" : ` data-hold="assignline"`}
+        <button class="lbl" data-act="${S.recMode ? "rbar" : "noteblock"}" data-i="${i}"${S.recMode ? ' data-segment="0"' : ""}${S.recMode || VIEW() ? "" : ` data-hold="assignline"`}
           style="${st2 ? `color:${st2 === "need" ? "var(--bad)" : "#F0B23C"}` : ""}">${S.recMode && l.tag ? `<b class="tagmk">${h(l.tag)}</b>` : ""}${l.cut ? `<b class="cutmk">カット</b>` : ""}${labelHTML(s, i)}</button>
         <div class="brk ${gp[i]}"></div>
         <div class="grow" style="min-width:0">
@@ -5955,7 +6029,7 @@ function viewOverview(s) {
   const useGrid = withT.length > 0 && withBoth.length >= withT.length * 0.8;
   let bodyHTML;
   if (S.recMode) {
-    const bars = barsOf(s);
+    const numberedRows = recordingBarRows(s);
     const vm2 = vtMarks(s);
     const hiddenRecLines = recordingHiddenLineIndexes(s);
     const nc = Math.max(1, Math.min(4, Number(s.cols || 1)));
@@ -5966,10 +6040,10 @@ function viewOverview(s) {
       const vh2 = vm2.info[i];
       return `${newSec ? `<div class="secdiv" id="sec-${h(l.sec)}"><span>${h(l.sec)}</span></div>` : ""}
         ${vh2 ? `<div class="vtdiv vtdivov" style="color:${vh2.c}"><span>${h(vh2.vt)}</span></div>` : ""}
-        <button class="ovw ${recLineFocus(s, i)}${l.add ? " lnadd" : ""}${S.recMode && l.skip ? " lnskip" : ""}${l.cut ? " lncut" : ""}" data-act="jumpline" data-i="${i}"
+        ${numberedRows[i].map(segment => `<button class="ovw ${recLineFocus(s, i)}${l.add ? " lnadd" : ""}${S.recMode && l.skip ? " lnskip" : ""}${l.cut ? " lncut" : ""}" data-act="jumpline" data-i="${i}" data-segment="${segment.index}"
           style="${vtColor(vtOf(l)) ? `box-shadow:inset 3px 0 0 ${vtColor(vtOf(l))}` : ""}">
-          <span class="ovwn">${l.tag ? `<b class="tagmk">${h(l.tag)}</b>` : ""}${S.recBars && bars[i] != null ? bars[i] : ""}</span>
-          <span>${lyricTextHTML(l, !!l.add)}</span></button>`;
+          <span class="ovwn">${l.tag && !segment.index ? `<b class="tagmk">${h(l.tag)}</b>` : ""}${S.recBars && segment.number != null ? segment.number : ""}</span>
+          <span>${l.add && !segment.index ? "（" : ""}${h(segment.text)}${l.add && segment.index === numberedRows[i].length - 1 ? "）" : ""}</span></button>`).join("")}`;
     };
     const brks = (s.colBreaks || []).filter((x) => x > 0 && x < s.lines.length);
     if (nc > 1 && brks.length) {
@@ -6502,7 +6576,9 @@ function renderSheet() {
   if (U.menu && U.menu.kind === "rbar") {
     const so = recSong();
     const l = so ? so.lines[U.menu.i] : null;
-    const cur = so ? barsOf(so)[U.menu.i] : 0;
+    const segments = so ? recordingBarRows(so)[U.menu.i] || [] : [];
+    const selected = segments[U.menu.segment ?? 0];
+    const cur = selected?.number ?? "";
     const vt = (l || {}).vt || "";
     const hdr = (t) => `<div style="font-size:10px;color:var(--dim);margin:14px 0 6px">${t}</div>`;
     const secs = paletteSec();
@@ -6520,7 +6596,7 @@ function renderSheet() {
     overlay.className = "mask";
     overlay.innerHTML = `<button class="sp" data-act="closemenu"></button><div class="sheet">
       <div class="row" style="margin-bottom:4px">
-        <span class="grow trunc" style="font-size:13px">${h(l ? l.t : "")}</span>
+        <span class="grow trunc" style="font-size:13px">${h(selected?.text ?? l?.t ?? "")}</span>
         <button data-act="closemenu" style="width:36px;height:36px;border-radius:10px;background:var(--panel2);font-size:17px">✕</button>
       </div>
 
@@ -6548,6 +6624,7 @@ function renderSheet() {
       </div>
 
       ${hdr("小節")}
+      ${segments.length > 1 ? `<div class="chips" style="margin-bottom:8px">${segments.map(segment => `<button class="chip sm" data-act="rbar" data-i="${U.menu.i}" data-segment="${segment.index}" aria-pressed="${segment === selected}" style="${segment === selected ? "background:var(--accent);color:#0A0A0A" : ""}">${segment.index + 1}行目 · ${segment.number ?? "—"}</button>`).join("")}</div>` : ""}
       <div class="row" style="margin-bottom:8px">
         <button class="chip" data-act="rbarset" data-id="-4">−4</button>
         <button class="chip" data-act="rbarset" data-id="-1">−1</button>
@@ -6559,8 +6636,9 @@ function renderSheet() {
       <div class="row">
         <span style="font-size:11px;color:var(--dim);width:64px">1行の長さ</span>
         ${[1, 2, 4, 8].map((b) => `<button class="chip sm grow" data-act="rlen" data-id="${b}"
-          style="${Number((l || {}).bars || 4) === b ? "background:var(--accent);color:#0A0A0A" : ""}">${b}</button>`).join("")}
+          style="${selected?.bars === b ? "background:var(--accent);color:#0A0A0A" : ""}">${b}</button>`).join("")}
       </div>
+      <div style="font-size:10px;color:var(--dim);margin-top:6px">この行から下にも適用</div>
 
       <button class="chip" data-act="rskip" style="width:100%;margin-top:14px;${
         (l || {}).skip ? "background:var(--dim);color:#0A0A0A;font-weight:700" : ""}">${
@@ -6591,7 +6669,7 @@ function renderSheet() {
           <button class="chip sm" data-act="rintro" data-id="4">＋4</button>
         </div>
 
-        ${l && l.at != null ? `<div class="row" style="margin-top:16px">
+        ${selected?.at != null ? `<div class="row" style="margin-top:16px">
           <button class="chip sm grow" data-act="rbarclear" style="color:var(--dim)">小節の手直しを取り消す</button>
         </div>` : ""}
         <button class="ghost" data-act="rdelline" style="margin-top:10px;color:var(--bad)">この行を消す</button>
@@ -8595,7 +8673,7 @@ function secBars() {
   let cur = "";
   (so2.lines || []).forEach((l) => {
     if (l.gap || l.cut || recordingEmptyTextLine(l)) return; // カットと余白は小節に数えない
-    const b = Number(l.bars || 4);
+    const b = recordingLineSegments(l).reduce((sum, segment) => sum + segment.bars, 0);
     // 表記が付いている行は、その表記の枠にも小節を足す（本編の分はそのまま）
     if (l.tag && tg.includes(l.tag)) {
       if (out[l.tag] == null) out[l.tag] = { all: 0, live: 0 };
@@ -9038,7 +9116,7 @@ function viewPlan() {
 function viewRecPrint() {
   const so = recSong();
   if (!so) return `<div class="hd"><button class="ic" data-act="recback">‹</button><b>PDF</b></div>`;
-  const bars = barsOf(so);
+  const numberedRows = recordingBarRows(so);
   const vm3 = vtMarks(so);
   const hiddenRecLines = recordingHiddenLineIndexes(so);
   const trs = so.lines.map((l, i) => {
@@ -9046,7 +9124,7 @@ function viewRecPrint() {
     if (l.gap) return `<tr class="prz"><td class="prn"></td><td class="prx"></td></tr>`;
     const vh3 = vm3.info[i];
     const hd = vh3 ? `<tr class="prv"><td class="prn"></td><td class="prx"><b>${h(vh3.vt)}</b></td></tr>` : "";
-    return hd + `<tr><td class="prn">${l.tag ? "［" + h(l.tag) + "］" : ""}${l.sec ? h(l.sec) + " " : ""}${S.recBars && bars[i] != null ? bars[i] : ""}</td><td class="prx">${lyricTextHTML(l, !!l.add)}</td></tr>`;
+    return hd + numberedRows[i].map(segment => `<tr data-line="${i}" data-segment="${segment.index}"><td class="prn">${l.tag && !segment.index ? "［" + h(l.tag) + "］" : ""}${l.sec && !segment.index ? h(l.sec) + " " : ""}${S.recBars && segment.number != null ? segment.number : ""}</td><td class="prx">${l.add && !segment.index ? "（" : ""}${h(segment.text)}${l.add && segment.index === numberedRows[i].length - 1 ? "）" : ""}</td></tr>`).join("");
   });
   return `
   <div class="hd noprint"><button class="ic" data-act="recback">‹</button><b>PDF・印刷</b>
@@ -9744,7 +9822,8 @@ document.addEventListener("click", async (e) => {
       render(); break;
     case "jumpline": {
       U.overview = false; render();
-      const el = app.querySelector(`.txt[data-l="${i}"]`);
+      const segment = Math.max(0, Number(b.dataset.segment) || 0);
+      const el = (segment && app.querySelector(`[data-act="rbar"][data-i="${i}"][data-segment="${segment}"]`)) || app.querySelector(`.txt[data-l="${i}"]`);
       if (el) el.scrollIntoView({ block: "center" });
       break;
     }
@@ -10252,28 +10331,27 @@ document.addEventListener("click", async (e) => {
       so.intro = Math.max(0, Number(so.intro || 0) + Number(id));
       save(); renderSheet(); render(); break;
     }
-    case "rbar": U.menu = { kind: "rbar", i }; renderSheet(); break;
+    case "rbar": U.menu = { kind: "rbar", i, segment: Math.max(0, Number(b.dataset.segment) || 0) }; renderSheet(); break;
     case "rbarset": {
-      const so = recSong(); if (!so) break;
-      const li = U.menu.i;
-      const cur = barsOf(so)[li];
+      const target = recordingBarMenuTarget(); if (!target || target.segment.number == null) break;
+      const value = Math.max(1, target.segment.number + Number(id));
+      if (!Number.isSafeInteger(value)) break;
       pushUndo();
-      so.lines[li].at = Math.max(1, cur + Number(id));
+      setRecordingSegmentBar(target.line, target.segment.index, "at", value);
       save(); renderSheet(); render(); break;
     }
     case "rbarclear": {
-      const so = recSong(); if (!so) break;
+      const target = recordingBarMenuTarget(); if (!target || target.segment.at == null) break;
       pushUndo();
-      delete so.lines[U.menu.i].at;
+      setRecordingSegmentBar(target.line, target.segment.index, "at", null);
       save(); renderSheet(); render(); break;
     }
     case "rbarnum": {
-      const so = recSong(); if (!so) break;
-      const now = barsOf(so)[U.menu.i];
-      const v0 = prompt("この行の小節番号", String(now == null ? "" : now));
+      const target = recordingBarMenuTarget(); if (!target || target.segment.number == null) break;
+      const v0 = prompt("この行の小節番号", String(target.segment.number));
       if (v0 == null) break;
       const v = Math.round(Number(String(v0).replace(/[^\d]/g, "")) || 0);
-      if (v > 0) { pushUndo(); so.lines[U.menu.i].at = v; save(); renderSheet(); render(); }
+      if (Number.isSafeInteger(v) && v > 0) { pushUndo(); setRecordingSegmentBar(target.line, target.segment.index, "at", v); save(); renderSheet(); render(); }
       break;
     }
     case "rmore": U.rmore = !U.rmore; renderSheet(); break;
@@ -10381,15 +10459,10 @@ document.addEventListener("click", async (e) => {
       save(); U.menu = null; renderSheet(); render(); break;
     }
     case "rlen": {
-      const so = recSong(); if (!so) break;
+      const target = recordingBarMenuTarget(), v = Number(id);
+      if (!target || !Number.isSafeInteger(v) || v < 1) break;
       pushUndo();
-      const v = Number(id);
-      // その行から下も同じ小節数にする（足した行は数えないので触らない）
-      for (let k = U.menu.i; k < so.lines.length; k++) {
-        const l3 = so.lines[k];
-        if (l3.gap || l3.add) continue;
-        l3.bars = v;
-      }
+      setRecordingBarLengths(target.so, target.lineIndex, target.segment.index, v);
       save(); U.menu = null; renderSheet(); render(); break;
     }
     case "rpdf": {
@@ -11163,6 +11236,7 @@ async function submitLyricBreakForm(form) {
     if (draftFormIsComposing(form) || input.value !== value) { report("入力内容が変わりました。もう一度保存してください。"); return false; }
     pushUndo(menu.rec ? undefined : target.so.id);
     if (offsets.length) target.line.lyricBreaks = offsets; else delete target.line.lyricBreaks;
+    pruneRecordingBarOverrides(target.line);
     document.activeElement?.blur(); U.menu = null; save();
     if (!menu.rec) schedulePush(); renderSheet(); render(); return true;
   } finally { lyricBreakSubmissions.delete(form); submit.disabled = false; form.removeAttribute("aria-busy"); }
@@ -11679,6 +11753,7 @@ document.addEventListener("pointerdown", (e) => {
   if (inkPts.size >= 2) { inkPath = null; paintInk(); return; }   // 2本目が触れたら、書きかけの線は捨てる
   if (U.erase) { eraseAt(e); inkPath = "erasing"; return; }
   inkPath = { c: "#FF5C42", w: 3, p: inkPos(e) };
+  if (S.recMode && !recordingLegacyLyricInk(song())) inkPath.recNumberedLyrics = 1;
 }, { passive: false });
 
 document.addEventListener("pointermove", (e) => {
