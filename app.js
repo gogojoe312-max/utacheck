@@ -118,7 +118,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.39";
+const APP_VER = "16.41.58.40";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1484,13 +1484,21 @@ function groupDisplayName(g) {
 function privateDeliveryGroup(g) {
   return !!g && (!!g.nopub || String(g.name || '').normalize('NFKC').replace(/\s/g,'') === '配信しない');
 }
+function editCheckpointContent(state) {
+  const copy=JSON.parse(JSON.stringify(state));
+  for(const key of ['bkAt','bkHash','bkSeen','bkError','bkFileAt','syncAt'])delete copy[key];
+  for(const g of copy.groups||[])for(const key of ['lastKey','publishKeyPending','publishWarning'])delete g[key];
+  for(const target of copy.recoveryDelivery?.targets||[])for(const key of ['status','expectedRemoteSha256','pendingDigest','pendingKey','lastFailure'])delete target[key];
+  return JSON.stringify(copy);
+}
 let verifiedEditBackup = null;
 async function automaticBackupBeforeEdit(reason) {
   if (VIEW() || preview) return false;
   if (typeof VerifiedEditBackup === 'undefined') { alert('保存の保護を読み込めません。入力せず、画面を開き直してください。'); return false; }
   verifiedEditBackup ||= VerifiedEditBackup.create({
-    active:()=>recordingInboxCanWrite() && booted && !bootErr && !preview && !VIEW() && !syncing && !manualSync && !backupInFlight && !publishInFlight,
+    active:()=>recordingInboxCanWrite() && booted && !bootErr && !preview && !VIEW() && !syncing && !manualSync,
     snapshot:()=>JSON.stringify(backupState()), hash:backupDigest,
+    unchanged:raw=>editCheckpointContent(backupState())===editCheckpointContent(JSON.parse(raw)),
     encode:async raw=>packBackup(JSON.parse(raw)),
     decode:async backup=>JSON.stringify((await unpackBackup(backup)).state),
     read:idbGet,
@@ -10436,7 +10444,7 @@ document.addEventListener("click", async (e) => {
   if (a === "folder-sort") {
     await changePerformanceFolderOrder("date"); return;
   }
-  if (new Set(['note','draw','word','resetsubs','setblock','unassign','setassign','goabsent','assignline','assignblock','assign','absent','absent-clear','dupshow','set-show-delivery','usegroup','m-setgroup','pickgroup','delpicked','deletesong','deleteshow','wordedit','word-save']).has(a) && !VIEW() && !preview) {
+  if (new Set(['draw','word','resetsubs','setblock','unassign','setassign','absent-clear','dupshow','set-show-delivery','usegroup','m-setgroup','delpicked','deletesong','deleteshow','word-save']).has(a) && !VIEW() && !preview) {
     if (!await automaticBackupBeforeEdit(a)) return;
     if (!b.isConnected) return;
   }

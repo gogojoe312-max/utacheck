@@ -114,6 +114,7 @@ async function readableTitles(page,rec){
    await page.evaluate(()=>{U.sheet={lineIdx:0,lineEnd:null,range:null,anchor:null,point:null,quick:true,tags:[],memo:'未保存の合成入力',seq:[],rec:false,sel:['m']};document.querySelector('[data-act="app-update-reload"]').click();});
    assert.equal(dialogs.length,dialogCount+1);assert.equal(dialogs.at(-1).type,'alert');assert.equal(await page.evaluate(()=>U.sheet.memo),'未保存の合成入力');assert.equal(await page.evaluate(()=>qaContent()),beforeReload);
    await page.evaluate(()=>{document.activeElement?.blur();U.sheet=null;renderPointers.clear();scrollingUntil=0;pendingRender=false;render(true);});await page.locator('.note-quick-mask').waitFor({state:'detached'});await info.locator(':scope > summary').click();assert.equal(await info.evaluate(el=>el.open),false);
+   await checkEditingDuringPublication(page,dialogs);
    await checkMemberPreviewLoading(page,width,{screenshot,assertFits});
    const folderResult=await checkFolderInteractions(page,width,{mode,assertFits,screenshot,confirmNext:()=>{confirmReply=true;}});
    const recordingBrowseResult=await checkRecordingBrowse(page,width,{mode,assertFits,screenshot});
@@ -134,6 +135,38 @@ async function readableTitles(page,rec){
 })().catch(error=>{console.error(error);process.exitCode=1;});
 
 
+async function checkEditingDuringPublication(page,dialogs){
+ const priorDialogs=dialogs.length;
+ try{
+  await page.evaluate(()=>{
+   window.__editDuringSendQA={state:S,ui:structuredClone(U),publish:publishInFlight,backup:backupInFlight,hash:backupDigest};
+   S=structuredClone(S);U=structuredClone(U);U.view='live';S.recMode=false;S.viewer=false;S.autoPub=false;
+   publishInFlight=true;backupInFlight=true;verifiedEditBackup=null;
+   backupDigest=async text=>{
+    const digest=await window.__editDuringSendQA.hash(text);
+    S.groups[0].lastKey='synthetic-send-finished';S.groups[0].publishKeyPending=false;S.bkAt=123;
+    return digest;
+   };
+   renderPointers.clear();scrollingUntil=0;pendingRender=false;render(true);
+  });
+  await page.locator('[data-act="note"][data-i="0"]').first().click();
+  await page.locator('.note-quick-mask').waitFor({state:'visible'});
+  await page.waitForFunction(()=>document.querySelector('#memo')?.readOnly===false);
+  assert.equal(dialogs.length,priorDialogs,'Opening and focusing a note during a send must not reject editing');
+  const result=await page.evaluate(async()=>{
+   const before=editCheckpointContent(backupState());
+   const ok=await automaticBackupBeforeEdit('synthetic-second-focus');
+   return {ok,unchanged:editCheckpointContent(backupState())===before,notes:S.notes.length,code:U.backupFailureCode};
+  });
+  assert.equal(result.ok,true);assert.equal(result.unchanged,true);assert.equal(result.notes,1);assert.equal(result.code,'');
+ }finally{
+  await page.evaluate(()=>{
+   const q=window.__editDuringSendQA;if(!q)return;
+   U.sheet=null;document.activeElement?.blur();S=q.state;U=q.ui;publishInFlight=q.publish;backupInFlight=q.backup;backupDigest=q.hash;verifiedEditBackup=null;
+   delete window.__editDuringSendQA;renderPointers.clear();scrollingUntil=0;pendingRender=false;render(true);
+  });
+ }
+}
 async function checkMemberPreviewLoading(page,width,{screenshot,assertFits}){
  try{
   await page.evaluate(()=>{
