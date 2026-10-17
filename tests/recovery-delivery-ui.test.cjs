@@ -621,3 +621,35 @@ test('blocked delivery never adopts a conflicting managed correction or a destin
   assert.equal(await f.c.RecoveryDelivery.reconcilePending(),false,variant);assert.equal(f.c.S.recoveryDelivery.targets[0].status,'blocked');assert.equal(f.patches(),1);
  }
 });
+
+test('single-phone owner resumes both stale held content and blocked delivery without duplicating feedback',async()=>{
+ const f=await fixture();await f.check();f.modal().querySelector('#rd-approve').checked=true;f.modal().querySelector('#rd-exclusive').checked=true;f.click('rd-commit');await f.until(()=>f.calls.some(x=>x.action==='pushOne'));
+ f.c.S.deliveryOwnerDeviceId=f.c.S.deviceId;
+ const remote=JSON.parse(f.remote());remote.notes.push({...remote.notes[0],memo:'Stale duplicate'});
+ remote.shows.push({id:'other-remote',name:'Keep other remote performance'});remote.songs.push({...remote.songs[0],showId:'other-remote'});
+ remote.notes.push({...remote.notes[0],songIdx:1,showId:'other-remote',memo:'Keep unrelated remote note'});
+ const oldRaw=JSON.stringify(remote);f.setRemote(oldRaw);
+ const binding=f.c.S.recoveryDelivery.targets[0];Object.assign(binding,{status:'blocked',preservedShowIds:['show','other-remote'],heldLocalShowIds:['show'],managedLocalShowIds:[]});
+ f.c.S.notes[0].memo='Current phone correction';f.c.save();await f.c.saveNow();
+ assert.equal(await f.c.RecoveryDelivery.reconcilePending(),true);assert.equal(binding.status,'ready');assert.deepEqual(clone(binding.heldLocalShowIds),[]);assert.equal(f.patches(),0);
+ assert.equal(f.idb.record('preserved:delivery-remote:v1:'+binding.gistId+':'+sha(oldRaw)),oldRaw);
+ assert.equal(await f.c.RecoveryDelivery.push('g',false),'sent');const published=JSON.parse(f.remote());
+ assert.deepEqual(published.notes.filter(n=>published.songs[n.songIdx].showId==='show').map(n=>n.memo),['Current phone correction']);
+ assert(published.notes.some(n=>n.memo==='Keep unrelated remote note'));assert(published.shows.some(s=>s.id==='other-remote'));assert.equal(f.patches(),1);
+ assert.equal(await f.c.RecoveryDelivery.push('g',false),'same');assert.equal(f.patches(),1);
+});
+
+test('single-phone owner sends its latest correction directly to the same verified existing source',async()=>{
+ const f=await fixture();await f.check();f.modal().querySelector('#rd-approve').checked=true;f.modal().querySelector('#rd-exclusive').checked=true;f.click('rd-commit');await f.until(()=>f.calls.some(x=>x.action==='pushOne'));
+ f.c.S.deliveryOwnerDeviceId=f.c.S.deviceId;const remote=JSON.parse(f.remote());remote.notes[0].memo='Older published correction';f.setRemote(JSON.stringify(remote));
+ f.c.S.notes[0].memo='Only phone correction';assert.equal(await f.c.RecoveryDelivery.push('g',true),'sent');assert.equal(JSON.parse(f.remote()).notes[0].memo,'Only phone correction');assert.equal(f.patches(),1);
+});
+
+test('single-phone authority does not bypass connection changes or storage preservation failure',async()=>{
+ for(const variant of ['destination','storage']){
+  let change=false;const f=await fixture({network:async(_url,opts,c)=>{if(change&&variant==='destination'&&(!opts.method||opts.method==='GET'))c.S.groups[0].src='https://example.invalid/changed';}});
+  await f.check();f.modal().querySelector('#rd-approve').checked=true;f.modal().querySelector('#rd-exclusive').checked=true;f.click('rd-commit');await f.until(()=>f.calls.some(x=>x.action==='pushOne'));
+  f.c.S.deliveryOwnerDeviceId=f.c.S.deviceId;change=true;if(variant==='storage')f.c.idbPut=async()=>{throw Error('Storage unavailable');};
+  await assert.rejects(()=>f.c.RecoveryDelivery.push('g',true));assert.equal(f.patches(),0);
+ }
+});

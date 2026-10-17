@@ -6,6 +6,12 @@
   "use strict";
   const ids = value => [...new Set((Array.isArray(value) ? value : []).filter(id => typeof id === "string" && id))];
   const same = (a,b) => a.length === b.length && a.every(id => b.includes(id));
+  function confirmed(receipt,beforeValue,afterValue,text) {
+    if(!receipt||!Array.isArray(receipt.before)||!Array.isArray(receipt.after))return false;
+    const before=ids(beforeValue),after=ids(afterValue);
+    return !same(before,after)&&same(ids(receipt.before),before)&&same(ids(receipt.after),after)
+      &&(text===undefined||receipt.text===String(text||""));
+  }
   function placeholderName(value) {
     const name=String(value == null ? "" : value).normalize("NFKC").trim();
     // Explicit assignment labels only; do not guess whether a person's name is real.
@@ -37,6 +43,7 @@
     const explicit=Array.isArray((context.subs || {})[index]);
     if (!explicit && Object.prototype.hasOwnProperty.call(song.blocks || {},label)) return null;
     const after=explicit ? context.subs[index] : before;
+    if(context.requireConfirmed&&!confirmed(context.edits?.lines?.[index],before,after,row.t))return null;
     const diff=classify(before,after,context.absent,explicit,context);
     if (!diff) return null;
     const beforeMain=ids(row.main || before), beforeExtra=ids(row.extra);
@@ -53,7 +60,9 @@
     const before=(song.blocks || {})[label];
     if (!Array.isArray(before)) return null;
     const explicit=Array.isArray((context.gsubs || {})[label]);
-    const diff=classify(before,explicit ? context.gsubs[label] : before,context.absent,explicit,context);
+    const after=explicit ? context.gsubs[label] : before;
+    if(context.requireConfirmed&&!confirmed(context.edits?.blocks?.[label],before,after))return null;
+    const diff=classify(before,after,context.absent,explicit,context);
     if (!diff) return null;
     const referenced=(song.lines || []).flatMap((row,index)=>!row.gap && !row.cut && String(row.label || "").trim()===label ? [index] : []);
     const lineIndices=referenced.filter(index=>!Array.isArray((context.subs || {})[index]));
@@ -81,5 +90,5 @@
     return [[entry.beforeMain,entry.afterMain],[entry.beforeExtra,entry.afterExtra]].some(([before,after])=>
       !same(before,after) && (before.includes(memberId) || after.includes(memberId)) && before.length < 3 && after.length < 3);
   }
-  return Object.freeze({placeholderName,eligibleMembers,classify,line,block,entries,forMember});
+  return Object.freeze({confirmed,placeholderName,eligibleMembers,classify,line,block,entries,forMember});
 });

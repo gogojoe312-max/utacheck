@@ -45,12 +45,17 @@ async function checkAbsence(page,width,{mode,assertFits,screenshot}){
    startupRecoveryNetworkHold=true;
    renderPointers.clear();scrollingUntil=0;pendingRender=false;render(true);
    window.__absenceQA.content=()=>JSON.stringify(Object.fromEntries(
-    ['groups','members','rosters','shows','songs','notes','pubNotes','memos','subs','gsubs','staffMemos','recs','plan'].map(k=>[k,S[k]])));
+    ['groups','members','rosters','shows','songs','notes','pubNotes','memos','subs','gsubs','assignmentEdits','staffMemos','recs','plan'].map(k=>[k,S[k]])));
    window.__absenceQA.before=window.__absenceQA.content();
   });
-  assert.equal(await page.locator('.member-absence-change').count(),0,'Notes do not contain pre-live changes');
+  assert.equal(await page.locator('.member-review-nav').count(),0,'Legacy/automatic substitutions cannot create a change notice');
+  await page.evaluate(()=>{
+   for(const [index,after] of Object.entries(S.subs['show|song']))recordAssignmentChange(S.songs[0],'lines',Number(index),after);
+   window.__absenceQA.before=window.__absenceQA.content();render(true);
+  });
+  assert.equal(await page.locator('.member-absence-change').count(),0,'Notes do not contain assignment changes');
   assert.equal(await page.locator('.summary-tabs [data-act="goabsent"]').count(),0);
-  assert.equal(await page.locator('.member-review-nav [data-act="goabsent"]').innerText(),'歌割変更');
+  assert.equal(await page.locator('.member-review-nav [data-act="goabsent"]').innerText(),'担当の変更があります（5件）');
   await page.locator('.member-review-nav [data-act="goabsent"]').click();await page.waitForFunction(()=>U.view==='absent');
   await expectLines([0,1,2,3,5]);
   assert.equal(await page.locator('.member-song').count(),1);
@@ -64,8 +69,9 @@ async function checkAbsence(page,width,{mode,assertFits,screenshot}){
   assert.deepEqual(await page.evaluate(()=>[0,1,2,3,4,5].map(i=>lineStatus(S.songs[0],i))),['','changed','changed','changed','','']);
   assert.equal(await page.locator('[data-act="toggleabsent"],[data-act="setassign"],[data-act="setblock"]').count(),0);
   await assertFits(page);await screenshot(page,width,'absence-summary-all');
-  assert.equal(await page.locator('[data-act="goabsent"]').innerText(),'歌割変更');
+  assert.equal(await page.locator('[data-act="goabsent"]').count(),0);
   assert.equal(await page.locator('.summary-tabs>button').evaluateAll(nodes=>nodes.every(el=>el.scrollWidth<=el.clientWidth+1&&el.getBoundingClientRect().right<=innerWidth)),true,'Summary actions stay readable');
+  await mode(page,false,true,'summary');
   await page.locator('[data-act="goabsent"]').click();
   await page.waitForFunction(()=>U.view==='absent');
   await expectLines([0,1,2,3,5]);
@@ -97,6 +103,13 @@ async function checkAbsence(page,width,{mode,assertFits,screenshot}){
   assert.deepEqual(candidates,['m1','m2','m3','m4']);
   assert.deepEqual(await page.evaluate(()=>[0,1,2,3,4,5,6,7].map(i=>lineStatus(S.songs[0],i))),['changed','changed','changed','changed','','changed','need','need']);
   assert.equal(await page.evaluate(()=>window.__absenceQA.content()),await page.evaluate(()=>window.__absenceQA.before));
+  await page.evaluate(()=>{S.subs['show|song'][2]=['m1'];U.menu={kind:'assign',id:'song',i:2,idx:[2]};renderSheet();});
+  await page.locator('[data-act="setassign"][data-id="m1"]').click();
+  await page.waitForFunction(()=>S.subs['show|song'][2].length===0);
+  await page.locator('[data-act="setassign"][data-id="m4"]').click();
+  await page.waitForFunction(()=>JSON.stringify(S.subs['show|song'][2])===JSON.stringify(['m4']));
+  await page.evaluate(()=>{U.menu=null;renderSheet();});
+  assert.equal(await page.evaluate(()=>AbsenceChanges.confirmed(S.assignmentEdits['show|song'].lines[2],['m1'],S.subs['show|song'][2],S.songs[0].lines[2].t)),true);
   const received=await page.evaluate(()=>{
    const before=JSON.stringify(S),ui=JSON.stringify(U),undo=undoStack.slice();
    try{
@@ -105,13 +118,18 @@ async function checkAbsence(page,width,{mode,assertFits,screenshot}){
     quickMark(2,null);const created=S.notes.at(-1);
     if(JSON.stringify(created.memberIds)!==JSON.stringify(['m4']))throw Error('Note target did not use changed assignment');
     const wire=publicationData('qa-absence');U.songIdx=oldSongIdx;S.groups[0].nopub=true;S.shows[0].nopub=true;
-    S.viewer=true;applySetlist(wire);
+    S.viewer=true;
+    const legacy=structuredClone(wire);for(const row of [...legacy.subs,...legacy.gsubs])delete row.confirmed;
+    applySetlist(legacy);
+    if(memberReviewNav()!==''||memberAbsenceChanges(S.songs[0]).length)throw Error('Old wire data created an unconfirmed notice');
+    if(names(partsOf(S.songs[0],2))!=='検証丁')throw Error('Hiding an unconfirmed notice changed effective assignment');
+    applySetlist(wire);
     const song=S.songs[0],changes=memberAbsenceChanges(song);
-    return {lines:changes.map(x=>x.lineIdx).sort((a,b)=>a-b),statuses:changes.map(x=>x.status),unresolved:[6,7].map(i=>lineStatus(song,i)),names:changes.find(x=>x.lineIdx===2).after.map(id=>member(id).name),noteNames:S.pubNotes[0].memberIds.map(id=>member(id).name),notesSeparate:!viewerSummaryBody().includes('member-absence-change')};
+    return {lines:changes.map(x=>x.lineIdx).sort((a,b)=>a-b),statuses:changes.map(x=>x.status),unresolved:[6,7].map(i=>lineStatus(song,i)),confirmedWire:wire.subs.find(x=>x.lineIdx===2).confirmed,names:changes.find(x=>x.lineIdx===2).after.map(id=>member(id).name),noteNames:S.pubNotes[0].memberIds.map(id=>member(id).name),notesSeparate:!viewerSummaryBody().includes('member-absence-change')};
    }finally{S=JSON.parse(before);U=JSON.parse(ui);undoStack=undo;renderPointers.clear();scrollingUntil=0;pendingRender=false;render(true);}
   });
   assert.deepEqual(received.lines,[0,1,2,3,5]);assert(received.statuses.every(status=>status==='changed'));
-  assert.deepEqual(received.unresolved,['','']);assert.deepEqual(received.names,['検証丁']);assert.deepEqual(received.noteNames,['検証丁']);assert.equal(received.notesSeparate,true);
+  assert.equal(received.confirmedWire,true);assert.deepEqual(received.unresolved,['','']);assert.deepEqual(received.names,['検証丁']);assert.deepEqual(received.noteNames,['検証丁']);assert.equal(received.notesSeparate,true);
 
  }finally{
   await page.evaluate(async()=>{
@@ -125,6 +143,6 @@ async function checkAbsence(page,width,{mode,assertFits,screenshot}){
    delete window.__absenceQA;
   });
  }
- return {separatePreLiveChanges:true,absenceAll:true,absencePersonal:true,absenceQuietReduction:true,absenceOwnerGuestPreserved:true,absenceLyricNavigation:true,confirmedChangesOnly:true,publicationRoundtrip:true};
+ return {noPermanentAssignmentField:true,manualAssignmentReceipt:true,separatePreLiveChanges:true,absenceAll:true,absencePersonal:true,absenceQuietReduction:true,absenceOwnerGuestPreserved:true,absenceLyricNavigation:true,confirmedChangesOnly:true,publicationRoundtrip:true};
 }
 module.exports={checkAbsence};

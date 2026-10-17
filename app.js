@@ -118,7 +118,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.34";
+const APP_VER = "16.41.58.35";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -307,7 +307,7 @@ let S = {
   groups: [], groupId: "",
   src: "", key: "", keyInLink: true,
   memos: {}, staffMemos: {}, recs: {}, kbps: 128, preroll: 5, viewer: false, srcGroup: "",
-  draws: {}, folders: {}, folderOrder: [], performanceFolderOrders: {}, rfolders: {}, rfolderOrder: [], recordingDateFolderOrders: {}, recordingFolders: [], subs: {}, subsMan: {}, subLib: {}, gsubs: {},
+  draws: {}, folders: {}, folderOrder: [], performanceFolderOrders: {}, rfolders: {}, rfolderOrder: [], recordingDateFolderOrders: {}, recordingFolders: [], subs: {}, subsMan: {}, assignmentEdits: {}, subLib: {}, gsubs: {},
   recMode: false, recOvSize: 14, rsongs: [], rsongId: "", recBars: true, liveShow: "", recEdit: false, linkSrc: "", groupOrder: [], pubAt: 0, syncAt: 0, seen: {}, planMin: 90, planPrep: 10, rosters: {}, secWords: [], trash: [], secAll: false, secHide: [], tagHide: [],
   plan: { start: "10:00", slots: [] },
   size: 19,
@@ -1054,7 +1054,7 @@ function validateStartupState(value) {
     if (value[key] === undefined) continue;
     if (!Array.isArray(value[key]) || value[key].some(item => !startupStateObject(item))) throw new Error('state-format');
   }
-  for (const key of ['memos','staffMemos','draws','recs','folders','rfolders','subs','subsMan','subLib','gsubs','rosters','plan']) {
+  for (const key of ['memos','staffMemos','draws','recs','folders','rfolders','subs','subsMan','assignmentEdits','subLib','gsubs','rosters','plan']) {
     if (value[key] !== undefined && !startupStateObject(value[key])) throw new Error('state-format');
   }
   if (value.plan?.slots !== undefined && (!Array.isArray(value.plan.slots) || value.plan.slots.some(item => !startupStateObject(item)))) throw new Error('state-format');
@@ -2320,7 +2320,7 @@ function pushUndo(songId, notesOnly = false, includeSongOrder = false) {
   if (songId) {
     const so = S.songs.find((x) => x.id === songId);
     if (so) snap.song = so;
-    snap.subs = S.subs; snap.subsMan = S.subsMan;
+    snap.subs = S.subs; snap.subsMan = S.subsMan; snap.assignmentEdits = S.assignmentEdits || {};
   }
   undoStack.push(JSON.stringify(snap));
   if (undoStack.length > 40) undoStack.shift();
@@ -8067,15 +8067,24 @@ async function toggleAbsenceMember(id, button) {
 // Read-only view of absence substitutions; use each song's own performance.
 function memberReviewNav() {
   if (!VIEW()) return "";
-  const changed = SONGS().some(so=>memberAbsenceChanges(so).length);
-  if (!changed) return "";
-  return '<nav class="member-review-nav" aria-label="歌割変更と指摘">'
-    +'<button class="member-change-alert" data-act="goabsent" aria-current="'+(U.view === "absent" ? 'page' : 'false')+'">歌割変更</button>'
-    +'<button data-act="go-summary" aria-current="'+(U.view === "summary" ? 'page' : 'false')+'">指摘</button></nav>';
+  const count=SONGS().reduce((n,so)=>n+memberAbsenceChanges(so).length,0);
+  if (!count) return "";
+  return '<div class="member-review-nav"><button class="member-change-alert" data-act="goabsent">担当の変更があります（'+count+'件）</button></div>';
+}
+
+function recordAssignmentChange(so,kind,index,after) {
+  if(!so)return;
+  const before=kind === "blocks" ? (so.blocks || {})[index] || [] : (so.lines[index] || {}).parts || [];
+  const key=(so.showId || S.showId)+"|"+so.id;
+  S.assignmentEdits ||= {};
+  const edits=S.assignmentEdits[key] ||= {lines:{},blocks:{}};
+  edits[kind] ||= {};
+  if(new Set(before).size === new Set(after).size && before.every(id=>after.includes(id)))delete edits[kind][index];
+  else edits[kind][index]={before:before.slice(),after:after.slice(),...(kind === "lines" ? {text:String(so.lines[index]?.t || "")} : {})};
 }
 function memberAbsenceContext(so) {
   const sid=so.showId || S.showId, key=sid+"|"+so.id;
-  return {absent:absentIds(sid),subs:(S.subs || {})[key] || {},gsubs:(S.gsubs || {})[key] || {}};
+  return {absent:absentIds(sid),subs:(S.subs || {})[key] || {},gsubs:(S.gsubs || {})[key] || {},requireConfirmed:true,edits:(S.assignmentEdits || {})[key] || {}};
 }
 function memberAbsenceChanges(so, memberId="", byMember=false) {
   if (typeof AbsenceChanges === "undefined") return [];
@@ -8117,8 +8126,8 @@ function viewMemberAbsence() {
     const changes=memberAbsenceChanges(so,memberId,byMember);
     return changes.length ? '<section class="card member-song"><div class="member-song-head"><h3>'+h(songName(so))+'</h3></div>'+memberAbsenceRows(so,changes,memberId)+'</section>' : '';
   }).join("");
-  return '<div class="hd"><button class="ic" data-act="go-live" aria-label="歌詞に戻る">‹</button><b>歌割の変更</b><span class="grow"></span><span class="trunc">'+h(showName())+'</span></div>'
-    +memberReviewNav()+'<div class="scroll pad"><p class="member-hint">変更後の担当を確認してください。</p><div class="tabs"><button class="chip sm" data-act="absence-scope" data-id="all" aria-pressed="'+!byMember+'">曲ごと</button><button class="chip sm" data-act="absence-scope" data-id="member" aria-pressed="'+byMember+'">人ごと</button></div>'+picker
+  return '<div class="hd"><button class="ic" data-act="go-live" aria-label="歌詞に戻る">‹</button><b>担当の変更</b><span class="grow"></span><span class="trunc">'+h(showName())+'</span></div>'
+    +'<div class="scroll pad"><p class="member-hint">変更後の担当を確認してください。</p><div class="tabs"><button class="chip sm" data-act="absence-scope" data-id="all" aria-pressed="'+!byMember+'">曲ごと</button><button class="chip sm" data-act="absence-scope" data-id="member" aria-pressed="'+byMember+'">人ごと</button></div>'+picker
     +(byMember ? '<p class="member-hint">3人以上のユニゾンは「曲ごと」で確認できます。</p>' : '')
     +'<div class="card member-hint">'+h(absentIds().map(id=>(member(id) || {}).name).filter(Boolean).join("・") || "欠席なし")+(absentIds().length ? " が欠席" : "")+'</div>'
     +(cards || '<p class="member-empty">'+(memberId ? h(compactMemberLabel(selected.name))+"さんに関わる" : "")+'歌割の変更はありません。</p>')+'</div>';
@@ -10111,7 +10120,6 @@ function viewSetup() {
     ${preview ? '<button class="primary" data-act="endpv">メンバー画面の確認を終わる</button>' : ""}
     ${!preview ? '<button class="ghost" data-act="publication-inspect">受信状況を確認（更新なし）</button>' : ''}
     ${lyricDisplaySettings()}
-    ${SONGS().some(so=>memberAbsenceChanges(so).length) ? '<h4 class="head">歌割変更</h4><div class="card"><button class="primary member-change-alert" data-act="goabsent">歌割変更を確認する</button></div>' : ""}
     <h4 class="head">指摘</h4><div class="card"><button class="primary" data-act="go-summary">指摘を見る</button></div>
     <h4 class="head">公演</h4>
     ${list || `<p class="note">公演がありません</p>`}
@@ -10512,6 +10520,7 @@ document.addEventListener("click", async (e) => {
           if (prev.recordingFolders) S.recordingFolders = prev.recordingFolders;
           if (prev.subs) S.subs = prev.subs;
           if (prev.subsMan) S.subsMan = prev.subsMan;
+          if (prev.assignmentEdits) S.assignmentEdits = prev.assignmentEdits;
           if (prev.song) {                                  // 差し替えを元に戻す
             const k = S.songs.findIndex((x) => x.id === prev.song.id);
             if (k >= 0) S.songs[k] = prev.song;
@@ -10763,6 +10772,7 @@ document.addEventListener("click", async (e) => {
         SONGS().forEach((so) => {
           delete S.subs[subKey(so.id)];
           delete S.subsMan[subKey(so.id)];
+          if(S.assignmentEdits)delete S.assignmentEdits[subKey(so.id)];
           delete S.subLib[libKey(so)];
         });
         libFrom = ""; autoSubs(); save(); render();
@@ -10779,6 +10789,7 @@ document.addEventListener("click", async (e) => {
       const cur8 = blockParts(so5, b);
       S.gsubs[k] = S.gsubs[k] || {};
       S.gsubs[k][b] = cur8.includes(id) ? cur8.filter((x) => x !== id) : cur8.concat(id);
+      recordAssignmentChange(so5,"blocks",b,S.gsubs[k][b]);
       save(); schedulePush(); renderSheet(); render();
       break;
     }
@@ -10793,6 +10804,7 @@ document.addEventListener("click", async (e) => {
       const k = subKey(sid);
       if (S.subs[k]) list.forEach((li) => { delete S.subs[k][li]; });
       if (S.subsMan[k]) list.forEach((li) => { delete S.subsMan[k][li]; });
+      if(S.assignmentEdits?.[k]?.lines)list.forEach(li=>delete S.assignmentEdits[k].lines[li]);
       U.menu = null; save(); schedulePush(); renderSheet(); render();
       break;
     }
@@ -10807,6 +10819,7 @@ document.addEventListener("click", async (e) => {
       list.forEach((li) => {
         S.subs[k][li] = next.slice();
         S.subsMan[k][li] = 1;
+        recordAssignmentChange(so3,"lines",li,next);
         if (so3) rememberSub(so3, li, next);   // 次に同じ人が休んだ時のために覚える
       });
       save(); schedulePush(); renderSheet(); render();
@@ -13154,7 +13167,8 @@ function publicationData(gid, previous, isolatedLibraries = false) {
             if (!m) return;
             Object.keys(m).forEach((b) => {
               arr.push({ showId: sid, songIdx: idx.get(x.id), block: b,
-                names: (m[b] || []).map((mid) => (member(mid) || {}).name).filter(Boolean) });
+                names: (m[b] || []).map((mid) => (member(mid) || {}).name).filter(Boolean),
+                ...(typeof AbsenceChanges !== "undefined" && AbsenceChanges.confirmed(S.assignmentEdits?.[sid+"|"+x.id]?.blocks?.[b],x.blocks?.[b],m[b]) ? {confirmed:true} : {}) });
             });
           });
         });
@@ -13169,7 +13183,8 @@ function publicationData(gid, previous, isolatedLibraries = false) {
             if (!m) return;
             Object.keys(m).forEach((li) => {
               arr.push({ showId: sid, songIdx: idx.get(x.id), lineIdx: Number(li),
-                names: (m[li] || []).map((mid) => (member(mid) || {}).name).filter(Boolean) });
+                names: (m[li] || []).map((mid) => (member(mid) || {}).name).filter(Boolean),
+                ...(typeof AbsenceChanges !== "undefined" && AbsenceChanges.confirmed(S.assignmentEdits?.[sid+"|"+x.id]?.lines?.[li],x.lines[li]?.parts,m[li],x.lines[li]?.t) ? {confirmed:true} : {}) });
             });
           });
         });
@@ -13879,6 +13894,14 @@ function hasPending() {
 setInterval(() => {
   if (!recordingInboxCanWrite() || document.hidden || preview || (typeof previewLoading!=='undefined' && previewLoading) || renderPointers.size || Date.now() < scrollingUntil || typingNow()) return;
   if (S.ghToken && S.groups.some((g) => g.gistId)) {
+    if(!VIEW() && S.deviceId && !S.deliveryOwnerDeviceId){
+      S.deliveryOwnerDeviceId=S.deviceId;
+      if(S.recoveryDelivery?.version===2)for(const target of S.recoveryDelivery.targets || []){
+        const g=S.groups.find(g=>g.id===target.groupId);
+        if(g&&target.status!=="prepared"&&g.gistId===target.gistId&&g.src===target.src)g.publishKeyPending=true;
+      }
+      save();
+    }
     if (typeof RecoveryDelivery !== "undefined" && RecoveryDelivery.reconcilePending) {
       void RecoveryDelivery.reconcilePending().then(confirmed=>{
         if (confirmed && recordingInboxCanWrite() && S.autoPub && !publishInFlight && !pushTimer && hasPending()) schedulePush();
@@ -14920,6 +14943,7 @@ function applySetlist(d) {
         absent: (x.absent || []).map((nm) => addMember(nm).id),
       }));
     }
+    S.assignmentEdits = {};
     S.gsubs = {};
     (d.gsubs || []).forEach((x) => {
       const so = S.songs[x.songIdx];
@@ -14927,6 +14951,7 @@ function applySetlist(d) {
       const k = x.showId + "|" + so.id;
       S.gsubs[k] = S.gsubs[k] || {};
       S.gsubs[k][x.block] = (x.names || []).map((nm) => addMember(nm).id);
+      if(x.confirmed === true)recordAssignmentChange(so,"blocks",x.block,S.gsubs[k][x.block]);
     });
     S.subs = {};
     (d.subs || []).forEach((x) => {
@@ -14935,6 +14960,7 @@ function applySetlist(d) {
       const k = x.showId + "|" + so.id;
       S.subs[k] = S.subs[k] || {};
       S.subs[k][x.lineIdx] = (x.names || []).map((nm) => addMember(nm).id);
+      if(x.confirmed === true)recordAssignmentChange(so,"lines",x.lineIdx,S.subs[k][x.lineIdx]);
     });
     // 曲も記録も無い公演は、そのグループに関係が無いので残さない
     S.shows = S.shows.filter((sw) =>

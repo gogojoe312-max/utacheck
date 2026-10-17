@@ -811,3 +811,12 @@ test('automatic rebase proves managed content unchanged and preserves independen
  assert.equal(API.verifyUnchangedManaged(scope,remote,baseline,['missing']),false);
  const unknown=clone(remote);unknown.shows.push({id:'UNKNOWN',name:'Unknown show'});assert.throws(()=>API.verifyUnchangedManaged(scope,unknown,baseline,['SOURCE_TWO']));
 });
+
+test('single-phone publication replaces only bound source shows and retains unrelated published history',()=>{
+ const f=mergeFixture(),before=clone(f.remote),out=API.mergeOwnerPublication(f.target,frozen(f.remote),frozen(f.local));
+ assert.deepEqual(out.heldLocalShowIds,[]);assert.deepEqual(out.managedLocalShowIds.slice().sort(),['LOCAL_ONE','LOCAL_TWO']);assert.deepEqual(out.preservedShowIds,['REMOTE_EXTRA']);
+ assert.deepEqual(out.payload.shows.find(s=>s.id==='REMOTE_EXTRA'),before.shows.find(s=>s.id==='REMOTE_EXTRA'));
+ assert(out.payload.notes.some(n=>n.memo==='HELD_LOCAL_NOTE'));assert(!out.payload.notes.some(n=>n.memo==='Current remote note'));
+ assert.equal(out.payload.notes.filter(n=>n.memo==='Managed fixture note').length,1);assert(out.payload.memos.some(m=>m.text==='Current remote memo'));
+ assert.deepEqual(f.remote,before);assert.deepEqual(out.payload.rosters,before.rosters);
+});

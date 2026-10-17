@@ -42,6 +42,7 @@
   }
   function ready(){return typeof S!=='undefined'&&startupRecoveryNetworkHold&&recordingInboxCanWrite()&&!VIEW()&&!preview&&!document.hidden;}
   function currentBinding(gid){return S.recoveryDelivery?.version===2&&Array.isArray(S.recoveryDelivery.targets)?S.recoveryDelivery.targets.find(t=>t.groupId===gid):null;}
+  function singleOwner(){return typeof S.deviceId==='string'&&!!S.deviceId&&S.deliveryOwnerDeviceId===S.deviceId;}
   function canPublish(gid){const b=currentBinding(gid),g=S.groups.find(g=>g.id===gid);return ready()&&!session&&!!S.ghToken&&!!b&&b.status==='ready'&&!!g&&!g.nopub&&g.gistId===b.gistId&&g.src===b.src;}
   // Preview is a token-free read of an already bound destination, even while sending is held.
   // It never clears the recovery hold or uses the publication transport.
@@ -474,14 +475,17 @@
       const localPayload=payloadFor(S,gid),key=payloadKey(localPayload);
       if(!force&&!group.publishKeyPending&&group.lastKey===key)return 'same';
       const remote=await readTarget(target,token,active);
-      if(remote.digest!==binding.expectedRemoteSha256)fail('source-changed');
-      const merged=RecoveryDeliveryScope.mergePublication(target,remote.data,localPayload,binding.preservedShowIds),payload=merged.payload;
+      if(remote.digest!==binding.expectedRemoteSha256&&!singleOwner())fail('source-changed');
+      const merged=singleOwner() ? RecoveryDeliveryScope.mergeOwnerPublication(target,remote.data,localPayload)
+        : RecoveryDeliveryScope.mergePublication(target,remote.data,localPayload,binding.preservedShowIds),payload=merged.payload;
       if(JSON.stringify(S)!==baseline)fail('local-changed');
       await preserveRemote(target,remote,active);
       const second=await readTarget(target,token,active);if(second.digest!==remote.digest)fail('source-changed');
       if(JSON.stringify(S)!==baseline)fail('local-changed');
       const raw=JSON.stringify(payload),digest=await backupDigest(raw);if(!active())fail('local-changed');
-      pendingDigest=digest;pendingKey=key;binding.status='sending';binding.pendingDigest=digest;binding.pendingKey=key;
+      previousDigest=remote.digest;
+      if(singleOwner())Object.assign(binding,{preservedShowIds:merged.preservedShowIds,heldLocalShowIds:merged.heldLocalShowIds,managedLocalShowIds:merged.managedLocalShowIds,preservedShowNames:merged.preservedShowNames});
+      pendingDigest=digest;pendingKey=key;binding.expectedRemoteSha256=previousDigest;binding.status='sending';binding.pendingDigest=digest;binding.pendingKey=key;
       await persist();if(!active())fail('cancelled');
       attempted=true;
       await request('https://api.github.com/gists/'+target.gistId,token,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({files:{'utacheck.json':{content:raw}}})},active);
@@ -509,8 +513,13 @@
         const active=()=>ready()&&!session&&S.ghToken===token&&currentBinding(target.groupId)===target
           &&S.groups.find(g=>g.id===target.groupId)===group&&!group?.nopub&&group?.gistId===target.gistId&&group?.src===target.src&&group?.key===key;
         const remote=await readTarget(target,token,active);
-        let rebased=false;
-        if(remote.digest!==target.pendingDigest&&remote.digest!==target.expectedRemoteSha256){
+        let rebased=false,ownerMerge=null;
+        if(includeBlocked&&singleOwner()){
+          const scope=RecoveryDeliveryScope.extendForOwnedShows(S,RecoveryDeliveryScope.plan(S,packetForBindings(target.groupId)).targets[0]);
+          ownerMerge=RecoveryDeliveryScope.mergeOwnerPublication(scope,remote.data,payloadFor(S,target.groupId));
+          await preserveRemote(scope,remote,active);rebased=true;
+        }
+        if(!ownerMerge&&remote.digest!==target.pendingDigest&&remote.digest!==target.expectedRemoteSha256){
           if(!includeBlocked||typeof RecoveryDeliveryScope.verifyUnchangedManaged!=='function')fail('source-changed');
           const scope=RecoveryDeliveryScope.extendForOwnedShows(S,RecoveryDeliveryScope.plan(S,packetForBindings(target.groupId)).targets[0]);
           const cached=await idbGet('preserved:delivery-remote:v1:'+target.gistId+':'+target.expectedRemoteSha256);
@@ -525,6 +534,10 @@
         const prior=copy(target),g=S.groups.find(g=>g.id===target.groupId),priorKey=g?.lastKey,priorPending=g?.publishKeyPending;
         if(remote.digest===target.pendingDigest){target.expectedRemoteSha256=remote.digest;if(g){g.lastKey=target.pendingKey;g.publishKeyPending=false;}}
         if(rebased)target.expectedRemoteSha256=remote.digest;
+        if(ownerMerge){
+          Object.assign(target,{preservedShowIds:ownerMerge.preservedShowIds,heldLocalShowIds:ownerMerge.heldLocalShowIds,managedLocalShowIds:ownerMerge.managedLocalShowIds,preservedShowNames:ownerMerge.preservedShowNames});
+          if(g)g.publishKeyPending=true;
+        }
         target.status='ready';delete target.pendingDigest;delete target.pendingKey;delete target.lastFailure;
         try{await persist();}catch(error){Object.keys(target).forEach(k=>delete target[k]);Object.assign(target,prior);if(g){g.lastKey=priorKey;g.publishKeyPending=priorPending;}throw error;}
         confirmed++;

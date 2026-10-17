@@ -6,7 +6,7 @@
   const unsafe=new Set(['__proto__','prototype','constructor']);
   const privateFields=new Set(['creds','credentials','ghToken','token','apiKey','password','passphrase','secret','key',
     'bkKey','bkGistId','editPass','srcKey','srcGist','srcGroup','linkSrc','lastKey','gistId','recs','rsongs','rsongId',
-    'staffMemos','draws','trash','plan','subLib','subsMan','pubNotes','songLib','xls','xlsAt','xlsSourceId','micSheet','micMap',
+    'staffMemos','draws','trash','plan','subLib','subsMan','assignmentEdits','pubNotes','songLib','xls','xlsAt','xlsSourceId','micSheet','micMap',
     'originalText','recoveredShowSources','recoveredFromOriginalExcel','archive','archived']);
   const HASH=/^[a-f0-9]{64}$/;
   const GIST=/^[a-f0-9]{32}$/;
@@ -192,7 +192,7 @@
     song:['showId','libIdx','take','fromIdx'],
     library:['title','credit','groups','order','lines','sections','lyricBreaks','groupRows'],
     note:['songIdx','lineIdx','memberNames','tags','memo','hand','pitch','lineEnd','from','to','showId','at'],
-    memo:['showId','songIdx','text'],sub:['showId','songIdx','lineIdx','names'],gsub:['showId','songIdx','block','names']
+    memo:['showId','songIdx','text'],sub:['showId','songIdx','lineIdx','names','confirmed'],gsub:['showId','songIdx','block','names','confirmed']
   };
   function validateHand(hand,bad){
     // Historical public handwriting is kept intact, but it is not an escape
@@ -307,6 +307,7 @@
       const seen=new Set();
       for(const row of publication[field]||[]){
         only(row,fields[field==='notes'?'note':field==='memos'?'memo':field==='subs'?'sub':'gsub'],bad);
+        if((field==='subs'||field==='gsubs')&&own(row,'confirmed')&&typeof row.confirmed!=='boolean')fail(bad);
         if(!Number.isSafeInteger(row.songIdx)||row.songIdx<0||row.songIdx>=publication.songs.length)fail('publication-song-reference');
         const song=publication.songs[row.songIdx],entry=publication.lib[song.libIdx];
         if(row.showId!=null&&row.showId!==''&&row.showId!==song.showId)fail('publication-show-reference');
@@ -397,8 +398,8 @@
         hand:optional(row.hand),pitch:row.pitch||null,lineEnd:optional(row.lineEnd),
         from:optional(row.from),to:optional(row.to),at:optional(row.at)};
       else if(field==='memos')normalized={text:row.text};
-      else if(field==='subs')normalized={lineIdx:row.lineIdx,names:row.names};
-      else normalized={block:row.block,names:row.names};
+      else if(field==='subs')normalized={lineIdx:row.lineIdx,names:row.names,confirmed:row.confirmed===true};
+      else normalized={block:row.block,names:row.names,confirmed:row.confirmed===true};
       records.get(row.songIdx)[field].push(normalized);
     }
     for(const rows of records.values()){
@@ -460,7 +461,7 @@
     }
     return true;
   }
-  function implementationMerge(target,remote,local,preservedShowIds){
+  function implementationMerge(target,remote,local,preservedShowIds,singleOwner=false){
     const scope=validatedScope(target),prior=copy(remote,'publication'),candidate=copy(local,'publication');
     bytes(prior,MAX_PUBLICATION_BYTES);bytes(candidate,MAX_PUBLICATION_BYTES);
     const sourceId=show=>show.recoveredSourceShowId||show.id;
@@ -483,7 +484,13 @@
     for(const show of candidate.shows)if(sourceId(show)!==localSourceMap.get(show.id))fail('merge-local-source-mismatch');
     const equivalentIds=new Set();
     let protectedIds;
-    if(preservedShowIds===undefined){
+    if(singleOwner){
+      // This installation has one editor. Its verified bound source shows use
+      // the phone's current content; other remote shows remain intact.
+      const owned=new Set(scope.sourceShowIds);
+      protectedIds=prior.shows.filter(show=>!owned.has(sourceId(show))).map(show=>show.id);
+      for(const show of prior.shows)if(owned.has(sourceId(show)))equivalentIds.add(show.id);
+    }else if(preservedShowIds===undefined){
       const libraryIdentities=new Map(),remoteContent=canonicalShows(prior,libraryIdentities),localContent=canonicalShows(candidate,libraryIdentities);
       protectedIds=[];
       for(const show of prior.shows){
@@ -532,12 +539,18 @@
     const payload=copy(prior,'publication');
     payload.shows=[];payload.songs=[];payload.lib=[];
     for(const field of ['notes','memos','subs','gsubs'])payload[field]=[];
+    const deferredParents=[];
     function append(value,selected,protectedPart){
       const songMap=new Map(),libraryMap=new Map(),libraryUsed=new Set();
       value.songs.forEach((song,index)=>{if(selected.has(song.showId)){songMap.set(index,payload.songs.length+songMap.size);libraryUsed.add(song.libIdx);}});
       value.lib.forEach((entry,index)=>{if(libraryUsed.has(index)){libraryMap.set(index,payload.lib.length);payload.lib.push(copy(entry,'publication'));}});
       for(const show of value.shows)if(selected.has(show.id)){
         const next=copy(show,'publication');
+        if(singleOwner&&protectedPart&&next.from!=null&&next.from!==''){
+          const ancestor=remoteShows.get(next.from),source=ancestor&&sourceId(ancestor);
+          const localIndex=scope.sourceShowIds.indexOf(source);
+          if(localIndex>=0)next.from=scope.showIds[localIndex];
+        }
         if(!protectedPart&&next.from!=null&&next.from!==''){
           if(!localToOutput.has(next.from))fail('merge-local-show-reference');
           next.from=localToOutput.get(next.from);
@@ -548,7 +561,17 @@
         if(!songMap.has(index))return;
         const next=copy(song,'publication');next.libIdx=libraryMap.get(song.libIdx);
         if(song.fromIdx!=null){
-          if(!songMap.has(song.fromIdx)){if(protectedPart)fail('merge-protected-song-reference');next.fromIdx=null;}
+          if(!songMap.has(song.fromIdx)){
+            if(protectedPart){
+              if(!singleOwner)fail('merge-protected-song-reference');
+              const ancestor=prior.songs[song.fromIdx],show=ancestor&&remoteShows.get(ancestor.showId);
+              const localIndex=show ? scope.sourceShowIds.indexOf(sourceId(show)) : -1;
+              if(localIndex<0)fail('merge-protected-song-reference');
+              const ordinal=prior.songs.slice(0,song.fromIdx).filter(row=>row.showId===ancestor.showId).length;
+              deferredParents.push({row:next,showId:scope.showIds[localIndex],ordinal,title:prior.lib[ancestor.libIdx].title});
+            }
+            next.fromIdx=null;
+          }
           else next.fromIdx=songMap.get(song.fromIdx);
         }
         payload.songs.push(next);
@@ -560,6 +583,11 @@
     }
     append(prior,protectedSet,true);
     const managedLibrary=append(candidate,managedSet,false);
+    for(const parent of deferredParents){
+      const indexes=payload.songs.flatMap((song,index)=>song.showId===parent.showId?[index]:[]),index=indexes[parent.ordinal];
+      if(index===undefined||payload.lib[payload.songs[index].libIdx].title!==parent.title)fail('merge-protected-song-reference');
+      parent.row.fromIdx=index;
+    }
     const requiredNames=new Set();
     const addNames=values=>{for(const value of values||[])if(typeof value==='string'&&value)requiredNames.add(value);};
     for(const index of managedLibrary){
@@ -611,7 +639,7 @@
       equivalentRemoteShowIds:[...equivalentIds]};
   }
   function guarded(fn,args){try{return fn(...args);}catch(error){if(failures.has(error))throw error;fail('unsafe-data');}}
-  const api=Object.freeze({verifyUnchangedManaged:(...args)=>guarded(implementationUnchangedManaged,args),plan:(...args)=>guarded(implementationPlan,args),extendForOwnedShows:(...args)=>guarded(implementationExtend,args),verifyPublication:(...args)=>guarded(implementationVerify,args),mergePublication:(...args)=>guarded(implementationMerge,args)});
+  const api=Object.freeze({mergeOwnerPublication:(target,remote,local)=>guarded(implementationMerge,[target,remote,local,undefined,true]),verifyUnchangedManaged:(...args)=>guarded(implementationUnchangedManaged,args),plan:(...args)=>guarded(implementationPlan,args),extendForOwnedShows:(...args)=>guarded(implementationExtend,args),verifyPublication:(...args)=>guarded(implementationVerify,args),mergePublication:(...args)=>guarded(implementationMerge,args)});
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
   root.RecoveryDeliveryScope=api;
 })(typeof globalThis!=='undefined'?globalThis:this);
