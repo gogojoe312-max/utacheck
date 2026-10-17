@@ -132,6 +132,14 @@ test('member screens expose no edit controls and rendering never changes saved d
  for(const action of ['toggleabsent','setassign','setblock','assignblock','resetsubs','assign'])assert(!html.includes('data-act="'+action+'"'),action);
  assert.equal(JSON.stringify(c.S),before);
 });
+test('restored songs keep individual Excel export available before their original is linked',()=>{
+ const c=fixture();c.viewer=false;
+ const before=JSON.stringify(c.S),html=c.viewAbsent();
+ assert(html.includes('data-act="xlsout" data-id="song"'),'A changed song without Excel metadata must still offer its verified-original export');
+ assert(html.includes('data-act="xlsall"'));
+ assert.equal(JSON.stringify(c.S),before,'Rendering the export controls does not repair or mutate the song');
+ c.viewer=true;assert(!c.viewAbsent().includes('data-act="xlsout"'));
+});
 test('VIEW style uses the pure comparison and owner toggle validates allowed IDs',()=>{
  assert(source.includes('if (VIEW() && typeof AbsenceChanges !== "undefined") return AbsenceChanges.line'));
  assert(source.includes('if (VIEW() || preview || !absenceSelectableMembers().some(m=>m.id===id)) return false;'));

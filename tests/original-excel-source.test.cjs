@@ -46,6 +46,38 @@ test('matching rejects shifted rows, group definitions and continuation changes'
   const {c,so}=setup();change(so);assert.equal(await c.inspectOriginalExcel(so,fixture()),false);
  }
 });
+test('empty column separators can use different addresses without relaxing lyric or owner checks',()=>{
+ const {c,so}=setup();so.lines.push({gap:true,t:'',cell:'A48',lcell:'C48',parts:[]});
+ const moved=copy(so);Object.assign(moved.lines[1],{cell:'D1',lcell:'F1'});
+ assert.equal(c.originalExcelLayout(so),c.originalExcelLayout(moved));
+ for(const change of [s=>s.lines[0].lcell='B2',s=>s.lines[1].t='追加の歌詞',s=>s.lines[1].parts=['member-a'],s=>s.lines[1].extraCell='G1']){
+  const changed=copy(moved);change(changed);assert.notEqual(c.originalExcelLayout(so),c.originalExcelLayout(changed));
+ }
+});
+test('legacy row offsets must equal the original range origin for every lyric and assignment cell',async()=>{
+ const {c,so}=setup();
+ vm.runInContext(fn('trimExcelRange'),c);
+ const wb=XLSX.utils.book_new(),sheet=XLSX.utils.aoa_to_sheet([[],['甲','合成歌詞'],['甲','二行目']]);
+ sheet['!ref']='A2:B3';XLSX.utils.book_append_sheet(wb,sheet,'歌割');
+ const blob=new Blob([XLSX.write(wb,{type:'buffer',bookType:'xlsx',compression:true})]);
+ c.parseXLSX=async(file,bytes,local)=>{
+  const s=song(),sh=local.workbook.Sheets[local.sheetName];s.sheetName=local.sheetName;
+  s.lines=[2,3].map(row=>({...s.lines[0],t:sh['B'+row].v,raw:sh['A'+row].v,labelRaw:sh['A'+row].v,
+   cell:'A'+row,lcell:'B'+row,parts:[sh['A'+row].v]}));return s;
+ };
+ so.lines.push({...so.lines[0],t:'二行目',cell:'A2',lcell:'B2'});
+ const before=JSON.stringify(c.S),prepared=await c.readOriginalExcel(blob);
+ assert.equal(prepared.originalRanges['歌割'],'A2:B3');assert.equal(prepared.workbook.Sheets['歌割']['!ref'],'A1:B3');
+ const repaired=await c.originalExcelAttachment(so,blob,prepared);
+ assert.deepEqual(copy(repaired.lines.map(l=>[l.cell,l.lcell])),[['A2','B2'],['A3','B3']]);
+ assert.equal(await c.inspectOriginalExcel(repaired,blob),true);assert.equal(JSON.stringify(c.S),before);
+ for(const change of [s=>s.lines[1].lcell='B3',s=>s.lines[1].cell='A3',s=>s.lines[0].t='別の歌詞',s=>s.lines[1].parts=[],s=>s.lines[0].cont=true]){
+  const changed=copy(so);change(changed);assert.equal(await c.originalExcelAttachment(changed,blob,prepared),null);
+ }
+ // A cached, already-trimmed parsed workbook must retain its original range.
+ assert.equal((await c.readOriginalExcel(new Blob([await blob.arrayBuffer()]))).originalRanges['歌割'],'A2:B3');
+ assert.equal(JSON.stringify(c.S),before);
+});
 test('missing coordinates and missing member identities fail closed',async()=>{
  const {c,so}=setup();so.lines[0].lcell='';assert.equal(await c.inspectOriginalExcel(so,fixture()),false);
  so.lines[0].lcell='B1';so.lines[0].parts=['unknown'];await assert.rejects(c.inspectOriginalExcel(so,fixture()),/担当名/);
@@ -337,6 +369,23 @@ test('byte-addressed workbook parsing cache reuses verified originals but does n
  const {c,so}=setup(),blob=fixture();let parses=0;const parse=c.parseXLSX;c.parseXLSX=async(...args)=>{parses++;return parse(...args);};
  assert.equal(await c.inspectOriginalExcel(so,blob),true);assert.equal(await c.inspectOriginalExcel(so,new Blob([await blob.arrayBuffer()])),true);assert.equal(parses,1);
  assert.equal(await c.inspectOriginalExcel(so,fixture({text:'changed'})),false);assert.equal(parses,2);
+});
+test('legacy 1Half title chooses its unique fully matching version sheet, never a full or nonmatching sheet',async()=>{
+ const {c,so}=setup();so.sheetName='';so.title='合成曲_1Half_歌割';
+ const workbook=async (halfText='合成歌詞',extra='')=>{
+  const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([['甲',halfText]]),'1Half');
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([['甲','合成歌詞']]),'New8P');
+  if(extra)XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([['甲','合成歌詞']]),extra);
+  return new Blob([XLSX.write(wb,{type:'buffer',bookType:'xlsx',compression:true})]);
+ };
+ const blob=await workbook(),before=JSON.stringify(so);
+ assert.equal((await c.originalExcelAttachment(so,blob))?.sheetName,'1Half');assert.equal(JSON.stringify(so),before);
+ so.title='合成曲_１Ｈａｌｆ';assert.equal((await c.originalExcelAttachment(so,blob))?.sheetName,'1Half');
+ so.title='合成曲';assert.equal(await c.originalExcelAttachment(so,blob),null);
+ so.title='合成曲_1Half';assert.equal(await c.originalExcelAttachment(so,await workbook('合成歌詞','ワンハーフ')),null);
+ assert.equal(await c.originalExcelAttachment(so,await workbook('異なる歌詞')),null);
+ so.sheetName='1Half';assert.equal(await c.originalExcelAttachment(so,await workbook('異なる歌詞')),null);
+ so.sheetName='';so.lines[0].parts=[];assert.equal(await c.originalExcelAttachment(so,blob),null);
 });
 test('export chooses an available pinned original before a filename-matching different format',async()=>{
  const {c,so}=setup(),pinned=await packetFor(c,fixture({cover:'Pinned format'}),'retained-name.xlsx'),other=await packetFor(c,fixture({cover:'Different format'}),so.title+'.xlsx');

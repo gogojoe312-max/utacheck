@@ -241,6 +241,33 @@ async function checkExcelReattach(page,width,dialogs){
   });
   assert.deepEqual(onDemand,{requests:1,replacement:'乙',original:'甲',stateUnchanged:true,receipt:null},'An export recovers its verified original without waiting for the background receiver and reuses it');
 
+  const restoredBefore=await page.evaluate(()=>{
+   closeExcelExport();U.menu=null;U.fileReport=null;
+   const so=S.songs.find(song=>song.id==='qa-excel-song');
+   for(const key of ['xls','xlsSourceId','xlsAt','sheetName','micSheet','micMap','blockCells','blockRows'])delete so[key];
+   for(const line of so.lines)for(const key of ['cell','lcell','extraCell'])delete line[key];
+   originalExcelExportSource.cache=new WeakMap();
+   renderPointers.clear();scrollingUntil=0;pendingRender=false;render(true);
+   return JSON.stringify(S);
+  });
+  await exportButton.waitFor({state:'visible'});await exportButton.click();
+  await page.waitForFunction(()=>!!U.excelExport?.blob&&!U.exportingExcel);
+  assert.equal(await page.locator('[data-act="excel-export-share"]').isVisible(),true,'Restored songs expose the same single-song save screen');
+  const restoredSingle=await page.evaluate(async()=>{
+   const wb=XLSX.read(new Uint8Array(await U.excelExport.blob.arrayBuffer()),{type:'array'});
+   return {state:JSON.stringify(S),name:U.excelExport.name,count:U.excelExport.count,failures:U.excelExport.failures,cover:wb.Sheets['表紙'].A1.v,original:wb.Sheets['歌割'].A1.v,replacement:wb.Sheets[absentTab()].A1.v};
+  });
+  assert.equal(restoredSingle.state,restoredBefore);assert.equal(restoredSingle.count,1);assert.deepEqual(restoredSingle.failures,[]);assert(restoredSingle.name.endsWith('.xlsx'));
+  assert.equal(restoredSingle.cover,'Synthetic cover to preserve');assert.equal(restoredSingle.original,'甲');assert.equal(restoredSingle.replacement,'乙');
+  await page.getByRole('dialog',{name:'Excelの保存'}).locator('[data-act="excel-export-close"]').click();
+  await page.locator('[data-act="xlsall"]').click();await page.waitForFunction(()=>!!U.excelExport?.blob&&!U.exportingExcel);
+  const restoredBatch=await page.evaluate(async()=>{
+   const archive=await unzip(new Uint8Array(await U.excelExport.blob.arrayBuffer())),name=archive.order[0],wb=XLSX.read(archive.files[name],{type:'array'});
+   return {state:JSON.stringify(S),name:U.excelExport.name,count:U.excelExport.count,failures:U.excelExport.failures,files:archive.order.length,cover:wb.Sheets['表紙'].A1.v,original:wb.Sheets['歌割'].A1.v,replacement:wb.Sheets[absentTab()].A1.v};
+  });
+  assert.equal(restoredBatch.state,restoredBefore);assert.equal(restoredBatch.count,1);assert.equal(restoredBatch.files,1);assert.deepEqual(restoredBatch.failures,[]);assert(restoredBatch.name.endsWith('.zip'));
+  assert.equal(restoredBatch.cover,'Synthetic cover to preserve');assert.equal(restoredBatch.original,'甲');assert.equal(restoredBatch.replacement,'乙');
+
  }finally{
   await page.evaluate(async saved=>{
    closeExcelExport();S=JSON.parse(saved.state);Object.keys(U).forEach(key=>delete U[key]);Object.assign(U,JSON.parse(saved.ui));
@@ -249,5 +276,5 @@ async function checkExcelReattach(page,width,dialogs){
   },saved);
   assert.equal(await page.evaluate(()=>JSON.stringify(S)),saved.state,'Excel check restores exact prior application state');
  }
- return {reattach:true,wrongWorkbookRejected:true,oldWorkbookPreserved:true,idsLyricsNotesPreserved:true,export:true,batchReattach:true,onDemandOriginal:true};
+ return {reattach:true,wrongWorkbookRejected:true,oldWorkbookPreserved:true,idsLyricsNotesPreserved:true,export:true,batchReattach:true,onDemandOriginal:true,restoredSongIndividualAndBatch:true};
 }

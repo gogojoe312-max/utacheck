@@ -67,3 +67,13 @@ test('publication and restoration retain gray-cut markers and distinguish full a
  assert.equal(full.lines[0].cut,undefined);assert.equal(restored.lines[2].cut,undefined);
  assert.equal(payload.notes[0].lineIdx,0);assert.deepEqual(plain(f.S),before);
 });
+test('publication preserves exact Excel worksheet, microphone and group addresses across restoration',()=>{
+ const f=fixture(),input={...parsed(),sheetName:'1Half',micSheet:'マイク',micMap:{歌手:'1'},
+  groups:{A:['歌手']},groupCells:{A:'C4'},groupRows:[{b:'A',ncell:'C4',lcell:'D4'}],
+  lines:[['歌手','歌詞','A1','B1','','','歌手',''],['','','A2','B2'],['→','続き','A3','B3']]};
+ const original=f.add(input),before=plain(f.S),wire=f.publish().lib[0],restored=f.c.buildSong(wire);
+ for(const key of ['sheetName','micSheet','micMap','blockCells','blockRows'])assert.deepEqual(plain(restored[key]),plain(original[key]));
+ assert.deepEqual(plain(restored.lines),plain(original.lines));assert.deepEqual(plain(f.S),before);
+ f.add({...input,sheetName:'Full'});assert.equal(f.publish().lib.length,2);
+ f.add({...input,micMap:{歌手:'2'}});assert.equal(f.publish().lib.length,3);
+});

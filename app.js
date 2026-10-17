@@ -113,7 +113,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.29";
+const APP_VER = "16.41.58.30";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -5216,7 +5216,9 @@ function originalExcelLayout(so, resolveName = id => member(id)?.name, original)
     sheet:so.sheetName, micSheet:so.micSheet || "", micMap:pairs(so.micMap),
     blocks:Object.keys(so.blocks || {}).sort().map(k => [k,named(so.blocks[k])]),
     blockCells:pairs(so.blockCells), blockRows:(so.blockRows || []).map(r => [r.b,r.ncell || "",r.lcell || ""]),
-    lines:so.lines.map((l,i) => [!!l.gap,text(l.t),text(l.cell),text(l.lcell),
+    // An empty separator has no editable Excel content. Older imports chose
+    // different empty cells at a printed-column break for the same separator.
+    lines:so.lines.map((l,i) => [!!l.gap,text(l.t),l.gap && !l.t && !(l.parts || []).length ? "" : text(l.cell),l.gap && !l.t && !(l.parts || []).length ? "" : text(l.lcell),
       text(l.raw == null ? l.labelRaw == null ? l.label : l.labelRaw : l.raw),
       text(l.labelRaw == null ? l.raw == null ? l.label : l.raw : l.labelRaw),
       // Older publications omitted the gray-fill-derived cut marker. Infer it
@@ -5253,6 +5255,7 @@ async function readOriginalExcel(blob, prepared = {}) {
     catch (_) { wb = XLSX.read(bytes,{type:"array",bookFiles:true}); }
   }
   if (!Array.isArray(wb.SheetNames) || new Set(wb.SheetNames).size !== wb.SheetNames.length || wb.SheetNames.length > 32) return null;
+  const originalRanges = Object.fromEntries(Object.entries(wb.Sheets || {}).map(([name,sheet]) => [name,sheet["!ref"] || ""]));
   let cells = 0, gridCells = 0;
   for (const sheet of Object.values(wb.Sheets || {})) {
     for (const address of Object.keys(sheet)) if (/^[A-Z]+[1-9]\d*$/.test(address)) {
@@ -5266,7 +5269,7 @@ async function readOriginalExcel(blob, prepared = {}) {
       if (gridCells > 1500000) return null;
     }
   }
-  Object.assign(prepared,{bytes,workbook:wb,validated:true});
+  Object.assign(prepared,{bytes,workbook:wb,originalRanges,validated:true});
   prepared.songs ||= new Map(); prepared.layouts ||= new Map();
   cache.set(digest,prepared);
   while (cache.size > 12 || [...cache.values()].reduce((n,value) => n + value.bytes.byteLength,0) > 32*1024*1024) cache.delete(cache.keys().next().value);
@@ -5304,16 +5307,47 @@ async function originalExcelAttachment(so, blob, prepared = {}, current = S) {
     let candidate;
     try { candidate = await originalExcelSheet(source,sheetName,current); } catch (_) { continue; }
     if (candidate.lines.length !== so.lines.length) continue;
-    const repaired = {...so,
-      sheetName:so.sheetName || candidate.sheetName,
-      micSheet:so.micSheet || candidate.micSheet,
-      micMap:so.micMap || candidate.micMap,
-      blockCells:{...candidate.blockCells,...so.blockCells},
-      blockRows:so.blockRows?.length ? so.blockRows : candidate.blockRows,
-      lines:so.lines.map((line,i) => ({...line,cell:line.cell || candidate.lines[i].cell,
-        lcell:line.lcell || candidate.lines[i].lcell,extraCell:line.extraCell || candidate.lines[i].extraCell,
-        raw:line.raw ?? candidate.lines[i].raw,labelRaw:line.labelRaw ?? candidate.lines[i].labelRaw,extraRaw:line.extraRaw ?? candidate.lines[i].extraRaw}))};
-    if (originalExcelLayout(repaired,id => (current.members || []).find(m => m.id === id)?.name,candidate) === source.layouts.get(sheetName)) candidates.push(repaired);
+    const repair = expected => ({...so,
+      sheetName:so.sheetName || expected.sheetName,
+      micSheet:so.micSheet || expected.micSheet,
+      micMap:so.micMap || expected.micMap,
+      blockCells:{...expected.blockCells,...so.blockCells},
+      blockRows:so.blockRows?.length ? so.blockRows : expected.blockRows,
+      lines:so.lines.map((line,i) => ({...line,cell:line.cell || expected.lines[i].cell,
+        lcell:line.lcell || expected.lines[i].lcell,extraCell:line.extraCell || expected.lines[i].extraCell,
+        raw:line.raw ?? expected.lines[i].raw,labelRaw:line.labelRaw ?? expected.lines[i].labelRaw,extraRaw:line.extraRaw ?? expected.lines[i].extraRaw}))});
+    const matches = (repaired,expected) => originalExcelLayout(repaired,id => (current.members || []).find(m => m.id === id)?.name,expected) === originalExcelLayout(expected,id => id);
+    let repaired = repair(candidate);
+    if (matches(repaired,candidate)) { candidates.push(repaired); continue; }
+    // Before range trimming was introduced, sheet_to_json started at !ref's
+    // first row but the parser numbered it as row 1. Recover only that exact
+    // workbook-proven offset, with all lyrics, owners and shifted cells equal.
+    const range = source.originalRanges?.[sheetName];
+    const rowOffset = range ? XLSX.utils.decode_range(range).s.r : 0;
+    if (!rowOffset) continue;
+    const shift = address => {
+      if (!address) return address;
+      const point = XLSX.utils.decode_cell(address); point.r -= rowOffset;
+      return point.r >= 0 ? XLSX.utils.encode_cell(point) : "__invalid__";
+    };
+    const legacy = {...candidate,
+      blockCells:Object.fromEntries(Object.entries(candidate.blockCells || {}).map(([name,address]) => [name,shift(address)])),
+      blockRows:(candidate.blockRows || []).map(row => ({...row,ncell:shift(row.ncell),lcell:shift(row.lcell)})),
+      lines:candidate.lines.map(line => ({...line,cell:shift(line.cell),lcell:shift(line.lcell),extraCell:shift(line.extraCell)}))};
+    repaired = repair(legacy);
+    if (matches(repaired,legacy)) candidates.push({...repaired,blockCells:candidate.blockCells,blockRows:candidate.blockRows,
+      lines:repaired.lines.map((line,i) => ({...line,cell:candidate.lines[i].cell,lcell:candidate.lines[i].lcell,extraCell:candidate.lines[i].extraCell}))});
+  }
+  // A filename explicitly requesting 1Half can identify that worksheet after
+  // every lyric, assignment and cell has already matched. Other matching full
+  // sheets do not erase the requested arrangement when old publications lack
+  // sheetName. Never use this title hint to accept a nonmatching worksheet.
+  if (!so.sheetName && /1[\s_-]*half|ワンハーフ/i.test(String(so.title || "").normalize("NFKC"))) {
+    const isHalf = name => /^(?:(?:歌|唄)割り?[\s_-]*)?(?:1[\s_-]*half|ワンハーフ)(?:[\s_-]*(?:歌|唄)割り?)?$/i.test(name.normalize("NFKC").trim());
+    if (source.workbook.SheetNames.some(isHalf)) {
+      const half = candidates.filter(item => isHalf(item.sheetName));
+      return half.length === 1 ? half[0] : null;
+    }
   }
   if (candidates.length === 1) return candidates[0];
   // Older publications also omitted sheet names. A normal song may share its
@@ -8067,7 +8101,7 @@ function viewAbsent() {
           <b class="grow trunc">${h(songName(so))}</b>
           ${need ? `<span style="font-size:11px;color:var(--bad)">未決 ${need}</span>`
                  : `<span style="font-size:11px;color:var(--good)">完了</span>`}
-          ${(so.xls || so.xlsSourceId || so.sheetName) && !VIEW() ? `<button class="chip sm" data-act="xlsout" data-id="${so.id}">Excel</button>` : ""}
+          <button class="chip sm" data-act="xlsout" data-id="${so.id}" aria-label="${h(songName(so))}をExcelにする">Excel</button>
         </div>${brows}${rows}</div>`;
     }).join("");
 
@@ -12983,7 +13017,7 @@ function publicationData(gid, previous, isolatedLibraries = false) {
       return o;
     };
     const entry = (x) => {
-      const lines = x.lines.map((l) => (l.gap ? ["", "", "", "", "", "", "", ""]
+      const lines = x.lines.map((l) => (l.gap ? ["", "", l.cell || "", l.lcell || "", "", "", "", ""]
         : [l.cont ? "→" : (l.raw != null ? l.raw : l.label), l.t, l.cell || "", l.lcell || "",
            (l.extra || []).length ? "ハモ " + (l.extra || []).map((m) => (member(m) || {}).name).filter(Boolean).join("・") : "",
            l.extraCell || "", l.labelRaw || l.raw || "", l.extraRaw || "", ...(l.cut ? ["cut"] : [])]));
@@ -12992,14 +13026,21 @@ function publicationData(gid, previous, isolatedLibraries = false) {
         const offsets = !l.gap && Array.isArray(l.lyricBreaks) ? lyricBreakOffsets(l) : [];
         return offsets.length ? [{lineIdx, offsets}] : [];
       });
+      const excel = {
+        ...(x.sheetName ? {sheetName:x.sheetName} : {}),
+        ...(x.micSheet ? {micSheet:x.micSheet} : {}),
+        ...(x.micMap && Object.keys(x.micMap).length ? {micMap:x.micMap} : {}),
+        ...(x.blockCells && Object.keys(x.blockCells).length ? {groupCells:x.blockCells} : {})
+      };
       const key = (isolatedLibraries ? x.id + "\u0001" : "") + x.title + "\u0001" + JSON.stringify(lines) + "\u0001" + JSON.stringify(sections)
+        + (Object.keys(excel).length ? "\u0001" + JSON.stringify(excel) : "")
         + (lyricBreaks.length ? "\u0001" + JSON.stringify(lyricBreaks) : "");
       if (libKey.has(key)) return libKey.get(key);
       const gs = {};
       Object.keys(x.blocks || {}).forEach((b) => {
         gs[b] = (x.blocks[b] || []).map((mid) => (member(mid) || {}).name).filter(Boolean);
       });
-      lib.push({ title: x.title, credit: x.credit, groups: gs, order: orderOf(x), lines,
+      lib.push({ title: x.title, credit: x.credit, groups: gs, order: orderOf(x), lines, ...excel,
         ...(sections.length ? {sections} : {}),
         ...(lyricBreaks.length ? {lyricBreaks} : {}),
         groupRows: (x.blockRows || []).map((br) => ({ b: br.b, ncell: br.ncell || "", lcell: br.lcell || "" })) });
