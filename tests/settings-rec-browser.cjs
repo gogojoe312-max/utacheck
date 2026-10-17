@@ -114,6 +114,7 @@ async function readableTitles(page,rec){
    await page.evaluate(()=>{U.sheet={lineIdx:0,lineEnd:null,range:null,anchor:null,point:null,quick:true,tags:[],memo:'未保存の合成入力',seq:[],rec:false,sel:['m']};document.querySelector('[data-act="app-update-reload"]').click();});
    assert.equal(dialogs.length,dialogCount+1);assert.equal(dialogs.at(-1).type,'alert');assert.equal(await page.evaluate(()=>U.sheet.memo),'未保存の合成入力');assert.equal(await page.evaluate(()=>qaContent()),beforeReload);
    await page.evaluate(()=>{document.activeElement?.blur();U.sheet=null;renderPointers.clear();scrollingUntil=0;pendingRender=false;render(true);});await page.locator('.note-quick-mask').waitFor({state:'detached'});await info.locator(':scope > summary').click();assert.equal(await info.evaluate(el=>el.open),false);
+   await checkGrayCutImport(page);
    await checkEditingDuringPublication(page,dialogs);
    await checkMemberPreviewLoading(page,width,{screenshot,assertFits});
    const folderResult=await checkFolderInteractions(page,width,{mode,assertFits,screenshot,confirmNext:()=>{confirmReply=true;}});
@@ -135,6 +136,32 @@ async function readableTitles(page,rec){
 })().catch(error=>{console.error(error);process.exitCode=1;});
 
 
+async function checkGrayCutImport(page){
+ try{
+  const result=await page.evaluate(async()=>{
+   window.__grayQA={state:S,ui:structuredClone(U)};
+   S=structuredClone(S0);S.groups=[{id:'gray-group',name:'合成歌手'}];S.groupId='gray-group';S.showId='gray-show';S.shows=[{id:'gray-show',groupId:'gray-group',name:'合成公演'}];
+   const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([['甲','表示する最初の歌詞'],['甲','非表示カット歌詞'],['乙','表示する最後の歌詞']]),'歌割');
+   const bytes=XLSX.write(wb,{type:'array',bookType:'xlsx'});
+   const marked=await addVersionTab(new Uint8Array(bytes),'1Half',{B2:{v:'非表示カット歌詞',fill:'FF808080'}},'歌割');
+   const parsed=await parseXLSX({name:'synthetic.xlsx'},marked.data,{state:S,sheetName:'1Half'});
+   const so=Object.assign(buildSong(parsed),{groupId:S.groupId,showId:S.showId});S.songs=[so];
+   const cut=so.lines.findIndex(l=>l.t==='非表示カット歌詞');if(cut<0||!so.lines[cut].cut)throw Error('Gray fill was not imported as a cut');
+   const expected=JSON.stringify(so.lines);const views=[];
+   for(const rec of [false,true])for(const viewer of [false,true])for(const overview of [false,true]){
+    S.recMode=rec;S.viewer=viewer;S.rsongs=[so];S.rsongId=so.id;Object.assign(U,{view:'live',songIdx:0,overview,sheet:null,menu:null,picker:false,focus:''});
+    renderPointers.clear();scrollingUntil=0;pendingRender=false;render(true);
+    const text=document.getElementById('app').innerText;
+    if(text.includes('非表示カット歌詞')||!text.includes('表示する最初の歌詞')||!text.includes('表示する最後の歌詞'))throw Error('Gray cut projection failed '+JSON.stringify({rec,viewer,overview}));
+    views.push({rec,viewer,overview});
+   }
+   return {views:views.length,preserved:JSON.stringify(so.lines)===expected,cut};
+  });
+  assert.equal(result.views,8);assert.equal(result.preserved,true);
+ }finally{
+  await page.evaluate(()=>{const q=window.__grayQA;if(!q)return;S=q.state;U=q.ui;delete window.__grayQA;renderPointers.clear();scrollingUntil=0;pendingRender=false;render(true);});
+ }
+}
 async function checkEditingDuringPublication(page,dialogs){
  const priorDialogs=dialogs.length;
  try{

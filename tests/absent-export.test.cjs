@@ -154,3 +154,18 @@ test('explicit worksheet names are decoded exactly and never fall back to the fi
  assert.equal(read.Sheets['歌割 & 声'].A1.v,'original');assert.equal(read.Sheets['表紙'].A1.v,'cover');
  await assert.rejects(c.addVersionTab(new Uint8Array(bytes),'欠席ver',{A1:'変更'},'存在しない歌割'),/対象シート/);
 });
+
+test('exported ZIP file dates use the current local date in local and central headers',async()=>{
+ const c=setup(),before=new Date(),out=await c.zip({'曲.xlsx':new TextEncoder().encode('content')},null,false),after=new Date(),view=new DataView(out.buffer);
+ const date=(d)=>((d.getFullYear()-1980)<<9)|((d.getMonth()+1)<<5)|d.getDate();
+ assert([date(before),date(after)].includes(view.getUint16(12,true)));
+ const central=30+new TextEncoder().encode('曲.xlsx').length+7;
+ assert.equal(view.getUint32(central,true),0x02014b50);assert.equal(view.getUint16(central+14,true),view.getUint16(12,true));assert(view.getUint16(12,true)>0);
+});
+test('absence version names collapse unique selected abbreviations without changing member IDs',()=>{
+ const c=setup({absentIds:()=>['short','full','other'],member:id=>({name:{short:'北',full:'北原',other:'斉藤'}[id]})});
+ vm.runInContext(fn('absentVersionNames'),c);
+ assert.deepEqual(Array.from(c.absentVersionNames()),['北原','斉藤']);
+ c.absentIds=()=>['short','full','different'];c.member=id=>({name:{short:'北',full:'北原',different:'北川'}[id]});
+ assert.deepEqual(Array.from(c.absentVersionNames()),['北','北原','北川'],'Ambiguous abbreviations remain distinct');
+});

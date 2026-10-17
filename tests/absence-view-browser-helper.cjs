@@ -79,7 +79,7 @@ async function checkAbsence(page,width,{mode,assertFits,screenshot}){
    U.view='absent';resetAbsenceEditBatch();renderPointers.clear();scrollingUntil=0;pendingRender=false;render(true);
   });
   await page.locator('[data-act="toggleabsent"][data-id="m1"]').click();
-  await page.waitForFunction(()=>!U.absencePending&&S.shows[0].absent.includes('m1'));
+  await page.waitForFunction(()=>!U.absencePending&&S.shows[0].absent.includes('m1')).catch(async error=>{console.error(await page.evaluate(()=>({absencePending:U.absencePending,absent:S.shows[0].absent,backup:U.backupFailureCode,fields:U.backupChangedFields,booted,bootErr,publishInFlight,backupInFlight,syncing,manualSync})));throw error;});
   const autoReceived=await page.evaluate(()=>{
    S.groups[0].nopub=false;S.shows[0].nopub=false;
    const wire=publicationData('qa-absence');

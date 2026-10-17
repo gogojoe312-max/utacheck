@@ -118,7 +118,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.40";
+const APP_VER = "16.41.58.41";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -2921,6 +2921,9 @@ async function unzip(buf) {
 async function zip(files, order, compress = true) {
   const names = order || Object.keys(files);
   const chunks = [], central = [];
+  const now=new Date(),year=Math.max(1980,Math.min(2107,now.getFullYear()));
+  const stampDate=((year-1980)<<9)|((now.getMonth()+1)<<5)|now.getDate();
+  const stampTime=(now.getHours()<<11)|(now.getMinutes()<<5)|Math.floor(now.getSeconds()/2);
   let off = 0;
   for (const name of names) {
     const raw = files[name];
@@ -2934,6 +2937,7 @@ async function zip(files, order, compress = true) {
     const lv = new DataView(lh.buffer);
     lv.setUint32(0, 0x04034b50, true); lv.setUint16(4, 20, true);
     lv.setUint16(6, 0x0800, true); lv.setUint16(8, method, true);
+    lv.setUint16(10,stampTime,true);lv.setUint16(12,stampDate,true);
     lv.setUint32(14, crc, true); lv.setUint32(18, use.length, true); lv.setUint32(22, raw.length, true);
     lv.setUint16(26, nb.length, true);
     lh.set(nb, 30);
@@ -2942,6 +2946,7 @@ async function zip(files, order, compress = true) {
     const cv = new DataView(ch.buffer);
     cv.setUint32(0, 0x02014b50, true); cv.setUint16(4, 20, true); cv.setUint16(6, 20, true);
     cv.setUint16(8, 0x0800, true); cv.setUint16(10, method, true);
+    cv.setUint16(12,stampTime,true);cv.setUint16(14,stampDate,true);
     cv.setUint32(16, crc, true); cv.setUint32(20, use.length, true); cv.setUint32(24, raw.length, true);
     cv.setUint16(28, nb.length, true);
     cv.setUint32(42, off, true);
@@ -5326,7 +5331,12 @@ async function originalExcelAttachment(so, blob, prepared = {}, current = S) {
     if (so.sheetName && so.sheetName !== sheetName) continue;
     let candidate;
     try { candidate = await originalExcelSheet(source,sheetName,current); } catch (_) { continue; }
-    if (candidate.lines.length !== so.lines.length) continue;
+    if(candidate.lines.length!==so.lines.length){
+      const empty=line=>line.gap&&!line.t&&!(line.parts||[]).length&&!line.extraCell;
+      const currentContent=so.lines.filter(line=>!empty(line)),sourceContent=candidate.lines.filter(line=>!empty(line));
+      if(currentContent.length!==sourceContent.length)continue;
+      let at=0;candidate={...candidate,lines:so.lines.map(line=>empty(line)?{...line}:sourceContent[at++])};
+    }
     const repair = expected => ({...so,
       sheetName:so.sheetName || expected.sheetName,
       micSheet:so.micSheet || expected.micSheet,
@@ -6208,7 +6218,7 @@ function viewLive() {
       s.lines.forEach((l, k) => { if (l.tag && tg.includes(l.tag) && tanc[l.tag] == null) tanc[l.tag] = k; });
     }
     body = s.lines.map((l, i) => {
-      if (hiddenRecLines.has(i)) return "";
+      if (l.cut || hiddenRecLines.has(i)) return "";
       if (fset && !fset.has(i)) return "";
       if (l.gap) {
         const gns = ns0.filter((n) => covers(n, i));
@@ -6386,6 +6396,7 @@ function viewOverview(s) {
   const ns0 = NOTES().filter((n) => n.songId === s.id && n.showId === S.showId && inTake(n));
   const gp = groupPos(s.lines);
   const rows = s.lines.map((l, i) => {
+    if (l.cut) return "";
     if (l.gap) {
       const gns = ns0.filter((n) => covers(n, i));
       if (!gns.length) return `<div style="height:7px"></div>`;
@@ -6429,7 +6440,7 @@ function viewOverview(s) {
     const hiddenRecLines = recordingHiddenLineIndexes(s);
     const nc = Math.max(1, Math.min(4, Number(s.cols || 1)));
     const one = (l, i) => {
-      if (hiddenRecLines.has(i)) return "";
+      if (l.cut || hiddenRecLines.has(i)) return "";
       if (l.gap) return `<div style="height:1em"></div>`;
       const newSec = l.sec && l.sec !== (s.lines[i - 1] || {}).sec;
       const vh2 = vm2.info[i];
@@ -6470,6 +6481,7 @@ function viewOverview(s) {
     let minR = Infinity, maxR = 0;
     const byName = {}, byLyric = {}, byExtra = {}, bat = {};
     s.lines.forEach((l, i) => {
+      if(l.cut)return;
       const a = ref(l.cell), b = ref(l.lcell), x = ref(l.extraCell);
       const any = a || b; if (!any) return;
       if (any.r < minR) minR = any.r;
@@ -7812,7 +7824,15 @@ function absentEdits(so) {
   });
   return edits;
 }
-const absentTab = () => absentIds().map((x) => (member(x) || {}).name).filter(Boolean).join("・") + "欠席ver";
+function absentVersionNames() {
+  const names=[...new Set(absentIds().map(id=>(member(id)||{}).name).filter(Boolean))];
+  // Collapse only unambiguous abbreviations among the selected absentees.
+  return [...new Set(names.map(name=>{
+    const full=names.filter(other=>other.length>name.length&&other.startsWith(name));
+    return full.length===1?full[0]:name;
+  }))];
+}
+const absentTab = () => absentVersionNames().join("・") + "欠席ver";
 function downloadBlob(name, blob) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -9844,7 +9864,7 @@ function viewRecPrint() {
   const vm3 = vtMarks(so);
   const hiddenRecLines = recordingHiddenLineIndexes(so);
   const trs = so.lines.map((l, i) => {
-    if (hiddenRecLines.has(i)) return "";
+    if (l.cut || hiddenRecLines.has(i)) return "";
     if (l.gap) return `<tr class="prz"><td class="prn"></td><td class="prx"></td></tr>`;
     const vh3 = vm3.info[i];
     const hd = vh3 ? `<tr class="prv"><td class="prn"></td><td class="prx"><b>${h(vh3.vt)}</b></td></tr>` : "";
@@ -10122,6 +10142,7 @@ function viewPrint() {
       inner = `<table class="prg">${trs}</table>`;
     } else {
       inner = `<div class="prbody">${so.lines.map((l, i) => {
+        if(l.cut)return "";
         if (l.gap) return `<div style="height:0.5em"></div>`;
         return `<div class="prl"><span class="prn">${nameHTML(l, i)}</span><span class="prx">${cellHTML(l, i)}</span></div>`;
       }).join("")}</div>`;
@@ -13003,7 +13024,7 @@ async function loadRecDocs(picked) {
       const ext = f.name.split(".").pop().toLowerCase();
       const parsed = ext === "pdf" ? await parsePDF(f) : ["xlsx","xlsm","xlsb","xls","csv"].includes(ext) ? await parseXLSX(f,result.buffer) : null;
       const so = parsed ? {id:uid(),title:parsed.title,credit:parsed.credit,intro:8,
-        lines:parsed.lines.map(r => r[1] ? {t:r[1],bars:4} : {gap:true,t:""}),cols:1,colBreaks:[],at:Date.now()}
+        lines:parsed.lines.map(r => r[1] ? {t:r[1],bars:4,...(r[8]==="cut"?{cut:1}:{})} : {gap:true,t:""}),cols:1,colBreaks:[],at:Date.now()}
         : await parseDocx(f);
       so.groupId = targetGroupId;
       if (U.recArtistFilter) so.recArtist = U.recArtistFilter;

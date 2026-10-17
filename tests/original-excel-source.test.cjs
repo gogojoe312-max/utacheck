@@ -399,3 +399,10 @@ test('export snapshot refuses show switches and unsaved assignment edits during 
   await assert.rejects(c.originalExcelExportSource(so,c.originalExcelExportContext()),/変わりました/);
  }
 });
+
+test('legacy extra blank separators can reattach without changing lyric or note indexes',async()=>{
+ const {c,so}=setup(),blob=fixture();so.lines.unshift({gap:true,t:'',parts:[],cell:'Z99',lcell:'Y99'});
+ const before=JSON.stringify(c.S),repaired=await c.originalExcelAttachment(so,blob);
+ assert(repaired);assert.equal(repaired.lines.length,2);assert.equal(repaired.lines[1].t,so.lines[1].t);assert.equal(repaired.lines[1].lcell,'B1');assert.equal(JSON.stringify(c.S),before);
+ so.lines[1].t='Different lyric';assert.equal(await c.originalExcelAttachment(so,blob),null);
+});
