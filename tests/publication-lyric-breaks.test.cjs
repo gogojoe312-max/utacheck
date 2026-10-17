@@ -57,3 +57,13 @@ test('empty or invalid local break arrays leave the old wire payload and library
  assert.deepEqual(f.publish(),before);assert.equal(before.lib.length,1);
  const old=f.c.buildSong(before.lib[0]);assert(old.lines.every(line=>!Object.hasOwn(line,'lyricBreaks')));
 });
+
+test('publication and restoration retain gray-cut markers and distinguish full and cut libraries',()=>{
+ const f=fixture(),input=parsed();input.lines[0].push('A1','B1','','','歌手','');const full=f.add(input);
+ const cut=f.add({...input,lines:input.lines.map((row,i)=>i===0?[...row,'cut']:row)});
+ f.S.notes.push({id:'note',songId:cut.id,showId:'show',lineIdx:0,from:0,to:1,tags:[],memberIds:[],memo:'Keep'});
+ const before=plain(f.S),payload=f.publish(),wire=payload.lib[payload.songs[1].libIdx],restored=f.c.buildSong(wire);
+ assert.equal(payload.lib.length,2);assert.equal(wire.lines[0][8],'cut');assert.equal(restored.lines[0].cut,1);
+ assert.equal(full.lines[0].cut,undefined);assert.equal(restored.lines[2].cut,undefined);
+ assert.equal(payload.notes[0].lineIdx,0);assert.deepEqual(plain(f.S),before);
+});

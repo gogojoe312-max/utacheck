@@ -300,6 +300,39 @@ test('legacy missing raw name metadata is recoverable only with identical lyrics
  const repaired=await c.originalExcelAttachment(so,fixture());assert(repaired);assert.equal(repaired.lines[0].raw,'甲');assert.equal(so.lines[0].raw,undefined);
  so.lines[0].parts=[];assert.equal(await c.originalExcelAttachment(so,fixture()),null);
 });
+test('legacy missing gray-cut metadata accepts exact originals without changing the saved lyric view',async()=>{
+ const {c,so,clips}=setup(),parse=c.parseXLSX,blob=fixture();
+ c.parseXLSX=async(...args)=>{const parsed=await parse(...args);parsed.lines[0].cut=1;return parsed;};
+ const before=JSON.stringify(c.S),packet=await packetFor(c,blob,so.title+'.xlsx');
+ c.PrivatePreparationUI={readOriginalExcelPackets:async()=>({status:'ready',operations:[{packet}]})};
+ const source=await c.originalExcelExportSource(so);
+ assert.equal(source.song,so);assert.equal(source.song.lines[0].cut,undefined);
+ assert.equal(await c.startupExcelDigest(source.blob),packet.sha256);assert.equal(JSON.stringify(c.S),before);
+ assert.equal(await c.inspectOriginalExcel(so,clips.get('xls:sha256-'+packet.sha256)),true);
+ // Missing coordinates/raw metadata can be repaired at the same time, but cuts
+ // remain untouched and a real assignment, lyric or address difference fails.
+ so.sheetName='';delete so.lines[0].raw;delete so.lines[0].labelRaw;so.lines[0].lcell='';
+ const repaired=await c.originalExcelAttachment(so,blob);assert(repaired);assert.equal(repaired.lines[0].cut,undefined);
+ for(const change of [line=>line.cut=0,line=>line.cut=false,line=>line.parts=[],line=>line.t='別歌詞',line=>line.lcell='B2']){
+  const changed=copy(repaired);change(changed.lines[0]);assert.equal(await c.originalExcelAttachment(changed,blob),null);
+ }
+});
+test('missing legacy sheet selects the sole standard sheet only over matching named short versions',async()=>{
+ const {c,so}=setup(),parse=c.parseXLSX;
+ c.parseXLSX=async(...args)=>{const parsed=await parse(...args);parsed.lines[0].cut=1;return parsed;};
+ const workbook=async alternate=>{
+  const wb=XLSX.read(new Uint8Array(await fixture().arrayBuffer()),{type:'array'});
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([['甲','合成歌詞']]),alternate);
+  return new Blob([XLSX.write(wb,{type:'buffer',bookType:'xlsx',compression:true})]);
+ };
+ so.sheetName='';const before=JSON.stringify(so),blob=await workbook('アニメサイズ');
+ const repaired=await c.originalExcelAttachment(so,blob);assert(repaired);assert.equal(repaired.sheetName,'歌割');
+ assert.equal(repaired.lines[0].cut,undefined);assert.equal(JSON.stringify(so),before);
+ for(const alternate of ['歌割コピー','別歌割','歌割り'])assert.equal(await c.originalExcelAttachment(so,await workbook(alternate)),null);
+ for(const title of ['合成曲 1Half','合成曲 １Ｈａｌｆ','合成曲 ＴＶ ｓｉｚｅ']){so.title=title;assert.equal(await c.originalExcelAttachment(so,blob),null);}
+ so.sheetName='アニメサイズ';assert.equal((await c.originalExcelAttachment(so,blob)).sheetName,'アニメサイズ');
+ so.sheetName='存在しない歌割';assert.equal(await c.originalExcelAttachment(so,blob),null);
+});
 test('byte-addressed workbook parsing cache reuses verified originals but does not accept changed bytes',async()=>{
  const {c,so}=setup(),blob=fixture();let parses=0;const parse=c.parseXLSX;c.parseXLSX=async(...args)=>{parses++;return parse(...args);};
  assert.equal(await c.inspectOriginalExcel(so,blob),true);assert.equal(await c.inspectOriginalExcel(so,new Blob([await blob.arrayBuffer()])),true);assert.equal(parses,1);

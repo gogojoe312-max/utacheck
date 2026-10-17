@@ -113,7 +113,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.28";
+const APP_VER = "16.41.58.29";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -5203,7 +5203,7 @@ function excelSourceCandidates(so) {
   return out;
 }
 // Original Excel recovery only compares exact sheet/row data. It never remaps lyrics.
-function originalExcelLayout(so, resolveName = id => member(id)?.name) {
+function originalExcelLayout(so, resolveName = id => member(id)?.name, original) {
   if (!so || !so.sheetName || !Array.isArray(so.lines) || !so.lines.some(l => l.t && l.lcell)) return "";
   const text = value => String(value == null ? "" : value);
   const named = ids => (ids || []).map(id => {
@@ -5216,10 +5216,13 @@ function originalExcelLayout(so, resolveName = id => member(id)?.name) {
     sheet:so.sheetName, micSheet:so.micSheet || "", micMap:pairs(so.micMap),
     blocks:Object.keys(so.blocks || {}).sort().map(k => [k,named(so.blocks[k])]),
     blockCells:pairs(so.blockCells), blockRows:(so.blockRows || []).map(r => [r.b,r.ncell || "",r.lcell || ""]),
-    lines:so.lines.map(l => [!!l.gap,text(l.t),text(l.cell),text(l.lcell),
+    lines:so.lines.map((l,i) => [!!l.gap,text(l.t),text(l.cell),text(l.lcell),
       text(l.raw == null ? l.labelRaw == null ? l.label : l.labelRaw : l.raw),
       text(l.labelRaw == null ? l.raw == null ? l.label : l.raw : l.labelRaw),
-      text(l.extraCell),text(l.extraRaw),!!l.cont,!!l.cut,named(l.parts)])
+      // Older publications omitted the gray-fill-derived cut marker. Infer it
+      // only for comparison when absent; never change the saved song or accept
+      // a contradictory explicit marker. Lyrics, owners and cells still match.
+      text(l.extraCell),text(l.extraRaw),!!l.cont,!!(l.cut ?? original?.lines[i]?.cut),named(l.parts)])
   });
 }
 function originalExcelSourceGroupAllowed(so,key) {
@@ -5280,12 +5283,12 @@ async function originalExcelSheet(prepared, sheetName, current = S) {
   return prepared.songs.get(sheetName);
 }
 async function inspectOriginalExcel(so, blob, prepared, current = S) {
-  const expected = originalExcelLayout(so,id => (current.members || []).find(m => m.id === id)?.name);
-  if (!expected) return false;
+  if (!originalExcelLayout(so,id => (current.members || []).find(m => m.id === id)?.name)) return false;
   const source = await readOriginalExcel(blob,prepared);
   if (!source || !source.workbook.SheetNames.includes(so.sheetName)
     || so.micSheet && !source.workbook.SheetNames.includes(so.micSheet)) return false;
-  await originalExcelSheet(source,so.sheetName,current);
+  const candidate = await originalExcelSheet(source,so.sheetName,current);
+  const expected = originalExcelLayout(so,id => (current.members || []).find(m => m.id === id)?.name,candidate);
   return source.layouts.get(so.sheetName) === expected;
 }
 // Reattachment may restore omitted Excel metadata, never lyric or assignment data.
@@ -5310,9 +5313,19 @@ async function originalExcelAttachment(so, blob, prepared = {}, current = S) {
       lines:so.lines.map((line,i) => ({...line,cell:line.cell || candidate.lines[i].cell,
         lcell:line.lcell || candidate.lines[i].lcell,extraCell:line.extraCell || candidate.lines[i].extraCell,
         raw:line.raw ?? candidate.lines[i].raw,labelRaw:line.labelRaw ?? candidate.lines[i].labelRaw,extraRaw:line.extraRaw ?? candidate.lines[i].extraRaw}))};
-    if (originalExcelLayout(repaired,id => (current.members || []).find(m => m.id === id)?.name) === source.layouts.get(sheetName)) candidates.push(repaired);
+    if (originalExcelLayout(repaired,id => (current.members || []).find(m => m.id === id)?.name,candidate) === source.layouts.get(sheetName)) candidates.push(repaired);
   }
-  return candidates.length === 1 ? candidates[0] : null;
+  if (candidates.length === 1) return candidates[0];
+  // Older publications also omitted sheet names. A normal song may share its
+  // exact cells with explicitly named short versions in the same workbook.
+  // Prefer the sole standard 歌割 sheet only in that narrow case; unknown
+  // duplicate sheets and a requested short version remain ambiguous.
+  const shortVersion = /アニメ|anime|TV[\s._-]*size|テレビサイズ|1[\s_-]*half|ワンハーフ|ハーフ/i;
+  if (!so.sheetName && !shortVersion.test(String(so.title || "").normalize("NFKC"))) {
+    const standard = candidates.filter(item => /^(?:歌|唄)割り?$/.test(item.sheetName.normalize("NFKC").trim()));
+    if (standard.length === 1 && candidates.every(item => item === standard[0] || shortVersion.test(item.sheetName.normalize("NFKC")))) return standard[0];
+  }
+  return null;
 }
 function attachOriginalExcelMetadata(so, repaired, sourceId, at) {
   // The existing objects and annotation indexes remain stable.
@@ -12973,7 +12986,7 @@ function publicationData(gid, previous, isolatedLibraries = false) {
       const lines = x.lines.map((l) => (l.gap ? ["", "", "", "", "", "", "", ""]
         : [l.cont ? "→" : (l.raw != null ? l.raw : l.label), l.t, l.cell || "", l.lcell || "",
            (l.extra || []).length ? "ハモ " + (l.extra || []).map((m) => (member(m) || {}).name).filter(Boolean).join("・") : "",
-           l.extraCell || "", l.labelRaw || l.raw || "", l.extraRaw || ""]));
+           l.extraCell || "", l.labelRaw || l.raw || "", l.extraRaw || "", ...(l.cut ? ["cut"] : [])]));
       const sections = x.lines.flatMap((l, lineIdx) => typeof l.sec === "string" && l.sec.trim() ? [{lineIdx, name:l.sec.trim()}] : []);
       const lyricBreaks = x.lines.flatMap((l, lineIdx) => {
         const offsets = !l.gap && Array.isArray(l.lyricBreaks) ? lyricBreakOffsets(l) : [];
