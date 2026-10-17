@@ -48,7 +48,31 @@ async function checkAbsence(page,width,{mode,assertFits,screenshot}){
     ['groups','members','rosters','shows','songs','notes','pubNotes','memos','subs','gsubs','assignmentEdits','staffMemos','recs','plan'].map(k=>[k,S[k]])));
    window.__absenceQA.before=window.__absenceQA.content();
   });
-  assert.equal(await page.locator('.member-review-nav').count(),0,'Legacy/automatic substitutions cannot create a change notice');
+  assert.equal(await page.locator('.member-review-nav').count(),1,'Already-created active absence changes remain accessible without newer receipts');
+  const legacyReceived=await page.evaluate(()=>{
+   window.__legacyAbsenceQA={state:JSON.stringify(S),ui:JSON.stringify(U)};
+   S.groups[0].nopub=false;S.shows[0].nopub=false;
+   S.shows.push({id:'newest-normal',groupId:S.groupId,name:'新しい通常公演',absent:[]});
+   S.songs.push({...structuredClone(S.songs[0]),id:'newest-song',showId:'newest-normal'});
+   S.showId='newest-normal';
+   const wire=publicationData(S.groupId);
+   const newlyConfirmed=wire.subs.filter(row=>row.confirmed===true).length;
+   for(const row of [...wire.subs,...wire.gsubs])delete row.confirmed;
+   S.deviceId='legacy-member-device';applySetlist(wire);U.view='summary';render(true);
+   return {newlyConfirmed,show:S.showId,receipts:Object.keys(S.assignmentEdits).length};
+  });
+  assert(legacyReceived.newlyConfirmed>0,'Existing absence changes are included in newly published data');
+  assert.equal(legacyReceived.show,'newest-normal');assert.equal(legacyReceived.receipts,0,'Old member data really lacks confirmation receipts');
+  await page.locator('.member-review-nav [data-act="goabsent"]').click();
+  await expectLines([0,1,2,3,5]);
+  assert.equal(await page.evaluate(()=>S.showId),'show','Notice opens the changed performance even from a newer normal show');
+  await page.evaluate(()=>{
+   S=JSON.parse(window.__legacyAbsenceQA.state);U=JSON.parse(window.__legacyAbsenceQA.ui);
+   delete window.__legacyAbsenceQA;renderPointers.clear();scrollingUntil=0;pendingRender=false;render(true);
+  });
+  await page.evaluate(()=>{S.shows[0].absent=[];render(true);});
+  assert.equal(await page.locator('.member-review-nav').count(),0,'Inactive inherited substitutions do not create notices');
+  await page.evaluate(()=>{S.shows[0].absent=['m1'];render(true);});
   await page.evaluate(()=>{
    window.__absenceSelectionQA={state:JSON.stringify(S),ui:JSON.stringify(U)};
    S.viewer=false;S.shows[0].absent=[];S.subs={};S.gsubs={};S.assignmentEdits={};
@@ -138,7 +162,7 @@ async function checkAbsence(page,width,{mode,assertFits,screenshot}){
     if(JSON.stringify(created.memberIds)!==JSON.stringify(['m4']))throw Error('Note target did not use changed assignment');
     const wire=publicationData('qa-absence');U.songIdx=oldSongIdx;S.groups[0].nopub=true;S.shows[0].nopub=true;
     S.viewer=true;
-    const legacy=structuredClone(wire);for(const row of [...legacy.subs,...legacy.gsubs])delete row.confirmed;
+    const legacy=structuredClone(wire);for(const row of [...legacy.subs,...legacy.gsubs])delete row.confirmed;for(const sw of legacy.shows)sw.absent=[];
     applySetlist(legacy);
     if(memberReviewNav()!==''||memberAbsenceChanges(S.songs[0]).length)throw Error('Old wire data created an unconfirmed notice');
     if(names(partsOf(S.songs[0],2))!=='検証丁')throw Error('Hiding an unconfirmed notice changed effective assignment');

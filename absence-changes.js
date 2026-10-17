@@ -12,6 +12,11 @@
     return !same(before,after)&&same(ids(receipt.before),before)&&same(ids(receipt.after),after)
       &&(text===undefined||receipt.text===String(text||""));
   }
+  function activeAbsenceChange(beforeValue,afterValue,absentValue) {
+    const before=ids(beforeValue),after=ids(afterValue),absent=ids(absentValue);
+    return after.length>0 && !same(before,after) && before.some(id=>absent.includes(id))
+      && !after.some(id=>absent.includes(id));
+  }
   function placeholderName(value) {
     const name=String(value == null ? "" : value).normalize("NFKC").trim();
     // Explicit assignment labels only; do not guess whether a person's name is real.
@@ -43,7 +48,8 @@
     const explicit=Array.isArray((context.subs || {})[index]);
     if (!explicit && Object.prototype.hasOwnProperty.call(song.blocks || {},label)) return null;
     const after=explicit ? context.subs[index] : before;
-    if(context.requireConfirmed&&!confirmed(context.edits?.lines?.[index],before,after,row.t))return null;
+    if(context.requireConfirmed&&!confirmed(context.edits?.lines?.[index],before,after,row.t)
+      &&!(context.acceptActiveAbsence&&explicit&&activeAbsenceChange(before,after,context.absent)))return null;
     const diff=classify(before,after,context.absent,explicit,context);
     if (!diff) return null;
     const beforeMain=ids(row.main || before), beforeExtra=ids(row.extra);
@@ -61,7 +67,8 @@
     if (!Array.isArray(before)) return null;
     const explicit=Array.isArray((context.gsubs || {})[label]);
     const after=explicit ? context.gsubs[label] : before;
-    if(context.requireConfirmed&&!confirmed(context.edits?.blocks?.[label],before,after))return null;
+    if(context.requireConfirmed&&!confirmed(context.edits?.blocks?.[label],before,after)
+      &&!(context.acceptActiveAbsence&&explicit&&activeAbsenceChange(before,after,context.absent)))return null;
     const diff=classify(before,after,context.absent,explicit,context);
     if (!diff) return null;
     const referenced=(song.lines || []).flatMap((row,index)=>!row.gap && !row.cut && String(row.label || "").trim()===label ? [index] : []);
@@ -90,5 +97,5 @@
     return [[entry.beforeMain,entry.afterMain],[entry.beforeExtra,entry.afterExtra]].some(([before,after])=>
       !same(before,after) && (before.includes(memberId) || after.includes(memberId)) && before.length < 3 && after.length < 3);
   }
-  return Object.freeze({confirmed,placeholderName,eligibleMembers,classify,line,block,entries,forMember});
+  return Object.freeze({confirmed,activeAbsenceChange,placeholderName,eligibleMembers,classify,line,block,entries,forMember});
 });

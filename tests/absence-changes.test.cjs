@@ -25,7 +25,7 @@ function fixture(){
  c.restoreViewerMember=()=>c.selected;c.viewerMembers=()=>c.S.members.slice(0,4);c.compactMemberLabel=n=>n;
  c.summarySongs=()=>c.U.allShows?c.S.songs:c.SONGS();c.showName=id=>c.S.shows.find(s=>s.id===(id||c.S.showId))?.name||'';
  vm.createContext(c);
- for(const name of ['rowNo','recordAssignmentChange','confirmAbsentAssignments','memberReviewNav','memberAbsenceContext','memberAbsenceChanges','absenceSelectableMembers','memberAbsenceRows','viewMemberAbsence','viewerSummaryBody','lineStatus','blockStatus','viewAbsent'])vm.runInContext(read(name),c);
+ for(const name of ['rowNo','memberChangePerformances','recordAssignmentChange','confirmAbsentAssignments','memberReviewNav','memberAbsenceContext','memberAbsenceChanges','absenceSelectableMembers','memberAbsenceRows','viewMemberAbsence','viewerSummaryBody','lineStatus','blockStatus','viewAbsent'])vm.runInContext(read(name),c);
  for(const so of c.S.songs){
   const key=so.showId+'|'+so.id;
   for(const [index,after] of Object.entries(c.S.subs[key]||{}))c.recordAssignmentChange(so,'lines',Number(index),after);
@@ -157,8 +157,8 @@ test('VIEW style uses the pure comparison and owner toggle validates allowed IDs
  assert(source.includes('if (VIEW() || preview || !absenceSelectableMembers().some(m=>m.id===id)) return false;'));
 });
 
-test('legacy, automatic and inherited substitutions never expose a member change notice',()=>{
- const c=fixture(),song=c.S.songs[0],before=json(c.S.subs);c.S.assignmentEdits={};c.S.subsMan={'show|song':{0:1,1:1,2:1,3:1}};
+test('inactive legacy substitutions need explicit confirmation and unchanged assignments stay hidden',()=>{
+ const c=fixture(),song=c.S.songs[0],before=json(c.S.subs);c.S.assignmentEdits={};c.S.shows[0].absent=[];c.S.subsMan={'show|song':{0:1,1:1,2:1,3:1}};
  assert.deepEqual(json(c.memberAbsenceChanges(song)),[]);assert.equal(c.memberReviewNav(),'');assert.equal(c.lineStatus(song,2),'');assert.deepEqual(json(c.S.subs),before);
  c.recordAssignmentChange(song,'lines',2,['m4']);assert.equal(c.memberAbsenceChanges(song).length,1);assert(c.memberReviewNav().includes('歌割変更があります（1件）'));
  c.S.subs['show|song'][2]=['m3'];assert.equal(c.memberReviewNav(),'','A stale receipt is not a new manual change');
@@ -167,7 +167,7 @@ test('legacy, automatic and inherited substitutions never expose a member change
 });
 
 test('explicit successful absence export confirms resolved assignments only; passive data stays hidden',()=>{
- const c=fixture(),so=c.S.songs[0];c.S.assignmentEdits={};
+ const c=fixture(),so=c.S.songs[0];c.S.assignmentEdits={};c.S.shows[0].absent=[];
  assert.equal(c.memberAbsenceChanges(so).length,0);
  assert.equal(c.confirmAbsentAssignments([so]),false,'Members cannot confirm changes');
  c.viewer=false;c.S.subs['show|song'][2]=['m1'];
@@ -176,7 +176,7 @@ test('explicit successful absence export confirms resolved assignments only; pas
  assert.equal(c.confirmAbsentAssignments([so]),false,'Repeat export is idempotent');
 });
 test('explicit absence selection confirms only changed assignments and restoration clears the receipt',()=>{
- const c=fixture(),so=c.S.songs[0];c.viewer=false;c.S.assignmentEdits={};
+ const c=fixture(),so=c.S.songs[0];c.viewer=false;c.S.assignmentEdits={};c.S.shows[0].absent=[];
  const previous=new Map([[so.id,{lines:so.lines.map((_,i)=>c.partsOf(so,i).slice()),blocks:{A:['m2']}}]]);
  c.S.subs['show|song'][1]=['m3'];
  assert.equal(c.confirmAbsentAssignments([so],previous),true);
@@ -184,4 +184,19 @@ test('explicit absence selection confirms only changed assignments and restorati
  const changed=new Map([[so.id,{lines:so.lines.map((_,i)=>c.partsOf(so,i).slice()),blocks:{A:['m2']}}]]);
  c.S.subs['show|song'][1]=['m1','m2'];c.confirmAbsentAssignments([so],changed);
  assert.equal(c.memberAbsenceChanges(so).length,0);
+});
+
+test('already-created absence changes remain visible without newer confirmation receipts',()=>{
+ const c=fixture(),so=c.S.songs[0];c.S.assignmentEdits={};const before=JSON.stringify(c.S);
+ assert.deepEqual(json(c.memberAbsenceChanges(so).flatMap(e=>e.lineIndices)),[0,1,2,3]);
+ assert(c.memberReviewNav().includes('歌割変更があります'));
+ assert.equal(c.memberAbsenceChanges(so,'m2',true).some(e=>e.lineIdx===0),false,'3+ unisons remain song-only');
+ assert.equal(JSON.stringify(c.S),before,'Reading existing changes never mutates assignments');
+ c.S.subs['show|song']={0:['m1','m2','m3'],1:['m1'],2:[],3:['m1']};c.S.gsubs={};
+ assert.equal(c.memberReviewNav(),'','Unchanged, absent-still-assigned and empty unresolved rows stay hidden');
+});
+test('changes on another performance are accessible even when current performance has none',()=>{
+ const c=fixture();c.S.shows.push({id:'newest',name:'Newest',absent:[]});c.S.showId='newest';
+ assert(c.memberReviewNav().includes('data-id="show"'));
+ assert(c.viewMemberAbsence().includes('id="summary-show"'));
 });

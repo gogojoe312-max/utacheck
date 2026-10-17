@@ -12,7 +12,7 @@ function fixture(){
  vm.runInContext(src.slice(src.indexOf('function performanceDateOrder('),src.indexOf('function groupedPerformanceHTML(')),c);
  vm.runInContext(src.slice(src.indexOf('function compactMemberLabel('),src.indexOf('const names = (ids)')),c);
  vm.runInContext(src.slice(src.indexOf('const songMemo ='),src.indexOf('const shownNotes =')),c);
- vm.runInContext(src.slice(src.indexOf('function memberReviewNav('),src.indexOf('function memberAbsenceContext(')),c);
+ vm.runInContext(src.slice(src.indexOf('function memberChangePerformances('),src.indexOf('function memberAbsenceContext(')),c);
  vm.runInContext(src.slice(src.indexOf('function summaryShows()'),src.indexOf('function viewSummary()')),c);
  return {c,stored,run:code=>vm.runInContext(code,c)};
 }

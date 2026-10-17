@@ -118,7 +118,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.38";
+const APP_VER = "16.41.58.39";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -8082,11 +8082,17 @@ async function toggleAbsenceMember(id, button) {
 }
 
 // Read-only view of absence substitutions; use each song's own performance.
+function memberChangePerformances() {
+  return S.shows.filter(sw=>!sw.hidden).map(sw=>({show:sw,count:S.songs
+    .filter(so=>so.showId===sw.id&&(!S.groupId||so.groupId===S.groupId))
+    .reduce((n,so)=>n+memberAbsenceChanges(so).length,0)})).filter(row=>row.count);
+}
 function memberReviewNav() {
   if (!VIEW()) return "";
-  const count=SONGS().reduce((n,so)=>n+memberAbsenceChanges(so).length,0);
+  const changes=memberChangePerformances(),count=changes.reduce((n,row)=>n+row.count,0);
   if (!count) return "";
-  return '<div class="member-review-nav"><button class="member-change-alert" data-act="goabsent">歌割変更があります（'+count+'件）</button></div>';
+  const target=changes.find(row=>row.show.id===S.showId)||changes[0];
+  return '<div class="member-review-nav"><button class="member-change-alert" data-act="goabsent" data-id="'+h(target.show.id)+'">歌割変更があります（'+count+'件）</button></div>';
 }
 
 function recordAssignmentChange(so,kind,index,after) {
@@ -8132,7 +8138,7 @@ function confirmAbsentAssignments(songs,previous) {
 }
 function memberAbsenceContext(so) {
   const sid=so.showId || S.showId, key=sid+"|"+so.id;
-  return {absent:absentIds(sid),subs:(S.subs || {})[key] || {},gsubs:(S.gsubs || {})[key] || {},requireConfirmed:true,edits:(S.assignmentEdits || {})[key] || {}};
+  return {absent:absentIds(sid),subs:(S.subs || {})[key] || {},gsubs:(S.gsubs || {})[key] || {},requireConfirmed:true,acceptActiveAbsence:true,edits:(S.assignmentEdits || {})[key] || {}};
 }
 function memberAbsenceChanges(so, memberId="", byMember=false) {
   if (typeof AbsenceChanges === "undefined") return [];
@@ -8167,6 +8173,11 @@ function memberAbsenceRows(so, entries, memberId="") {
   }).join("");
 }
 function viewMemberAbsence() {
+  const changeShows=memberChangePerformances().map(row=>row.show);
+  if(!changeShows.some(sw=>sw.id===S.showId)){
+    const current=S.shows.find(sw=>sw.id===S.showId);if(current)changeShows.unshift(current);
+  }
+  const showPicker=changeShows.length>1 ? '<label class="summary-show-picker"><span>公演・日付</span><select id="summary-show" aria-label="公演・日付">'+changeShows.map(sw=>'<option value="'+h(sw.id)+'" '+(sw.id===S.showId?'selected':'')+'>'+h(sw.name)+'</option>').join('')+'</select></label>' : '';
   const selected=restoreViewerMember(), byMember=!!selected;
   const memberId=byMember && selected ? selected.id : "";
   const picker='<label class="summary-show-picker member-picker"><span>メンバー</span><select id="summary-member" aria-label="メンバー"><option value="">全員</option>'+viewerMembers().map(m=>'<option value="'+h(m.id)+'" '+(selected?.id===m.id ? 'selected' : '')+'>'+h(compactMemberLabel(m.name))+'</option>').join("")+'</select></label>';
@@ -8175,7 +8186,7 @@ function viewMemberAbsence() {
     return changes.length ? '<section class="card member-song"><div class="member-song-head"><h3>'+h(songName(so))+'</h3></div>'+memberAbsenceRows(so,changes,memberId)+'</section>' : '';
   }).join("");
   return '<div class="hd"><button class="ic" data-act="go-live" aria-label="歌詞に戻る">‹</button><b>歌割変更</b><span class="grow"></span><span class="trunc">'+h(showName())+'</span></div>'
-    +'<div class="scroll pad"><p class="member-hint">変更後の担当を確認してください。</p>'+picker
+    +'<div class="scroll pad"><p class="member-hint">変更後の担当を確認してください。</p>'+showPicker+picker
     +(byMember ? '<p class="member-hint">3人以上のユニゾンは「全員」で確認できます。</p>' : '')
     +'<div class="card member-hint">'+h(absentIds().map(id=>(member(id) || {}).name).filter(Boolean).join("・") || "欠席なし")+(absentIds().length ? " が欠席" : "")+'</div>'
     +(cards || '<p class="member-empty">'+(memberId ? h(compactMemberLabel(selected.name))+"さんに関わる" : "")+'歌割の変更はありません。</p>')+'</div>';
@@ -10814,7 +10825,7 @@ document.addEventListener("click", async (e) => {
       break;
     }
     case "absence-scope": if (VIEW()) { U.absenceMode = id === "member" ? "member" : "all"; render(); } break;
-    case "goabsent": commitFields(); U.view = "absent"; render(); break;
+    case "goabsent": commitFields(); if(VIEW() && S.shows.some(sw=>sw.id===id)){S.showId=id;U.songIdx=0;U.allShows=false;} U.view = "absent"; render(); break;
     case "resetsubs":
       if (confirm("この公演の振り替えをすべてやり直しますか？")) {
         SONGS().forEach((so) => {
@@ -13216,7 +13227,7 @@ function publicationData(gid, previous, isolatedLibraries = false) {
             Object.keys(m).forEach((b) => {
               arr.push({ showId: sid, songIdx: idx.get(x.id), block: b,
                 names: (m[b] || []).map((mid) => (member(mid) || {}).name).filter(Boolean),
-                ...(typeof AbsenceChanges !== "undefined" && AbsenceChanges.confirmed(S.assignmentEdits?.[sid+"|"+x.id]?.blocks?.[b],x.blocks?.[b],m[b]) ? {confirmed:true} : {}) });
+                ...(typeof AbsenceChanges !== "undefined" && (AbsenceChanges.confirmed(S.assignmentEdits?.[sid+"|"+x.id]?.blocks?.[b],x.blocks?.[b],m[b]) || AbsenceChanges.activeAbsenceChange(x.blocks?.[b],m[b],absentIds(sid))) ? {confirmed:true} : {}) });
             });
           });
         });
@@ -13232,7 +13243,7 @@ function publicationData(gid, previous, isolatedLibraries = false) {
             Object.keys(m).forEach((li) => {
               arr.push({ showId: sid, songIdx: idx.get(x.id), lineIdx: Number(li),
                 names: (m[li] || []).map((mid) => (member(mid) || {}).name).filter(Boolean),
-                ...(typeof AbsenceChanges !== "undefined" && AbsenceChanges.confirmed(S.assignmentEdits?.[sid+"|"+x.id]?.lines?.[li],x.lines[li]?.parts,m[li],x.lines[li]?.t) ? {confirmed:true} : {}) });
+                ...(typeof AbsenceChanges !== "undefined" && (AbsenceChanges.confirmed(S.assignmentEdits?.[sid+"|"+x.id]?.lines?.[li],x.lines[li]?.parts,m[li],x.lines[li]?.t) || AbsenceChanges.activeAbsenceChange(x.lines[li]?.parts,m[li],absentIds(sid))) ? {confirmed:true} : {}) });
             });
           });
         });
