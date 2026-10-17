@@ -37,11 +37,11 @@ test('preview never overwrites remembered name and denied storage remains usable
  c.preview=null;c.localStorage={getItem(){throw Error()},setItem(){throw Error()}};c.U={mode:'member'};run("selectViewerMember('b')");assert.equal(run('restoreViewerMember().name'),'田中');
 });
 test('song view shows every member and opening a historic song changes the correct show',()=>{
- const {c,run}=fixture();run("selectViewerMember('a')");c.U.mode='song';const html=run('viewerSummaryBody()');assert(html.includes('田中向け'));assert(html.includes('指摘ゼロでも表示'));
+ const {c,run}=fixture();run("selectViewerMember('a')");c.U.mode='song';run("selectViewerMember('')");const html=run('viewerSummaryBody()');assert(html.includes('田中向け'));assert(html.includes('指摘ゼロでも表示'));
  c.U.allShows=true;run("openSummarySong('s3')");assert.equal(c.S.showId,'day2');assert.equal(c.U.songIdx,0);assert.equal(c.U.view,'live');
 });
 test('summary header keeps member tabs simple and editor show tab available',()=>{
- const {c,run}=fixture();assert(!run('summaryHeader()').includes('公演別'));c.VIEW=()=>false;assert(run('summaryHeader()').includes('公演別'));
+ const {c,run}=fixture();const header=run('summaryHeader()');for(const label of ['人ごと','曲ごと','公演別'])assert(!header.includes(label));c.VIEW=()=>false;assert(run('summaryHeader()').includes('公演別'));
 });
 test('a feedback point opens its exact line and back restores the summary context and scroll',()=>{
  const {c,run}=fixture();let sc={scrollTop:360},jumped=0,highlighted=0;

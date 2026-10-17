@@ -653,3 +653,13 @@ test('single-phone authority does not bypass connection changes or storage prese
   await assert.rejects(()=>f.c.RecoveryDelivery.push('g',true));assert.equal(f.patches(),0);
  }
 });
+
+test('Excel reattachment metadata no longer blocks the single-phone delivery and survives verified readback',async()=>{
+ const f=await fixture();await f.check();f.modal().querySelector('#rd-approve').checked=true;f.modal().querySelector('#rd-exclusive').checked=true;f.click('rd-commit');await f.until(()=>f.calls.some(x=>x.action==='pushOne'));
+ f.c.S.deliveryOwnerDeviceId=f.c.S.deviceId;Object.assign(f.c.S.songs[0],{sheetName:'歌割',micSheet:'マイク',micMap:{Member:'1'},blockCells:{A:'B4'}});
+ Object.assign(f.c.S.recoveryDelivery.targets[0],{status:'blocked',lastFailure:'元の配信先・公演の対応または形式を確認できません。配信・設定は変更していません。'});
+ f.c.S.notes[0].memo='Phone feedback after Excel reattachment';f.c.save();await f.c.saveNow();
+ assert.equal(await f.c.RecoveryDelivery.reconcilePending(),true);assert.equal(await f.c.RecoveryDelivery.push('g',false),'sent');
+ const wire=JSON.parse(f.remote());assert.equal(wire.lib[0].sheetName,'歌割');assert.equal(wire.lib[0].micSheet,'マイク');assert.deepEqual(wire.lib[0].micMap,{Member:'1'});assert.equal(wire.lib[0].groupCells.A,'B4');
+ assert.equal(wire.notes[0].memo,'Phone feedback after Excel reattachment');assert.equal(f.c.S.recoveryDelivery.targets[0].status,'ready');assert.equal(f.patches(),1);assert.equal(f.c.RecoveryDelivery.pending('g'),false);
+});

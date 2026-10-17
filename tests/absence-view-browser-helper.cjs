@@ -55,6 +55,7 @@ async function checkAbsence(page,width,{mode,assertFits,screenshot}){
   });
   assert.equal(await page.locator('.member-absence-change').count(),0,'Notes do not contain assignment changes');
   assert.equal(await page.locator('.summary-tabs [data-act="goabsent"]').count(),0);
+  assert.equal(await page.locator('[data-act="mode"][data-id="member"],[data-act="mode"][data-id="song"]').count(),0);
   assert.equal(await page.locator('.member-review-nav [data-act="goabsent"]').innerText(),'担当の変更があります（5件）');
   await page.locator('.member-review-nav [data-act="goabsent"]').click();await page.waitForFunction(()=>U.view==='absent');
   await expectLines([0,1,2,3,5]);
@@ -76,8 +77,7 @@ async function checkAbsence(page,width,{mode,assertFits,screenshot}){
   await page.waitForFunction(()=>U.view==='absent');
   await expectLines([0,1,2,3,5]);
   await mode(page,false,true,'absent');
-  await page.locator('[data-act="absence-scope"][data-id="member"]').click();
-  await page.locator('#summary-member').selectOption('');await expectLines([1,2]);
+  await page.locator('#summary-member').selectOption('');await expectLines([0,1,2,3,5]);
   await page.locator('#summary-member').selectOption('m2');await expectLines([1]);
   assert((await page.locator('.member-absence-change').innerText()).includes('一緒に歌うメンバーが変更'));
   await page.locator('#summary-member').selectOption('m4');await expectLines([2]);
@@ -91,9 +91,8 @@ async function checkAbsence(page,width,{mode,assertFits,screenshot}){
   assert.equal(await page.locator('[data-lyric-line="0"]').evaluate(el=>el.style.background), '');
   await screenshot(page,width,'absence-lyric-target');
   await mode(page,false,true,'absent');
-  await page.locator('[data-act="absence-scope"][data-id="all"]').click();await expectLines([0,1,2,3,5]);
-  await page.locator('[data-act="absence-scope"][data-id="member"]').click();
-  await page.locator('#summary-member').selectOption('');await expectLines([1,2]);
+  await page.locator('#summary-member').selectOption('');await expectLines([0,1,2,3,5]);
+  await page.locator('#summary-member').selectOption('');await expectLines([0,1,2,3,5]);
   await page.locator('#summary-member').selectOption('m2');await expectLines([1]);
   await page.locator('#summary-member').selectOption('m4');await expectLines([2]);
   assert.equal(await page.locator('[data-act="toggleabsent"],[data-act="setassign"],[data-act="setblock"]').count(),0);

@@ -820,3 +820,24 @@ test('single-phone publication replaces only bound source shows and retains unre
  assert.equal(out.payload.notes.filter(n=>n.memo==='Managed fixture note').length,1);assert(out.payload.memos.some(m=>m.text==='Current remote memo'));
  assert.deepEqual(f.remote,before);assert.deepEqual(out.payload.rosters,before.rosters);
 });
+
+test('actual Excel import metadata passes the same publication path used after original workbook reattachment',()=>{
+ const f=actualPublicationFixture(),so=f.S.songs[0];
+ Object.assign(so,{sheetName:'歌割',micSheet:'マイク',micMap:{'Fixture singer':'1'},blockCells:{A:'B4'}});
+ const payload=JSON.parse(JSON.stringify(f.context.publicationData('GROUP',undefined,true)));
+ payload.folderOrder=payload.folderOrder.filter(folder=>payload.shows.some(show=>show.folder===folder));
+ assert.equal(payload.lib[0].sheetName,'歌割');
+ assert.equal(API.verifyPublication(f.result.targets[0],publication(),payload).ok,true);
+ const out=API.mergeOwnerPublication(f.result.targets[0],publication(),payload);
+ assert.equal(out.payload.lib.find(x=>x.sheetName==='歌割').micMap['Fixture singer'],'1');
+});
+
+for(const [field,value] of [['sheetName',{}],['micSheet',7],['micMap',{Singer:{token:'PRIVATE'}}],['micMap',{Singer:7}],['groupCells',{A:'not a cell'}]])test('Excel publication metadata rejects malformed '+field,()=>{
+ const payload=publication(true);payload.lib[0][field]=value;assert.throws(()=>API.verifyPublication(target(),publication(),payload));
+});
+for(const key of ['micSheet','micMap'])test('Excel layout exception never admits private '+key+' outside library metadata',()=>{
+ for(const place of ['top','show','hand']){
+  const payload=publication(true),node=place==='top'?payload:place==='show'?payload.shows[0]:payload.notes[0].hand;node[key]=key==='micSheet'?'Sheet':{Singer:'1'};
+  fails('publication-private-field',()=>API.verifyPublication(target(),publication(),payload));
+ }
+});

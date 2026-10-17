@@ -29,10 +29,10 @@
     return !!prototype&&own(prototype,'value')&&prototype.value===proto;
   }
   // Inspect descriptors first. No accessor, toJSON, or inherited hook is executed.
-  function copy(value,mode='json'){
+  function copy(value,mode='json',kind=''){
     let nodes=0;
     const ancestors=new Set();
-    function visit(item,depth){
+    function visit(item,depth,path=[]){
       if(++nodes>(mode==='state'?MAX_STATE_NODES:MAX_NODES)||depth>MAX_DEPTH)fail('data-limit');
       if(item===undefined&&mode==='state')return undefined;
       if(item===undefined&&mode==='publication')return null;
@@ -46,18 +46,19 @@
       for(const key of keys){
         if(array&&key==='length')continue;
         if(typeof key!=='string'||unsafe.has(key))fail('unsafe-key');
-        if(mode==='publication'&&privateFields.has(key))fail('publication-private-field');
+        if(mode==='publication'&&privateFields.has(key)
+          &&!(['micSheet','micMap'].includes(key)&&path.length===2&&path[0]==='lib'&&/^(0|[1-9]\d*)$/.test(path[1])))fail('publication-private-field');
         const descriptor=Object.getOwnPropertyDescriptor(item,key);
         if(!descriptor||!own(descriptor,'value')||!descriptor.enumerable)fail('unsafe-data');
         if(array&&(!/^(0|[1-9]\d*)$/.test(key)||Number(key)>=item.length))fail('unsafe-data');
         // publicationData intentionally leaves optional object fields undefined.
         // The actual JSON wire representation omits those fields.
         if(!array&&mode==='publication'&&descriptor.value===undefined)continue;
-        out[key]=visit(descriptor.value,depth+1);
+        out[key]=visit(descriptor.value,depth+1,path.concat(key));
       }
       ancestors.delete(item);return out;
     }
-    return visit(value,0);
+    return visit(value,0,kind==='library'?['lib','0']:[]);
   }
   function bytes(value,limit){if(new TextEncoder().encode(JSON.stringify(value)).byteLength>limit)fail('data-limit');}
   function only(value,allowed,code){if(!object(value)||Object.keys(value).some(key=>!allowed.includes(key)))fail(code);}
@@ -190,7 +191,7 @@
     publication:['version','authorId','src','groupName','members','rosters','alert','groupOrder','folderOrder','lib','songs','shows','gsubs','subs','notes','memos','focusShow'],
     show:['id','name','ts','folder','from','nopub','hidden','absent','recoveredSourceShowId','recoverySource'],
     song:['showId','libIdx','take','fromIdx'],
-    library:['title','credit','groups','order','lines','sections','lyricBreaks','groupRows'],
+    library:['title','credit','groups','order','lines','sections','lyricBreaks','groupRows','sheetName','micSheet','micMap','groupCells'],
     note:['songIdx','lineIdx','memberNames','tags','memo','hand','pitch','lineEnd','from','to','showId','at'],
     memo:['showId','songIdx','text'],sub:['showId','songIdx','lineIdx','names','confirmed'],gsub:['showId','songIdx','block','names','confirmed']
   };
@@ -248,6 +249,12 @@
       only(entry,fields.library,bad);
       if(typeof entry.title!=='string'||!Array.isArray(entry.lines)||entry.lines.some(row=>!Array.isArray(row)||row.length<2||row.length>9||row[0]!==null&&typeof row[0]!=='string'||typeof row[1]!=='string'||row.some(cell=>cell!==null&&typeof cell!=='string')))fail(bad);
       if(entry.credit!=null&&typeof entry.credit!=='string'||own(entry,'order')&&!strings(entry.order)||own(entry,'groups')&&!object(entry.groups))fail(bad);
+      // The ordinary Excel importer emits these layout references. They are
+      // required for reattaching the original workbook after a publication
+      // restore; workbook bytes and private editor/source IDs stay forbidden.
+      for(const key of ['sheetName','micSheet'])if(own(entry,key)&&(typeof entry[key]!=='string'||!entry[key].length||entry[key].length>255||/[\x00-\x1f]/.test(entry[key])))fail(bad);
+      if(own(entry,'micMap')&&(!object(entry.micMap)||Object.entries(entry.micMap).some(([key,value])=>!name(key)||typeof value!=='string'||value.length>4096)))fail(bad);
+      if(own(entry,'groupCells')&&(!object(entry.groupCells)||Object.entries(entry.groupCells).some(([key,value])=>!name(key)||typeof value!=='string'||value!==''&&!/^\$?[A-Z]{1,3}\$?[1-9]\d{0,6}$/.test(value))))fail(bad);
       for(const names of Object.values(entry.groups||{}))if(!strings(names))fail(bad);
       if(own(entry,'sections')){
         if(!Array.isArray(entry.sections))fail(bad);
@@ -410,6 +417,7 @@
     }
     const libraries=publication.lib.map(entry=>{
       const content=stable({title:entry.title,credit:empty(entry.credit),
+      sheetName:empty(entry.sheetName),micSheet:empty(entry.micSheet),micMap:entry.micMap||{},groupCells:entry.groupCells||{},
       // Block insertion order can affect performer ordering, so retain it too.
       groups:Object.entries(entry.groups||{}),order:entry.order||[],
       lines:entry.lines.map(row=>Array.from({length:9},(_,index)=>index===1?row[index]:empty(row[index]))),
@@ -543,7 +551,7 @@
     function append(value,selected,protectedPart){
       const songMap=new Map(),libraryMap=new Map(),libraryUsed=new Set();
       value.songs.forEach((song,index)=>{if(selected.has(song.showId)){songMap.set(index,payload.songs.length+songMap.size);libraryUsed.add(song.libIdx);}});
-      value.lib.forEach((entry,index)=>{if(libraryUsed.has(index)){libraryMap.set(index,payload.lib.length);payload.lib.push(copy(entry,'publication'));}});
+      value.lib.forEach((entry,index)=>{if(libraryUsed.has(index)){libraryMap.set(index,payload.lib.length);payload.lib.push(copy(entry,'publication','library'));}});
       for(const show of value.shows)if(selected.has(show.id)){
         const next=copy(show,'publication');
         if(singleOwner&&protectedPart&&next.from!=null&&next.from!==''){

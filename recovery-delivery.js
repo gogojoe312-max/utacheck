@@ -36,9 +36,13 @@
       'unsafe-key':'接続ファイルに安全に扱えない項目があるため停止しました。送信・設定変更はしていません。',
       'target':'接続ファイルと元の配信先が一致しません。別の配信先には送信していません。',
       'remote':'GitHubから元の配信内容を読み取れませんでした。送信・設定変更はしていません。',
+      'publication-private-field':'配信データに未対応の項目があります。',
+      'payload-publication-invalid':'この端末の配信データ形式を確認できません。',
+      'remote-publication-invalid':'配信先のデータ形式を確認できません。',
     };
     const prefix=code==='source-receipt-mismatch'&&Number.isSafeInteger(error.targetNumber)&&error.targetNumber>0&&error.targetNumber<=100?'接続対象'+error.targetNumber+'：':'';
-    return prefix+(messages[code]||'元の配信先・公演の対応または形式を確認できません。配信・設定は変更していません。')+(code==='saved-mismatch'&&error.reconnectDetail?'\n\n'+error.reconnectDetail:'');
+    return prefix+(messages[code]||'元の配信先・公演の対応または形式を確認できません。配信・設定は変更していません。')
+      +(error?.recoveryDeliveryCode&&/^[a-z][a-z0-9-]{1,80}$/.test(code||'')?'（確認コード：'+code+'）':'')+(code==='saved-mismatch'&&error.reconnectDetail?'\n\n'+error.reconnectDetail:'');
   }
   function ready(){return typeof S!=='undefined'&&startupRecoveryNetworkHold&&recordingInboxCanWrite()&&!VIEW()&&!preview&&!document.hidden;}
   function currentBinding(gid){return S.recoveryDelivery?.version===2&&Array.isArray(S.recoveryDelivery.targets)?S.recoveryDelivery.targets.find(t=>t.groupId===gid):null;}

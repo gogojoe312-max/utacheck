@@ -118,7 +118,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.35";
+const APP_VER = "16.41.58.36";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -7410,13 +7410,13 @@ function memberNoteBody(n, showMembers = true) {
 }
 function viewerSummaryBody() {
   const selected = restoreViewerMember();
-  const byMember = U.mode === "member";
+  const byMember = !!selected;
   const all = shownNotes();
   const ns = byMember && selected ? all.filter(n => !(n.memberIds || []).length || n.memberIds.includes(selected.id)) : all;
-  const picker = byMember ? `<label class="summary-show-picker member-picker"><span>メンバー</span>
+  const picker = `<label class="summary-show-picker member-picker"><span>メンバー</span>
     <select id="summary-member" aria-label="メンバー"><option value="">全員</option>
     ${viewerMembers().map(m => `<option value="${h(m.id)}" ${selected && selected.id === m.id ? "selected" : ""}>${h(compactMemberLabel(m.name))}</option>`).join("")}</select></label>
-    <p class="member-hint">${selected ? h(compactMemberLabel(selected.name)) + "さんへの指摘と、全員共通の総括を表示しています。" : "名前を選ぶと、自分への指摘を表示します。"}</p>` : "";
+    <p class="member-hint">${selected ? h(compactMemberLabel(selected.name)) + "さんへの指摘と、全員共通の総括を表示しています。" : "名前を選ぶと、自分への指摘を表示します。"}</p>`;
   const cards = summarySongs().map(so => {
     const notes = ns.filter(n => n.songId === so.id && n.showId === so.showId).sort((a,b) => a.lineIdx - b.lineIdx);
     const memo = summaryMemo(so);
@@ -7510,7 +7510,7 @@ function summaryHeader() {
     <span class="grow"></span>
     <span style="font-size:11px;color:var(--dim)" class="trunc">${h(U.allShows ? "全公演" : showName())}</span></div>
   ${memberReviewNav()}
-  <div class="tabs summary-tabs">${tab("member", VIEW() ? "人ごと" : "メンバー別")}${tab("song", VIEW() ? "曲ごと" : "曲別")}${VIEW() ? "" : tab("show", "公演別")}${tab("diff", "前回との差")}${VIEW() ? '<button class="chip sm" data-act="summary-lyrics">歌詞</button>' : ""}</div>
+  <div class="tabs summary-tabs">${VIEW() ? tab(U.mode === "diff" ? "member" : "diff", U.mode === "diff" ? "指摘に戻る" : "前回との差") + '<button class="chip sm" data-act="summary-lyrics">歌詞</button>' : tab("member", "メンバー別") + tab("song", "曲別") + tab("show", "公演別") + tab("diff", "前回との差")}</div>
   ${summaryShowPicker()}
 `;
 }
@@ -8119,16 +8119,16 @@ function memberAbsenceRows(so, entries, memberId="") {
   }).join("");
 }
 function viewMemberAbsence() {
-  const selected=restoreViewerMember(), byMember=U.absenceMode==="member";
+  const selected=restoreViewerMember(), byMember=!!selected;
   const memberId=byMember && selected ? selected.id : "";
-  const picker=byMember ? '<label class="summary-show-picker member-picker"><span>メンバー</span><select id="summary-member" aria-label="メンバー"><option value="">全員</option>'+viewerMembers().map(m=>'<option value="'+h(m.id)+'" '+(selected?.id===m.id ? 'selected' : '')+'>'+h(compactMemberLabel(m.name))+'</option>').join("")+'</select></label>' : '';
+  const picker='<label class="summary-show-picker member-picker"><span>メンバー</span><select id="summary-member" aria-label="メンバー"><option value="">全員</option>'+viewerMembers().map(m=>'<option value="'+h(m.id)+'" '+(selected?.id===m.id ? 'selected' : '')+'>'+h(compactMemberLabel(m.name))+'</option>').join("")+'</select></label>';
   const cards=SONGS().map(so=>{
     const changes=memberAbsenceChanges(so,memberId,byMember);
     return changes.length ? '<section class="card member-song"><div class="member-song-head"><h3>'+h(songName(so))+'</h3></div>'+memberAbsenceRows(so,changes,memberId)+'</section>' : '';
   }).join("");
   return '<div class="hd"><button class="ic" data-act="go-live" aria-label="歌詞に戻る">‹</button><b>担当の変更</b><span class="grow"></span><span class="trunc">'+h(showName())+'</span></div>'
-    +'<div class="scroll pad"><p class="member-hint">変更後の担当を確認してください。</p><div class="tabs"><button class="chip sm" data-act="absence-scope" data-id="all" aria-pressed="'+!byMember+'">曲ごと</button><button class="chip sm" data-act="absence-scope" data-id="member" aria-pressed="'+byMember+'">人ごと</button></div>'+picker
-    +(byMember ? '<p class="member-hint">3人以上のユニゾンは「曲ごと」で確認できます。</p>' : '')
+    +'<div class="scroll pad"><p class="member-hint">変更後の担当を確認してください。</p>'+picker
+    +(byMember ? '<p class="member-hint">3人以上のユニゾンは「全員」で確認できます。</p>' : '')
     +'<div class="card member-hint">'+h(absentIds().map(id=>(member(id) || {}).name).filter(Boolean).join("・") || "欠席なし")+(absentIds().length ? " が欠席" : "")+'</div>'
     +(cards || '<p class="member-empty">'+(memberId ? h(compactMemberLabel(selected.name))+"さんに関わる" : "")+'歌割の変更はありません。</p>')+'</div>';
 }

@@ -117,16 +117,12 @@ test('personal changes exclude unison groups before or after replacement but pre
  for(const id of ['a','e'])assert.equal(Changes.forMember(melody,id),true);
  for(const id of ['b','c','d'])assert.equal(Changes.forMember(melody,id),false);
 });
-test('personal tabs exclude large unisons even before a member is selected',()=>{
+test('one member selector shows all changes for everyone and only personal changes for a named person',()=>{
  const c=fixture();delete c.S.songs[0].blocks.A;delete c.S.gsubs['show|song'].A;
- c.U.mode='member';c.U.absenceMode='member';
- for(const html of [c.viewMemberAbsence()]){
-  assert.equal((html.match(/member-absence-change/g)||[]).length,2);
-  assert(!html.includes('quiet trio'));assert(!html.includes('visible addition'));
-  assert(html.includes('visible duo'));assert(html.includes('visible replacement'));
- }
- c.U.mode='song';c.U.absenceMode='all';
- for(const html of [c.viewMemberAbsence()])assert.equal((html.match(/member-absence-change/g)||[]).length,4);
+ let html=c.viewMemberAbsence();assert.equal((html.match(/member-absence-change/g)||[]).length,4);
+ assert(html.includes('id="summary-member"'));assert(!html.includes('absence-scope'));
+ c.selected=c.member('m4');html=c.viewMemberAbsence();assert.equal((html.match(/member-absence-change/g)||[]).length,1);assert(html.includes('visible replacement'));
+ c.selected=null;html=c.viewMemberAbsence();assert.equal((html.match(/member-absence-change/g)||[]).length,4);
 });
 test('unresolved or unchanged assignments stay out of member changes and lyric emphasis',()=>{
  const c=fixture(),song=c.S.songs[0];delete c.S.subs['show|song'][2];
@@ -144,7 +140,7 @@ test('an unchanged solo role does not inherit a large unison change',()=>{
 });
 test('member screens expose no edit controls and rendering never changes saved data',()=>{
  const c=fixture(),before=JSON.stringify(c.S),html=c.viewAbsent()+c.viewerSummaryBody();
- assert(html.includes('data-act="absence-scope"'));assert(html.includes('data-act="summary-note"'));
+ assert(!html.includes('data-act="absence-scope"'));assert(html.includes('id="summary-member"'));assert(html.includes('data-act="summary-note"'));
  for(const action of ['toggleabsent','setassign','setblock','assignblock','resetsubs','assign'])assert(!html.includes('data-act="'+action+'"'),action);
  assert.equal(JSON.stringify(c.S),before);
 });

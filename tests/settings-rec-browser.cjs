@@ -191,6 +191,20 @@ async function checkExcelReattach(page,width,dialogs){
    const so=S.songs.find(s=>s.id==='qa-excel-song'),original=await getOriginalExcel(so,true),old=await getClip('xls:'+so.id),durable=await loadRaw();
    return {state:JSON.stringify(S),source:so.xlsSourceId,stored:Array.from(new Uint8Array(await original.arrayBuffer())),old:Array.from(new Uint8Array(await old.arrayBuffer())),durable,packed:JSON.stringify(packState(S)),automaticExport:!!U.excelExport};
   });
+  const excelPublication=await page.evaluate(()=>{
+   const original=S,ui=JSON.stringify(U);
+   try{
+    S=structuredClone(S);const g=S.groups.find(g=>g.id==='qa-excel-group'),show=S.shows.find(s=>s.id==='qa-excel-show');g.nopub=false;show.nopub=false;
+    const wire=JSON.parse(JSON.stringify(publicationData(g.id,undefined,true)));
+    const scope={groupId:g.id,groupName:g.name,gistId:'b'.repeat(32),src:'https://gist.githubusercontent.com/synthetic/'+ 'b'.repeat(32)+'/raw/utacheck.json',sourceSha256:'a'.repeat(64),expectedRemoteSha256:'c'.repeat(64),showIds:[show.id],sourceShowIds:[show.id]};
+    RecoveryDeliveryScope.verifyPublication(scope,wire,wire);
+    if(wire.lib[0].sheetName!=='歌割')throw Error('Actual Excel worksheet metadata is missing');
+    S.deviceId='synthetic-member-device';S.viewer=true;applySetlist(wire);
+    const received=S.songs[0];
+    return {sheet:received.sheetName,notes:S.pubNotes.map(n=>n.memo),title:received.title};
+   }finally{S=original;U=JSON.parse(ui);renderPointers.clear();scrollingUntil=0;pendingRender=false;render(true);}
+  });
+  assert.equal(excelPublication.sheet,'歌割');assert.deepEqual(excelPublication.notes,['合成指摘を保持']);assert.equal(excelPublication.title,'合成Excel曲');
   const expected=JSON.parse(initial),next=JSON.parse(verified.state),expectedSong=expected.songs.find(s=>s.id===songId),actualSong=next.songs.find(s=>s.id===songId);
   for(const key of ['xlsSourceId','xls','xlsAt'])expectedSong[key]=actualSong[key];
   assert.deepEqual(next,expected,'Reattachment changes only original-workbook metadata');
