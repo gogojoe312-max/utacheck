@@ -6,6 +6,7 @@ function fixture(){
  const c={S:{showId:'show',groupId:'group',recMode:false,shows:[{id:'show',absent:[]}],notes:[{memo:'keep'}],songs:[{id:'song',lines:[{t:'keep lyric'}]}],subs:{},gsubs:{},ghToken:'test-token'},U:{view:'absent'},preview:null,viewer:false,
   booted:true,bootErr:'',syncing:false,manualSync:false,backupInFlight:false,publishInFlight:false,saveErr:false,stateRevision:0,checks:0,writes:0,renders:0,allowed:true,
   recordingInboxCanWrite:()=>true,packState:s=>({...s}),document:{querySelectorAll:()=>buttons},typingNow:()=>false,schedulePush(){},rebuildSubs(){},render(){c.renders++;},save(){c.stateRevision++;},async saveNow(){c.writes++;},async automaticBackupBeforeEdit(){c.checks++;return c.allowed;}};
+ c.SONGS=()=>c.S.songs;c.partsOf=(s,i)=>s.lines[i].parts||[];c.blocksOf=()=>[];c.confirmAbsentAssignments=()=>false;
  c.VIEW=()=>c.viewer;c.absenceSelectableMembers=()=>buttons.map(b=>({id:b.id}));
  vm.createContext(c);vm.runInContext(source.slice(source.indexOf('let absenceEditBatch ='),source.indexOf('// Read-only view of absence substitutions;')),c);
  return {c,buttons,run:code=>vm.runInContext(code,c)};

@@ -118,7 +118,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.36";
+const APP_VER = "16.41.58.37";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -7928,6 +7928,11 @@ async function runAbsentExport(songs, bundle, {prepareOnly = false} = {}) {
     if (runAbsentExport.prepared.has(cacheKey)) {
       U.exportingExcel = true;
       try {
+        if(confirmAbsentAssignments(songs)){
+          save();schedulePush();
+          const context=originalExcelExportContext();
+          for(const item of runAbsentExport.prepared.values())item.context=context;
+        }
         presentExcelExport(cached.name,cached.blob,cached.count,cached.failures,cached.missingExcelIds,false);
         await shareExcelExport({automatic:true});
       } finally { U.exportingExcel = false; render(); }
@@ -7938,7 +7943,7 @@ async function runAbsentExport(songs, bundle, {prepareOnly = false} = {}) {
   const targets = songs.slice(), sourceContext = originalExcelExportContext();
   if (!prepareOnly) { U.exportingExcel = true; closeExcelExport(); }
   const files = Object.create(null), failures = [], missingExcelIds = [];
-  const prepared = new Map();
+  const prepared = new Map(), completed = [];
   try {
     for (let i = 0; i < targets.length; i++) {
       const so = targets[i];
@@ -7959,6 +7964,7 @@ async function runAbsentExport(songs, bundle, {prepareOnly = false} = {}) {
         let name = base, suffix = 2;
         while (files[name]) name = base.replace(/\.xlsx$/, ` (${suffix++}).xlsx`);
         files[name] = data;
+        completed.push(so);
         prepared.set("single:"+so.id,{name:base,blob:new Blob([data],{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}),count:1,failures:[],missingExcelIds:[],context:sourceContext,targets:JSON.stringify([so])});
       } catch (e) { failures.push(`${so.title}（Excel出力）\n${fileFailureReason(e)}`); if (e.originalExcelMissing) missingExcelIds.push(so.id); }
     }
@@ -7977,6 +7983,12 @@ async function runAbsentExport(songs, bundle, {prepareOnly = false} = {}) {
     if (!failures.length) prepared.set(cacheKey,item);
     runAbsentExport.prepared = prepared;
     if (prepareOnly) return;
+    if(confirmAbsentAssignments(completed)){
+      save();schedulePush();
+      const context=originalExcelExportContext();
+      for(const entry of prepared.values())entry.context=context;
+      item.context=context;
+    }
     U.busy = ""; render();
     presentExcelExport(item.name,item.blob,item.count,failures,missingExcelIds,false);
     await shareExcelExport({automatic:true});
@@ -8048,8 +8060,13 @@ async function toggleAbsenceMember(id, button) {
     if (typingNow()) { commitFields(); document.activeElement.blur(); }
     const sw = S.shows.find(x=>x.id===S.showId);
     if (!sw) return false;
+    const previousAssignments=new Map(SONGS().map(so=>[so.id,{
+      lines:so.lines.map((_,i)=>partsOf(so,i).slice()),
+      blocks:Object.fromEntries(blocksOf(so).map(b=>[b,blockParts(so,b).slice()]))
+    }]));
     sw.absent = (sw.absent || []).includes(id) ? sw.absent.filter(x=>x!==id) : (sw.absent || []).concat(id);
     rebuildSubs();
+    confirmAbsentAssignments(SONGS(),previousAssignments);
     save(); schedulePush(); render();
     const expected = {...scope,revision:stateRevision,snapshot:absenceEditSnapshot()};
     await saveNow();
@@ -8081,6 +8098,37 @@ function recordAssignmentChange(so,kind,index,after) {
   edits[kind] ||= {};
   if(new Set(before).size === new Set(after).size && before.every(id=>after.includes(id)))delete edits[kind][index];
   else edits[kind][index]={before:before.slice(),after:after.slice(),...(kind === "lines" ? {text:String(so.lines[index]?.t || "")} : {})};
+}
+// Explicit absence edits and successful Excel creation both confirm the
+// resulting assignments. Passive import/rebuild and idle preparation do not.
+function confirmAbsentAssignments(songs,previous) {
+  if(VIEW() || preview || !recordingInboxCanWrite() || typeof AbsenceChanges === "undefined")return false;
+  const before=JSON.stringify(S.assignmentEdits || {});
+  const same=(a,b)=>a.length===b.length&&a.every(id=>b.includes(id));
+  for(const so of songs){
+    if(!S.songs.includes(so))continue;
+    if(previous){
+      const old=previous.get(so.id);if(!old)continue;
+      for(const b of blocksOf(so)){
+        const now=blockParts(so,b);
+        if(old.blocks[b]&&!same(old.blocks[b],now))recordAssignmentChange(so,"blocks",b,now);
+      }
+      so.lines.forEach((line,i)=>{
+        if(blockOf(so,i)&&!Array.isArray(S.subs?.[(so.showId || S.showId)+"|"+so.id]?.[i]))return;
+        const now=partsOf(so,i);
+        if(old.lines[i]&&!same(old.lines[i],now))recordAssignmentChange(so,"lines",i,now);
+      });
+    }else{
+      const key=(so.showId || S.showId)+"|"+so.id;
+      const entries=AbsenceChanges.entries(so,{absent:absentIds(so.showId),subs:S.subs?.[key] || {},gsubs:S.gsubs?.[key] || {},includeGroupReductions:true});
+      for(const entry of entries){
+        if(entry.status!=="changed")continue;
+        if(entry.kind==="block")recordAssignmentChange(so,"blocks",entry.label,entry.after);
+        else for(const i of entry.lineIndices)recordAssignmentChange(so,"lines",i,entry.after);
+      }
+    }
+  }
+  return before!==JSON.stringify(S.assignmentEdits || {});
 }
 function memberAbsenceContext(so) {
   const sid=so.showId || S.showId, key=sid+"|"+so.id;

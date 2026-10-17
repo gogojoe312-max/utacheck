@@ -16,7 +16,7 @@ function fixture(){
   U:{mode:'song',allShows:false},preview:null,viewer:true,selected:null,libFrom:'',
   h:s=>String(s??'').replace(/[<>&"]/g,k=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[k])),
   songName:s=>s.title,shownNotes:()=>[],summaryMemo:()=>'',needCount:()=>0,changedCount:()=>0,runAt:(s,i)=>[i]};
- c.VIEW=()=>c.viewer;c.member=id=>c.S.members.find(m=>m.id===id);c.names=ids=>(ids||[]).map(c.member).filter(Boolean).map(m=>m.name).join('・');
+ c.recordingInboxCanWrite=()=>true;c.VIEW=()=>c.viewer;c.member=id=>c.S.members.find(m=>m.id===id);c.names=ids=>(ids||[]).map(c.member).filter(Boolean).map(m=>m.name).join('・');
  c.SONGS=()=>c.S.songs.filter(s=>s.showId===c.S.showId);c.songRoster=s=>s.roster||[];c.showRoster=()=>[...new Set(c.SONGS().flatMap(c.songRoster))];
  c.absentIds=id=>c.S.shows.find(s=>s.id===(id||c.S.showId))?.absent||[];
  c.subOf=(id,i)=>c.S.subs[c.S.showId+'|'+id]?.[i]||null;c.gsubOf=(id,b)=>c.S.gsubs[c.S.showId+'|'+id]?.[b]||null;
@@ -25,7 +25,7 @@ function fixture(){
  c.restoreViewerMember=()=>c.selected;c.viewerMembers=()=>c.S.members.slice(0,4);c.compactMemberLabel=n=>n;
  c.summarySongs=()=>c.U.allShows?c.S.songs:c.SONGS();c.showName=id=>c.S.shows.find(s=>s.id===(id||c.S.showId))?.name||'';
  vm.createContext(c);
- for(const name of ['rowNo','recordAssignmentChange','memberReviewNav','memberAbsenceContext','memberAbsenceChanges','absenceSelectableMembers','memberAbsenceRows','viewMemberAbsence','viewerSummaryBody','lineStatus','blockStatus','viewAbsent'])vm.runInContext(read(name),c);
+ for(const name of ['rowNo','recordAssignmentChange','confirmAbsentAssignments','memberReviewNav','memberAbsenceContext','memberAbsenceChanges','absenceSelectableMembers','memberAbsenceRows','viewMemberAbsence','viewerSummaryBody','lineStatus','blockStatus','viewAbsent'])vm.runInContext(read(name),c);
  for(const so of c.S.songs){
   const key=so.showId+'|'+so.id;
   for(const [index,after] of Object.entries(c.S.subs[key]||{}))c.recordAssignmentChange(so,'lines',Number(index),after);
@@ -164,4 +164,24 @@ test('legacy, automatic and inherited substitutions never expose a member change
  c.S.subs['show|song'][2]=['m3'];assert.equal(c.memberReviewNav(),'','A stale receipt is not a new manual change');
  c.recordAssignmentChange(song,'lines',2,['m3']);assert.equal(c.memberAbsenceChanges(song).length,1);
  c.S.subs['show|song'][2]=['m1'];c.recordAssignmentChange(song,'lines',2,['m1']);assert.equal(c.memberReviewNav(),'','Reverting to original removes the notice');
+});
+
+test('explicit successful absence export confirms resolved assignments only; passive data stays hidden',()=>{
+ const c=fixture(),so=c.S.songs[0];c.S.assignmentEdits={};
+ assert.equal(c.memberAbsenceChanges(so).length,0);
+ assert.equal(c.confirmAbsentAssignments([so]),false,'Members cannot confirm changes');
+ c.viewer=false;c.S.subs['show|song'][2]=['m1'];
+ assert.equal(c.confirmAbsentAssignments([so]),true);
+ assert.deepEqual(json(c.memberAbsenceChanges(so).flatMap(e=>e.lineIndices)),[0,1,3]);
+ assert.equal(c.confirmAbsentAssignments([so]),false,'Repeat export is idempotent');
+});
+test('explicit absence selection confirms only changed assignments and restoration clears the receipt',()=>{
+ const c=fixture(),so=c.S.songs[0];c.viewer=false;c.S.assignmentEdits={};
+ const previous=new Map([[so.id,{lines:so.lines.map((_,i)=>c.partsOf(so,i).slice()),blocks:{A:['m2']}}]]);
+ c.S.subs['show|song'][1]=['m3'];
+ assert.equal(c.confirmAbsentAssignments([so],previous),true);
+ assert.deepEqual(json(c.memberAbsenceChanges(so).flatMap(e=>e.lineIndices)),[1]);
+ const changed=new Map([[so.id,{lines:so.lines.map((_,i)=>c.partsOf(so,i).slice()),blocks:{A:['m2']}}]]);
+ c.S.subs['show|song'][1]=['m1','m2'];c.confirmAbsentAssignments([so],changed);
+ assert.equal(c.memberAbsenceChanges(so).length,0);
 });

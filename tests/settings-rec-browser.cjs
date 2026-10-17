@@ -215,7 +215,21 @@ async function checkExcelReattach(page,width,dialogs){
    const so=S.songs.find(s=>s.id==='qa-excel-song'),bytes=new Uint8Array(await U.excelExport.blob.arrayBuffer()),wb=XLSX.read(bytes,{type:'array',cellStyles:true});
    return {state:JSON.stringify(S),name:U.excelExport.name,count:U.excelExport.count,failures:U.excelExport.failures,sheets:wb.SheetNames,cover:wb.Sheets['表紙'].A1.v,originalName:wb.Sheets['歌割'].A1.v,originalLyric:wb.Sheets['歌割'].B1.v,versionName:wb.Sheets[absentTab()].A1.v,versionLyric:wb.Sheets[absentTab()].B1.v,tab:absentTab()};
   });
-  assert.equal(exported.state,verified.state,'Export preserves song IDs, lyrics and notes');
+  const beforeExport=JSON.parse(verified.state),afterExport=JSON.parse(exported.state);
+  assert(afterExport.assignmentEdits?.['qa-excel-show|qa-excel-song'] || Object.keys(afterExport.assignmentEdits||{}).length,'Explicit export confirms changed assignments');
+  afterExport.assignmentEdits=beforeExport.assignmentEdits;
+  assert.deepEqual(afterExport,beforeExport,'Export preserves all content except explicit assignment confirmation');
+  const exportedMemberChange=await page.evaluate(()=>{
+   const original=S,ui=JSON.stringify(U);
+   try{
+    S=structuredClone(S);S.groups.find(g=>g.id==='qa-excel-group').nopub=false;S.shows.find(s=>s.id==='qa-excel-show').nopub=false;
+    const wire=publicationData('qa-excel-group',undefined,true);
+    if(!wire.subs.some(row=>row.confirmed===true))throw Error('Created Excel omitted confirmed change from publication');
+    S.viewer=true;applySetlist(wire);
+    return {count:memberAbsenceChanges(S.songs[0]).length,notice:memberReviewNav(),notes:S.pubNotes.map(n=>n.memo)};
+   }finally{S=original;U=JSON.parse(ui);}
+  });
+  assert.equal(exportedMemberChange.count,1);assert(exportedMemberChange.notice.includes('担当の変更があります'));assert.deepEqual(exportedMemberChange.notes,['合成指摘を保持']);
   assert.equal(exported.count,1);assert.deepEqual(exported.failures,[]);assert(exported.name.endsWith('.xlsx'));
   assert.deepEqual(exported.sheets,[exported.tab,'表紙','歌割']);assert.equal(exported.cover,'Synthetic cover to preserve');
   assert.equal(exported.originalName,'甲');assert.equal(exported.originalLyric,'Synthetic lyric one to preserve');

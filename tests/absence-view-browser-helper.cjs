@@ -50,6 +50,26 @@ async function checkAbsence(page,width,{mode,assertFits,screenshot}){
   });
   assert.equal(await page.locator('.member-review-nav').count(),0,'Legacy/automatic substitutions cannot create a change notice');
   await page.evaluate(()=>{
+   window.__absenceSelectionQA={state:JSON.stringify(S),ui:JSON.stringify(U)};
+   S.viewer=false;S.shows[0].absent=[];S.subs={};S.gsubs={};S.assignmentEdits={};
+   U.view='absent';resetAbsenceEditBatch();renderPointers.clear();scrollingUntil=0;pendingRender=false;render(true);
+  });
+  await page.locator('[data-act="toggleabsent"][data-id="m1"]').click();
+  await page.waitForFunction(()=>!U.absencePending&&S.shows[0].absent.includes('m1'));
+  const autoReceived=await page.evaluate(()=>{
+   S.groups[0].nopub=false;S.shows[0].nopub=false;
+   const wire=publicationData('qa-absence');
+   if(!wire.subs.length||!wire.subs.every(row=>row.confirmed===true))throw Error('Explicit absence selection did not confirm wire changes');
+   S.viewer=true;applySetlist(wire);U.view='summary';render(true);
+   return memberAbsenceChanges(S.songs[0]).flatMap(entry=>entry.lineIndices).sort((a,b)=>a-b);
+  });
+  assert.deepEqual(autoReceived,[0,1,3,5]);
+  await page.locator('.member-review-nav [data-act="goabsent"]').click();await expectLines([0,1,3,5]);
+  await page.evaluate(()=>{
+   S=JSON.parse(window.__absenceSelectionQA.state);U=JSON.parse(window.__absenceSelectionQA.ui);
+   delete window.__absenceSelectionQA;resetAbsenceEditBatch();renderPointers.clear();scrollingUntil=0;pendingRender=false;render(true);
+  });
+  await page.evaluate(()=>{
    for(const [index,after] of Object.entries(S.subs['show|song']))recordAssignmentChange(S.songs[0],'lines',Number(index),after);
    window.__absenceQA.before=window.__absenceQA.content();render(true);
   });
