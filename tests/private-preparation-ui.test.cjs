@@ -188,6 +188,45 @@ test('manual retry after an access failure retains a queued check through intera
  assert.equal((await f.c.PrivatePreparationUI.receive()).status,'applied');
 });
 
+test('automatic reception interrupted by interaction resumes before the polling cooldown',async()=>{
+ let interrupt=true;
+ const f=await setup({source:async({f,manifest})=>{
+  if(interrupt){interrupt=false;f.run('scrollingUntil=Date.now()+500');}
+  return {status:'ready',manifest,sourceSha:'a'.repeat(40)};
+ }});
+ const before=f.run('JSON.stringify(S)');
+ assert.equal((await f.c.PrivatePreparationUI.receive()).status,'deferred');
+ assert.equal(f.c.PrivatePreparationUI.getStatus().reason,'interaction');
+ assert.equal(f.run('JSON.stringify(S)'),before);
+ f.run('scrollingUntil=0');
+ assert.equal((await f.c.PrivatePreparationUI.receive()).status,'applied');
+ assert.equal(f.run('S.plan.slots[0].min'),75);
+});
+
+test('queued automatic reception keeps recording and editing guards and then resumes',async()=>{
+ for(const [block,release,reason] of [['REC={}','REC=null','recording'],['U.sheet={}','U.sheet=null','editing']]){
+  let interrupt=true;
+  const f=await setup({source:async({f,manifest})=>{
+   if(interrupt){interrupt=false;f.run(block);}
+   return {status:'ready',manifest,sourceSha:'a'.repeat(40)};
+  }});
+  assert.equal((await f.c.PrivatePreparationUI.receive()).status,'deferred');
+  assert.equal((await f.c.PrivatePreparationUI.receive()).reason,reason);
+  assert.equal(f.reads,1);assert.equal(f.run('S.plan.slots[0].min'),90);
+  f.run(release);assert.equal((await f.c.PrivatePreparationUI.receive()).status,'applied');
+ }
+});
+
+test('interaction after an access failure does not bypass network retry cooldown',async()=>{
+ const f=await setup({source:async()=>({status:'unavailable',code:'HTTP_404',stage:'repository'})});
+ assert.equal((await f.c.PrivatePreparationUI.receive()).status,'access');
+ f.run('scrollingUntil=Date.now()+500');
+ assert.equal((await f.c.PrivatePreparationUI.receive()).status,'deferred');
+ f.run('scrollingUntil=0');
+ assert.equal((await f.c.PrivatePreparationUI.receive()).status,'throttled');
+ assert.equal(f.reads,1);assert.equal(f.c.PrivatePreparationUI.getStatus().kind,'access');
+});
+
 const READ_TOKEN='github_pat_'+'q'.repeat(40),AUTH_KEY='private-preparation:read-credential:v1';
 test('progress connection can deliver without a separate token and the obsolete update controls are absent',async()=>{
  const f=await setup({token:''});let calls=0;

@@ -30,7 +30,7 @@
   }
   credentialLoaded=true;
  }
- let running=false,applying=false,lastAttempt=0,status={kind:'waiting'},started=false,manualPending=false,interactionRetry=null;
+ let running=false,applying=false,lastAttempt=0,status={kind:'waiting'},started=false,manualPending=false,resumePending=false,interactionRetry=null;
  const failure=code=>Object.assign(new Error(code),{preparationCode:code});
  function waitingReason(){
   if(connectionBlocked)return 'connection';
@@ -51,6 +51,13 @@
   return '';
  }
  function ready(){return !waitingReason();}
+ function queueResume(reason){
+  // A local interruption has not finished this check. Resume it after the
+  // interaction settles instead of applying the network polling cooldown.
+  resumePending=true;
+  if(!['interaction','saving','editor','schedule',''].includes(reason)||interactionRetry!==null)return;
+  interactionRetry=setTimeout(()=>{interactionRetry=null;void receive();},250);
+ }
  function waitingText(reason){
   const messages={
    connection:'接続の保存結果を確認できません。アプリを開き直してください。',
@@ -268,14 +275,15 @@
   if(running)return {status:'busy'};
   const reason=waitingReason();
   if(reason){
-   if(manualPending){
+   if(manualPending||resumePending||Date.now()-lastAttempt>=60000){
     setStatus({kind:'deferred',reason});
-    if(reason==='interaction'&&!interactionRetry)interactionRetry=setTimeout(()=>{interactionRetry=null;void receive();},180);
+    queueResume(reason);
    }
    return {status:'deferred',reason};
   }
-  if(!manualPending&&Date.now()-lastAttempt<60000)return {status:'throttled'};
-  manualPending=false;lastAttempt=Date.now();running=true;let token;
+  if(!manualPending&&!resumePending&&Date.now()-lastAttempt<60000)return {status:'throttled'};
+  clearTimeout(interactionRetry);interactionRetry=null;
+  manualPending=false;resumePending=false;lastAttempt=Date.now();running=true;let token;
   try{
    await loadCredential();token=sourceToken();
    if(!token&&!root.ProgressPreparationSource){setStatus({kind:'missing-token'});return {status:'missing-token'};}
@@ -310,7 +318,10 @@
    if(addedRecording){U.recArtistFilter='';render();}
    setStatus({kind:count?'applied':conflicts?'conflict':'current',count,conflicts,sourceSha:source.sourceSha});return {status:status.kind,count,conflicts};
   }catch(error){const code=error.preparationCode||error.code||'PREPARATION_CONFLICT';
-   setStatus({kind:code==='CREDENTIAL_UNREADABLE'?'connection-error':code==='DEFERRED'?'deferred':code==='MULTIPLE_WINDOWS'?'multiple-windows':code==='OWNER_REQUIRED'?'owner-required':code==='UNSUPPORTED'?'unsupported':code==='SAVE_UNVERIFIED'?'unverified':'conflict',code,reason:code==='DEFERRED'?waitingReason():undefined});return {status:status.kind,code};
+   const reason=code==='DEFERRED'?waitingReason():undefined;
+   setStatus({kind:code==='CREDENTIAL_UNREADABLE'?'connection-error':code==='DEFERRED'?'deferred':code==='MULTIPLE_WINDOWS'?'multiple-windows':code==='OWNER_REQUIRED'?'owner-required':code==='UNSUPPORTED'?'unsupported':code==='SAVE_UNVERIFIED'?'unverified':'conflict',code,reason});
+   if(code==='DEFERRED')queueResume(reason);
+   return {status:status.kind,code};
   }finally{running=false;}
  }
  async function importFile(file){
