@@ -12,6 +12,7 @@ function fixture(){
  vm.runInContext(src.slice(src.indexOf('function performanceDateOrder('),src.indexOf('function groupedPerformanceHTML(')),c);
  vm.runInContext(src.slice(src.indexOf('function compactMemberLabel('),src.indexOf('const names = (ids)')),c);
  vm.runInContext(src.slice(src.indexOf('const songMemo ='),src.indexOf('const shownNotes =')),c);
+ vm.runInContext(src.slice(src.indexOf('function memberReviewNav('),src.indexOf('function memberAbsenceContext(')),c);
  vm.runInContext(src.slice(src.indexOf('function summaryShows()'),src.indexOf('function viewSummary()')),c);
  return {c,stored,run:code=>vm.runInContext(code,c)};
 }
@@ -67,7 +68,7 @@ test('lyric entry without a note opens current song, handles empty songs, and re
 });
 test('remembered member opens on another performance after relaunch and a roster refresh',()=>{
  const {c,run}=fixture();run("selectViewerMember('b')");c.S.showId='day2';c.S.members=[{id:'new-b',name:'田中'},{id:'new-a',name:'山田'}];c.U={view:'summary',mode:'member',allShows:false};
- const html=run('viewerSummaryBody()');assert(html.includes('田中さんへの指摘・歌割の変更と'));assert(html.includes('二日目の総括'));assert.equal(c.U.sumOpen,'new-b');
+ const html=run('viewerSummaryBody()');assert(html.includes('田中さんへの指摘と'));assert(html.includes('二日目の総括'));assert.equal(c.U.sumOpen,'new-b');
 });
 test('the exact selected substring is highlighted in context without a duplicate target line',()=>{
  const {c,run}=fixture();c.S.songs[0].lines=[{t:'大空目掛けて羽ばたくけれど (Yeah)'}];

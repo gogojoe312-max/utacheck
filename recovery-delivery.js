@@ -318,7 +318,7 @@
     const targets=S.recoveryDelivery?.targets||[],legacy=S.recoveryDelivery?.version!==2,pending=targets.some(t=>t.status!=='ready');
     return '<div class="card"><b>既存の配信先に再接続</b><p class="note">元の配信先と対象公演を確認して再開します。新しい配信先は作りません。</p>'+
       '<button class="primary" data-act="rd-open">既存の配信先に再接続</button>'+
-      (targets.length?'<p class="note">'+targets.map(t=>h(t.groupName)+'：'+(legacy?'接続ファイルの更新が必要':t.status==='ready'?'既存先の配信を再開済み':['blocked','prepared'].includes(t.status)?'再接続の確認が必要':'送信結果の確認待ち')).join('<br>')+'</p>'+targets.filter(t=>t.heldLocalShowIds?.length).map(t=>'<p class="note">'+h(t.groupName)+'：'+t.heldLocalShowIds.length+'公演の端末版差分を保留中</p><button class="ghost" id="rd-difference-button-'+h(t.groupId)+'" data-act="rd-differences" data-id="'+h(t.groupId)+'">保留中の公演と差分を見る</button><p class="note" style="white-space:pre-wrap" id="rd-difference-'+h(t.groupId)+'" role="status"></p>').join(''):'')+
+      (targets.length?'<p class="note">'+targets.map(t=>h(t.groupName)+'：'+(legacy?'接続ファイルの更新が必要':t.status==='ready'?'既存先の配信を再開済み':t.status==='blocked'?'自動で配信先を再確認中'+(t.lastFailure?'（'+h(t.lastFailure)+'）':''):t.status==='prepared'?'接続設定の保存確認待ち':'送信結果の確認待ち')).join('<br>')+'</p>'+targets.filter(t=>t.heldLocalShowIds?.length).map(t=>'<p class="note">'+h(t.groupName)+'：'+t.heldLocalShowIds.length+'公演の端末版差分を保留中</p><button class="ghost" id="rd-difference-button-'+h(t.groupId)+'" data-act="rd-differences" data-id="'+h(t.groupId)+'">保留中の公演と差分を見る</button><p class="note" style="white-space:pre-wrap" id="rd-difference-'+h(t.groupId)+'" role="status"></p>').join(''):'')+
       (pending&&!legacy?'<button class="ghost" data-act="rd-reconcile">接続・送信結果を確認（再送しない）</button>':'')+'</div>';
   }
   function unlock(){const app=document.getElementById('app');if(app&&typeof recordingInboxCanWrite==='function')app.inert=!recordingInboxCanWrite();}
@@ -487,14 +487,15 @@
       await request('https://api.github.com/gists/'+target.gistId,token,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({files:{'utacheck.json':{content:raw}}})},active);
       const confirmed=await readTarget(target,token,active);if(confirmed.digest!==digest)fail('unknown');
       binding.expectedRemoteSha256=digest;binding.status='ready';delete binding.pendingDigest;delete binding.pendingKey;
-      group.lastKey=key;group.publishKeyPending=false;group.publishWarning=merged.heldLocalShowIds.length?'現配信の公演を保持しています。同じ公演の端末版差分は保留です。':'';await persist();return 'sent';
+      await preserveRemote(target,confirmed,active);
+      group.lastKey=key;group.publishKeyPending=false;delete binding.lastFailure;group.publishWarning=merged.heldLocalShowIds.length?'現配信の公演を保持しています。同じ公演の端末版差分は保留です。':'';await persist();return 'sent';
     }catch(e){
       if(attempted){binding.expectedRemoteSha256=previousDigest;binding.status='uncertain';binding.pendingDigest=pendingDigest;binding.pendingKey=pendingKey;try{await persist();}catch(_){};const error=new Error(message({reconnectCode:'unknown'}));error.publicationUnknown=true;throw error;}
-      if(binding.status==='sending'||!['cancelled','local-changed'].includes(e.reconnectCode)){binding.status='blocked';try{await persist();}catch(_){}}
+      if(binding.status==='sending'||!['cancelled','local-changed'].includes(e.reconnectCode)){binding.status='blocked';binding.lastFailure=message(e);try{await persist();}catch(_){}}
       throw new Error(message(e));
     }finally{release?.();pushing=false;}
   }
-  async function reconcile({silent=false,onlyUncertain=false,groupId}={}){
+  async function reconcile({silent=false,onlyUncertain=false,includeBlocked=false,groupId}={}){
     if(!ready()||session||pushing||publishInFlight||S.recoveryDelivery?.version!==2)return;pushing=true;let release;
     const resolvedIssues=new Set();let confirmed=0;
     try{
@@ -502,19 +503,33 @@
       RecoveryDeliveryScope.plan(S,packetForBindings(groupId));
       for(const target of S.recoveryDelivery?.targets||[]){
         if(groupId&&target.groupId!==groupId)continue;
-        if(onlyUncertain&&!['sending','uncertain'].includes(target.status))continue;
+        if(onlyUncertain&&!['sending','uncertain'].includes(target.status)&&!(includeBlocked&&target.status==='blocked'))continue;
         if(target.status==='ready')continue;if(target.status==='prepared')fail('storage');if(!target.pendingDigest&&target.status!=='blocked')fail('unknown');
         const token=S.ghToken,group=S.groups.find(g=>g.id===target.groupId),key=group?.key;
         const active=()=>ready()&&!session&&S.ghToken===token&&currentBinding(target.groupId)===target
           &&S.groups.find(g=>g.id===target.groupId)===group&&!group?.nopub&&group?.gistId===target.gistId&&group?.src===target.src&&group?.key===key;
         const remote=await readTarget(target,token,active);
-        if(remote.digest!==target.pendingDigest&&remote.digest!==target.expectedRemoteSha256)fail('source-changed');
+        let rebased=false;
+        if(remote.digest!==target.pendingDigest&&remote.digest!==target.expectedRemoteSha256){
+          if(!includeBlocked||typeof RecoveryDeliveryScope.verifyUnchangedManaged!=='function')fail('source-changed');
+          const scope=RecoveryDeliveryScope.extendForOwnedShows(S,RecoveryDeliveryScope.plan(S,packetForBindings(target.groupId)).targets[0]);
+          const cached=await idbGet('preserved:delivery-remote:v1:'+target.gistId+':'+target.expectedRemoteSha256);
+          let baseline;
+          if(typeof cached==='string'&&await backupDigest(cached)===target.expectedRemoteSha256)baseline=JSON.parse(cached);
+          else try{baseline=JSON.parse(group.lastKey);}catch(_){fail('source-changed');}
+          if(!active()||!RecoveryDeliveryScope.verifyUnchangedManaged(scope,remote.data,baseline,target.preservedShowIds))fail('source-changed');
+          // Validate the prospective merge as well before adopting a new digest.
+          RecoveryDeliveryScope.mergePublication(scope,remote.data,payloadFor(S,target.groupId),target.preservedShowIds);
+          await preserveRemote(scope,remote,active);rebased=true;
+        }
         const prior=copy(target),g=S.groups.find(g=>g.id===target.groupId),priorKey=g?.lastKey,priorPending=g?.publishKeyPending;
         if(remote.digest===target.pendingDigest){target.expectedRemoteSha256=remote.digest;if(g){g.lastKey=target.pendingKey;g.publishKeyPending=false;}}
-        target.status='ready';delete target.pendingDigest;delete target.pendingKey;
+        if(rebased)target.expectedRemoteSha256=remote.digest;
+        target.status='ready';delete target.pendingDigest;delete target.pendingKey;delete target.lastFailure;
         try{await persist();}catch(error){Object.keys(target).forEach(k=>delete target[k]);Object.assign(target,prior);if(g){g.lastKey=priorKey;g.publishKeyPending=priorPending;}throw error;}
         confirmed++;
         const name=g?.name||target.groupName||'配信先';
+        if(prior.lastFailure&&S.groups.filter(group=>(group.name||'配信先')===name).length===1)resolvedIssues.add(name+'：'+prior.lastFailure);
         if(S.groups.filter(group=>(group.name||'配信先')===name).length===1)for(const reason of ['配信結果の確認待ち','接続設定の保存確認待ち','配信保留（復旧状況を確認してください）',message({reconnectCode:'unknown'})])resolvedIssues.add(name+'：'+reason);
       }
       if(!silent)alert('既存先の送信結果を確認しました。この確認では再送していません。');render(true);
@@ -530,13 +545,13 @@
     if(!ready()||session||pushing||publishInFlight||!S.ghToken||S.recoveryDelivery?.version!==2
       ||REC||saving||U.sheet||U.menu||U.busy||U.picker
       ||typeof typingNow==='function'&&typingNow()
-      ||!(S.recoveryDelivery.targets||[]).some(t=>['sending','uncertain'].includes(t.status)&&t.pendingDigest&&t.pendingKey))return false;
+      ||!(S.recoveryDelivery.targets||[]).some(t=>t.status==='blocked'||['sending','uncertain'].includes(t.status)&&t.pendingDigest&&t.pendingKey))return false;
     if(Date.now()-lastPendingCheck<30000)return false;
     lastPendingCheck=Date.now();
     let confirmed=false;
     for(const target of S.recoveryDelivery.targets||[]){
-      if(['sending','uncertain'].includes(target.status)&&target.pendingDigest&&target.pendingKey)
-        confirmed=await reconcile({silent:true,onlyUncertain:true,groupId:target.groupId})||confirmed;
+      if(target.status==='blocked'||['sending','uncertain'].includes(target.status)&&target.pendingDigest&&target.pendingKey)
+        confirmed=await reconcile({silent:true,onlyUncertain:true,includeBlocked:true,groupId:target.groupId})||confirmed;
     }
     return confirmed;
   }

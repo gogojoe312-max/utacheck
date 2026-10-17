@@ -588,7 +588,36 @@ test('automatic readback waits during editing and holds changed remote content w
  const f=await fixture({unknownPatch:true});await f.check();f.modal().querySelector('#rd-approve').checked=true;f.modal().querySelector('#rd-exclusive').checked=true;f.click('rd-commit');await f.until(()=>f.calls.some(x=>x.action==='pushOne'));
  await assert.rejects(()=>f.c.RecoveryDelivery.push('g',true));const before=f.calls.length,alerts=f.alerts.length;
  f.c.U.sheet='editing';assert.equal(await f.c.RecoveryDelivery.reconcilePending(),false);assert.equal(f.calls.length,before);f.c.U.sheet=null;
- f.setRemote(f.remote()+' ');assert.equal(await f.c.RecoveryDelivery.reconcilePending(),false);const after=f.calls.length;assert(after>before);
+ const changed=JSON.parse(f.remote());changed.notes[0].memo='Another editor change';f.setRemote(JSON.stringify(changed));assert.equal(await f.c.RecoveryDelivery.reconcilePending(),false);const after=f.calls.length;assert(after>before);
  assert.equal(f.c.S.recoveryDelivery.targets[0].status,'uncertain');assert.equal(f.patches(),1);assert.equal(f.alerts.length,alerts);
  assert.equal(await f.c.RecoveryDelivery.reconcilePending(),false);assert.equal(f.calls.length,after);
+});
+
+test('blocked transient delivery automatically verifies the same source then sends queued notes',async()=>{
+ let offline=false;const f=await fixture({network:async()=>{if(offline)throw Error('network failure');}});await f.check();f.modal().querySelector('#rd-approve').checked=true;f.modal().querySelector('#rd-exclusive').checked=true;f.click('rd-commit');await f.until(()=>f.calls.some(x=>x.action==='pushOne'));
+ f.c.S.notes[0].memo='New correction';f.c.save();await f.c.saveNow();offline=true;
+ await assert.rejects(()=>f.c.RecoveryDelivery.push('g',true));assert.equal(f.c.S.recoveryDelivery.targets[0].status,'blocked');assert.equal(f.patches(),0);
+ f.c.publishIssues=['Synthetic Group：'+f.c.S.recoveryDelivery.targets[0].lastFailure];
+ offline=false;assert.equal(await f.c.RecoveryDelivery.reconcilePending(),true);assert.deepEqual(Array.from(f.c.publishIssues),[]);assert.equal(f.c.S.recoveryDelivery.targets[0].status,'ready');assert.equal(f.patches(),0);
+ assert.equal(await f.c.RecoveryDelivery.push('g',true),'sent');assert.equal(JSON.parse(f.remote()).notes[0].memo,'New correction');assert.equal(f.patches(),1);
+});
+
+test('blocked digest drift resumes when last published managed content is unchanged, preserving local edits',async()=>{
+ const f=await fixture();await f.check();f.modal().querySelector('#rd-approve').checked=true;f.modal().querySelector('#rd-exclusive').checked=true;f.click('rd-commit');await f.until(()=>f.calls.some(x=>x.action==='pushOne'));
+ await f.c.RecoveryDelivery.push('g',true);const changed=JSON.parse(f.remote());changed.version++;f.setRemote(JSON.stringify(changed,null,2));
+ f.c.S.notes[0].memo='Later correction';f.c.save();await f.c.saveNow();
+ await assert.rejects(()=>f.c.RecoveryDelivery.push('g',true),/上書き/);assert.equal(f.c.S.recoveryDelivery.targets[0].status,'blocked');
+ assert.equal(await f.c.RecoveryDelivery.reconcilePending(),true);assert.equal(f.patches(),1);assert.equal(f.c.S.notes[0].memo,'Later correction');
+ assert.equal(await f.c.RecoveryDelivery.push('g',true),'sent');assert.equal(JSON.parse(f.remote()).notes[0].memo,'Later correction');assert.equal(f.patches(),2);
+});
+
+test('blocked delivery never adopts a conflicting managed correction or a destination changed during readback',async()=>{
+ for(const variant of ['remote-edit','destination-edit']){
+  let mutate=false;const f=await fixture({network:async(_url,opts,c)=>{if(mutate&&variant==='destination-edit'&&(!opts.method||opts.method==='GET'))c.S.groups[0].key='NEW_KEY';}});
+  await f.check();f.modal().querySelector('#rd-approve').checked=true;f.modal().querySelector('#rd-exclusive').checked=true;f.click('rd-commit');await f.until(()=>f.calls.some(x=>x.action==='pushOne'));
+  await f.c.RecoveryDelivery.push('g',true);
+  const remote=JSON.parse(f.remote());if(variant==='remote-edit')remote.notes[0].memo='Other editor correction';else remote.version++;
+  f.setRemote(JSON.stringify(remote));await assert.rejects(()=>f.c.RecoveryDelivery.push('g',true));mutate=true;
+  assert.equal(await f.c.RecoveryDelivery.reconcilePending(),false,variant);assert.equal(f.c.S.recoveryDelivery.targets[0].status,'blocked');assert.equal(f.patches(),1);
+ }
 });

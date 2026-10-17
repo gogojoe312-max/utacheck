@@ -801,3 +801,13 @@ test('larger preserved editor state has a separate finite node budget from publi
   const pub=publication(true);pub.largeUntrusted=Array(1000001).fill(0);fails('data-limit',()=>API.verifyPublication(target(),publication(),pub));
   s.unknown.retained=Array(2000001).fill(0);fails('data-limit',()=>API.plan(s,packet()));assert.equal(s.unknown.retained.length,2000001);
 });
+
+test('automatic rebase proves managed content unchanged and preserves independent protected changes',()=>{
+ const scope=target(),baseline=publication(),remote=clone(baseline);
+ remote.version++;remote.shows[1].name='Updated protected show';remote.shows[1].folder='New protected folder';
+ const before=clone(remote);assert.equal(API.verifyUnchangedManaged(scope,frozen(remote),frozen(baseline),['SOURCE_TWO']),true);assert.deepEqual(remote,before);
+ const conflict=clone(remote);conflict.notes[0].memo='Changed managed feedback';assert.equal(API.verifyUnchangedManaged(scope,conflict,baseline,['SOURCE_TWO']),false);
+ const lyric=clone(remote);lyric.lib[0].lines[0][1]='Changed managed lyrics';assert.equal(API.verifyUnchangedManaged(scope,lyric,baseline,['SOURCE_TWO']),false);
+ assert.equal(API.verifyUnchangedManaged(scope,remote,baseline,['missing']),false);
+ const unknown=clone(remote);unknown.shows.push({id:'UNKNOWN',name:'Unknown show'});assert.throws(()=>API.verifyUnchangedManaged(scope,unknown,baseline,['SOURCE_TWO']));
+});

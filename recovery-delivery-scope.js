@@ -433,6 +433,33 @@
     }
     return result;
   }
+  // A changed digest may be metadata/layout or an update to protected shows.
+  // Resume only when every remotely managed show still equals the last sent
+  // content; protected shows are kept by mergePublication, never overwritten.
+  function implementationUnchangedManaged(target,remote,baseline,preservedShowIds){
+    const scope=validatedScope(target),prior=copy(remote,'publication'),base=copy(baseline,'publication');
+    bytes(prior,MAX_PUBLICATION_BYTES);bytes(base,MAX_PUBLICATION_BYTES);
+    const snapshot=value=>{
+      if(!Array.isArray(value?.shows)||!value.shows.length)fail('remote-publication-invalid');
+      return {...scope,showIds:value.shows.map(sw=>sw.id),sourceShowIds:value.shows.map(sw=>sw.recoveredSourceShowId||sw.id)};
+    };
+    validatePublication(prior,snapshot(prior),true);validatePublication(base,snapshot(base),true);
+    if(!Array.isArray(preservedShowIds)||new Set(preservedShowIds).size!==preservedShowIds.length
+      ||preservedShowIds.some(id=>!prior.shows.some(sw=>sw.id===id)))return false;
+    const protectedIds=new Set(preservedShowIds),allowed=new Set(scope.sourceShowIds),libraries=new Map();
+    const before=canonicalShows(base,libraries),now=canonicalShows(prior,libraries);
+    for(const show of prior.shows){
+      if(protectedIds.has(show.id))continue;
+      const source=show.recoveredSourceShowId||show.id;
+      if(!allowed.has(source)||!before.has(source)||before.get(source)!==now.get(source))return false;
+    }
+    // A managed show disappearing is a remote change too.
+    for(const show of base.shows){
+      const source=show.recoveredSourceShowId||show.id;
+      if(allowed.has(source)&&!prior.shows.some(sw=>(sw.recoveredSourceShowId||sw.id)===source))return false;
+    }
+    return true;
+  }
   function implementationMerge(target,remote,local,preservedShowIds){
     const scope=validatedScope(target),prior=copy(remote,'publication'),candidate=copy(local,'publication');
     bytes(prior,MAX_PUBLICATION_BYTES);bytes(candidate,MAX_PUBLICATION_BYTES);
@@ -584,7 +611,7 @@
       equivalentRemoteShowIds:[...equivalentIds]};
   }
   function guarded(fn,args){try{return fn(...args);}catch(error){if(failures.has(error))throw error;fail('unsafe-data');}}
-  const api=Object.freeze({plan:(...args)=>guarded(implementationPlan,args),extendForOwnedShows:(...args)=>guarded(implementationExtend,args),verifyPublication:(...args)=>guarded(implementationVerify,args),mergePublication:(...args)=>guarded(implementationMerge,args)});
+  const api=Object.freeze({verifyUnchangedManaged:(...args)=>guarded(implementationUnchangedManaged,args),plan:(...args)=>guarded(implementationPlan,args),extendForOwnedShows:(...args)=>guarded(implementationExtend,args),verifyPublication:(...args)=>guarded(implementationVerify,args),mergePublication:(...args)=>guarded(implementationMerge,args)});
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
   root.RecoveryDeliveryScope=api;
 })(typeof globalThis!=='undefined'?globalThis:this);

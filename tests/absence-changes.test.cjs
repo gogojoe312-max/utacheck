@@ -25,7 +25,7 @@ function fixture(){
  c.restoreViewerMember=()=>c.selected;c.viewerMembers=()=>c.S.members.slice(0,4);c.compactMemberLabel=n=>n;
  c.summarySongs=()=>c.U.allShows?c.S.songs:c.SONGS();c.showName=id=>c.S.shows.find(s=>s.id===(id||c.S.showId))?.name||'';
  vm.createContext(c);
- for(const name of ['rowNo','memberAbsenceContext','memberAbsenceChanges','absenceSelectableMembers','memberAbsenceRows','viewMemberAbsence','viewerSummaryBody','lineStatus','blockStatus','viewAbsent'])vm.runInContext(read(name),c);
+ for(const name of ['rowNo','memberReviewNav','memberAbsenceContext','memberAbsenceChanges','absenceSelectableMembers','memberAbsenceRows','viewMemberAbsence','viewerSummaryBody','lineStatus','blockStatus','viewAbsent'])vm.runInContext(read(name),c);
  return c;
 }
 test('2 to 1 remains important; 3+ subset reductions are quiet, including 3 to 1',()=>{
@@ -87,12 +87,14 @@ test('each performance and take uses its own substitution key',()=>{
  c.S.songs.push(other);c.S.subs['other|take2']={0:['m3']};c.S.subs['show|take2']={0:['m4']};
  assert.deepEqual(json(c.memberAbsenceChanges(other)[0].after),['m3']);assert.equal(c.S.showId,'show');
 });
-test('VIEW summary contains absence-only songs and personal changes before or after assignment',()=>{
+test('pre-live changes are separate from notes, with only actual changes exposing navigation',()=>{
  const c=fixture();delete c.S.songs[0].blocks.A;delete c.S.gsubs['show|song'].A;
- let html=c.viewerSummaryBody();assert.equal((html.match(/member-absence-change/g)||[]).length,4);assert(html.includes('quiet trio'));assert(html.includes('visible duo'));assert(html.includes('Song &lt;safe&gt;'));
- c.U.mode='member';c.selected=c.member('m2');html=c.viewerSummaryBody();assert.equal((html.match(/member-absence-change/g)||[]).length,1);assert(!html.includes('visible replacement'));assert(html.includes('一緒に歌うメンバーが変更'));
- c.selected=c.member('m4');html=c.viewerSummaryBody();assert.equal((html.match(/member-absence-change/g)||[]).length,1);assert(!html.includes('visible duo'));assert(!html.includes('visible addition'));assert(html.includes('新しく担当'));
- c.selected=c.member('m1');html=c.viewerSummaryBody();assert.equal((html.match(/member-absence-change/g)||[]).length,2);assert(html.includes('担当から外れます'));
+ assert(!c.viewerSummaryBody().includes('member-absence-change'));
+ assert(!c.viewerSummaryBody().includes('歌割の変更'));
+ assert(c.memberReviewNav().includes('歌割変更（ライブ前）'));assert(c.memberReviewNav().includes('指摘'));
+ c.U.absenceMode='all';let html=c.viewMemberAbsence();assert.equal((html.match(/member-absence-change/g)||[]).length,4);
+ c.U.absenceMode='member';c.selected=c.member('m4');html=c.viewMemberAbsence();assert.equal((html.match(/member-absence-change/g)||[]).length,1);assert(html.includes('新しく担当'));
+ c.S.subs={};c.S.gsubs={};assert.equal(c.memberReviewNav(),'');assert(!c.viewerSummaryBody().includes('member-absence-change'));
 });
 test('personal changes exclude unison groups before or after replacement but preserve small roles',()=>{
  const song={id:'s',blocks:{A:['a','b','c']},lines:[
@@ -113,13 +115,13 @@ test('personal changes exclude unison groups before or after replacement but pre
 test('personal tabs exclude large unisons even before a member is selected',()=>{
  const c=fixture();delete c.S.songs[0].blocks.A;delete c.S.gsubs['show|song'].A;
  c.U.mode='member';c.U.absenceMode='member';
- for(const html of [c.viewerSummaryBody(),c.viewMemberAbsence()]){
+ for(const html of [c.viewMemberAbsence()]){
   assert.equal((html.match(/member-absence-change/g)||[]).length,2);
   assert(!html.includes('quiet trio'));assert(!html.includes('visible addition'));
   assert(html.includes('visible duo'));assert(html.includes('visible replacement'));
  }
  c.U.mode='song';c.U.absenceMode='all';
- for(const html of [c.viewerSummaryBody(),c.viewMemberAbsence()])assert.equal((html.match(/member-absence-change/g)||[]).length,4);
+ for(const html of [c.viewMemberAbsence()])assert.equal((html.match(/member-absence-change/g)||[]).length,4);
 });
 test('unresolved or unchanged assignments stay out of member changes and lyric emphasis',()=>{
  const c=fixture(),song=c.S.songs[0];delete c.S.subs['show|song'][2];

@@ -118,7 +118,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.32";
+const APP_VER = "16.41.58.33";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1892,10 +1892,11 @@ const subOf = (songId, i) => {
 };
 // その行を実際に歌う人
 const partsOf = (so, i) => {
-  const sub = subOf(so.id, i);
-  if (sub) return sub;
+  const key = (so.showId || S.showId) + "|" + so.id;
+  const sub = (S.subs || {})[key]?.[i];
+  if (Array.isArray(sub)) return sub;
   const b = blockOf(so, i);
-  if (b) return blockParts(so, b);
+  if (b) return (S.gsubs || {})[key]?.[b] || (so.blocks || {})[b] || [];
   return (so.lines[i] || {}).parts || [];
 };
 // 画面に出す名前。差し替えがあればその名前を出す。
@@ -6319,6 +6320,7 @@ function viewLive() {
       ${!VIEW() && !S.recMode && s ? `<button class="ic" data-act="songmenu" data-i="${U.songIdx}" aria-label="曲のメニュー">⋯</button>` : ""}
     <button class="ic" data-act="go-setup" style="font-size:12px">設定</button>
   </div>
+  ${memberReviewNav()}
   ${s ? blockBar(s) : ""}
   <div class="scroll" style="position:relative">
     <canvas id="ink" class="ink" style="pointer-events:${U.draw && !VIEW() ? "auto" : "none"};touch-action:${U.draw ? "none" : "auto"}"></canvas>
@@ -7414,22 +7416,20 @@ function viewerSummaryBody() {
   const picker = byMember ? `<label class="summary-show-picker member-picker"><span>メンバー</span>
     <select id="summary-member" aria-label="メンバー"><option value="">全員</option>
     ${viewerMembers().map(m => `<option value="${h(m.id)}" ${selected && selected.id === m.id ? "selected" : ""}>${h(compactMemberLabel(m.name))}</option>`).join("")}</select></label>
-    <p class="member-hint">${selected ? h(compactMemberLabel(selected.name)) + "さんへの指摘・歌割の変更と、全員共通の総括を表示しています。" : "名前を選ぶと、自分への指摘・歌割の変更を表示します。"}3人以上のユニゾンは「曲ごと」で確認できます。</p>` : "";
+    <p class="member-hint">${selected ? h(compactMemberLabel(selected.name)) + "さんへの指摘と、全員共通の総括を表示しています。" : "名前を選ぶと、自分への指摘を表示します。"}</p>` : "";
   const cards = summarySongs().map(so => {
     const notes = ns.filter(n => n.songId === so.id && n.showId === so.showId).sort((a,b) => a.lineIdx - b.lineIdx);
     const memo = summaryMemo(so);
-    const changes = memberAbsenceChanges(so, byMember && selected ? selected.id : "", byMember);
-    if (!notes.length && !memo && !changes.length) return "";
+    if (!notes.length && !memo) return "";
     return `<section class="card member-song">
       <div class="member-song-head"><div class="grow">${U.allShows ? `<div class="member-caption">${h(showName(so.showId))}</div>` : ""}<h3>${h(songName(so))}</h3></div></div>
       ${memo ? `<div class="song-summary"><h4>総括 <span>全員共通</span></h4><div>${h(memo)}</div></div>` : ""}
-      ${changes.length ? `<h4 class="member-notes-title member-change-title">歌割の変更<span>${changes.length}件</span></h4>${memberAbsenceRows(so,changes,byMember && selected ? selected.id : "")}` : ""}
       ${notes.length ? `<h4 class="member-notes-title">${byMember && selected ? h(compactMemberLabel(selected.name)) + "さんへの指摘" : "指摘"}<span>${notes.length}件</span></h4>
         ${notes.map(n => `<button class="member-note member-note-link" data-act="summary-note" data-id="${h(so.id)}" data-i="${n.lineIdx}" data-note="${h(n.id || "")}"><span class="member-note-arrow" aria-hidden="true">›</span>${memberNoteBody(n, !byMember || !selected || !(n.memberIds || []).length)}<span class="sr-only">歌詞で見る</span></button>`).join("")}`
         : `<p class="member-hint">${byMember && selected ? h(compactMemberLabel(selected.name)) + "さんへの個別の指摘はありません。" : "個別の指摘はありません。"}</p>`}
     </section>`;
   }).join("");
-  return picker + (cards || `<p class="member-empty">${byMember && selected ? h(compactMemberLabel(selected.name)) + "さんへの指摘・歌割の変更・曲の総括は" : "指摘・歌割の変更・曲の総括は"}${U.allShows ? "まだ" : "この公演には"}ありません。</p>`);
+  return picker + (cards || `<p class="member-empty">${byMember && selected ? h(compactMemberLabel(selected.name)) + "さんへの指摘・曲の総括は" : "指摘・曲の総括は"}${U.allShows ? "まだ" : "この公演には"}ありません。</p>`);
 }
 function viewerBackButton() {
   return VIEW() ? '<button class="member-back" data-act="summary-back" aria-label="指摘に戻る"><span aria-hidden="true">‹</span> 戻る</button>' : "";
@@ -7509,7 +7509,8 @@ function summaryHeader() {
     ${preview ? '<button class="chip sm" data-act="endpv">確認を終わる</button>' : ""}
     <span class="grow"></span>
     <span style="font-size:11px;color:var(--dim)" class="trunc">${h(U.allShows ? "全公演" : showName())}</span></div>
-  <div class="tabs summary-tabs">${tab("member", VIEW() ? "人ごと" : "メンバー別")}${tab("song", VIEW() ? "曲ごと" : "曲別")}${VIEW() ? "" : tab("show", "公演別")}${tab("diff", "前回との差")}${VIEW() ? ((summarySongs().some(so=>memberAbsenceChanges(so).length) ? '<button class="chip sm member-change-alert" data-act="goabsent">歌割の変更</button>' : '') + '<button class="chip sm" data-act="summary-lyrics">歌詞</button>') : ""}</div>
+  ${memberReviewNav()}
+  <div class="tabs summary-tabs">${tab("member", VIEW() ? "人ごと" : "メンバー別")}${tab("song", VIEW() ? "曲ごと" : "曲別")}${VIEW() ? "" : tab("show", "公演別")}${tab("diff", "前回との差")}${VIEW() ? '<button class="chip sm" data-act="summary-lyrics">歌詞</button>' : ""}</div>
   ${summaryShowPicker()}
 `;
 }
@@ -8064,6 +8065,14 @@ async function toggleAbsenceMember(id, button) {
 }
 
 // Read-only view of absence substitutions; use each song's own performance.
+function memberReviewNav() {
+  if (!VIEW()) return "";
+  const changed = SONGS().some(so=>memberAbsenceChanges(so).length);
+  if (!changed) return "";
+  return '<nav class="member-review-nav" aria-label="ライブ前とライブ後の確認">'
+    +'<button class="member-change-alert" data-act="goabsent" aria-current="'+(U.view === "absent" ? 'page' : 'false')+'">歌割変更（ライブ前）</button>'
+    +'<button data-act="go-summary" aria-current="'+(U.view === "summary" ? 'page' : 'false')+'">指摘</button></nav>';
+}
 function memberAbsenceContext(so) {
   const sid=so.showId || S.showId, key=sid+"|"+so.id;
   return {absent:absentIds(sid),subs:(S.subs || {})[key] || {},gsubs:(S.gsubs || {})[key] || {}};
@@ -8109,7 +8118,7 @@ function viewMemberAbsence() {
     return changes.length ? '<section class="card member-song"><div class="member-song-head"><h3>'+h(songName(so))+'</h3></div>'+memberAbsenceRows(so,changes,memberId)+'</section>' : '';
   }).join("");
   return '<div class="hd"><button class="ic" data-act="go-live" aria-label="歌詞に戻る">‹</button><b>歌割の変更</b><span class="grow"></span><span class="trunc">'+h(showName())+'</span></div>'
-    +'<div class="scroll pad"><div class="tabs"><button class="chip sm" data-act="absence-scope" data-id="all" aria-pressed="'+!byMember+'">曲ごと</button><button class="chip sm" data-act="absence-scope" data-id="member" aria-pressed="'+byMember+'">人ごと</button></div>'+picker
+    +memberReviewNav()+'<div class="scroll pad"><p class="member-hint">ライブ前に、変更後の担当を確認してください。</p><div class="tabs"><button class="chip sm" data-act="absence-scope" data-id="all" aria-pressed="'+!byMember+'">曲ごと</button><button class="chip sm" data-act="absence-scope" data-id="member" aria-pressed="'+byMember+'">人ごと</button></div>'+picker
     +(byMember ? '<p class="member-hint">3人以上のユニゾンは「曲ごと」で確認できます。</p>' : '')
     +'<div class="card member-hint">'+h(absentIds().map(id=>(member(id) || {}).name).filter(Boolean).join("・") || "欠席なし")+(absentIds().length ? " が欠席" : "")+'</div>'
     +(cards || '<p class="member-empty">'+(memberId ? h(compactMemberLabel(selected.name))+"さんに関わる" : "")+'歌割の変更はありません。</p>')+'</div>';
@@ -10102,6 +10111,7 @@ function viewSetup() {
     ${preview ? '<button class="primary" data-act="endpv">メンバー画面の確認を終わる</button>' : ""}
     ${!preview ? '<button class="ghost" data-act="publication-inspect">受信状況を確認（更新なし）</button>' : ''}
     ${lyricDisplaySettings()}
+    ${SONGS().some(so=>memberAbsenceChanges(so).length) ? '<h4 class="head">ライブ前の確認</h4><div class="card"><button class="primary member-change-alert" data-act="goabsent">歌割変更を確認する</button></div>' : ""}
     <h4 class="head">指摘</h4><div class="card"><button class="primary" data-act="go-summary">指摘を見る</button></div>
     <h4 class="head">公演</h4>
     ${list || `<p class="note">公演がありません</p>`}
@@ -12047,7 +12057,8 @@ function commitNote() {
     const note = {
       id: uid(), songId: s.id,
       lineIdx: sh.range && sh.rangeLine != null ? sh.rangeLine : sh.lineIdx,
-      memberIds: sh.sel, tags,
+      memberIds: sh.assignment && sh.sel.length === sh.assignment.length && sh.sel.every(id=>sh.assignment.includes(id))
+        ? partsOf(s, sh.lineIdx).slice() : sh.sel, tags,
       memo: memo.trim(), pitch: sh.seq && sh.seq.length ? sh.seq.join("-") : null,
       lineEnd: sh.range ? null : (sh.lineEnd || null),   // 文字を選んだ時はその行だけ
       from: sh.range ? sh.range[0] : null, to: sh.range ? sh.range[1] : null,
@@ -12134,7 +12145,7 @@ function openSheet(lineIdx, range, lineEnd, point) {
   // 誰が歌う行かは歌割から自明なので、その行の担当をそのまま記録に入れる
   U.sheet = { lineIdx, lineEnd: (lineEnd != null && lineEnd > lineIdx) ? lineEnd : null,
     range: range || null, anchor: null, point:point || null, quick:true, tags: [], memo: "", seq: [], rec: false,
-    sel: partsOf(s, lineIdx).slice() };
+    sel: partsOf(s, lineIdx).slice(), assignment: partsOf(s, lineIdx).slice() };
   renderSheet();
 }
 

@@ -380,3 +380,9 @@ select.field{appearance:auto}textarea.field{resize:vertical}
 .member-change-badge{display:block;width:fit-content;border-radius:4px;padding:2px 5px;margin-bottom:6px;font-size:11px;line-height:1.5}
 .member-absence-change .member-note-members:nth-child(3)>span{color:#fff0ed;font-weight:700}
 }
+
+@media screen {
+.member-review-nav{display:flex;gap:8px;padding:8px 12px;border-bottom:1px solid var(--line);flex:none;background:var(--bg)}
+.member-review-nav>button{min-width:0;min-height:44px;flex:1;border-radius:9px;background:var(--panel2);color:var(--text);font-size:13px;padding:8px;font-weight:650}
+.member-review-nav>button[aria-current="page"]{outline:2px solid var(--text);outline-offset:-3px}
+}
