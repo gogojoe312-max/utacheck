@@ -211,11 +211,33 @@ test('REC automatic schedule defers editing and respects manual choice, dates an
   assert.equal(f.calls.network.length,0);
 });
 
-test('unconfirmed old schedule rows remain visible but never trigger automatic focus',async()=>{
+test('general REC plan navigation filters exact linked slots while retaining active work and stored data',async()=>{
+ const f=await fixture();f.run(`S.plan.slots.push(
+  {id:'current-a',songId:S.rsongId,name:'Current member A',day:'10/18',date:'2026-10-18',at:600,min:60},
+  {id:'current-b',songId:S.rsongId,name:'Current member B',day:'10/19',date:'2026-10-19',at:600,min:60},
+  {id:'other',songId:'rec-song-1',name:'Unrelated member',day:'10/1',date:'2026-10-01',at:600,min:60,a0:600,a1:660,takes:{A:2}}
+ );U.planDay='10/1';`);
+ const before=f.run('JSON.stringify(S)'),stored=f.idb.snapshot(),local=clone(f.localWrites);
+ for(const entry of ['live','setup']){
+  if(entry==='setup')f.click('go-setup');
+  f.click('goplan');f.click('planday','');
+  assert.equal((f.app.innerHTML.match(/data-drop="p:/g)||[]).length,2);
+  assert.match(f.app.innerHTML,/Current member A/);assert.match(f.app.innerHTML,/Current member B/);
+  assert.doesNotMatch(f.app.innerHTML,/Unrelated member|data-drop="p:slot-|data-act="plan-all"|data-act="pstart"/);
+  assert.match(f.app.innerHTML,/data-act="psecgo" data-id="current-a" disabled/);
+  assert.equal(f.run('U.planDay'),'10/1');f.click('recback');
+  unchanged(f,before,stored,local);
+ }
+ f.run(`S.rsongId='rec-song-2'`);const emptyBefore=f.run('JSON.stringify(S)');
+ f.click('goplan');assert.match(f.app.innerHTML,/この曲に連携した進行表はありません/);assert.doesNotMatch(f.app.innerHTML,/data-drop="p:/);
+ unchanged(f,emptyBefore,stored,local);
+});
+
+test('linked unconfirmed schedule rows remain visible but never trigger automatic focus',async()=>{
  const f=await fixture();f.run(`S.plan.slots=[
- {id:'later',name:'Later slot',kind:'member',day:'10/8',at:900,min:75},
- {id:'early',name:'Earlier slot',kind:'member',day:'10/8',at:810,min:75},
- {id:'uncertain',name:'Old break',kind:'break',day:'10/8',at:750,min:60,scheduleTimeUnconfirmed:true}];
+ {id:'later',songId:S.rsongId,name:'Later slot',kind:'member',day:'10/8',at:900,min:75},
+ {id:'early',songId:S.rsongId,name:'Earlier slot',kind:'member',day:'10/8',at:810,min:75},
+ {id:'uncertain',songId:S.rsongId,name:'Old break',kind:'break',day:'10/8',at:750,min:60,scheduleTimeUnconfirmed:true}];
  S.planFocus='';U.recSchedulePaused=false;Date.now=()=>Date.parse('2026-10-08T03:45:00Z');`);
  const before=f.run('JSON.stringify(S)');assert.equal(f.run('recScheduledRow()'),null);
  const html=f.run('viewPlan()');assert.match(html,/時刻未確認・自動切替対象外/);assert(html.indexOf('Earlier slot')<html.indexOf('Later slot'));

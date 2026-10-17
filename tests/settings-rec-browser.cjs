@@ -160,6 +160,14 @@ async function checkExcelReattach(page,width,dialogs){
   const reattach=page.locator('[data-act="excel-reattach"][data-id="'+songId+'"]');
   await reattach.waitFor({state:'visible'});
   assert.equal(await page.evaluate(()=>JSON.stringify(S)),initial,'Missing original must not change the song');
+  const generated=await page.evaluate(async()=>{
+   const item=U.excelExport,wb=XLSX.read(new Uint8Array(await item.blob.arrayBuffer()),{type:'array'});
+   return {count:item.count,failures:item.failures,rebuilt:item.rebuiltExcelIds,rows:XLSX.utils.sheet_to_json(wb.Sheets[absentTab()],{header:1})};
+  });
+  assert.equal(generated.count,1);assert.deepEqual(generated.failures,[]);assert.deepEqual(generated.rebuilt,[songId]);
+  assert(generated.rows.some(r=>r[2]==='乙'&&r[3]==='Synthetic lyric one to preserve'),'Missing original still exports the current substitution and lyric');
+  assert(await page.getByText(/再添付しなくても、このまま保存できます/).isVisible());
+
   await assertFits(page);await screenshot(page,width,'excel-original-missing');
   const wrongDialogCount=dialogs.length,wrongChooser=page.waitForEvent('filechooser'),wrongRejected=page.waitForEvent('dialog');
   await reattach.click();await(await wrongChooser).setFiles({name:'合成Excel曲.xlsx',mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',buffer:Buffer.from(files.wrong)});
@@ -184,7 +192,7 @@ async function checkExcelReattach(page,width,dialogs){
   for(const key of ['xlsSourceId','xls','xlsAt'])expectedSong[key]=actualSong[key];
   assert.deepEqual(next,expected,'Reattachment changes only original-workbook metadata');
   assert.deepEqual(verified.stored,files.correct);assert.deepEqual(verified.old,files.wrong,'Existing legacy workbook bytes remain unchanged');
-  assert.equal(verified.durable,verified.packed,'Successful reattachment is durably reread');assert.equal(verified.automaticExport,false);
+  assert.equal(verified.durable,verified.packed,'Successful reattachment is durably reread');assert.equal(verified.automaticExport,true,'The already generated download remains available after reattachment');
   await exportButton.click();await page.waitForFunction(()=>!!U.excelExport?.blob&&!U.exportingExcel);
   const exported=await page.evaluate(async()=>{
    const so=S.songs.find(s=>s.id==='qa-excel-song'),bytes=new Uint8Array(await U.excelExport.blob.arrayBuffer()),wb=XLSX.read(bytes,{type:'array',cellStyles:true});

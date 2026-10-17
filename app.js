@@ -113,7 +113,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.25";
+const APP_VER = "16.41.58.26";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -6461,6 +6461,7 @@ function renderSheet() {
       <a class="organize-action" href="${h(item.url)}" download="${h(item.name)}">ダウンロードして保存</a>
       ${item.name.endsWith(".zip") ? '<p class="note">曲ごとのExcelをZIPにまとめています。iPhoneでは「ファイルに保存」後、ZIPをタップすると開けます。</p>' : ""}
       ${item.failures.length ? `<p role="alert" class="note" style="color:var(--bad)">作成できなかった曲（${item.failures.length}曲）</p>${item.failures.map(x=>`<p class="note" style="white-space:pre-wrap;overflow-wrap:anywhere">${h(x)}</p>`).join("")}` : ""}
+      ${item.rebuiltExcelIds?.length ? `<p class="note">${item.rebuiltExcelIds.length}曲は保存済みの歌詞・歌割から作成しました。元Excelの体裁は含みません。再添付しなくても、このまま保存できます。</p>` : ""}
       ${originalExcelRepairHTML(item.missingExcelIds)}
     </div>`;
     document.body.appendChild(overlay); return;
@@ -7351,16 +7352,68 @@ function copyRecords(oldSo, newSo) {
 const CHKCOL = { "音程": "FFFFD5CC", "タイミング": "FFFDEBC7", "出音": "FFD3F2F0",
   "表情": "FFE7DEFF", "ミス": "FFFFD3DE", "バランス": "FFD6E8FF", "良い": "FFD6F2E2" };
 
+// A missing source file must not make the saved lyrics and assignments unexportable.
+// This separate workbook uses saved rows only; it never binds or edits an unmatched original.
+function savedSongWorkbook(so, tab, notes = []) {
+  if (!Array.isArray(so.lines) || !so.lines.some(l => String(l.t || "").trim()))
+    throw new Error("この曲の歌詞が保存されていないため、Excelを作成できません。");
+  const rows = [[so.title || "無題"], [showName(so.showId), tab],
+    ["保存済みの歌詞・歌割から作成（元Excelの体裁は含みません）"]];
+  if (so.credit) rows.push([so.credit]);
+  const absent = names(absentIds(so.showId));
+  if (absent) rows.push(["欠席", absent]);
+  for (const b of Object.keys(so.blocks || {})) rows.push([b, names(gsubOf(so.id,b) || so.blocks[b])]);
+  rows.push([], ["行", "区分", "歌割", "歌詞", "指摘"]);
+  so.lines.forEach((l,i) => {
+    const hits = notes.filter(n => covers(n,i));
+    if (!l.t && !l.label && !l.sec && !hits.length) return;
+    const breaks = new Set(lyricBreakOffsets(l));
+    const lyric = Array.from(String(l.t || "")).map((ch,k) => (breaks.has(k) ? "\n" : "") + ch).join("");
+    rows.push([i+1, [l.sec || "", l.cut ? "カット" : ""].filter(Boolean).join(" "),
+      savedExcelAssignment(so,i), lyric, hits.map(n => excelNoteText(l,n)).join(" / ")]);
+  });
+  const memo = songMemo(so.id);
+  if (memo) rows.push([], ["総括", memo]);
+  const sheet = XLSX.utils.aoa_to_sheet(rows);
+  sheet["!cols"] = [{wch:7},{wch:16},{wch:30},{wch:64},{wch:56}];
+  sheet["!rows"] = rows.map(row => ({hpt:Math.max(22, ...row.map(value => String(value).split("\n").length * 18))}));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,sheet,(tab || "歌割").replace(/[\\/?:*\[\]]/g,"-").slice(0,31));
+  return new Uint8Array(XLSX.write(wb,{type:"array",bookType:"xlsx",compression:true}));
+}
+function savedExcelAssignment(so, i) {
+  const line = so.lines[i];
+  // Continuation rows may have their own harmony substitutions. Imported records
+  // may also contain member IDs without a display label; keep those assignments.
+  if (line.cont || !line.label) {
+    const assignment = splitAssign(so,i);
+    if (assignment.main.length || assignment.extra.length || subOf(so.id,i))
+      return (names(assignment.main) || "—") + (assignment.extra.length ? "　ハモ " + names(assignment.extra) : "");
+  }
+  return labelOf(so,i) || line.labelRaw || line.raw || "";
+}
+function excelNoteText(line, note) {
+  const where = note.from != null ? `「${Array.from(line.t || "").slice(note.from,note.to+1).join("")}」` : "";
+  return where + (note.tags || []).map(tagName).join("・")
+    + (note.pitch ? " " + pitchLabel(note.pitch) : "") + (note.memo ? " " + note.memo : "")
+    + (note.hand ? " 手書き：" + (note.hand.text || "原文を画面で確認") + (note.hand.state === "draft" ? "（自動認識・未確認）" : "") : "");
+}
+
 async function exportCheckXlsx(songId) {
   const so = S.songs.find((x) => x.id === songId);
   if (!so) return;
   const blob = await getOriginalExcel(so,true).catch(() => null);
-  if (!blob) { showFileReport("Excel出力結果", [], ["一致する元Excelがありません。元Excelを再添付してください。"], [], [so.id]); return; }
   const ns0 = NOTES().filter((n) => n.songId === so.id && n.showId === S.showId);
   if (!ns0.length) { alert("この曲に記録がありません。"); return; }
 
   try {
     U.busy = "Excelを作成中…"; render();
+    if (!blob) {
+      const data = savedSongWorkbook(so,"チェック",ns0);
+      presentExcelExport(absentExportFilename(so.title,"チェック"),
+        new Blob([data],{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}),1,[],[so.id],[so.id]);
+      U.busy = ""; render(); return;
+    }
     const buf = new Uint8Array(await blob.arrayBuffer());
 
     // 空いている列を探して、そこに指摘を書く
@@ -7375,12 +7428,7 @@ async function exportCheckXlsx(songId) {
     so.lines.forEach((l, i) => {
       const ns = ns0.filter((n) => covers(n, i));
       if (!ns.length || !l.lcell) return;
-      const chars = Array.from(l.t);
-      const txt = ns.map((n) => {
-        const where = n.from != null ? `「${chars.slice(n.from, n.to + 1).join("")}」` : "";
-        const tag = n.tags.map(tagName).join("・");
-        return where + tag + (n.pitch ? " " + pitchLabel(n.pitch) : "") + (n.memo ? " " + n.memo : "") + (n.hand ? " 手書き：" + (n.hand.text || "原文を画面で確認") + (n.hand.state === "draft" ? "（自動認識・未確認）" : "") : "");
-      }).join(" / ");
+      const txt = ns.map(n => excelNoteText(l,n)).join(" / ");
       edits[l.lcell] = { v: l.t, fill: CHKCOL[catOf((ns[0].tags || [])[0])] || "FFFFF3B0" };
       const row = (l.lcell.match(/\d+$/) || [""])[0];
       if (row) edits[memoCol + row] = { v: txt, fill: "FFFFFFFF" };
@@ -7490,9 +7538,9 @@ function closeExcelExport() {
   U.excelExport = null;
   if (U.menu?.kind === "excel-export") U.menu = null;
 }
-function presentExcelExport(name, blob, count, failures, missingExcelIds = []) {
+function presentExcelExport(name, blob, count, failures, missingExcelIds = [], rebuiltExcelIds = []) {
   closeExcelExport();
-  U.excelExport = {name, blob, count, failures, missingExcelIds, url:URL.createObjectURL(blob)};
+  U.excelExport = {name, blob, count, failures, missingExcelIds, rebuiltExcelIds, url:URL.createObjectURL(blob)};
   U.menu = {kind:"excel-export"}; renderSheet();
 }
 async function shareExcelExport() {
@@ -7513,12 +7561,15 @@ function hasAbsentExportChanges(so) {
     return partsOf(so, i).slice().sort().join("|") !== before;
   });
 }
-async function buildAbsentWorkbook(so, tab, edits) {
+async function buildAbsentWorkbook(so, tab, edits, rebuiltExcelIds = []) {
   let blob, sourceSearchActive = true;
   try { blob = await importTimeout(getOriginalExcel(so,true,() => sourceSearchActive), 30000, "元のExcelの確認に時間がかかっています。元Excelを再添付して再実行してください。"); }
-  catch (error) { error.originalExcelMissing = true; throw error; }
+  catch (_) { blob = null; }
   finally { sourceSearchActive = false; }
-  if (!blob) { const error = new Error("端末に一致する元Excelがありません。元Excelを再添付してください。曲・歌詞・指摘はそのまま残っています。"); error.originalExcelMissing = true; throw error; }
+  if (!blob) {
+    const data = savedSongWorkbook(so,tab);
+    rebuiltExcelIds.push(so.id); return data;
+  }
   let data = new Uint8Array(await importTimeout(blob.arrayBuffer(), 10000, "元のExcelを読み込めませんでした。"));
   // XLS / XLSB / CSV also need an XML workbook before adding a version tab.
   if (!(data[0] === 0x50 && data[1] === 0x4b) || !XLSX.CFB.read(data, {type:"array"}).FullPaths.some(p => p.endsWith('/xl/workbook.xml'))) {
@@ -7551,7 +7602,7 @@ async function runAbsentExport(songs, bundle) {
   const targets = songs.slice();
   U.exportingExcel = true;
   closeExcelExport();
-  const files = Object.create(null), failures = [], missingExcelIds = [];
+  const files = Object.create(null), failures = [], missingExcelIds = [], rebuiltExcelIds = [];
   try {
     for (let i = 0; i < targets.length; i++) {
       const so = targets[i];
@@ -7560,7 +7611,7 @@ async function runAbsentExport(songs, bundle) {
       try {
         const edits = absentEdits(so);
         if (!Object.keys(edits).length && !hasAbsentExportChanges(so)) continue;
-        const data = await buildAbsentWorkbook(so, tab, edits);
+        const data = await buildAbsentWorkbook(so, tab, edits, rebuiltExcelIds);
         const base = absentExportFilename(so.title, tab);
         let name = base, suffix = 2;
         while (files[name]) name = base.replace(/\.xlsx$/, ` (${suffix++}).xlsx`);
@@ -7576,7 +7627,7 @@ async function runAbsentExport(songs, bundle) {
     const data = bundle ? await zip(files, null, false) : files[names[0]];
     const name = bundle ? absentExportFilename(title,tab).replace(/\.xlsx$/, ".zip") : names[0];
     U.busy = ""; render();
-    presentExcelExport(name, new Blob([data], {type:bundle ? "application/zip" : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}), names.length, failures, missingExcelIds);
+    presentExcelExport(name, new Blob([data], {type:bundle ? "application/zip" : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}), names.length, failures, [...missingExcelIds,...rebuiltExcelIds], rebuiltExcelIds);
   } catch (e) { alert("Excelを作れませんでした。\n" + e.message); }
   finally { U.busy = ""; U.exportingExcel = false; render(); }
 }
@@ -8331,7 +8382,9 @@ function recordingPlanExpired(now=Date.now()) {
   return Number.isFinite(end)&&now>=end;
 }
 function recordingPlanEntryHTML() {
-  return recordingPlanExpired() ? '<details class="card"><summary>過去の進行表</summary><button class="ghost" data-act="goplan">過去の進行表をひらく</button></details>' : '<div class="card"><button class="primary" data-act="goplan">進行表をひらく</button></div>';
+  const song = S.rsongs.find(so => so.id === S.rsongId);
+  const linked = song && (S.plan?.slots || []).some(slot => slot.songId === song.id);
+  return '<div class="card"><button class="primary" data-act="goplan">この曲の進行表をひらく</button>' + (linked ? '' : '<p class="note">'+(song ? 'この曲に連携した進行表はありません。' : 'RECの曲を選択してください。')+'</p>') + '</div>';
 }
 function recordingGroupSelector() {
   const artists = [...new Set(S.rsongs.map(x => recordingClassification(x).artist))];
@@ -8562,8 +8615,26 @@ function recordingPlanSongCanSelect(id) {
   return !(S.plan?.slots || []).some(slot => slot.a0 != null && slot.a1 == null)
     && !REC && !recordingStartPending && !recordingFinalizePending && !pitchStartPending && !PT.on && !micStream;
 }
+function recordingPlanEditableSongId() {
+  const id = U.planSongId || S.rsongId;
+  if (!S.recMode || U.view !== "recplan" || !U.planSongEditing || id !== S.rsongId
+    || S.rsongs.filter(so => so.id === id).length !== 1 || VIEW() || preview
+    || REC || recordingStartPending || recordingFinalizePending || pitchStartPending || PT.on || micStream
+    || (S.plan?.slots || []).some(slot => slot.a0 != null && slot.a1 == null && slot.songId !== id)) return "";
+  return id;
+}
+function planEditSlot(id, breakOnly = false) {
+  const matches = (S.plan?.slots || []).filter(slot => slot.id === id);
+  if (matches.length !== 1) return null;
+  const slot = matches[0];
+  if (S.recMode && U.view === "recplan") {
+    const songId = recordingPlanEditableSongId();
+    if (!songId || slot.songId !== songId || breakOnly && (slot.kind !== "break" || slot.a0 != null || slot.a1 != null)) return null;
+  }
+  return slot;
+}
 function openRecordingSongPlan(id) {
-  if (VIEW() || preview || !S.recMode || S.rsongs.filter(so => so.id === id).length !== 1 || !(S.plan?.slots || []).some(slot => slot.songId === id)) return false;
+  if (VIEW() || preview || !S.recMode || S.rsongs.filter(so => so.id === id).length !== 1) return false;
   if (U.planSongId !== id) U.planSongDay = U.planDay;
   const canSelect = recordingPlanSongCanSelect(id);
   if (canSelect) {
@@ -8571,7 +8642,7 @@ function openRecordingSongPlan(id) {
     chooseRecordingSongPlanDay(id);
   }
   chooseRecordingSongPlanDay(id, Date.now(), true);
-  U.planSongId = id; U.planSec = ""; U.secOrd = false; U.menu = null; U.view = "recplan";
+  U.planSongId = id; U.planSongEditing = false; U.planSec = ""; U.secOrd = false; U.menu = null; U.view = "recplan";
   if (canSelect) save();
   renderSheet(); render();
   return true;
@@ -8893,16 +8964,16 @@ function secSplitByBars(slot) {
 // 配分を直す相手。開いている枠、無ければ今やっている枠。
 function planSlot() {
   const rows = planRows();
-  if (U.planSec) { const r = rows.find((x) => x.s.id === U.planSec); if (r) return r.s; }
+  if (U.planSec) { const slot = planEditSlot(U.planSec); if (slot || S.recMode && U.view === "recplan") return slot; }
   const lv = rows.find((x) => x.live);
-  return lv ? lv.s : null;
+  return lv ? planEditSlot(lv.s.id) : null;
 }
 // 「全員」にしている時は、同じ直しを他の人の枠にも入れる。休憩は触らない。
 function secApply(t, fn) {
-  if (!t) return;
+  if (!t || !planEditSlot(t.id)) return;
   fn(t);
   if (!S.secAll) return;
-  (S.plan.slots || []).forEach((sl) => { if (sl !== t && sl.kind !== "break") fn(sl); });
+  (S.plan.slots || []).forEach((sl) => { if (sl !== t && sl.kind !== "break" && (sl.songId || "") === (t.songId || "")) fn(sl); });
 }
 // 区切りの合計と、その人の持ち時間（準備を含む）
 function secSum(slot) {
@@ -9073,14 +9144,19 @@ function applySchedule(text) {
 }
 
 function viewPlan() {
-  const scopedSong = U.planSongId ? S.rsongs.find(so => so.id === U.planSongId) : null;
-  const readOnlyScope = !!scopedSong && (S.rsongId !== scopedSong.id || !recordingPlanSongCanSelect(scopedSong.id));
-  const allRows = planRows().filter(row => !scopedSong || row.s.songId === scopedSong.id);
+  const songScoped = S.recMode || !!U.planSongId;
+  const songId = U.planSongId || S.rsongId;
+  const matches = S.rsongs.filter(so => so.id === songId);
+  const scopedSong = matches.length === 1 ? matches[0] : null;
+  const readOnlyScope = songScoped && (!scopedSong || S.rsongId !== scopedSong.id || !recordingPlanSongCanSelect(scopedSong.id)
+    || (S.plan?.slots || []).some(slot => slot.a0 != null && slot.a1 == null && slot.songId !== scopedSong.id));
+  const canEdit = !songScoped || !!recordingPlanEditableSongId();
+  const allRows = planRows().filter(row => !songScoped || scopedSong && row.s.songId === scopedSong.id);
   const dayKey=s=>{const m=/^(\d{1,2})\/(\d{1,2})$/.exec(s.day||"");return m?Number(m[1])*100+Number(m[2]):null;};
   if(allRows.every(r=>dayKey(r.s)!==null&&Number.isFinite(r.s.at)))allRows.sort((a,b)=>dayKey(a.s)-dayKey(b.s)||a.pS-b.pS);
   const dayList = [...new Set(allRows.map((r) => r.s.day).filter(Boolean))];
   // 日付が複数ある時は、その日だけを見られるようにする
-  const selectedDay = scopedSong ? U.planSongDay : U.planDay;
+  const selectedDay = songScoped ? U.planSongDay : U.planDay;
   const pickDay = dayList.length > 1 && selectedDay && dayList.includes(selectedDay) ? selectedDay : "";
   /* 終わった枠は隠す。ただし今日の分は、終わっても残しておく。 */
   const td = new Date();
@@ -9090,7 +9166,7 @@ function viewPlan() {
   const now = nowMin();
   // 配分を開く枠。何も開いていなければ、今やっている枠を開いておく。
   const liveSlotId = (rows.find((r) => r.live) || { s: {} }).s.id || "";
-  const openSlot = !scopedSong && U.planSec && rows.some((r) => r.s.id === U.planSec) ? U.planSec : "";
+  const openSlot = canEdit && U.planSec && rows.some((r) => r.s.id === U.planSec) ? U.planSec : "";
   const liveIdx = rows.findIndex((r) => r.live);
   const nextIdx = rows.findIndex((r) => !r.done && !r.live);
   const last = rows[rows.length - 1];
@@ -9107,7 +9183,7 @@ function viewPlan() {
     const diff = r.done ? (r.aE - r.aS) - Number(s.min || 0) : 0;
     const rest = r.live ? r.aE - now : 0;
     return `${dayHead}<div class="row card plan-row${r.live ? " is-live" : ""}${isBreak ? " is-break" : ""}" data-drop="p:${s.id}" style="margin-bottom:8px;padding:11px 12px;flex-wrap:wrap;max-width:100%;${r.live ? "outline:1px solid var(--accent)" : ""}">
-      ${scopedSong ? "" : `<span class="grip" data-drag="plan:${s.id}">⣿</span>`}
+      ${songScoped ? "" : `<span class="grip" data-drag="plan:${s.id}">⣿</span>`}
       <button class="grow" style="text-align:left;min-width:0" data-act="psecgo" data-id="${s.id}"${readOnlyScope ? " disabled" : ""}>
         <div class="row" style="gap:8px;min-width:0">
           <span style="font-size:12px;color:var(--dim);font-variant-numeric:tabular-nums;flex:0 0 auto">${min2hm(r.aS)}–${min2hm(r.aE)}</span>
@@ -9120,13 +9196,13 @@ function viewPlan() {
           ${!r.done && !r.live && i === nextIdx ? `　<span style="color:var(--accent)">次</span>` : ""}
         </div>
       </button>
-      ${isBreak || scopedSong ? "" : `<button class="chip sm" data-act="psecopen" data-id="${s.id}"
+      ${isBreak || !canEdit ? "" : `<button class="chip sm" data-act="psecopen" data-id="${s.id}"
         style="${openSlot === s.id ? "background:var(--panel2);color:var(--accent);border:1px solid var(--accent)" : "color:var(--dim)"}">配分</button>`}
-      ${isBreak && !scopedSong ? `<button class="chip sm" data-act="peditbreak" data-id="${s.id}">時間</button>` : ""}
+      ${isBreak && canEdit && (!songScoped || s.a0 == null && s.a1 == null) ? `<button class="chip sm" data-act="peditbreak" data-id="${s.id}">時間</button>` : ""}
       ${readOnlyScope ? "" : r.live ? `<button class="chip sm rec-primary" data-act="pnext" data-id="${s.id}">${isBreak ? "休憩終了" : "終了"}</button>`
         : !r.done ? `<button class="chip sm rec-primary" data-act="pstart" data-id="${s.id}">${isBreak ? "休憩開始" : "今から開始"}</button>`
         : `<button class="chip sm" data-act="pundo" data-id="${s.id}">戻す</button>`}
-      ${!scopedSong && !r.done && !r.live && Number.isInteger(s.at) && (s.date || s.day) ? `<details class="plan-more"><summary>時刻を調整</summary><span class="note">この枠以降・同日の未開始枠</span><button data-act="pshift" data-id="${s.id}|-5">5分早める</button><button data-act="pshift" data-id="${s.id}|5">5分遅らせる</button></details>` : ""}
+      ${!songScoped && !r.done && !r.live && Number.isInteger(s.at) && (s.date || s.day) ? `<details class="plan-more"><summary>時刻を調整</summary><span class="note">この枠以降・同日の未開始枠</span><button data-act="pshift" data-id="${s.id}|-5">5分早める</button><button data-act="pshift" data-id="${s.id}|5">5分遅らせる</button></details>` : ""}
       ${!readOnlyScope && r.live ? `<details class="plan-more"><summary>その他</summary><button data-act="pretry" data-id="${s.id}">やり直す</button><button data-act="pcancel" data-id="${s.id}">開始状態だけ解除</button></details>` : ""}
     </div>
     ${openSlot === s.id && sectionsOf(s).length ? (() => {
@@ -9139,7 +9215,7 @@ function viewPlan() {
         <button class="chip sm" data-act="psecord"
           style="${U.secOrd ? "color:var(--accent);border:1px solid var(--accent)" : "color:var(--dim)"}">${U.secOrd ? "おわり" : "録る順"}</button>
         ${U.secOrd ? "" : `<button class="chip sm" data-act="psecall" data-id="${s.id}"
-          style="${S.secAll ? "background:var(--accent);color:#0A0A0A;font-weight:700" : "color:var(--dim)"}">${S.secAll ? "全員に反映中" : "この人だけ"}</button>`}
+          style="${S.secAll ? "background:var(--accent);color:#0A0A0A;font-weight:700" : "color:var(--dim)"}">${S.secAll ? "この曲の全員に反映中" : "この人だけ"}</button>`}
       </div>
       ${U.secOrd ? `<div style="font-size:10px;color:var(--dim);margin:-4px 0 8px">上から順に録ります。⣿ をつまんで入れ替え。曲ごとに覚えます</div>`
         : `<div style="font-size:11px;margin:-4px 0 8px;color:${over > 0 ? "var(--bad)" : over < 0 ? "var(--dim)" : "var(--good)"}">
@@ -9176,8 +9252,8 @@ function viewPlan() {
         <button class="chip sm grow" data-act="psecbars">持ち時間いっぱいに割る</button>
         ${r.live ? `<button class="chip sm grow" data-act="pnextsec">次へ</button>` : ""}
       </div>
-      ${S.secAll ? `<div style="font-size:10px;color:var(--accent);margin-top:6px">直した分は、休憩をのぞく全員の枠に同じように入ります</div>`
-        : `<button class="chip sm" data-act="pseccopy" style="margin-top:6px;color:var(--dim);width:100%">いまの配分をほかの全員にも配る</button>`}`}
+      ${S.secAll ? `<div style="font-size:10px;color:var(--accent);margin-top:6px">直した分は、この曲の休憩をのぞく全員の枠に同じように入ります</div>`
+        : `<button class="chip sm" data-act="pseccopy" style="margin-top:6px;color:var(--dim);width:100%">いまの配分をこの曲のほかの全員にも配る</button>`}`}
     </div>`; })() : ""}`;
   }).join("");
 
@@ -9213,12 +9289,11 @@ function viewPlan() {
     <span style="font-size:12px;color:${gap > 0 ? "var(--bad)" : gap < 0 ? "var(--good)" : "var(--dim)"}">
       ${last ? (gap ? dmin(gap) : "予定どおり") : ""}</span></div>
   <div class="scroll pad">
-    <div class="plan-song">${h((scopedSong || recSong() || {}).title || "曲を選択してください")}</div>
-    ${scopedSong ? '<button class="ghost" data-act="plan-all">すべての進行表</button>' : ""}
-    ${readOnlyScope ? '<p class="note">録音画面は切り替えず、この曲の予定を表示しています。</p>' : ""}
-    ${!scopedSong && U.planShiftUndo ? '<button class="ghost" data-act="pshiftundo">直前の時刻調整を戻す</button>' : ""}
-    ${dayBar}${list || `<p class="note">予定はまだありません</p>`}
-    ${scopedSong ? "" : `<details class="plan-settings"><summary>進行表を編集</summary>
+    <div class="plan-song">${h((songScoped ? scopedSong : recSong())?.title || "曲を選択してください")}</div>
+    ${readOnlyScope && scopedSong ? '<p class="note">録音画面は切り替えず、この曲の予定を表示しています。</p>' : ""}
+    ${!songScoped && U.planShiftUndo ? '<button class="ghost" data-act="pshiftundo">直前の時刻調整を戻す</button>' : ""}
+    ${dayBar}${list || `<p class="note">${songScoped ? scopedSong ? 'この曲に連携した進行表はありません。' : 'RECの曲を選択してください。' : '予定はまだありません'}</p>`}
+    ${songScoped ? "" : `<details class="plan-settings"><summary>進行表を編集</summary>
     <div class="card">
       <div class="row" style="gap:10px;margin-bottom:10px">
         <span style="font-size:11px;color:var(--dim);width:40px">開始</span>
@@ -10477,6 +10552,7 @@ document.addEventListener("click", async (e) => {
       break;
     }
     case "recback":
+      U.planSongEditing = false;
       if (U.planSongId) { U.planSongId = ""; U.planSongDay = ""; }
       U.view = U.pdfBack || "live"; U.pdfBack = ""; render(); break;
     case "rbars": S.recBars = !S.recBars; save(); render(); break;
@@ -10633,11 +10709,14 @@ document.addEventListener("click", async (e) => {
       break;
     }
     case "goplan":
-      if (U.planSongId) { U.planSongId = ""; U.planSongDay = ""; }
+      U.planSongId = S.rsongId || ""; U.planSongDay = U.planDay;
+      U.planSongEditing = true;
+      chooseRecordingSongPlanDay(U.planSongId, Date.now(), true);
+      U.planSec = ""; U.secOrd = false;
       U.view = "recplan"; render(); break;
     case "rec-song-plan": openRecordingSongPlan(id); break;
     case "plan-all":
-      U.planSongId = ""; U.planSongDay = ""; U.planDay = ""; U.planSec = ""; U.secOrd = false; render(); break;
+      U.planSongDay = ""; U.planSec = ""; U.secOrd = false; render(); break;
     case "psec": {
       const ps = String(id).split("|");
       const dv = Number(ps.pop());
@@ -10669,6 +10748,7 @@ document.addEventListener("click", async (e) => {
       save(); render(); break;
     }
     case "psecall": {
+      if (!planEditSlot(id)) break;
       U.planSec = id || "";
       S.secAll = !S.secAll;
       save(); render(); break;
@@ -10676,6 +10756,7 @@ document.addEventListener("click", async (e) => {
     case "psecgo": {
       // 人名を押したら、その人の歌詞画面へ行く。テイクは自分で選ぶ。
       const sl = (S.plan.slots || []).find((x) => x.id === id);
+      if (S.recMode && U.view === "recplan" && (!sl?.songId || sl.songId !== (U.planSongId || S.rsongId))) break;
       if (sl?.songId && S.rsongs.filter(so => so.id === sl.songId).length === 1) {
         if (!recordingPlanSongCanSelect(sl.songId)) break;
         S.rsongId = sl.songId; U.songIdx = SONGS().findIndex(so => so.id === sl.songId); U.secView = "";
@@ -10684,14 +10765,15 @@ document.addEventListener("click", async (e) => {
       break;
     }
     case "psecopen": {
+      if (!planEditSlot(id)) break;
       U.planSec = U.planSec === id ? "" : id;
       render(); break;
     }
     case "pseccopy": {
       const t = planSlot(); if (!t) break;
-      const others = (S.plan.slots || []).filter((sl) => sl !== t && sl.kind !== "break");
+      const others = (S.plan.slots || []).filter((sl) => sl !== t && sl.kind !== "break" && (sl.songId || "") === (t.songId || ""));
       if (!others.length) { alert("ほかに配れる枠がありません。"); break; }
-      if (!confirm(`この配分を ほかの${others.length}人にも同じにします。\nそれぞれの手直しは上書きされます。`)) break;
+      if (!confirm(`この配分を この曲のほかの${others.length}人にも同じにします。\nそれぞれの手直しは上書きされます。`)) break;
       pushUndo();
       const sec = JSON.parse(JSON.stringify(t.sec || {}));
       const skip = JSON.parse(JSON.stringify(t.skip || {}));
@@ -10805,7 +10887,7 @@ document.addEventListener("click", async (e) => {
     }
     case "pastesched": U.menu = { kind: "sched" }; renderSheet(); break;
     case "planday":
-      if (U.planSongId) U.planSongDay = id || "";
+      if (S.recMode || U.planSongId) U.planSongDay = id || "";
       else U.planDay = id || "";
       render(); break;
     case "autotoggle": {
@@ -10959,15 +11041,17 @@ document.addEventListener("click", async (e) => {
       const _sl = (S.plan.slots || []).find((x) => x.id === id);
       if (_sl) { pauseRecSchedule(); S.planFocus = _sl.id; U.view = "live"; save(); render(); break; }
     }
-    case "peditbreak": U.menu = { kind: "pedit", id }; renderSheet(); break;
+    case "peditbreak":
+      if (!planEditSlot(id, true)) break;
+      U.menu = { kind: "pedit", id }; renderSheet(); break;
     case "pset": {
-      const s2 = S.plan.slots.find((x) => x.id === U.menu.id);
+      const s2 = planEditSlot(U.menu?.id, true);
       if (s2) { s2.min = Math.max(1, Number(s2.min || 0) + Number(id)); save(); renderSheet(); render(); }
       break;
     }
     case "psetat": {
       /* この枠だけを指定の時刻へ動かす。前後の枠はそのまま。 */
-      const s3 = S.plan.slots.find((x) => x.id === U.menu.id);
+      const s3 = planEditSlot(U.menu?.id, true);
       const el3 = document.getElementById("patv");
       if (s3 && el3 && el3.value) {
         pushUndo();
@@ -10977,7 +11061,7 @@ document.addEventListener("click", async (e) => {
       break;
     }
     case "psetv": {
-      const s2 = S.plan.slots.find((x) => x.id === U.menu.id);
+      const s2 = planEditSlot(U.menu?.id, true);
       const el = document.getElementById("pminv"), en = document.getElementById("pnamev");
       if (s2) {
         if (el && Number(el.value) > 0) s2.min = Math.round(Number(el.value));
@@ -10987,6 +11071,7 @@ document.addEventListener("click", async (e) => {
       break;
     }
     case "pdel": {
+      if (!planEditSlot(U.menu?.id, true)) break;
       S.plan.slots = S.plan.slots.filter((x) => x.id !== U.menu.id);
       U.menu = null; save(); renderSheet(); render(); break;
     }
