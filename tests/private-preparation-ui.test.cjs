@@ -3,6 +3,7 @@ const {test}=require('node:test'),assert=require('node:assert/strict'),fs=requir
 const {indexedFixture}=require('./startup-file-restoration-fixture.cjs');
 const {appContext,settle,clone}=require('./startup-excel-recovery-fixture.cjs');
 const Store=require('../recovery-delivery-store.js'),Preparation=require('../private-preparation.js');
+const rawDigest=bytes=>require('node:crypto').createHash('sha256').update(bytes).digest('hex');
 async function setup({hold=true,store=Store,owner=true,source,token='synthetic-token'}={}){
  const held={v:1,seq:1,slot:1,copyKey:'preserved:recovery:v1:'+'a'.repeat(64),sourceKind:'cloud-publication'};
  const idb=indexedFixture({state:hold?{'recovery:network-hold:v1':held}:{},clips:{audio:new Blob(['original audio'])}});
@@ -20,6 +21,97 @@ async function setup({hold=true,store=Store,owner=true,source,token='synthetic-t
  for(const path of ['private-preparation.js','recording-schedule-update.js','private-preparation-ui.js'])vm.runInContext(fs.readFileSync(__dirname+'/../'+path,'utf8'),f.c);
  f.localWrites.length=0;return {...f,idb,state,packet,operation,manifest,get reads(){return reads;}};
 }
+async function originalOperation(name='original.xlsx',contents='synthetic original bytes'){
+ const bytes=Buffer.from(contents),packet={app:'utacheck-original-excel',version:1,name,size:bytes.length,sha256:rawDigest(bytes),base64:bytes.toString('base64')};
+ return {id:'original-'+packet.sha256,type:'original-excel',packet,sha256:await Preparation.digest(packet,webcrypto)};
+}
+function prepareOriginalFixture(f,options={}){
+ let calls=0;
+ f.c.prepareOriginalExcelAttachment=async(current,packet,{isActive})=>{
+  calls++;assert.equal(f.run('recordingInboxIntegration.gate.applying'),true);assert.equal(isActive(),true);
+  await options.before?.({current,packet,isActive});
+  for(const file of [packet,...(packet.exportFile?[packet.exportFile]:[])]){
+   const blob=new Blob([Buffer.from(file.base64,'base64')]);await f.c.putClip('xls:sha256-'+file.sha256,blob);
+   assert.equal(rawDigest(Buffer.from(await(await f.c.getClip('xls:sha256-'+file.sha256)).arrayBuffer())),file.sha256);
+  }
+  await options.after?.({current,packet,isActive});
+  const state=clone(current),sourceId='sha256-'+(packet.exportFile||packet).sha256,unmatched=typeof options.unmatched==='function'?options.unmatched():options.unmatched;
+  const targets=unmatched?[]:state.songs.filter(song=>!song.xlsSourceId||song.xlsSourceId===sourceId);
+  for(const song of targets)Object.assign(song,{xls:1,xlsSourceId:sourceId});
+  return {state,linked:targets.length,stored:packet.exportFile?2:1,unmatched:targets.length?0:1};
+ };
+ return {get calls(){return calls;}};
+}
+test('original reception verifies files under the writer gate, preserves annotations and reuses one confirmed source snapshot',async()=>{
+ const f=await setup(),first=await originalOperation(),second=await originalOperation('other.xlsx','other synthetic bytes');f.manifest.operations=[first,second];
+ f.run('S.plan.slots[0].a1=null');const before=clone(f.run('S')),prepared=prepareOriginalFixture(f);
+ const result=await f.c.PrivatePreparationUI.receive(true);assert.equal(result.status,'applied',JSON.stringify(result));assert.equal(result.count,2);assert.equal(prepared.calls,2);assert.equal(f.reads,2);
+ const after=clone(f.run('S'));for(const key of Object.keys(before).filter(key=>!['songs','privatePreparations'].includes(key)))assert.deepEqual(after[key],before[key],key);
+ assert.deepEqual(after.songs[0].lines,before.songs[0].lines);assert.equal(after.privatePreparations[first.id].stored,1);
+ const db=f.idb.snapshot();assert.equal((await f.c.PrivatePreparationUI.receive(true)).status,'current');assert.equal(prepared.calls,2);assert.deepEqual(f.idb.snapshot(),db);
+});
+test('a restored original receipt with missing export bytes restores both files and retains its prior counts and timestamp',async()=>{
+ const f=await setup(),op=await originalOperation('legacy.xls'),converted=await originalOperation('converted.xlsx','converted synthetic bytes');
+ op.packet.exportFile=Object.fromEntries(['name','size','sha256','base64'].map(key=>[key,converted.packet[key]]));op.sha256=await Preparation.digest(op.packet,webcrypto);f.manifest.operations=[op];
+ const prepared=prepareOriginalFixture(f);assert.equal((await f.c.PrivatePreparationUI.receive(true)).status,'applied');
+ const before=clone(f.run('S')),receipt=before.privatePreparations[op.id];f.idb.stores.get('clips').delete('xls:sha256-'+op.packet.exportFile.sha256);
+ assert.equal((await f.c.PrivatePreparationUI.receive(true)).status,'applied');assert.equal(prepared.calls,2);assert.deepEqual(clone(f.run('S')),before);
+ assert.deepEqual(clone(f.run('S.privatePreparations'))[op.id],receipt);assert(await f.c.getClip('xls:sha256-'+op.packet.exportFile.sha256));
+ assert.equal((await f.c.PrivatePreparationUI.receive(true)).status,'current');assert.equal(prepared.calls,2);
+});
+test('same-size corrupted original bytes are detected despite an existing matching receipt',async()=>{
+ const f=await setup(),op=await originalOperation();f.manifest.operations=[op];const prepared=prepareOriginalFixture(f);
+ await f.c.PrivatePreparationUI.receive(true);f.idb.replace('xls:sha256-'+op.packet.sha256,new Blob(['x'.repeat(op.packet.size)]),'clips');
+ assert.equal((await f.c.PrivatePreparationUI.receive(true)).status,'applied');assert.equal(prepared.calls,2);
+ assert.equal(rawDigest(Buffer.from(await(await f.c.getClip('xls:sha256-'+op.packet.sha256)).arrayBuffer())),op.packet.sha256);
+});
+test('unmatched original receipt and settings preserve honest stored and unlinked counts',async()=>{
+ const f=await setup(),op=await originalOperation();f.manifest.operations=[op];prepareOriginalFixture(f,{unmatched:true});const before=clone(f.run('S.songs'));
+ const result=await f.c.PrivatePreparationUI.receive(true);assert.equal(result.status,'applied');assert.equal(result.originals.unmatched,1);assert.equal(result.originals.linked,0);
+ assert.deepEqual(clone(f.run('S.songs')),before);assert.match(f.c.PrivatePreparationUI.settingsHTML(),/1件は一致する曲がなく/);
+});
+test('cancelled preparation and a failed state transaction leave no original receipt or song link',async()=>{
+ for(const mode of ['cancelled','rejected']){
+  const f=await setup(mode==='rejected'?{store:{commit:async()=>({status:'rejected',committed:false})}}:{}),op=await originalOperation();f.manifest.operations=[op];
+  const before=clone(f.run('S'));prepareOriginalFixture(f,{after:()=>{if(mode==='cancelled')f.c.document.hidden=true;}});
+  const result=await f.c.PrivatePreparationUI.receive(true);assert.equal(result.status,mode==='cancelled'?'deferred':'conflict');assert.deepEqual(clone(f.run('S')),before);
+  assert(await f.c.getClip('xls:sha256-'+op.packet.sha256),'only the verified immutable blob can remain');
+ }
+});
+test('a changed confirmation source prevents original receipts even after immutable blob storage',async()=>{
+ let reads=0;const f=await setup({source:async({manifest})=>({status:'ready',manifest,sourceSha:(++reads>1?'b':'a').repeat(40)})}),op=await originalOperation();
+ f.manifest.operations=[op];prepareOriginalFixture(f);const before=clone(f.run('S'));
+ const result=await f.c.PrivatePreparationUI.receive(true);assert.equal(result.code,'PREPARATION_SOURCE_CHANGED');assert.deepEqual(clone(f.run('S')),before);assert.equal(reads,2);
+});
+test('an unmatched stored original is retried after matching data changes and its receipt identity is retained',async()=>{
+ const f=await setup(),op=await originalOperation();f.manifest.operations=[op];f.run('S.songs[0].xls=1');let unmatched=true;
+ const prepared=prepareOriginalFixture(f,{unmatched:()=>unmatched});assert.equal((await f.c.PrivatePreparationUI.receive(true)).status,'applied');
+ const old=clone(f.run('S.privatePreparations'))[op.id];assert.equal(old.unmatched,1);assert.match(old.targetSha256,/^[a-f0-9]{64}$/);
+ assert.equal((await f.c.PrivatePreparationUI.receive(true)).status,'current');assert.equal(prepared.calls,1);
+ unmatched=false;f.run('S.songs[0].lines[0].t="Revised matching lyric"');
+ assert.equal((await f.c.PrivatePreparationUI.receive(true)).status,'applied');const next=clone(f.run('S.privatePreparations'))[op.id];
+ for(const key of ['sha256','type','at'])assert.equal(next[key],old[key]);assert.equal(next.linked,1);assert.equal(next.unmatched,0);assert.notEqual(next.targetSha256,old.targetSha256);
+ assert.equal((await f.c.PrivatePreparationUI.receive(true)).status,'current');assert.equal(prepared.calls,2);
+});
+test('new performance copies relink after receiver reload while note edits and attachment timestamps do not reparse workbooks',async()=>{
+ const f=await setup(),op=await originalOperation();f.manifest.operations=[op];const prepared=prepareOriginalFixture(f);
+ await f.c.PrivatePreparationUI.receive(true);const old=clone(f.run('S.privatePreparations'))[op.id];
+ f.run('S.notes[0].memo="New note";S.songs[0].xlsAt=999;S.recs.audio.dur=35');
+ assert.equal((await f.c.PrivatePreparationUI.receive(true)).status,'current');assert.equal(prepared.calls,1);
+ f.run('S.songs.push({...JSON.parse(JSON.stringify(S.songs[0])),id:"new-performance-copy",showId:"other-show"})');
+ vm.runInContext(fs.readFileSync(__dirname+'/../private-preparation-ui.js','utf8'),f.c);
+ assert.equal((await f.c.PrivatePreparationUI.receive(true)).status,'applied');const receipt=clone(f.run('S.privatePreparations'))[op.id];
+ assert.equal(prepared.calls,2);assert.equal(receipt.linked,2);assert.equal(receipt.at,old.at);assert.equal(receipt.sha256,old.sha256);
+ assert.equal((await f.c.PrivatePreparationUI.receive(true)).status,'current');assert.equal(prepared.calls,2);
+});
+test('member names, assignments and exact cell metadata invalidate original matching fingerprints',async()=>{
+ const f=await setup(),op=await originalOperation();f.manifest.operations=[op];const prepared=prepareOriginalFixture(f);
+ await f.c.PrivatePreparationUI.receive(true);
+ for(const change of ['S.members.push({id:"new-person",name:"New singer"})','S.songs[0].lines[0].parts=["new-person"]','S.songs[0].lines[0].lcell="B5"']){
+  f.run(change);assert.equal((await f.c.PrivatePreparationUI.receive(true)).status,'applied');assert.equal((await f.c.PrivatePreparationUI.receive(true)).status,'current');
+ }
+ assert.equal(prepared.calls,4);
+});
 for(const hold of [true,false])test('private schedule automatic atomic save works with hold '+hold+' and is idempotent',async()=>{
  const f=await setup({hold}),before=clone(f.run('S')),clips=f.idb.snapshot().clips;
  const result=await f.c.PrivatePreparationUI.receive(true);assert.equal(result.status,'applied',JSON.stringify(result));assert.equal(result.count,1);

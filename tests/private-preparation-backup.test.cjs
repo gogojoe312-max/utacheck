@@ -109,12 +109,20 @@ test('empty preparation receipts preserve ordinary existing backup behavior',asy
 
 
 test('every current preparation receipt survives matching backup checks after serialization',()=>{
- for(const type of ['recording-song','material-update','live-update','recording-schedule','recording-addition','live-addition']){
+ for(const type of ['recording-song','material-update','live-update','recording-schedule','recording-addition','live-addition','original-excel']){
   const f=fixture({state:{privatePreparations:{prepared:{type,sha256:'c'.repeat(64),at:1}}}});
   const reopened=JSON.parse(JSON.stringify(f.c.S));
   assert.equal(f.c.privatePreparationReceiptsMatch(reopened),true,type);
   reopened.privatePreparations.prepared.sha256='d'.repeat(64);assert.equal(f.c.privatePreparationReceiptsMatch(reopened),false,type);
  }
+});
+test('encrypted backup round trips original matching fingerprints and counts without changing source receipt identity',async()=>{
+ const original={sha256:'c'.repeat(64),type:'original-excel',at:17,linked:4,stored:2,unmatched:0,targetSha256:'d'.repeat(64)};
+ const f=fixture({state:{privatePreparations:{prepared:original}}}),packed=await f.c.packBackup(),restored=await f.c.unpackBackup(packed,KEY);
+ assert.deepEqual(clone(restored.state.privatePreparations.prepared),original);assert.equal(f.c.privatePreparationReceiptsMatch(restored.state),true);
+ restored.state.privatePreparations.prepared.targetSha256='e'.repeat(64);
+ assert.equal(f.c.privatePreparationReceiptsMatch(restored.state),true,'a local matching fingerprint does not redefine the immutable source operation');
+ assert.equal(f.calls.length,0);
 });
 
 test('independent readback rejects an echoed PATCH when the server cannot verify the saved backup',async()=>{

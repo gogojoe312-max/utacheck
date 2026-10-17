@@ -45,7 +45,7 @@ test('unresolved and empty assignments are not mistaken for quiet completion',()
 });
 test('collecting entries is read only and keeps original and replacement membership',()=>{
  const c=fixture(),song=c.S.songs[0],before=JSON.stringify(c.S),entries=c.memberAbsenceChanges(song);
- assert(!entries.some(e=>e.kind==='line'&&e.lineIdx===0));
+ assert(entries.some(e=>e.kind==='line'&&e.lineIdx===0));
  assert.deepEqual(json(entries.find(e=>e.lineIdx===1).before),['m1','m2']);
  assert.deepEqual(json(entries.find(e=>e.lineIdx===1).after),['m2']);
  assert(entries.find(e=>e.lineIdx===2).involved.includes('m1'));assert(entries.find(e=>e.lineIdx===2).involved.includes('m4'));
@@ -89,10 +89,42 @@ test('each performance and take uses its own substitution key',()=>{
 });
 test('VIEW summary contains absence-only songs and personal changes before or after assignment',()=>{
  const c=fixture();delete c.S.songs[0].blocks.A;delete c.S.gsubs['show|song'].A;
- let html=c.viewerSummaryBody();assert.equal((html.match(/member-absence-change/g)||[]).length,3);assert(!html.includes('quiet trio'));assert(html.includes('visible duo'));assert(html.includes('Song &lt;safe&gt;'));
- c.U.mode='member';c.selected=c.member('m2');html=c.viewerSummaryBody();assert.equal((html.match(/member-absence-change/g)||[]).length,2);assert(!html.includes('visible replacement'));
- c.selected=c.member('m4');html=c.viewerSummaryBody();assert.equal((html.match(/member-absence-change/g)||[]).length,2);assert(!html.includes('visible duo'));
- c.selected=c.member('m1');assert.equal((c.viewerSummaryBody().match(/member-absence-change/g)||[]).length,3);
+ let html=c.viewerSummaryBody();assert.equal((html.match(/member-absence-change/g)||[]).length,4);assert(html.includes('quiet trio'));assert(html.includes('visible duo'));assert(html.includes('Song &lt;safe&gt;'));
+ c.U.mode='member';c.selected=c.member('m2');html=c.viewerSummaryBody();assert.equal((html.match(/member-absence-change/g)||[]).length,1);assert(!html.includes('visible replacement'));assert(html.includes('一緒に歌うメンバーが変更'));
+ c.selected=c.member('m4');html=c.viewerSummaryBody();assert.equal((html.match(/member-absence-change/g)||[]).length,1);assert(!html.includes('visible duo'));assert(!html.includes('visible addition'));assert(html.includes('新しく担当'));
+ c.selected=c.member('m1');html=c.viewerSummaryBody();assert.equal((html.match(/member-absence-change/g)||[]).length,2);assert(html.includes('担当から外れます'));
+});
+test('personal changes exclude unison groups before or after replacement but preserve small roles',()=>{
+ const song={id:'s',blocks:{A:['a','b','c']},lines:[
+  {parts:['a','b'],t:'expansion'},
+  {parts:['a','b','c'],t:'reduction'},
+  {parts:['a','b','c','d'],main:['a','b','c'],extra:['d'],t:'solo harmony'},
+  {parts:['a','b','c','d'],main:['a'],extra:['b','c','d'],t:'solo melody'},
+  {label:'A',parts:['a','b','c'],t:'block group'}]};
+ const entries=Changes.entries(song,{absent:['a'],includeGroupReductions:true,
+  gsubs:{A:['b','c','e']},subs:{0:['b','c','e'],1:['b','c'],2:['a','b','c','e'],3:['b','c','d','e']}});
+ for(const entry of entries.filter(e=>e.kind==='block'||e.lineIdx<2))for(const id of entry.involved)assert.equal(Changes.forMember(entry,id),false);
+ const harmony=Changes.line(song,2,{absent:['d'],subs:{2:['a','b','c','e']}}),melody=entries.find(e=>e.lineIdx===3);
+ for(const id of ['d','e'])assert.equal(Changes.forMember(harmony,id),true);
+ for(const id of ['a','b','c'])assert.equal(Changes.forMember(harmony,id),false);
+ for(const id of ['a','e'])assert.equal(Changes.forMember(melody,id),true);
+ for(const id of ['b','c','d'])assert.equal(Changes.forMember(melody,id),false);
+});
+test('personal tabs exclude large unisons even before a member is selected',()=>{
+ const c=fixture();delete c.S.songs[0].blocks.A;delete c.S.gsubs['show|song'].A;
+ c.U.mode='member';c.U.absenceMode='member';
+ for(const html of [c.viewerSummaryBody(),c.viewMemberAbsence()]){
+  assert.equal((html.match(/member-absence-change/g)||[]).length,2);
+  assert(!html.includes('quiet trio'));assert(!html.includes('visible addition'));
+  assert(html.includes('visible duo'));assert(html.includes('visible replacement'));
+ }
+ c.U.mode='song';c.U.absenceMode='all';
+ for(const html of [c.viewerSummaryBody(),c.viewMemberAbsence()])assert.equal((html.match(/member-absence-change/g)||[]).length,4);
+});
+test('unresolved personal assignments say adjusting instead of claiming a confirmed change',()=>{
+ const c=fixture(),song=c.S.songs[0];delete c.S.subs['show|song'][2];
+ const entry=c.memberAbsenceChanges(song,'m1').find(e=>e.lineIdx===2),html=c.memberAbsenceRows(song,[entry],'m1');
+ assert(html.includes('調整中'));assert(!html.includes('新しく担当'));assert(!html.includes('一緒に歌うメンバーが変更'));
 });
 test('member screens expose no edit controls and rendering never changes saved data',()=>{
  const c=fixture(),before=JSON.stringify(c.S),html=c.viewAbsent()+c.viewerSummaryBody();

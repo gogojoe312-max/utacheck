@@ -15,7 +15,7 @@
     const blocks=new Set(options.blockLabels || []);
     return (members || []).filter(m=>m && !placeholderName(m.name) && !blocks.has(m.name));
   }
-  function classify(beforeValue, afterValue, absentValue, explicit) {
+  function classify(beforeValue, afterValue, absentValue, explicit, options={}) {
     const before=ids(beforeValue), after=ids(afterValue), absent=ids(absentValue);
     if (!absent.length || !before.length) return null;
     const added=after.filter(id=>!before.includes(id)), removed=before.filter(id=>!after.includes(id));
@@ -24,8 +24,8 @@
     if (!explicit) status=affected ? "need" : "";
     else if (after.some(id=>absent.includes(id)) || !after.length && affected) status="need";
     else if (!same(before,after)) {
-      // A 3+ person group merely losing members does not need member emphasis.
-      if (!(before.length >= 3 && after.length > 0 && !added.length && removed.length)) status="changed";
+      // Keep lyric emphasis quiet for group reductions, but include them in the song overview.
+      if (options.includeGroupReductions || !(before.length >= 3 && after.length > 0 && !added.length && removed.length)) status="changed";
     }
     return status ? {status,before,after,added,removed,involved:ids(before.concat(after))} : null;
   }
@@ -37,7 +37,7 @@
     const explicit=Array.isArray((context.subs || {})[index]);
     if (!explicit && Object.prototype.hasOwnProperty.call(song.blocks || {},label)) return null;
     const after=explicit ? context.subs[index] : before;
-    const diff=classify(before,after,context.absent,explicit);
+    const diff=classify(before,after,context.absent,explicit,context);
     if (!diff) return null;
     const beforeMain=ids(row.main || before), beforeExtra=ids(row.extra);
     const keepMain=diff.after.filter(id=>beforeMain.includes(id)), keepExtra=diff.after.filter(id=>beforeExtra.includes(id));
@@ -53,7 +53,7 @@
     const before=(song.blocks || {})[label];
     if (!Array.isArray(before)) return null;
     const explicit=Array.isArray((context.gsubs || {})[label]);
-    const diff=classify(before,explicit ? context.gsubs[label] : before,context.absent,explicit);
+    const diff=classify(before,explicit ? context.gsubs[label] : before,context.absent,explicit,context);
     if (!diff) return null;
     const referenced=(song.lines || []).flatMap((row,index)=>!row.gap && !row.cut && String(row.label || "").trim()===label ? [index] : []);
     const lineIndices=referenced.filter(index=>!Array.isArray((context.subs || {})[index]));
@@ -76,5 +76,10 @@
     });
     return blocks.concat(rows);
   }
-  return Object.freeze({placeholderName,eligibleMembers,classify,line,block,entries});
+  function forMember(entry, memberId) {
+    // A solo harmony remains personal even when the main melody has 3+ singers.
+    return [[entry.beforeMain,entry.afterMain],[entry.beforeExtra,entry.afterExtra]].some(([before,after])=>
+      (before.includes(memberId) || after.includes(memberId)) && before.length < 3 && after.length < 3);
+  }
+  return Object.freeze({placeholderName,eligibleMembers,classify,line,block,entries,forMember});
 });

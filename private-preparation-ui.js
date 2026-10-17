@@ -100,8 +100,9 @@
   if(status.kind==='connected')return '進行アプリの読み取り接続を保存しました。更新を自動で確認します。';
   if(status.kind==='connection-error')return '接続を保存できませんでした。アプリを開き直して確認してください。';
   if(status.kind==='invalid-read-token')return 'GitHubで作成した読み取り専用の fine-grained token を入力してください。';
-  if(status.kind==='applied')return '進行アプリから資料を取り込みました。'+(status.conflicts?'既存の内容と重なる資料は保留しています。':'');
-  if(status.kind==='current')return '進行アプリの資料は、この端末に反映済みです。';
+  const originals=status.originals,originalText=originals?.files?' 元Excel '+originals.files+'件を保存、'+originals.linked+'曲にリンクしました。'+(originals.unmatched?' '+originals.unmatched+'件は一致する曲がなく、原本を保管しています。':''):'';
+  if(status.kind==='applied')return '進行アプリから資料を取り込みました。'+originalText+(status.conflicts?'既存の内容と重なる資料は保留しています。':'');
+  if(status.kind==='current')return '進行アプリの資料は、この端末に反映済みです。'+originalText;
   if(status.kind==='checking')return '進行アプリの資料を確認しています…';
   if(status.kind==='active-plan')return '進行中の枠が残っているため、予定の反映を待っています。実際には未開始なら、その枠の「その他」から開始状態だけ解除できます。';
   if(status.kind==='deferred')return waitingText(status.reason);
@@ -228,10 +229,35 @@
    throw error;
   }finally{if(app)app.inert=!recordingInboxCanWrite();}
  }
- async function applyOne(operation,token,sourceSha,localSource){
+ async function originalExcelPresent(packet){
+  PrivatePreparation.checkOriginalExcel(packet);
+  for(const file of [packet,...(packet.exportFile?[packet.exportFile]:[])]){
+   const blob=await getClip('xls:sha256-'+file.sha256);
+   if(!(blob instanceof Blob)||blob.size!==file.size||await startupExcelDigest(blob)!==file.sha256)return false;
+  }
+  return true;
+ }
+ async function originalTargetFingerprint(current){
+  // Track matching inputs across reloads, including deliberate cell edits and
+  // new performance/take copies. Notes, recordings and attachment timestamps
+  // cannot change which workbook belongs to a song and do not trigger parsing.
+  const keys=['id','title','artist','groupId','showId','take','xlsSourceId','sheetName','micSheet','micMap','blocks','blockCells','blockRows','roster','lines'];
+  const songs=items=>(items||[]).filter(so=>!so.hidden&&Array.isArray(so.lines)&&(so.xls||so.xlsSourceId||so.sheetName||so.lines.some(line=>line.cell||line.lcell)))
+   .map(so=>Object.fromEntries(keys.filter(key=>Object.prototype.hasOwnProperty.call(so,key)).map(key=>[key,so[key]])));
+  return PrivatePreparation.digest({songs:songs(current.songs),rsongs:songs(current.rsongs),members:(current.members||[]).map(member=>[member.id,member.name])});
+ }
+ function originalSummary(manifest){
+  const result={files:0,linked:0,stored:0,unmatched:0};
+  for(const op of manifest.operations){const receipt=S.privatePreparations?.[op.id];
+   if(op.type!=='original-excel'||receipt?.type!==op.type||receipt.sha256!==op.sha256)continue;
+   result.files++;for(const key of ['linked','stored','unmatched'])if(Number.isSafeInteger(receipt[key])&&receipt[key]>=0)result[key]+=receipt[key];
+  }
+  return result;
+ }
+ async function applyOne(operation,token,sourceSha,localSource,originalBatch){
   if(!ready()||sourceToken()!==token)throw failure('DEFERRED');
   const receipt=S.privatePreparations?.[operation.id];
-  if(receipt){if(receipt.sha256!==operation.sha256||receipt.type!==operation.type)throw failure('OPERATION_ID_REUSED');return false;}
+  if(receipt){if(receipt.sha256!==operation.sha256||receipt.type!==operation.type)throw failure('OPERATION_ID_REUSED');if(operation.type!=='original-excel')return false;}
   const gate=recordingInboxIntegration?.gate,releaseGate=gate?.acquire();if(!releaseGate)throw failure('DEFERRED');
   let release,committed=false;applying=true;const app=document.getElementById('app');if(app)app.inert=true;
   try{
@@ -240,8 +266,16 @@
    await saveNow();if(saveErr)throw failure('LOCAL_SAVE_UNCONFIRMED');
    const original=JSON.stringify(S),revision=stateRevision,view=JSON.stringify(U);
    const selectedSongId=!S.recMode && typeof song==='function' ? song()?.id : null;
-   const next=PrivatePreparation.apply(S,operation,{schedule:RecordingScheduleUpdate.apply,recording:mergeRecordingAddition}).state;
    const active=()=>startupPhase==='ready'&&recordingInboxCanWrite()&&recordingInboxOwner?.canWrite&&!document.hidden&&sourceToken()===token&&stateRevision===revision&&JSON.stringify(S)===original&&JSON.stringify(U)===view&&!REC&&!recordingStartPending&&!recordingFinalizePending&&!pitchStartPending&&!saving&&!syncing&&!manualSync&&!backupInFlight&&!publishInFlight&&!U.busy&&!U.importing&&!U.sheet&&!U.menu&&!U.showRecovery;
+   let prepared;
+   if(operation.type==='original-excel'){
+    if(typeof prepareOriginalExcelAttachment!=='function')throw failure('UNSUPPORTED');
+    prepared=await prepareOriginalExcelAttachment(S,operation.packet,{isActive:active});
+    if(!active())throw failure('DEFERRED');
+    prepared={...prepared,targetSha256:await originalTargetFingerprint(prepared.state)};
+    if(!active())throw failure('DEFERRED');
+   }
+   const applied=PrivatePreparation.apply(S,operation,{schedule:RecordingScheduleUpdate.apply,recording:mergeRecordingAddition,originalExcel:()=>prepared}),next=applied.state;
    const slots=await Promise.all([idbGet('state:0'),idbGet('state:1')]),hold=await idbGet('recovery:network-hold:v1'),legacy=localStorage.getItem(KEY);
    if(!active())throw failure('DEFERRED');
    if(localSource){
@@ -252,12 +286,25 @@
     const matched=fresh.operations.find(op=>op.id===operation.id);
     if(!matched||JSON.stringify(matched)!==JSON.stringify(operation))throw failure('PREPARATION_SOURCE_CHANGED');
     if(!active())throw failure('DEFERRED');
-   }else if(root.ProgressPreparationSource||operation.type==='material-update'||operation.type==='recording-song'){
+   }else if(operation.type==='original-excel'&&originalBatch?.confirmed?.get(operation.id)===JSON.stringify(operation)){
+    // Original bytes and packet hashes are immutable. Reuse the one confirmed
+    // source snapshot only within this reception batch; every local match,
+    // content-addressed blob and editor revision is still checked separately.
+    if(!active())throw failure('DEFERRED');
+   }else if(root.ProgressPreparationSource||['material-update','recording-song','original-excel'].includes(operation.type)){
     const fresh=await readSource({...config,token,isActive:active});
     if(fresh.status!=='ready'||fresh.sourceSha!==sourceSha)throw failure('PREPARATION_SOURCE_CHANGED');
-    await PrivatePreparation.validate(fresh.manifest,config.owner);
+    const checked=await PrivatePreparation.validate(fresh.manifest,config.owner);
+    if(operation.type==='original-excel'){
+     const confirmed=new Map(checked.operations.filter(op=>op.type==='original-excel').map(op=>[op.id,JSON.stringify(op)]));
+     if(confirmed.get(operation.id)!==JSON.stringify(operation))throw failure('PREPARATION_SOURCE_CHANGED');
+     if(originalBatch)originalBatch.confirmed=confirmed;
+    }
     if(!active())throw failure('DEFERRED');
    }
+   // Restoring a JSON backup can restore a receipt without its Excel blobs.
+   // Preparation has independently verified those blobs before this no-op.
+   if(operation.type==='original-excel'&&applied.status==='already-applied')return true;
    const nextRaw=JSON.stringify(packState(next));recoveryValidateCloudState(JSON.parse(nextRaw));
    const stored=await RecoveryDeliveryStore.commit({database:()=>DB,hash:backupDigest,isActive:active,readLegacy:()=>localStorage.getItem(KEY),expectedLegacyRaw:legacy,
     expectedSlotsRaw:JSON.stringify(slots),expectedHoldRaw:JSON.stringify(hold),allowMissingHold:true,originalStateRaw:original,nextStateRaw:nextRaw,remoteCopies:[]});
@@ -296,27 +343,37 @@
    const manifest=await PrivatePreparation.validate(source.manifest,config.owner);
    if(!ready()||sourceToken()!==token)throw failure('DEFERRED');
    const activeSlots=(S.plan?.slots||[]).filter(x=>x.a0!=null&&x.a1==null),activePlan=activeSlots.length>0;
-   const unapplied=manifest.operations.filter(op=>!S.privatePreparations?.[op.id]||S.privatePreparations[op.id].sha256!==op.sha256||S.privatePreparations[op.id].type!==op.type);
+   const unapplied=[],targetSha256=manifest.operations.some(op=>op.type==='original-excel')?await originalTargetFingerprint(S):null;
+   for(const op of manifest.operations){
+    const receipt=S.privatePreparations?.[op.id];
+    if(!receipt||receipt.sha256!==op.sha256||receipt.type!==op.type||op.type==='original-excel'&&(receipt.targetSha256!==targetSha256||!await originalExcelPresent(op.packet)))unapplied.push(op);
+    if(!ready()||sourceToken()!==token)throw failure('DEFERRED');
+   }
    // A past slot left started must not hide an independent future session.
    // Append-only future dates preserve every existing slot and selected song.
    // Same-day corrections and dates we cannot compare still wait.
    const futureAddition=op=>op.type==='recording-addition'&&Array.isArray(op.packet.plan?.slots)&&op.packet.plan.slots.length>0
     &&activeSlots.every(current=>/^\d{4}-\d{2}-\d{2}$/.test(current.date||'')&&op.packet.plan.slots.every(next=>/^\d{4}-\d{2}-\d{2}$/.test(next.date||'')&&next.date>current.date));
-   const eligible=unapplied.filter(op=>!activePlan||op.type==='recording-song'||futureAddition(op));
+   const eligible=unapplied.filter(op=>!activePlan||['recording-song','original-excel'].includes(op.type)||futureAddition(op));
    const pending=eligible;
    if(unapplied.length&&!pending.length){setStatus({kind:'active-plan'});return {status:'deferred'};}
-   if(!pending.length){setStatus({kind:'current',sourceSha:source.sourceSha});return {status:'current'};}
+   if(!pending.length){setStatus({kind:'current',sourceSha:source.sourceSha,originals:originalSummary(manifest)});return {status:'current'};}
    await establishOwner();if(sourceToken()!==token)throw failure('DEFERRED');
-   let count=0,conflicts=0,addedRecording=false;
+   let count=0,conflicts=0,addedRecording=false;const originalBatch={};
    for(const operation of pending){
     // Check each independent addition against the current device. An older
     // conflicting packet must not keep a later, unrelated session out forever.
-    try{PrivatePreparation.apply(S,operation,{schedule:RecordingScheduleUpdate.apply,recording:mergeRecordingAddition});}
+    try{
+     if(operation.type==='original-excel'){
+      PrivatePreparation.checkOriginalExcel(operation.packet);
+      const receipt=S.privatePreparations?.[operation.id];if(receipt&&(receipt.sha256!==operation.sha256||receipt.type!==operation.type))throw failure('OPERATION_ID_REUSED');
+     }else PrivatePreparation.apply(S,operation,{schedule:RecordingScheduleUpdate.apply,recording:mergeRecordingAddition});
+    }
     catch(error){if(error.preparationCode==='OPERATION_ID_REUSED')throw error;conflicts++;continue;}
-    if(await applyOne(operation,token,source.sourceSha)){count++;if(['recording-song','recording-addition'].includes(operation.type))addedRecording=true;}
+    if(await applyOne(operation,token,source.sourceSha,undefined,originalBatch)){count++;if(['recording-song','recording-addition'].includes(operation.type))addedRecording=true;}
    }
    if(addedRecording){U.recArtistFilter='';render();}
-   setStatus({kind:count?'applied':conflicts?'conflict':'current',count,conflicts,sourceSha:source.sourceSha});return {status:status.kind,count,conflicts};
+   const originals=originalSummary(manifest);setStatus({kind:count?'applied':conflicts?'conflict':'current',count,conflicts,sourceSha:source.sourceSha,originals});return {status:status.kind,count,conflicts,originals};
   }catch(error){const code=error.preparationCode||error.code||'PREPARATION_CONFLICT';
    const reason=code==='DEFERRED'?waitingReason():undefined;
    setStatus({kind:code==='CREDENTIAL_UNREADABLE'?'connection-error':code==='DEFERRED'?'deferred':code==='MULTIPLE_WINDOWS'?'multiple-windows':code==='OWNER_REQUIRED'?'owner-required':code==='UNSUPPORTED'?'unsupported':code==='SAVE_UNVERIFIED'?'unverified':'conflict',code,reason});

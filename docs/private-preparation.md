@@ -60,6 +60,31 @@ Supported types:
   setlist order, singer assignments or dates belong in the queue.
 - `live-update`: narrow corrections to existing private group/show/song identities,
   with complete before values and no deletion or inferred lyric mapping.
+- `original-excel`: one immutable original workbook per operation. Its packet has
+  `app: utacheck-original-excel`, `version: 1`, `name`, decoded-byte `size`, binary
+  `sha256`, and canonical `base64`. XLS/XLSB originals may also have an `exportFile`
+  containing those four file fields for a separately preserved XLSX copy. Each
+  file is bounded to 16 MiB; the existing private manifest limit remains 15 MiB.
+  The device verifies the bytes and exact existing workbook layout before linking
+  any song. It preserves unmatched files without creating songs. Source files
+  and export copies are stored by digest and read back before the state/receipt
+  transaction. A receipt records `linked`, `stored`, and `unmatched` counts and a
+  `targetSha256` fingerprint of eligible existing song identities, matching
+  material/cell metadata, and member names. New songs, changed matching material,
+  or restored receipts without that fingerprint trigger another exact match.
+  Later matches update the counts and target fingerprint while preserving the
+  original operation hash, type and first receipt time. Notes, recordings and
+  attachment timestamps do not trigger workbook parsing.
+
+Original workbooks use one rechecked private source snapshot per reception batch,
+with a validated immutable packet hash for every file. This avoids repeatedly
+transferring all workbooks and exceeding the relay's request limit. Each file
+still gets a separate local concurrency check, exact match, verified blob save,
+state backup and receipt transaction. Other preparation types retain their
+per-operation source check. A changed source at snapshot confirmation aborts the
+batch. Matching original receipts do not hide missing or corrupted file blobs:
+the device checks both original and export hashes and receives them again when
+needed, preserving the existing receipt and later song edits.
 
 ## Existing LIVE correction contract
 

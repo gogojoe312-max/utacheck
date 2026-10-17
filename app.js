@@ -113,7 +113,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.26";
+const APP_VER = "16.41.58.27";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -2961,15 +2961,18 @@ async function addVersionTab(buf, tabName, edits, srcSheet) {
   let ct    = dec(files['[Content_Types].xml']);
 
   // A named source must never fall back to the cover or a different arrangement.
+  const xmlText = text => text.replace(/&(?:amp|lt|gt|quot|apos|#\d+|#x[\da-fA-F]+);/g,entity => {
+    const named = {"&amp;":"&","&lt;":"<","&gt;":">","&quot;":'"',"&apos;":"'"};
+    if (named[entity]) return named[entity];
+    const number = entity.startsWith("&#x") ? parseInt(entity.slice(3,-1),16) : Number(entity.slice(2,-1));
+    return Number.isInteger(number) && number > 0 && number <= 0x10ffff ? String.fromCodePoint(number) : entity;
+  });
   const attr = (tag,name) => {
     const match = new RegExp("(?:^|\\s)" + name + "\\s*=\\s*([\"'])([\\s\\S]*?)\\1").exec(tag);
-    return match ? match[2].replace(/&(?:amp|lt|gt|quot|apos|#\d+|#x[\da-fA-F]+);/g,entity => {
-      const named = {"&amp;":"&","&lt;":"<","&gt;":">","&quot;":'"',"&apos;":"'"};
-      if (named[entity]) return named[entity];
-      const number = entity.startsWith("&#x") ? parseInt(entity.slice(3,-1),16) : Number(entity.slice(2,-1));
-      return Number.isInteger(number) && number > 0 && number <= 0x10ffff ? String.fromCodePoint(number) : entity;
-    }) : "";
+    return match ? xmlText(match[2]) : "";
   };
+  const setAttr = (tag,name,value) => tag.replace(new RegExp("(\\s"+name+"\\s*=\\s*)([\"'])([\\s\\S]*?)\\2"),
+    (_,prefix,quote) => prefix+quote+esc(value).replace(/"/g,"&quot;").replace(/'/g,"&apos;")+quote);
   const sheets = wbxml.match(/<sheet\b[^>]*>/g) || [];
   const first = srcSheet ? sheets.find(tag => attr(tag,"name") === srcSheet) : sheets[0];
   const rid = first && attr(first,"r:id");
@@ -3109,8 +3112,6 @@ async function addVersionTab(buf, tabName, edits, srcSheet) {
     return '<row r="' + r + '"' + rest + 'spans="' + a + ':' + mx + '"';
   });
 
-  sheet = sheet.replace(/<drawing[^>]*\/>/g, '').replace(/<legacyDrawing[^>]*\/>/g, '');
-
   // 新しいシートを登録して一番左に置く
   const nums = names.map((n) => (/xl\/worksheets\/sheet(\d+)\.xml/.exec(n) || [])[1]).filter(Boolean).map(Number);
   const newNum = (nums.length ? Math.max.apply(null, nums) : 0) + 1;
@@ -3125,14 +3126,88 @@ async function addVersionTab(buf, tabName, edits, srcSheet) {
     const tail = ` (${suffix++})`; safe = baseName.slice(0, 31 - tail.length) + tail;
   }
 
-  files['xl/workbook.xml'] = enc(wbxml.replace('<sheets>', '<sheets><sheet name="' + esc(safe).replace(/"/g, '&quot;') + '" sheetId="' + newSid + '" r:id="' + newRid + '"/>'));
+  const newPath = 'xl/worksheets/sheet' + newNum + '.xml';
+  const relPath = part => part.replace(/([^/]+)$/, '_rels/$1.rels');
+  const putPart = (path,bytes) => { files[path] = bytes; if (!names.includes(path)) names.push(path); };
+  const resolvePart = (part,target) => {
+    if (/^[a-z][a-z0-9+.-]*:/i.test(target) || /[\\?#]/.test(target)) throw new Error("元Excelの図形参照を確認できません。");
+    const path = target.startsWith('/') ? [] : part.split('/').slice(0,-1);
+    for (const encoded of target.split('/')) {
+      const segment = decodeURIComponent(encoded);
+      if (!segment || segment === '.') continue;
+      if (segment === '..') { if (!path.length) throw new Error("元Excelの図形参照を確認できません。"); path.pop(); }
+      else { if (/[\\/]/.test(segment)) throw new Error("元Excelの図形参照を確認できません。"); path.push(segment); }
+    }
+    return path.join('/');
+  };
+  const relativePart = (part,target) => {
+    const from = part.split('/').slice(0,-1), to = target.split('/');
+    while (from.length && to.length && from[0] === to[0]) { from.shift(); to.shift(); }
+    return [...from.map(() => '..'),...to].map(encodeURIComponent).join('/');
+  };
+  const copied = new Map();
+  const clonePart = part => {
+    if (copied.has(part)) return copied.get(part);
+    if (!files[part]) throw new Error("元Excelの図形・コメントを読み込めません。");
+    const dot = part.lastIndexOf('.'), stem = dot > part.lastIndexOf('/') ? part.slice(0,dot) : part;
+    const extension = part.slice(stem.length);
+    let index = 1, next;
+    do { next = stem + '_copy' + index++ + extension; } while (files[next] || files[relPath(next)]);
+    copied.set(part,next); putPart(next,files[part]);
+    const type = (ct.match(/<Override\b[^>]*>/g) || []).find(tag => resolvePart('',attr(tag,'PartName')) === part);
+    if (type) ct = ct.replace('</Types>',setAttr(type,'PartName','/'+next)+'</Types>');
+    const dependencies = files[relPath(part)];
+    if (dependencies) {
+      const nextRels = dec(dependencies).replace(/<Relationship\b[^>]*>/g,tag => {
+        if (attr(tag,'TargetMode') === 'External') return tag;
+        const child = clonePart(resolvePart(part,attr(tag,'Target')));
+        return setAttr(tag,'Target',relativePart(next,child));
+      });
+      putPart(relPath(next),enc(nextRels));
+    }
+    return next;
+  };
+  const sourceRels = files[relPath(srcPath)];
+  if (sourceRels) {
+    const nextRels = dec(sourceRels).replace(/<Relationship\b[^>]*>/g,tag => {
+      if (attr(tag,'TargetMode') === 'External') return tag;
+      const original = resolvePart(srcPath,attr(tag,'Target'));
+      // These parts belong to the copied sheet. Unrelated shared workbook parts
+      // (for example tables with global IDs) must not be duplicated blindly.
+      const owned = /\/(?:drawing|vmlDrawing|comments|printerSettings)$/.test(attr(tag,'Type'));
+      const destination = owned ? clonePart(original) : original;
+      return setAttr(tag,'Target',relativePart(newPath,destination));
+    });
+    putPart(relPath(newPath),enc(nextRels));
+  }
+
+  // localSheetId is a zero-based position, not sheetId. Inserting at the front
+  // shifts every old scope; copy the source's local names for the new sheet.
+  const sourceIndex = sheets.indexOf(first), sourceName = attr(first,'name'), localNames = [];
+  const newReference = "'" + safe.replace(/'/g,"''") + "'!";
+  const renameReferences = formula => formula.replace(/"(?:[^"]|"")*"|'(?:[^']|'')*'!|[^\s!"'()+\-*/^&=<>%,;{}]+!/g,token => {
+    if (token.startsWith('"')) return token;
+    const name = token.startsWith("'") ? token.slice(1,-2).replace(/''/g,"'") : token.slice(0,-1);
+    return name.toLowerCase() === sourceName.toLowerCase() ? newReference : token;
+  });
+  let nextWorkbook = wbxml.replace(/<definedName\b[^>]*(?:\/>|>[\s\S]*?<\/definedName>)/g,entry => {
+    const end = entry.indexOf('>'), opening = entry.slice(0,end+1), local = attr(opening,'localSheetId');
+    if (!/^\d+$/.test(local)) return entry;
+    if (Number(local) === sourceIndex) {
+      const copy = setAttr(opening,'localSheetId',0);
+      const body = entry.slice(end+1,-'</definedName>'.length);
+      localNames.push(opening.endsWith('/>') ? copy : copy+esc(renameReferences(xmlText(body)))+'</definedName>');
+    }
+    return setAttr(opening,'localSheetId',Number(local)+1)+entry.slice(end+1);
+  });
+  if (localNames.length) nextWorkbook = nextWorkbook.replace('</definedNames>',localNames.join('')+'</definedNames>');
+  files['xl/workbook.xml'] = enc(nextWorkbook.replace('<sheets>', '<sheets><sheet name="' + esc(safe).replace(/"/g, '&quot;') + '" sheetId="' + newSid + '" r:id="' + newRid + '"/>'));
   files['xl/_rels/workbook.xml.rels'] = enc(rels.replace('</Relationships>',
     '<Relationship Id="' + newRid + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet' + newNum + '.xml"/></Relationships>'));
   files['[Content_Types].xml'] = enc(ct.replace('</Types>',
     '<Override PartName="/xl/worksheets/sheet' + newNum + '.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>'));
   files['xl/styles.xml'] = enc(st);
   files['xl/sharedStrings.xml'] = enc(ss);
-  const newPath = 'xl/worksheets/sheet' + newNum + '.xml';
   files[newPath] = enc(sheet);
   if (names.indexOf(newPath) < 0) names.push(newPath);
   return { data: await zip(files, names), changed };
@@ -5158,42 +5233,87 @@ function originalExcelSourceGroupAllowed(so,key) {
   const known = aliases.map(groupOf).filter(Boolean);
   return !known.length || !!target && known.includes(target);
 }
-async function inspectOriginalExcel(so, blob, prepared) {
-  if (!(blob instanceof Blob) || !blob.size || blob.size > 16 * 1024 * 1024) return false;
-  const expected = originalExcelLayout(so);
-  if (!expected) return false;
-  const bytes = prepared?.bytes || new Uint8Array(await blob.arrayBuffer());
-  if (!startupExcelWithinBudget(bytes)) return false;
-  let wb = prepared?.workbook;
+async function readOriginalExcel(blob, prepared = {}) {
+  if (!(blob instanceof Blob) || !blob.size || blob.size > 16 * 1024 * 1024) return null;
+  if (prepared.validated) return prepared;
+  const bytes = prepared.bytes || new Uint8Array(await blob.arrayBuffer());
+  if (!startupExcelWithinBudget(bytes)) return null;
+  let wb = prepared.workbook;
   if (!wb) {
     try { wb = XLSX.read(bytes,{type:"array",cellStyles:true,bookFiles:true}); }
     catch (_) { wb = XLSX.read(bytes,{type:"array",bookFiles:true}); }
-    if (prepared) prepared.workbook = wb;
   }
-  if (!Array.isArray(wb.SheetNames) || !wb.SheetNames.includes(so.sheetName)
-    || new Set(wb.SheetNames).size !== wb.SheetNames.length || wb.SheetNames.length > 32
-    || (so.micSheet && !wb.SheetNames.includes(so.micSheet))) return false;
+  if (!Array.isArray(wb.SheetNames) || new Set(wb.SheetNames).size !== wb.SheetNames.length || wb.SheetNames.length > 32) return null;
   let cells = 0, gridCells = 0;
   for (const sheet of Object.values(wb.Sheets || {})) {
     for (const address of Object.keys(sheet)) if (/^[A-Z]+[1-9]\d*$/.test(address)) {
       const point = XLSX.utils.decode_cell(address);
-      if (point.r >= 20000 || point.c >= 512 || ++cells > 250000) return false;
+      if (point.r >= 20000 || point.c >= 512 || ++cells > 250000) return null;
     }
     trimExcelRange(sheet);
     if (sheet["!ref"]) {
       const range = XLSX.utils.decode_range(sheet["!ref"]);
       gridCells += (range.e.r + 1) * (range.e.c + 1);
-      if (gridCells > 1500000) return false;
+      if (gridCells > 1500000) return null;
     }
   }
-  let layout = prepared?.layouts?.get(so.sheetName);
-  if (layout === undefined) {
-    const parsed = await parseXLSX({name:"original.xlsx"},bytes,{state:S,workbook:wb,sheetName:so.sheetName});
+  Object.assign(prepared,{bytes,workbook:wb,validated:true});
+  prepared.songs ||= new Map(); prepared.layouts ||= new Map();
+  return prepared;
+}
+async function originalExcelSheet(prepared, sheetName, current = S) {
+  if (!prepared.workbook.SheetNames.includes(sheetName)) return null;
+  if (!prepared.songs.has(sheetName)) {
+    const parsed = await parseXLSX({name:"original.xlsx"},prepared.bytes,{state:current,workbook:prepared.workbook,sheetName});
     const candidate = buildSong(parsed,{addMember:name => ({id:name}),uid:() => "original-excel-inspection"});
-    layout = originalExcelLayout(candidate,id => id);
-    prepared?.layouts?.set(so.sheetName,layout);
+    prepared.songs.set(sheetName,candidate);
+    prepared.layouts.set(sheetName,originalExcelLayout(candidate,id => id));
   }
-  return layout === expected;
+  return prepared.songs.get(sheetName);
+}
+async function inspectOriginalExcel(so, blob, prepared, current = S) {
+  const expected = originalExcelLayout(so,id => (current.members || []).find(m => m.id === id)?.name);
+  if (!expected) return false;
+  const source = await readOriginalExcel(blob,prepared);
+  if (!source || !source.workbook.SheetNames.includes(so.sheetName)
+    || so.micSheet && !source.workbook.SheetNames.includes(so.micSheet)) return false;
+  await originalExcelSheet(source,so.sheetName,current);
+  return source.layouts.get(so.sheetName) === expected;
+}
+// Reattachment may restore omitted Excel metadata, never lyric or assignment data.
+// Existing addresses must still match; an ambiguous worksheet is not guessed.
+async function originalExcelAttachment(so, blob, prepared = {}, current = S) {
+  if (!Array.isArray(so.lines) || !so.lines.some(l => l.t)) return null;
+  if (await inspectOriginalExcel(so,blob,prepared,current)) return so;
+  const source = await readOriginalExcel(blob,prepared);
+  if (!source) return null;
+  const candidates = [];
+  for (const sheetName of source.workbook.SheetNames) {
+    if (so.sheetName && so.sheetName !== sheetName) continue;
+    let candidate;
+    try { candidate = await originalExcelSheet(source,sheetName,current); } catch (_) { continue; }
+    if (candidate.lines.length !== so.lines.length) continue;
+    const repaired = {...so,
+      sheetName:so.sheetName || candidate.sheetName,
+      micSheet:so.micSheet || candidate.micSheet,
+      micMap:so.micMap || candidate.micMap,
+      blockCells:{...candidate.blockCells,...so.blockCells},
+      blockRows:so.blockRows?.length ? so.blockRows : candidate.blockRows,
+      lines:so.lines.map((line,i) => ({...line,cell:line.cell || candidate.lines[i].cell,
+        lcell:line.lcell || candidate.lines[i].lcell,extraCell:line.extraCell || candidate.lines[i].extraCell}))};
+    if (originalExcelLayout(repaired,id => (current.members || []).find(m => m.id === id)?.name) === source.layouts.get(sheetName)) candidates.push(repaired);
+  }
+  return candidates.length === 1 ? candidates[0] : null;
+}
+function attachOriginalExcelMetadata(so, repaired, sourceId, at) {
+  // The existing objects and annotation indexes remain stable.
+  for (const key of ["sheetName","micSheet","micMap","blockCells","blockRows"]) {
+    if (JSON.stringify(so[key]) !== JSON.stringify(repaired[key])) so[key] = repaired[key];
+  }
+  so.lines.forEach((line,i) => {
+    for (const key of ["cell","lcell","extraCell"]) if (repaired.lines[i][key] && line[key] !== repaired.lines[i][key]) line[key] = repaired.lines[i][key];
+  });
+  so.xlsSourceId = sourceId; so.xls = 1; so.xlsAt = at;
 }
 async function storedOriginalExcelEntries() {
   const d = await db();
@@ -5275,7 +5395,7 @@ function originalExcelRepairHTML(ids) {
 }
 function originalExcelFileInput(songId, batch = false) {
   if (VIEW() || preview || U.importing) return;
-  if (!S.songs.some(so => so.id === songId)) return;
+  if (!(batch && songId === "__all__") && !S.songs.some(so => so.id === songId)) return;
   U.excelAttachId = songId; U.excelAttachBatch = batch;
   let input = document.getElementById("exceloriginalfile");
   if (!input) {
@@ -5301,13 +5421,14 @@ async function reattachOriginalExcel(songId,file) {
     U.busy = "元Excelと歌詞・担当・セル位置を照合しています…"; render();
     if (file.size > 16 * 1024 * 1024) throw new Error("元Excelが大きすぎます。16MB以下の元ファイルを選んでください。");
     const blob = new Blob([await file.arrayBuffer()]);
-    if (!await inspectOriginalExcel(so,blob)) throw new Error("歌詞・担当・セル位置が現在の曲と一致しません。このファイルは紐付けていません。取り込み前の元Excelを選んでください。");
+    const repaired = await originalExcelAttachment(so,blob);
+    if (!repaired) throw new Error("歌詞・担当・セル位置が現在の曲と一致しません。このファイルは紐付けていません。取り込み前の元Excelを選んでください。");
     if (!unchanged()) throw new Error("確認中に曲が変わりました。もう一度元Excelを選んでください。");
     if (!await automaticBackupBeforeEdit("original-excel-reattach")) return false;
     if (!unchanged()) throw new Error("保存前に曲が変わりました。もう一度元Excelを選んでください。");
     const sourceId = await storeOriginalExcel(blob);
     if (!unchanged()) throw new Error("保存中に曲が変わりました。元Excelは保管しましたが紐付けは変更していません。");
-    so.xlsSourceId = sourceId; so.xls = 1; so.xlsAt = Date.now();
+    attachOriginalExcelMetadata(so,repaired,sourceId,Date.now());
     delete XLOOK[so.id];
     const expected = JSON.stringify(packState(S)); save(); await saveNow();
     if (saveErr || await loadRaw() !== expected || JSON.stringify(packState(S)) !== expected)
@@ -5319,14 +5440,17 @@ async function reattachOriginalExcel(songId,file) {
 }
 
 function originalExcelGroupTargets(songId) {
+  const all = songId === "__all__";
   const selected = S.songs.find(so => so.id === songId);
   const groupOf = so => so.groupId || S.shows.find(sh => sh.id === so.showId)?.groupId || "";
   const groupId = selected && groupOf(selected);
-  if (!groupId) throw new Error("対象グループを確認できません。公演を選び直してください。");
-  const songs = S.songs.filter(so => !so.hidden && groupOf(so) === groupId && (so.xls || so.sheetName));
+  if (!all && !groupId) throw new Error("対象グループを確認できません。公演を選び直してください。");
+  const songs = [...S.songs,...(all ? S.rsongs || [] : [])].filter(so => !so.hidden && (all || groupOf(so) === groupId)
+    && (so.xls || so.xlsSourceId || so.sheetName || so.lines?.some(l => l.cell || l.lcell)));
   if (new Set(songs.map(so => so.id)).size !== songs.length) throw new Error("曲IDが重複しているため、紐付けを変更していません。");
   return songs;
 }
+
 async function reattachOriginalExcelBatch(songId, files) {
   const release = enterRecordingInboxEditor();
   if (!release) return false;
@@ -5340,12 +5464,12 @@ async function reattachOriginalExcelBatch(songId, files) {
     const beforeDraft = draft(), unchanged = () => S === state && JSON.stringify(S) === before && draft() === beforeDraft
       && !typingNow() && !VIEW() && !preview && recordingInboxCanWrite();
     const assertCurrent = () => { if (!unchanged()) throw new Error("照合中に編集内容が変わりました。紐付けは変更していません。"); };
-    const layouts = new Map(), matches = new Map(), blobs = new Map(), failed = [], warnings = [];
+    const layouts = new Map(), matches = new Map(), repairs = new Map(), blobs = new Map(), failed = [], warnings = [];
     for (const so of songs) {
-      let layout = ""; try { layout = originalExcelLayout(so); } catch (_) {}
+      let layout = ""; try { layout = originalExcelLayout({...so,sheetName:so.sheetName || "__missing__",lines:so.lines.map(l => ({...l,lcell:l.lcell || "__missing__"}))}); } catch (_) {}
       if (!layout) { warnings.push(songName(so) + "：元Excelのセル対応を確認できないため保留"); continue; }
       if (!layouts.has(layout)) layouts.set(layout,[]);
-      layouts.get(layout).push(so); matches.set(so.id,new Set());
+      layouts.get(layout).push(so); matches.set(so.id,new Set()); repairs.set(so.id,new Map());
     }
     for (let i=0; i<selected.length; i++) {
       assertCurrent();
@@ -5359,15 +5483,14 @@ async function reattachOriginalExcelBatch(songId, files) {
         if (blobs.has(digest)) continue;
         const prepared = {bytes,layouts:new Map()}; let count = 0;
         for (const group of layouts.values()) {
-          if (!await inspectOriginalExcel(group[0],blob,prepared)) continue;
+          const repaired = await originalExcelAttachment(group[0],blob,prepared);
+          if (!repaired) continue;
           for (const so of group) {
-            const pinned = /^sha256-([a-f0-9]{64})$/.exec(so.xlsSourceId || "")?.[1];
-            if (pinned && pinned !== digest) continue;
-            matches.get(so.id).add(digest); count++;
+            matches.get(so.id).add(digest); repairs.get(so.id).set(digest,repaired); count++;
           }
         }
         assertCurrent(); blobs.set(digest,blob);
-        if (!count) warnings.push(file.name + "：このグループに一致する曲なし");
+        if (!count) warnings.push(file.name + "：既存の曲に一致する原本なし");
       } catch (error) { assertCurrent(); failed.push(file.name + "：" + fileFailureReason(error)); }
       await new Promise(resolve => setTimeout(resolve,0));
     }
@@ -5375,8 +5498,11 @@ async function reattachOriginalExcelBatch(songId, files) {
     const plan = [];
     for (const so of songs) {
       const candidates = matches.get(so.id);
-      if (candidates?.size === 1) plan.push({so,digest:[...candidates][0]});
+      const pinned = /^sha256-([a-f0-9]{64})$/.exec(so.xlsSourceId || "")?.[1];
+      if (candidates?.has(pinned)) plan.push({so,digest:pinned});
+      else if (candidates?.size === 1) plan.push({so,digest:[...candidates][0]});
       else if (candidates?.size > 1) warnings.push(songName(so) + "：一致する原本が複数あるため保留");
+      else warnings.push(songName(so) + "：今回のファイルでは原本を確認できませんでした");
     }
     if (!plan.length) { showFileReport("元Excelの復旧結果",[],failed,warnings.concat("一致した曲はありません。")); return {restored:0}; }
     if (!await automaticBackupBeforeEdit("original-excel-batch-reattach")) return false;
@@ -5387,13 +5513,70 @@ async function reattachOriginalExcelBatch(songId, files) {
       assertCurrent();
     }
     const at = Date.now();
-    for (const {so,digest} of plan) { so.xlsSourceId = "sha256-" + digest; so.xls = 1; so.xlsAt = at; delete XLOOK[so.id]; }
+    for (const {so,digest} of plan) { attachOriginalExcelMetadata(so,repairs.get(so.id).get(digest),"sha256-" + digest,at); delete XLOOK[so.id]; }
     const expected = JSON.stringify(packState(S)); save(); await saveNow();
     if (saveErr || await loadRaw() !== expected || JSON.stringify(packState(S)) !== expected)
       throw new Error("元Excelは保管しましたが、紐付けの保存後確認を完了できませんでした。");
     showFileReport("元Excelの復旧結果",plan.map(({so}) => (S.shows.find(sh => sh.id === so.showId)?.name || "") + " · " + songName(so)),failed,warnings);
     return {restored:plan.length,files:new Set(plan.map(x => x.digest)).size};
   } finally { U.busy = ""; render(); release(); }
+}
+
+async function prepareOriginalExcelAttachment(current, packet, {isActive = () => true} = {}) {
+  const active = () => {
+    if (!isActive()) { const error = new Error("原本の受信を再開します。"); error.code = "DEFERRED"; throw error; }
+  };
+  if (!packet || packet.app !== "utacheck-original-excel" || packet.version !== 1) throw new Error("元Excelの配信形式を確認できません。");
+  const decode = async file => {
+    active();
+    if (!file || typeof file.name !== "string" || /[\\/\x00-\x1f]/.test(file.name) || !/\.(xlsx|xlsm|xlsb|xls|csv)$/i.test(file.name)
+      || !Number.isSafeInteger(file.size) || file.size < 1 || file.size > 16*1024*1024 || !/^[a-f0-9]{64}$/.test(file.sha256)
+      || typeof file.base64 !== "string" || file.base64.length !== 4*Math.ceil(file.size/3)
+      || !/^[A-Za-z0-9+/]*={0,2}$/.test(file.base64)) throw new Error("元Excelの配信内容を確認できません。");
+    const binary = atob(file.base64);
+    if (btoa(binary) !== file.base64) throw new Error("元Excelの配信内容を確認できません。");
+    const bytes = Uint8Array.from(binary,c => c.charCodeAt(0)), blob = new Blob([bytes]);
+    if (bytes.length !== file.size || await startupExcelDigest(blob) !== file.sha256) throw new Error("受信した元Excelが原本と一致しません。");
+    const prepared = await readOriginalExcel(blob,{bytes});
+    if (!prepared) throw new Error("受信した元Excelを読み取れません。");
+    active(); return {blob,prepared,id:"sha256-"+file.sha256};
+  };
+  const original = await decode(packet);
+  if (packet.exportFile && (!/\.(xls|xlsb)$/i.test(packet.name) || !/\.xlsx$/i.test(packet.exportFile.name))) throw new Error("元Excelの出力用コピーを確認できません。");
+  const exported = packet.exportFile ? await decode(packet.exportFile) : original;
+  // Keep both uploaded bytes and the layout-preserving copy for legacy Excel.
+  for (const source of new Set([original,exported])) {
+    if (await storeOriginalExcel(source.blob) !== source.id) throw new Error("元Excelの保管後確認が一致しません。");
+    active();
+  }
+  const next = {...current}, targets = [...(current.songs || []),...(current.rsongs || [])];
+  if (new Set(targets.map(so => so.id)).size !== targets.length) throw new Error("曲IDが重複しているため、原本のリンクを保留しました。");
+  const updates = new Map();
+  for (let i=0; i<targets.length; i++) {
+    const so = targets[i]; active();
+    if (so.hidden || !Array.isArray(so.lines) || !(so.xls || so.xlsSourceId || so.sheetName || so.lines.some(l => l.cell || l.lcell))) continue;
+    let repaired;
+    try {
+      repaired = await originalExcelAttachment(so,original.blob,original.prepared,current);
+      if (repaired && exported !== original) repaired = await originalExcelAttachment(repaired,exported.blob,exported.prepared,current);
+    } catch (_) { repaired = null; }
+    if (repaired) {
+      // Automatic delivery must not replace an intact, verified formatting choice.
+      // Explicit reattachment can still select a different matching original.
+      if (/^sha256-[a-f0-9]{64}$/.test(so.xlsSourceId || "") && so.xlsSourceId !== exported.id) {
+        const pinned = await getClip("xls:" + so.xlsSourceId);
+        if (pinned instanceof Blob && await startupExcelDigest(pinned) === so.xlsSourceId.slice(7)
+          && await inspectOriginalExcel(so,pinned,undefined,current).catch(() => false)) continue;
+      }
+      const updated = {...so,lines:so.lines.map(l => ({...l}))};
+      attachOriginalExcelMetadata(updated,repaired,exported.id,so.xlsSourceId === exported.id && so.xlsAt ? so.xlsAt : Date.now());
+      updates.set(so.id,updated);
+    }
+    if (i%25===24) await new Promise(resolve => setTimeout(resolve,0));
+  }
+  active();
+  for (const key of ["songs","rsongs"]) if (Array.isArray(current[key])) next[key] = current[key].map(so => updates.get(so.id) || so);
+  return {state:next,linked:updates.size,stored:exported === original ? 1 : 2,unmatched:updates.size ? 0 : 1};
 }
 
 function delClip(id) {
@@ -6461,7 +6644,6 @@ function renderSheet() {
       <a class="organize-action" href="${h(item.url)}" download="${h(item.name)}">ダウンロードして保存</a>
       ${item.name.endsWith(".zip") ? '<p class="note">曲ごとのExcelをZIPにまとめています。iPhoneでは「ファイルに保存」後、ZIPをタップすると開けます。</p>' : ""}
       ${item.failures.length ? `<p role="alert" class="note" style="color:var(--bad)">作成できなかった曲（${item.failures.length}曲）</p>${item.failures.map(x=>`<p class="note" style="white-space:pre-wrap;overflow-wrap:anywhere">${h(x)}</p>`).join("")}` : ""}
-      ${item.rebuiltExcelIds?.length ? `<p class="note">${item.rebuiltExcelIds.length}曲は保存済みの歌詞・歌割から作成しました。元Excelの体裁は含みません。再添付しなくても、このまま保存できます。</p>` : ""}
       ${originalExcelRepairHTML(item.missingExcelIds)}
     </div>`;
     document.body.appendChild(overlay); return;
@@ -7061,16 +7243,16 @@ function viewerSummaryBody() {
   const picker = byMember ? `<label class="summary-show-picker member-picker"><span>メンバー</span>
     <select id="summary-member" aria-label="メンバー"><option value="">全員</option>
     ${viewerMembers().map(m => `<option value="${h(m.id)}" ${selected && selected.id === m.id ? "selected" : ""}>${h(compactMemberLabel(m.name))}</option>`).join("")}</select></label>
-    <p class="member-hint">${selected ? h(compactMemberLabel(selected.name)) + "さんへの指摘・歌割の変更と、全員共通の総括を表示しています。" : "名前を選ぶと、自分への指摘・歌割の変更を表示します。"}</p>` : "";
+    <p class="member-hint">${selected ? h(compactMemberLabel(selected.name)) + "さんへの指摘・歌割の変更と、全員共通の総括を表示しています。" : "名前を選ぶと、自分への指摘・歌割の変更を表示します。"}3人以上のユニゾンは「曲ごと」で確認できます。</p>` : "";
   const cards = summarySongs().map(so => {
     const notes = ns.filter(n => n.songId === so.id && n.showId === so.showId).sort((a,b) => a.lineIdx - b.lineIdx);
     const memo = summaryMemo(so);
-    const changes = memberAbsenceChanges(so, byMember && selected ? selected.id : "");
+    const changes = memberAbsenceChanges(so, byMember && selected ? selected.id : "", byMember);
     if (!notes.length && !memo && !changes.length) return "";
     return `<section class="card member-song">
       <div class="member-song-head"><div class="grow">${U.allShows ? `<div class="member-caption">${h(showName(so.showId))}</div>` : ""}<h3>${h(songName(so))}</h3></div></div>
       ${memo ? `<div class="song-summary"><h4>総括 <span>全員共通</span></h4><div>${h(memo)}</div></div>` : ""}
-      ${changes.length ? `<h4 class="member-notes-title">歌割の変更<span>${changes.length}件</span></h4>${memberAbsenceRows(so,changes)}` : ""}
+      ${changes.length ? `<h4 class="member-notes-title">歌割の変更<span>${changes.length}件</span></h4>${memberAbsenceRows(so,changes,byMember && selected ? selected.id : "")}` : ""}
       ${notes.length ? `<h4 class="member-notes-title">${byMember && selected ? h(compactMemberLabel(selected.name)) + "さんへの指摘" : "指摘"}<span>${notes.length}件</span></h4>
         ${notes.map(n => `<button class="member-note member-note-link" data-act="summary-note" data-id="${h(so.id)}" data-i="${n.lineIdx}" data-note="${h(n.id || "")}"><span class="member-note-arrow" aria-hidden="true">›</span>${memberNoteBody(n, !byMember || !selected || !(n.memberIds || []).length)}<span class="sr-only">歌詞で見る</span></button>`).join("")}`
         : `<p class="member-hint">${byMember && selected ? h(compactMemberLabel(selected.name)) + "さんへの個別の指摘はありません。" : "個別の指摘はありません。"}</p>`}
@@ -7156,7 +7338,7 @@ function summaryHeader() {
     ${preview ? '<button class="chip sm" data-act="endpv">確認を終わる</button>' : ""}
     <span class="grow"></span>
     <span style="font-size:11px;color:var(--dim)" class="trunc">${h(U.allShows ? "全公演" : showName())}</span></div>
-  <div class="tabs summary-tabs">${tab("member", "メンバー別")}${tab("song", "曲別")}${VIEW() ? "" : tab("show", "公演別")}${tab("diff", "前回との差")}${VIEW() ? '<button class="chip sm" data-act="summary-lyrics">歌詞</button>' : ""}</div>
+  <div class="tabs summary-tabs">${tab("member", VIEW() ? "人ごと" : "メンバー別")}${tab("song", VIEW() ? "曲ごと" : "曲別")}${VIEW() ? "" : tab("show", "公演別")}${tab("diff", "前回との差")}${VIEW() ? '<button class="chip sm" data-act="goabsent">歌割の変更</button><button class="chip sm" data-act="summary-lyrics">歌詞</button>' : ""}</div>
   ${summaryShowPicker()}
 `;
 }
@@ -7352,68 +7534,16 @@ function copyRecords(oldSo, newSo) {
 const CHKCOL = { "音程": "FFFFD5CC", "タイミング": "FFFDEBC7", "出音": "FFD3F2F0",
   "表情": "FFE7DEFF", "ミス": "FFFFD3DE", "バランス": "FFD6E8FF", "良い": "FFD6F2E2" };
 
-// A missing source file must not make the saved lyrics and assignments unexportable.
-// This separate workbook uses saved rows only; it never binds or edits an unmatched original.
-function savedSongWorkbook(so, tab, notes = []) {
-  if (!Array.isArray(so.lines) || !so.lines.some(l => String(l.t || "").trim()))
-    throw new Error("この曲の歌詞が保存されていないため、Excelを作成できません。");
-  const rows = [[so.title || "無題"], [showName(so.showId), tab],
-    ["保存済みの歌詞・歌割から作成（元Excelの体裁は含みません）"]];
-  if (so.credit) rows.push([so.credit]);
-  const absent = names(absentIds(so.showId));
-  if (absent) rows.push(["欠席", absent]);
-  for (const b of Object.keys(so.blocks || {})) rows.push([b, names(gsubOf(so.id,b) || so.blocks[b])]);
-  rows.push([], ["行", "区分", "歌割", "歌詞", "指摘"]);
-  so.lines.forEach((l,i) => {
-    const hits = notes.filter(n => covers(n,i));
-    if (!l.t && !l.label && !l.sec && !hits.length) return;
-    const breaks = new Set(lyricBreakOffsets(l));
-    const lyric = Array.from(String(l.t || "")).map((ch,k) => (breaks.has(k) ? "\n" : "") + ch).join("");
-    rows.push([i+1, [l.sec || "", l.cut ? "カット" : ""].filter(Boolean).join(" "),
-      savedExcelAssignment(so,i), lyric, hits.map(n => excelNoteText(l,n)).join(" / ")]);
-  });
-  const memo = songMemo(so.id);
-  if (memo) rows.push([], ["総括", memo]);
-  const sheet = XLSX.utils.aoa_to_sheet(rows);
-  sheet["!cols"] = [{wch:7},{wch:16},{wch:30},{wch:64},{wch:56}];
-  sheet["!rows"] = rows.map(row => ({hpt:Math.max(22, ...row.map(value => String(value).split("\n").length * 18))}));
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb,sheet,(tab || "歌割").replace(/[\\/?:*\[\]]/g,"-").slice(0,31));
-  return new Uint8Array(XLSX.write(wb,{type:"array",bookType:"xlsx",compression:true}));
-}
-function savedExcelAssignment(so, i) {
-  const line = so.lines[i];
-  // Continuation rows may have their own harmony substitutions. Imported records
-  // may also contain member IDs without a display label; keep those assignments.
-  if (line.cont || !line.label) {
-    const assignment = splitAssign(so,i);
-    if (assignment.main.length || assignment.extra.length || subOf(so.id,i))
-      return (names(assignment.main) || "—") + (assignment.extra.length ? "　ハモ " + names(assignment.extra) : "");
-  }
-  return labelOf(so,i) || line.labelRaw || line.raw || "";
-}
-function excelNoteText(line, note) {
-  const where = note.from != null ? `「${Array.from(line.t || "").slice(note.from,note.to+1).join("")}」` : "";
-  return where + (note.tags || []).map(tagName).join("・")
-    + (note.pitch ? " " + pitchLabel(note.pitch) : "") + (note.memo ? " " + note.memo : "")
-    + (note.hand ? " 手書き：" + (note.hand.text || "原文を画面で確認") + (note.hand.state === "draft" ? "（自動認識・未確認）" : "") : "");
-}
-
 async function exportCheckXlsx(songId) {
   const so = S.songs.find((x) => x.id === songId);
   if (!so) return;
   const blob = await getOriginalExcel(so,true).catch(() => null);
+  if (!blob) { showFileReport("Excel出力結果", [], ["一致する元Excelがありません。元Excelを再添付してください。"], [], [so.id]); return; }
   const ns0 = NOTES().filter((n) => n.songId === so.id && n.showId === S.showId);
   if (!ns0.length) { alert("この曲に記録がありません。"); return; }
 
   try {
     U.busy = "Excelを作成中…"; render();
-    if (!blob) {
-      const data = savedSongWorkbook(so,"チェック",ns0);
-      presentExcelExport(absentExportFilename(so.title,"チェック"),
-        new Blob([data],{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}),1,[],[so.id],[so.id]);
-      U.busy = ""; render(); return;
-    }
     const buf = new Uint8Array(await blob.arrayBuffer());
 
     // 空いている列を探して、そこに指摘を書く
@@ -7428,7 +7558,12 @@ async function exportCheckXlsx(songId) {
     so.lines.forEach((l, i) => {
       const ns = ns0.filter((n) => covers(n, i));
       if (!ns.length || !l.lcell) return;
-      const txt = ns.map(n => excelNoteText(l,n)).join(" / ");
+      const chars = Array.from(l.t);
+      const txt = ns.map((n) => {
+        const where = n.from != null ? `「${chars.slice(n.from, n.to + 1).join("")}」` : "";
+        const tag = n.tags.map(tagName).join("・");
+        return where + tag + (n.pitch ? " " + pitchLabel(n.pitch) : "") + (n.memo ? " " + n.memo : "") + (n.hand ? " 手書き：" + (n.hand.text || "原文を画面で確認") + (n.hand.state === "draft" ? "（自動認識・未確認）" : "") : "");
+      }).join(" / ");
       edits[l.lcell] = { v: l.t, fill: CHKCOL[catOf((ns[0].tags || [])[0])] || "FFFFF3B0" };
       const row = (l.lcell.match(/\d+$/) || [""])[0];
       if (row) edits[memoCol + row] = { v: txt, fill: "FFFFFFFF" };
@@ -7538,9 +7673,9 @@ function closeExcelExport() {
   U.excelExport = null;
   if (U.menu?.kind === "excel-export") U.menu = null;
 }
-function presentExcelExport(name, blob, count, failures, missingExcelIds = [], rebuiltExcelIds = []) {
+function presentExcelExport(name, blob, count, failures, missingExcelIds = []) {
   closeExcelExport();
-  U.excelExport = {name, blob, count, failures, missingExcelIds, rebuiltExcelIds, url:URL.createObjectURL(blob)};
+  U.excelExport = {name, blob, count, failures, missingExcelIds, url:URL.createObjectURL(blob)};
   U.menu = {kind:"excel-export"}; renderSheet();
 }
 async function shareExcelExport() {
@@ -7561,15 +7696,12 @@ function hasAbsentExportChanges(so) {
     return partsOf(so, i).slice().sort().join("|") !== before;
   });
 }
-async function buildAbsentWorkbook(so, tab, edits, rebuiltExcelIds = []) {
+async function buildAbsentWorkbook(so, tab, edits) {
   let blob, sourceSearchActive = true;
   try { blob = await importTimeout(getOriginalExcel(so,true,() => sourceSearchActive), 30000, "元のExcelの確認に時間がかかっています。元Excelを再添付して再実行してください。"); }
-  catch (_) { blob = null; }
+  catch (error) { error.originalExcelMissing = true; throw error; }
   finally { sourceSearchActive = false; }
-  if (!blob) {
-    const data = savedSongWorkbook(so,tab);
-    rebuiltExcelIds.push(so.id); return data;
-  }
+  if (!blob) { const error = new Error("端末に一致する元Excelがありません。元Excelを再添付してください。曲・歌詞・指摘はそのまま残っています。"); error.originalExcelMissing = true; throw error; }
   let data = new Uint8Array(await importTimeout(blob.arrayBuffer(), 10000, "元のExcelを読み込めませんでした。"));
   // XLS / XLSB / CSV also need an XML workbook before adding a version tab.
   if (!(data[0] === 0x50 && data[1] === 0x4b) || !XLSX.CFB.read(data, {type:"array"}).FullPaths.some(p => p.endsWith('/xl/workbook.xml'))) {
@@ -7602,7 +7734,7 @@ async function runAbsentExport(songs, bundle) {
   const targets = songs.slice();
   U.exportingExcel = true;
   closeExcelExport();
-  const files = Object.create(null), failures = [], missingExcelIds = [], rebuiltExcelIds = [];
+  const files = Object.create(null), failures = [], missingExcelIds = [];
   try {
     for (let i = 0; i < targets.length; i++) {
       const so = targets[i];
@@ -7611,7 +7743,7 @@ async function runAbsentExport(songs, bundle) {
       try {
         const edits = absentEdits(so);
         if (!Object.keys(edits).length && !hasAbsentExportChanges(so)) continue;
-        const data = await buildAbsentWorkbook(so, tab, edits, rebuiltExcelIds);
+        const data = await buildAbsentWorkbook(so, tab, edits);
         const base = absentExportFilename(so.title, tab);
         let name = base, suffix = 2;
         while (files[name]) name = base.replace(/\.xlsx$/, ` (${suffix++}).xlsx`);
@@ -7627,7 +7759,7 @@ async function runAbsentExport(songs, bundle) {
     const data = bundle ? await zip(files, null, false) : files[names[0]];
     const name = bundle ? absentExportFilename(title,tab).replace(/\.xlsx$/, ".zip") : names[0];
     U.busy = ""; render();
-    presentExcelExport(name, new Blob([data], {type:bundle ? "application/zip" : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}), names.length, failures, [...missingExcelIds,...rebuiltExcelIds], rebuiltExcelIds);
+    presentExcelExport(name, new Blob([data], {type:bundle ? "application/zip" : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}), names.length, failures, missingExcelIds);
   } catch (e) { alert("Excelを作れませんでした。\n" + e.message); }
   finally { U.busy = ""; U.exportingExcel = false; render(); }
 }
@@ -7662,9 +7794,11 @@ function memberAbsenceContext(so) {
   const sid=so.showId || S.showId, key=sid+"|"+so.id;
   return {absent:absentIds(sid),subs:(S.subs || {})[key] || {},gsubs:(S.gsubs || {})[key] || {}};
 }
-function memberAbsenceChanges(so, memberId="") {
+function memberAbsenceChanges(so, memberId="", byMember=false) {
   if (typeof AbsenceChanges === "undefined") return [];
-  return AbsenceChanges.entries(so,memberAbsenceContext(so)).filter(entry=>!memberId || entry.involved.includes(memberId));
+  return AbsenceChanges.entries(so,{...memberAbsenceContext(so),includeGroupReductions:true})
+    .filter(entry=>memberId ? AbsenceChanges.forMember(entry,memberId)
+      : !byMember || entry.involved.some(id=>AbsenceChanges.forMember(entry,id)));
 }
 function absenceSelectableMembers() {
   const allowed=new Set();
@@ -7676,10 +7810,12 @@ function absenceSelectableMembers() {
   });
   return showRoster().map(member).filter(m=>m && allowed.has(m.id));
 }
-function memberAbsenceRows(so, entries) {
+function memberAbsenceRows(so, entries, memberId="") {
   const assignment=(main,extra)=>(names(main) || "—")+(extra.length ? "　ハモ "+names(extra) : "");
   return entries.map(entry=>{
-    const content='<span class="member-note-top"><span class="member-note-location">'+h(entry.kind==="block" ? "ブロック "+entry.label : rowNo(so,entry.lineIdx)+"行目"+(entry.lineIndices.length>1 ? "から "+entry.lineIndices.length+"行" : ""))+'</span><span class="member-note-tag">'+(entry.status==="need" ? "調整中" : "変更")+'</span></span>'
+    const status=entry.status==="need" ? "調整中" : !memberId ? "変更"
+      : entry.added.includes(memberId) ? "新しく担当" : entry.removed.includes(memberId) ? "担当から外れます" : "一緒に歌うメンバーが変更";
+    const content='<span class="member-note-top"><span class="member-note-location">'+h(entry.kind==="block" ? "ブロック "+entry.label : rowNo(so,entry.lineIdx)+"行目"+(entry.lineIndices.length>1 ? "から "+entry.lineIndices.length+"行" : ""))+'</span><span class="member-note-tag">'+status+'</span></span>'
       +'<span class="member-note-members"><span>変更前</span><span>'+h(assignment(entry.beforeMain,entry.beforeExtra))+'</span></span>'
       +'<span class="member-note-members"><span>変更後</span><span>'+h(assignment(entry.afterMain,entry.afterExtra))+'</span></span>'
       +(entry.text ? '<span class="member-lyric" style="display:block;white-space:pre-wrap;overflow-wrap:anywhere">'+h(entry.text)+'</span>' : '');
@@ -7694,11 +7830,12 @@ function viewMemberAbsence() {
   const memberId=byMember && selected ? selected.id : "";
   const picker=byMember ? '<label class="summary-show-picker member-picker"><span>メンバー</span><select id="summary-member" aria-label="メンバー"><option value="">全員</option>'+viewerMembers().map(m=>'<option value="'+h(m.id)+'" '+(selected?.id===m.id ? 'selected' : '')+'>'+h(compactMemberLabel(m.name))+'</option>').join("")+'</select></label>' : '';
   const cards=SONGS().map(so=>{
-    const changes=memberAbsenceChanges(so,memberId);
-    return changes.length ? '<section class="card member-song"><div class="member-song-head"><h3>'+h(songName(so))+'</h3></div>'+memberAbsenceRows(so,changes)+'</section>' : '';
+    const changes=memberAbsenceChanges(so,memberId,byMember);
+    return changes.length ? '<section class="card member-song"><div class="member-song-head"><h3>'+h(songName(so))+'</h3></div>'+memberAbsenceRows(so,changes,memberId)+'</section>' : '';
   }).join("");
   return '<div class="hd"><button class="ic" data-act="go-live" aria-label="歌詞に戻る">‹</button><b>歌割の変更</b><span class="grow"></span><span class="trunc">'+h(showName())+'</span></div>'
-    +'<div class="scroll pad"><div class="tabs"><button class="chip sm" data-act="absence-scope" data-id="all" aria-pressed="'+!byMember+'">すべて</button><button class="chip sm" data-act="absence-scope" data-id="member" aria-pressed="'+byMember+'">メンバー別</button></div>'+picker
+    +'<div class="scroll pad"><div class="tabs"><button class="chip sm" data-act="absence-scope" data-id="all" aria-pressed="'+!byMember+'">曲ごと</button><button class="chip sm" data-act="absence-scope" data-id="member" aria-pressed="'+byMember+'">人ごと</button></div>'+picker
+    +(byMember ? '<p class="member-hint">3人以上のユニゾンは「曲ごと」で確認できます。</p>' : '')
     +'<div class="card member-hint">'+h(absentIds().map(id=>(member(id) || {}).name).filter(Boolean).join("・") || "欠席なし")+(absentIds().length ? " が欠席" : "")+'</div>'
     +(cards || '<p class="member-empty">'+(memberId ? h(compactMemberLabel(selected.name))+"さんに関わる" : "")+'歌割の変更はありません。</p>')+'</div>';
 }
@@ -7940,7 +8077,7 @@ function viewSetupRec() {
     <h4 class="head">曲</h4>
     ${recordingBrowseControlsHTML()}
     ${list || `<p class="note">曲がありません</p>`}
-    <div class="card"><button class="primary" data-act="rpick">歌割り・歌詞ファイルを読み込む（Word/PDF/Excel）</button>${typeof PrivatePreparationUI !== "undefined" ? PrivatePreparationUI.settingsHTML() : ""}</div>
+    <div class="card"><button class="primary" data-act="rpick">歌割り・歌詞ファイルを読み込む（Word/PDF/Excel）</button><button class="ghost" data-act="excel-reattach-all">元Excelをまとめてリンク</button>${typeof PrivatePreparationUI !== "undefined" ? PrivatePreparationUI.settingsHTML() : ""}</div>
 
     </section>
     ${recMemberSelector()}
@@ -9770,6 +9907,7 @@ function viewSetup() {
     ${songs}
     ${!activeShow ? `<p class="note">このグループの公演を選択するか、新しい公演を追加してください。</p>` : `<div class="card">
       <button class="primary" data-act="pickfile" style="margin-bottom:8px">歌割り・歌詞ファイルを読み込む（Word/PDF/Excel）</button>
+      <button class="ghost" data-act="excel-reattach-all">元Excelをまとめてリンク</button>
       <div style="font-size:11px;color:var(--dim);margin-top:6px">取り込み先：${h(activeShow.name)} ・ ${h(group().name || "")}</div>${typeof PrivatePreparationUI !== "undefined" ? PrivatePreparationUI.settingsHTML() : ""}
     </div>`}
 
@@ -10399,6 +10537,7 @@ document.addEventListener("click", async (e) => {
     case "excel-export-share": shareExcelExport(); break;
     case "excel-reattach": originalExcelFileInput(id); break;
     case "excel-reattach-batch": originalExcelFileInput(id,true); break;
+    case "excel-reattach-all": originalExcelFileInput("__all__",true); break;
     case "xlsout": exportAbsentXlsx(id); break;
     case "xlsall": exportAllAbsentXlsx(); break;
     case "bootok": bootErr = ""; render(); break;
@@ -13959,7 +14098,7 @@ function privatePreparationReceiptsMatch(incoming) {
     const receipt = local[id];
     return receipt && typeof receipt === 'object' && !Array.isArray(receipt)
       && /^[a-f0-9]{64}$/.test(receipt.sha256 || '')
-      && ['recording-schedule', 'recording-addition', 'live-addition', 'recording-song', 'material-update', 'live-update'].includes(receipt.type)
+      && ['recording-schedule', 'recording-addition', 'live-addition', 'recording-song', 'material-update', 'live-update', 'original-excel'].includes(receipt.type)
       && Object.prototype.hasOwnProperty.call(remote, id)
       && remote[id]?.sha256 === receipt.sha256 && remote[id]?.type === receipt.type;
   });

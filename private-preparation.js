@@ -25,6 +25,20 @@
  const clone=v=>JSON.parse(JSON.stringify(v));
  function only(value,required,optional=[]){if(!object(value)||Object.keys(value).some(k=>![...required,...optional].includes(k))||required.some(k=>!own(value,k)))fail('INVALID_MANIFEST');}
  function safePacket(v){check(v);const todo=[v];while(todo.length){const x=todo.pop();for(const [k,val]of Object.entries(x)){if(secrets.has(k))fail('PRIVATE_CONNECTION_FIELD');if(val&&typeof val==='object')todo.push(val);}}}
+ function checkOriginalExcel(packet){
+  safePacket(packet);only(packet,['app','version','name','size','sha256','base64'],['exportFile']);
+  if(packet.app!=='utacheck-original-excel'||packet.version!==1)fail('INVALID_OPERATION');
+  const file=(value,extension)=>{
+   if(typeof value.name!=='string'||!value.name||value.name.length>1000||/[\\/\x00-\x1f\x7f]/.test(value.name)||!extension.test(value.name)
+    ||!Number.isSafeInteger(value.size)||value.size<1||value.size>16*1024*1024||!/^[a-f0-9]{64}$/.test(value.sha256||'')
+    ||typeof value.base64!=='string'||value.base64.length!==Math.ceil(value.size/3)*4||!/^[A-Za-z0-9+/]+={0,2}$/.test(value.base64))fail('INVALID_OPERATION');
+   const padding=(3-value.size%3)%3,alphabet='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+   if((value.base64.match(/=*$/)?.[0].length||0)!==padding||padding&&(alphabet.indexOf(value.base64.at(-padding-1))&((1<<(padding*2))-1)))fail('INVALID_OPERATION');
+  };
+  file(packet,/\.(xlsx|xls|xlsb)$/i);
+  if(own(packet,'exportFile')){only(packet.exportFile,['name','size','sha256','base64']);if(!/\.(xls|xlsb)$/i.test(packet.name))fail('INVALID_OPERATION');file(packet.exportFile,/\.xlsx$/i);}
+  return packet;
+ }
  async function digest(value,cryptoProvider=root.crypto){const result=await cryptoProvider.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(value)));return [...new Uint8Array(result)].map(x=>x.toString(16).padStart(2,'0')).join('');}
  async function validate(input,owner,cryptoProvider=root.crypto){
   check(input);only(input,['app','version','owner','revision','createdAt','operations']);
@@ -33,8 +47,9 @@
   const manifest=clone(input),seen=new Set();
   for(const op of manifest.operations){
    only(op,['id','type','sha256','packet']);
-   if(!id(op.id)||seen.has(op.id)||!['recording-song','recording-schedule','recording-addition','live-addition','live-update','material-update'].includes(op.type)||!/^[a-f0-9]{64}$/.test(op.sha256))fail('INVALID_OPERATION');
+   if(!id(op.id)||seen.has(op.id)||!['recording-song','recording-schedule','recording-addition','live-addition','live-update','material-update','original-excel'].includes(op.type)||!/^[a-f0-9]{64}$/.test(op.sha256))fail('INVALID_OPERATION');
    seen.add(op.id);safePacket(op.packet);if(await digest(op.packet,cryptoProvider)!==op.sha256)fail('HASH_MISMATCH');
+   if(op.type==='original-excel')checkOriginalExcel(op.packet);
   }
   return manifest;
  }
@@ -224,7 +239,9 @@
  }
  function apply(current,operation,adapters={},now=Date.now()){
   const ledger=current.privatePreparations||{};if(!object(ledger))fail('INVALID_RECEIPTS');
-  if(own(ledger,operation.id)){const old=ledger[operation.id];if(old?.sha256!==operation.sha256||old?.type!==operation.type)fail('OPERATION_ID_REUSED');return {state:current,status:'already-applied'};}
+  const receipt=own(ledger,operation.id)?ledger[operation.id]:null;
+  if(receipt){if(receipt.sha256!==operation.sha256||receipt.type!==operation.type)fail('OPERATION_ID_REUSED');if(operation.type!=='original-excel')return {state:current,status:'already-applied'};}
+  else if(own(ledger,operation.id))fail('OPERATION_ID_REUSED');
   let result;
   if(operation.type==='recording-song')result=mergeRecordingSong(current,operation.packet);
   else if(operation.type==='recording-schedule'){
@@ -243,10 +260,21 @@
   }else if(operation.type==='live-addition')result=mergeLive(current,operation.packet);
   else if(operation.type==='live-update')result=mergeLiveUpdate(current,operation.packet);
   else if(operation.type==='material-update')result=mergeMaterialUpdate(current,operation.packet);
+  else if(operation.type==='original-excel'){
+   checkOriginalExcel(operation.packet);
+   if(typeof adapters.originalExcel!=='function')fail('ORIGINAL_EXCEL_NOT_PREPARED');
+   result=adapters.originalExcel(current,operation.packet);
+   if(!object(result)||!object(result.state)||!Number.isSafeInteger(result.linked)||result.linked<0
+    ||result.stored!==(operation.packet.exportFile?2:1)||![0,1].includes(result.unmatched)||result.unmatched!==(result.linked===0?1:0)
+    ||own(result,'targetSha256')&&(typeof result.targetSha256!=='string'||!/^[a-f0-9]{64}$/.test(result.targetSha256)))fail('INVALID_OPERATION');
+   if(receipt&&(!result.targetSha256||result.targetSha256===receipt.targetSha256)&&JSON.stringify(result.state)===JSON.stringify(current))return {...result,state:current,status:'already-applied'};
+  }
   else fail('INVALID_OPERATION');
-  if(!result?.state||result.state===current&&operation.type!=='recording-schedule')fail('INVALID_OPERATION');
-  return {...result,status:'applied',state:{...result.state,privatePreparations:{...ledger,[operation.id]:{sha256:operation.sha256,type:operation.type,at:now}}}};
+  if(!result?.state||result.state===current&&!['recording-schedule','original-excel'].includes(operation.type))fail('INVALID_OPERATION');
+  const counts=operation.type==='original-excel'?{linked:result.linked,stored:result.stored,unmatched:result.unmatched,...(result.targetSha256?{targetSha256:result.targetSha256}:{})}:{};
+  const updatedReceipt=receipt?(operation.type==='original-excel'&&result.targetSha256&&result.targetSha256!==receipt.targetSha256?{...receipt,...counts}:receipt):{sha256:operation.sha256,type:operation.type,at:now,...counts};
+  return {...result,status:'applied',state:{...result.state,privatePreparations:{...ledger,[operation.id]:updatedReceipt}}};
  }
- const api=Object.freeze({validate,apply,digest,mergeLive,mergeLiveUpdate,mergeMaterialUpdate,mergeRecordingSong});if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.PrivatePreparation=api;
+ const api=Object.freeze({validate,apply,digest,checkOriginalExcel,mergeLive,mergeLiveUpdate,mergeMaterialUpdate,mergeRecordingSong});if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.PrivatePreparation=api;
 })(typeof globalThis!=='undefined'?globalThis:this);
 
