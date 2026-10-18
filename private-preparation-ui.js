@@ -244,7 +244,7 @@
   const keys=['id','title','artist','groupId','showId','take','xlsSourceId','sheetName','micSheet','micMap','blocks','blockCells','blockRows','roster','lines'];
   const songs=items=>(items||[]).filter(so=>!so.hidden&&Array.isArray(so.lines)&&(so.xls||so.xlsSourceId||so.sheetName||so.lines.some(line=>line.cell||line.lcell)))
    .map(so=>Object.fromEntries(keys.filter(key=>Object.prototype.hasOwnProperty.call(so,key)).map(key=>[key,so[key]])));
-  return PrivatePreparation.digest({songs:songs(current.songs),rsongs:songs(current.rsongs),members:(current.members||[]).map(member=>[member.id,member.name])});
+  return PrivatePreparation.digest({originalMatcherVersion:2,songs:songs(current.songs),rsongs:songs(current.rsongs),members:(current.members||[]).map(member=>[member.id,member.name])});
  }
  function originalSummary(manifest){
   const result={files:0,linked:0,stored:0,unmatched:0};

@@ -118,7 +118,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.41";
+const APP_VER = "16.41.58.42";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -3266,8 +3266,12 @@ const looksName = (v) => nameScore(v) >= 0.6;
 
 // どのシートが歌割かを選ぶ。
 // 1枚目が「マイク番号」のように番号だけの表のことがあるため。
-function pickSheet(wb, localState=S) {
+function pickSheet(wb, localState=S, filename="") {
   const names = wb.SheetNames;
+  if(/1[\s_-]*half|ワンハーフ/i.test(String(filename).normalize('NFKC'))){
+    const half=names.filter(name=>/1[\s_-]*half|ワンハーフ/i.test(name.normalize('NFKC')));
+    if(half.length===1)return half[0];
+  }
   const score = (sn) => {
     const sh2 = wb.Sheets[sn];
     if (!sh2 || !sh2["!ref"]) return -1e9;
@@ -3344,7 +3348,7 @@ async function parseXLSX(file, buf, local) {
   if(!wb){try { wb = XLSX.read(raw0, { type: "array", cellStyles: true, bookFiles: true }); }
   catch (e) { wb = XLSX.read(raw0, { type: "array", bookFiles: true }); }}
   Object.values(wb.Sheets).forEach(trimExcelRange);
-  const pickedName = local?.sheetName || pickSheet(wb,local?.state||S);
+  const pickedName = local?.sheetName || pickSheet(wb,local?.state||S,file.name);
   const sh = wb.Sheets[pickedName];
   const bubbles = readBubbles(wb.files, wb.SheetNames.indexOf(pickedName));
   const isGray = (ri, ci) => {
@@ -5319,11 +5323,32 @@ async function inspectOriginalExcel(so, blob, prepared, current = S) {
   const expected = originalExcelLayout(so,id => (current.members || []).find(m => m.id === id)?.name,candidate);
   return source.layouts.get(so.sheetName) === expected;
 }
-// Reattachment may restore omitted Excel metadata, never lyric or assignment data.
+// Expand only missing A/B definitions proven by the original workbook.
+// The full row/cell/lyric comparison below still has to succeed.
+function originalExcelGroupRepair(so,expected,current) {
+  const definitions={...so.blocks},missing=Object.keys(expected.blocks||{}).filter(label=>!Object.prototype.hasOwnProperty.call(definitions,label));
+  if(!missing.length)return so;
+  const members=current.members||[],aliases=new Map();
+  const used=new Set([...(so.roster||[]),...so.lines.flatMap(line=>[...(line.parts||[]),...(line.main||[]),...(line.extra||[])])]);
+  for(const label of missing){
+    const ids=[];
+    for(const name of expected.blocks[label]){
+      const named=members.filter(member=>member.name===name),scoped=named.filter(member=>used.has(member.id));
+      const matches=scoped.length?scoped:named;
+      if(matches.length!==1)return null;
+      ids.push(matches[0].id);
+    }
+    definitions[label]=ids;
+    for(const member of members.filter(member=>member.name===label))aliases.set(member.id,ids);
+  }
+  const expand=ids=>[...new Set((ids||[]).flatMap(id=>aliases.get(id)||[id]))];
+  return {...so,blocks:definitions,roster:expand(so.roster),lines:so.lines.map(line=>({...line,
+    parts:expand(line.parts),...(Array.isArray(line.main)?{main:expand(line.main)}:{}),...(Array.isArray(line.extra)?{extra:expand(line.extra)}:{})}))};
+}
+// Reattach only after original rows, singers and cell positions have matched.
 // Existing addresses must still match; an ambiguous worksheet is not guessed.
 async function originalExcelAttachment(so, blob, prepared = {}, current = S) {
   if (!Array.isArray(so.lines) || !so.lines.some(l => l.t)) return null;
-  if (await inspectOriginalExcel(so,blob,prepared,current)) return so;
   const source = await readOriginalExcel(blob,prepared);
   if (!source) return null;
   const candidates = [];
@@ -5337,16 +5362,18 @@ async function originalExcelAttachment(so, blob, prepared = {}, current = S) {
       if(currentContent.length!==sourceContent.length)continue;
       let at=0;candidate={...candidate,lines:so.lines.map(line=>empty(line)?{...line}:sourceContent[at++])};
     }
-    const repair = expected => ({...so,
+    const repair = expected => {
+      const base=originalExcelGroupRepair(so,expected,current);if(!base)return null;
+      return ({...base,
       sheetName:so.sheetName || expected.sheetName,
       micSheet:so.micSheet || expected.micSheet,
       micMap:so.micMap || expected.micMap,
       blockCells:{...expected.blockCells,...so.blockCells},
       blockRows:so.blockRows?.length ? so.blockRows : expected.blockRows,
-      lines:so.lines.map((line,i) => ({...line,cell:line.cell || expected.lines[i].cell,
+      lines:base.lines.map((line,i) => ({...line,...(line.cut==null&&expected.lines[i].cut?{cut:1}:{}),cell:line.cell || expected.lines[i].cell,
         lcell:line.lcell || expected.lines[i].lcell,extraCell:line.extraCell || expected.lines[i].extraCell,
-        raw:line.raw ?? expected.lines[i].raw,labelRaw:line.labelRaw ?? expected.lines[i].labelRaw,extraRaw:line.extraRaw ?? expected.lines[i].extraRaw}))});
-    const matches = (repaired,expected) => originalExcelLayout(repaired,id => (current.members || []).find(m => m.id === id)?.name,expected) === originalExcelLayout(expected,id => id);
+        raw:line.raw ?? expected.lines[i].raw,labelRaw:line.labelRaw ?? expected.lines[i].labelRaw,extraRaw:line.extraRaw ?? expected.lines[i].extraRaw}))});};
+    const matches = (repaired,expected) => !!repaired && originalExcelLayout(repaired,id => (current.members || []).find(m => m.id === id)?.name,expected) === originalExcelLayout(expected,id => id);
     let repaired = repair(candidate);
     if (matches(repaired,candidate)) { candidates.push(repaired); continue; }
     // Before range trimming was introduced, sheet_to_json started at !ref's
@@ -5393,11 +5420,11 @@ async function originalExcelAttachment(so, blob, prepared = {}, current = S) {
 }
 function attachOriginalExcelMetadata(so, repaired, sourceId, at) {
   // The existing objects and annotation indexes remain stable.
-  for (const key of ["sheetName","micSheet","micMap","blockCells","blockRows"]) {
+  for (const key of ["sheetName","micSheet","micMap","blockCells","blockRows","blocks","roster"]) {
     if (JSON.stringify(so[key]) !== JSON.stringify(repaired[key])) so[key] = repaired[key];
   }
   so.lines.forEach((line,i) => {
-    for (const key of ["cell","lcell","extraCell","raw","labelRaw","extraRaw"]) if (repaired.lines[i][key] != null && line[key] !== repaired.lines[i][key]) line[key] = repaired.lines[i][key];
+    for (const key of ["cell","lcell","extraCell","raw","labelRaw","extraRaw","parts","main","extra","cut"]) if (repaired.lines[i][key] != null && line[key] !== repaired.lines[i][key]) line[key] = repaired.lines[i][key];
   });
   so.xlsSourceId = sourceId; so.xls = 1; so.xlsAt = at;
 }
@@ -5756,6 +5783,23 @@ async function prepareOriginalExcelAttachment(current, packet, {isActive = () =>
       }
       const updated = {...so,lines:so.lines.map(l => ({...l}))};
       attachOriginalExcelMetadata(updated,repaired,exported.id,so.xlsSourceId === exported.id && so.xlsAt ? so.xlsAt : Date.now());
+      const restored=Object.keys(updated.blocks||{}).filter(label=>!Object.prototype.hasOwnProperty.call(so.blocks||{},label));
+      if(restored.length){
+        const key=(so.showId||current.showId)+'|'+so.id,absent=(current.shows||[]).find(show=>show.id===so.showId)?.absent||[];
+        const aliases=new Map((current.members||[]).filter(member=>restored.includes(member.name)).map(member=>[member.id,updated.blocks[member.name]]));
+        const substitutions=(next.subs||{})[key];
+        if(substitutions){
+          const mapped=Object.fromEntries(Object.entries(substitutions).map(([index,ids])=>[index,[...new Set(ids.flatMap(id=>aliases.has(id)?aliases.get(id).filter(pid=>!absent.includes(pid)):[id]))]]));
+          if(JSON.stringify(mapped)!==JSON.stringify(substitutions))next.subs={...next.subs,[key]:mapped};
+        }
+        const groups={...(next.gsubs||{})[key]};
+        for(const label of restored){
+          if(Array.isArray(groups[label]))continue;
+          const before=updated.blocks[label],after=before.filter(id=>!absent.includes(id));
+          if(after.length&&after.length<before.length)groups[label]=after;
+        }
+        if(Object.keys(groups).length)next.gsubs={...next.gsubs,[key]:groups};
+      }
       updates.set(so.id,updated);
     }
     if (i%25===24) await new Promise(resolve => setTimeout(resolve,0));
@@ -7792,7 +7836,9 @@ function absentEdits(so) {
   blocksOf(so).forEach((b) => {
     const cell = (so.blockCells || {})[b];
     if (!cell) return;
-    const g = gsubOf(so.id, b);
+    const original=(so.blocks||{})[b]||[],absent=absentIds(so.showId);
+    const rest=original.filter(id=>!absent.includes(id));
+    const g = gsubOf(so.id, b) || (rest.length&&rest.length<original.length?rest:null);
     if (!g) return;
     const before = ((so.blocks || {})[b] || []).map((x) => (member(x) || {}).name).filter(Boolean).join("・");
     const after = g.map((x) => (member(x) || {}).name).filter(Boolean).join("・");
