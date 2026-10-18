@@ -118,7 +118,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.43";
+const APP_VER = "16.41.58.44";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -5259,7 +5259,7 @@ function originalExcelLayout(so, resolveName = id => member(id)?.name, original)
       // Older publications omitted the gray-fill-derived cut marker. Infer it
       // only for comparison when absent; never change the saved song or accept
       // a contradictory explicit marker. Lyrics, owners and cells still match.
-      text(l.extraCell),text(l.extraRaw),!!l.cont,!!(l.cut ?? original?.lines[i]?.cut),named(l.parts)])
+      text(l.extraCell),text(l.extraRaw),!!l.cont,!!(l.sourceCut ?? l.cut ?? original?.lines[i]?.cut),named(l.parts)])
   });
 }
 function originalExcelSourceGroupAllowed(so,key) {
@@ -5368,6 +5368,10 @@ async function originalExcelAttachment(so, blob, prepared = {}, current = S) {
       if(currentContent.length!==sourceContent.length)continue;
       let at=0;candidate={...candidate,lines:so.lines.map(line=>empty(line)?{...line}:sourceContent[at++])};
     }
+    // Reject unrelated songs before resolving hundreds of singer references.
+    // This is only a necessary check; matching rows still pass every original
+    // assignment, address and worksheet check below before anything is linked.
+    if(so.lines.some((line,i)=>!!line.gap!==!!candidate.lines[i].gap||String(line.t??'')!==String(candidate.lines[i].t??'')))continue;
     const repair = expected => {
       const base=originalExcelGroupRepair(so,expected,current);if(!base)return null;
       return ({...base,
@@ -5430,7 +5434,7 @@ function attachOriginalExcelMetadata(so, repaired, sourceId, at) {
     if (JSON.stringify(so[key]) !== JSON.stringify(repaired[key])) so[key] = repaired[key];
   }
   so.lines.forEach((line,i) => {
-    for (const key of ["cell","lcell","extraCell","raw","labelRaw","extraRaw","parts","main","extra","cut"]) if (repaired.lines[i][key] != null && line[key] !== repaired.lines[i][key]) line[key] = repaired.lines[i][key];
+    for (const key of ["cell","lcell","extraCell","raw","labelRaw","extraRaw","parts","main","extra","cut","sourceCut"]) if (repaired.lines[i][key] != null && line[key] !== repaired.lines[i][key]) line[key] = repaired.lines[i][key];
   });
   so.xlsSourceId = sourceId; so.xls = 1; so.xlsAt = at;
 }
@@ -5741,6 +5745,21 @@ async function reattachOriginalExcelBatch(songId, files) {
   } finally { U.busy = ""; render(); release(); }
 }
 
+function applyOriginalDisplayCuts(so,ranges,current) {
+  if(!ranges)return so;
+  const applicable=ranges.filter(range=>range.sheetName===so.sheetName);
+  if(!applicable.length)return so;
+  const canonical=value=>String(value||'').normalize('NFKC').replace(/﨑/g,'崎').trim();
+  const cuts=new Set();
+  for(const range of applicable){
+    const endpoint=(cell,text,singer)=>so.lines.flatMap((line,index)=>line.lcell===cell&&canonical(line.t)===canonical(text)
+      &&(line.main||line.parts||[]).some(id=>canonical((current.members||[]).find(m=>m.id===id)?.name)===canonical(singer))?[index]:[]);
+    const start=endpoint(range.fromCell,range.fromText,range.fromSinger),end=endpoint(range.toCell,range.toText,range.toSinger);
+    if(start.length!==1||end.length!==1||start[0]>end[0])throw new Error('カット範囲の歌詞・担当・セル位置を確認できません。');
+    for(let i=start[0];i<=end[0];i++)cuts.add(i);
+  }
+  return {...so,lines:so.lines.map((line,i)=>cuts.has(i)?{...line,sourceCut:line.sourceCut??!!line.cut,cut:1}:line)};
+}
 async function prepareOriginalExcelAttachment(current, packet, {isActive = () => true} = {}) {
   const active = () => {
     if (!isActive()) { const error = new Error("原本の受信を再開します。"); error.code = "DEFERRED"; throw error; }
@@ -5780,6 +5799,7 @@ async function prepareOriginalExcelAttachment(current, packet, {isActive = () =>
       if (repaired && exported !== original) repaired = await originalExcelAttachment(repaired,exported.blob,exported.prepared,current);
     } catch (_) { repaired = null; }
     if (repaired) {
+      repaired=applyOriginalDisplayCuts(repaired,packet.displayCuts,current);
       // Automatic delivery must not replace an intact, verified formatting choice.
       // Explicit reattachment can still select a different matching original.
       if (/^sha256-[a-f0-9]{64}$/.test(so.xlsSourceId || "") && so.xlsSourceId !== exported.id) {
@@ -7878,8 +7898,8 @@ function absentEdits(so) {
   });
   return edits;
 }
-function absentVersionNames() {
-  const names=[...new Set(absentIds().map(id=>(member(id)||{}).name).filter(Boolean))];
+function absentVersionNames(ids = absentIds()) {
+  const names=[...new Set(ids.map(id=>(member(id)||{}).name).filter(Boolean))];
   // Collapse only unambiguous abbreviations among the selected absentees.
   return [...new Set(names.map(name=>{
     const full=names.filter(other=>other.length>name.length&&other.startsWith(name));
@@ -8270,7 +8290,7 @@ function viewMemberAbsence() {
   return '<div class="hd"><button class="ic" data-act="go-live" aria-label="歌詞に戻る">‹</button><b>歌割変更</b><span class="grow"></span><span class="trunc">'+h(showName())+'</span></div>'
     +'<div class="scroll pad"><p class="member-hint">変更後の担当を確認してください。</p>'+showPicker+picker
     +(byMember ? '<p class="member-hint">3人以上のユニゾンは「全員」で確認できます。</p>' : '')
-    +'<div class="card member-hint">'+h(absentIds().map(id=>(member(id) || {}).name).filter(Boolean).join("・") || "欠席なし")+(absentIds().length ? " が欠席" : "")+'</div>'
+    +'<div class="card member-hint">'+h(absentVersionNames().join("・") || "欠席なし")+(absentIds().length ? " が欠席" : "")+'</div>'
     +(cards || '<p class="member-empty">'+(memberId ? h(compactMemberLabel(selected.name))+"さんに関わる" : "")+'歌割の変更はありません。</p>')+'</div>';
 }
 
@@ -8335,7 +8355,7 @@ function viewAbsent() {
     <span class="grow"></span>
     <span style="font-size:11px;color:var(--dim)" class="trunc">${h(showName())}</span></div>
   <div class="scroll pad">
-    ${VIEW() ? `<div class="card"><div style="font-size:12px;color:var(--dim)">${ab.length ? h(ab.map((x) => (member(x) || {}).name).join("・")) + " が欠席" : "欠席なし"}</div></div>`
+    ${VIEW() ? `<div class="card"><div style="font-size:12px;color:var(--dim)">${ab.length ? h(absentVersionNames(ab).join("・")) + " が欠席" : "欠席なし"}</div></div>`
       : `<div class="card"><h4 style="font-size:11px;color:var(--dim);margin-bottom:8px">欠席するメンバー</h4>
       <div class="chips">${chips || ``}</div>
       ${ab.length ? `<div class="row" style="margin-top:10px;font-size:12px">
@@ -10366,7 +10386,7 @@ function viewSetup() {
     <h4 class="head">欠席対応</h4>
     <div class="card">
       <button class="primary" data-act="goabsent">${absentIds().length
-        ? `${h(absentIds().map((x) => (member(x) || {}).name).join("・"))} が欠席${needCount() ? `　未決 ${needCount()}` : "　完了"}`
+        ? `${h(absentVersionNames().join("・"))} が欠席${needCount() ? `　未決 ${needCount()}` : "　完了"}`
         : "欠席者を設定する"}</button>
     </div>
 

@@ -28,7 +28,7 @@ function setup(extra={}){
   },
   buildSong:parsed=>parsed,getClip:async key=>clips.get(key),putClip:async(key,blob)=>{stats.writes++;clips.set(key,blob);},
   storedOriginalExcelEntries:async()=>[...clips].map(([key,blob])=>({key,blob})),importTimeout:async p=>p,fileFailureReason:e=>e.message,showFileReport:(title,succeeded,failed,warnings)=>{c.report={title,succeeded,failed,warnings};},...extra});
- for(const name of ['startupExcelDigest','startupExcelWithinBudget','excelSourceCandidates','originalExcelLayout','originalExcelSourceGroupAllowed','readOriginalExcel','originalExcelSheet','inspectOriginalExcel','originalExcelGroupRepair','originalExcelAttachment','attachOriginalExcelMetadata','getOriginalExcel','originalExcelExportContext','originalExcelExportSource','storeOriginalExcel','originalExcelRepairHTML','reattachOriginalExcel','originalExcelGroupTargets','reattachOriginalExcelBatch','prepareOriginalExcelAttachment'])vm.runInContext(fn(name),c);
+ for(const name of ['startupExcelDigest','startupExcelWithinBudget','excelSourceCandidates','originalExcelLayout','originalExcelSourceGroupAllowed','readOriginalExcel','originalExcelSheet','inspectOriginalExcel','originalExcelGroupRepair','originalExcelAttachment','attachOriginalExcelMetadata','getOriginalExcel','originalExcelExportContext','originalExcelExportSource','storeOriginalExcel','originalExcelRepairHTML','reattachOriginalExcel','originalExcelGroupTargets','reattachOriginalExcelBatch','applyOriginalDisplayCuts','prepareOriginalExcelAttachment'])vm.runInContext(fn(name),c);
  return {c,clips,alerts,stats,so:c.S.songs[0]};
 }
 test('same-sheet exact original passes without modifying IDs, lyrics, members or notes',async()=>{
@@ -418,4 +418,17 @@ test('workbook-proven missing groups resolve A/B placeholders using this song ro
  const notes=JSON.stringify(c.S.notes),prepared=await c.prepareOriginalExcelAttachment(c.S,await packetFor(c,blob));
  assert.equal(prepared.linked,1);assert.deepEqual(copy(prepared.state.gsubs['show|song'].A),['member-b']);assert.deepEqual(copy(prepared.state.subs['show|song'][0]),['member-b']);assert.equal(JSON.stringify(prepared.state.notes),notes);
  assert.equal(c.S.songs[0].blocks.A,undefined,'Preparation leaves the live state untouched until committed');
+});
+
+test('explicit display cuts verify both original endpoints and retain the original Excel identity',async()=>{
+ const {c,so}=setup(),blob=fixture(),packet=await packetFor(c,blob),before=JSON.stringify(c.S.notes);
+ packet.displayCuts=[{sheetName:'歌割',fromCell:'B1',toCell:'B1',fromText:'合成歌詞',toText:'合成歌詞',fromSinger:'甲',toSinger:'甲'}];
+ const prepared=await c.prepareOriginalExcelAttachment(c.S,packet),updated=prepared.state.songs[0];
+ assert.equal(updated.lines[0].cut,1);assert.equal(updated.lines[0].sourceCut,false);assert.equal(so.lines[0].cut,undefined);
+ assert.equal(JSON.stringify(prepared.state.notes),before);assert.equal(await c.inspectOriginalExcel(updated,blob),true);
+ const retry=await c.prepareOriginalExcelAttachment(prepared.state,packet);assert.equal(retry.state.songs[0].lines[0].cut,1);
+ for(const change of [{fromText:'違う歌詞'},{fromSinger:'乙'},{toCell:'B2'}]){
+  const wrong={...packet,displayCuts:[{...packet.displayCuts[0],...change}]};
+  await assert.rejects(c.prepareOriginalExcelAttachment(c.S,wrong),/カット範囲/);
+ }
 });

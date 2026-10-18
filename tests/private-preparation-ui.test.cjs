@@ -475,3 +475,25 @@ test('an unfinished past slot does not block a separate future REC session, and 
   }else{assert.equal(result.status,'deferred');assert.deepEqual(after,before);}
  }
 });
+
+test('later input preserves earlier committed original batches and resumes without replaying them',async()=>{
+ const f=await setup(),ops=[];for(let i=0;i<5;i++)ops.push(await originalOperation('source'+i+'.xlsx','synthetic original '+i));
+ f.manifest.operations=ops;let calls=0;
+ prepareOriginalFixture(f,{before:()=>{calls++;if(calls===4)f.run('U.menu={kind:"person-selection"}');}});
+ assert.equal((await f.c.PrivatePreparationUI.receive(true)).status,'deferred');
+ assert.equal(Object.keys(f.run('S.privatePreparations')).length,3);
+ const durable=JSON.stringify(f.idb.snapshot().state);assert(durable.includes(ops[0].id));assert(!durable.includes(ops[3].id));
+ f.run('U.menu=null');assert.equal((await f.c.PrivatePreparationUI.receive(true)).status,'applied');
+ assert.equal(Object.keys(f.run('S.privatePreparations')).length,5);assert.equal(calls,6);
+ assert.equal((await f.c.PrivatePreparationUI.receive(true)).status,'current');assert.equal(calls,6);
+});
+test('original fingerprint excludes unrelated songs once this source has identified targets',async()=>{
+ const f=await setup(),op=await originalOperation();f.manifest.operations=[op];
+ f.run('S.songs[0].title="original";S.songs.push({...JSON.parse(JSON.stringify(S.songs[0])),id:"unrelated",title:"Another original",xls:1})');
+ const prepared=prepareOriginalFixture(f);assert.equal((await f.c.PrivatePreparationUI.receive(true)).status,'applied');
+ // The fixture links every initially unlinked song; give the unrelated song its real other source.
+ f.run('S.songs[1].xlsSourceId="sha256-"+"f".repeat(64)');
+ await f.c.PrivatePreparationUI.receive(true);const calls=prepared.calls;
+ f.run('S.songs[1].lines[0].t="Unrelated workbook change"');
+ assert.equal((await f.c.PrivatePreparationUI.receive(true)).status,'current');assert.equal(prepared.calls,calls);
+});

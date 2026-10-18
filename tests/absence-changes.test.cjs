@@ -25,7 +25,7 @@ function fixture(){
  c.restoreViewerMember=()=>c.selected;c.viewerMembers=()=>c.S.members.slice(0,4);c.compactMemberLabel=n=>n;
  c.summarySongs=()=>c.U.allShows?c.S.songs:c.SONGS();c.showName=id=>c.S.shows.find(s=>s.id===(id||c.S.showId))?.name||'';
  vm.createContext(c);
- for(const name of ['noteInArrangement','rowNo','memberChangePerformances','recordAssignmentChange','confirmAbsentAssignments','memberReviewNav','memberAbsenceContext','memberAbsenceChanges','absenceSelectableMembers','memberAbsenceRows','viewMemberAbsence','viewerSummaryBody','lineStatus','blockStatus','viewAbsent'])vm.runInContext(read(name),c);
+ for(const name of ['absentVersionNames','noteInArrangement','rowNo','memberChangePerformances','recordAssignmentChange','confirmAbsentAssignments','memberReviewNav','memberAbsenceContext','memberAbsenceChanges','absenceSelectableMembers','memberAbsenceRows','viewMemberAbsence','viewerSummaryBody','lineStatus','blockStatus','viewAbsent'])vm.runInContext(read(name),c);
  for(const so of c.S.songs){
   const key=so.showId+'|'+so.id;
   for(const [index,after] of Object.entries(c.S.subs[key]||{}))c.recordAssignmentChange(so,'lines',Number(index),after);
@@ -199,4 +199,11 @@ test('changes on another performance are accessible even when current performanc
  const c=fixture();c.S.shows.push({id:'newest',name:'Newest',absent:[]});c.S.showId='newest';
  assert(c.memberReviewNav().includes('data-id="show"'));
  assert(c.viewMemberAbsence().includes('id="summary-show"'));
+});
+
+test('member absence heading uses the same unambiguous full names as Excel exports',()=>{
+ const c=fixture();c.S.members.push({id:'north-short',name:'北'},{id:'north-full',name:'北原'});c.S.shows[0].absent=['north-full','north-short'];
+ assert.deepEqual(Array.from(c.absentVersionNames()),['北原']);
+ const html=vm.runInContext('viewMemberAbsence()',c);assert(html.includes('北原 が欠席'));assert(!html.includes('北原・北'));
+ assert.deepEqual(c.S.shows[0].absent,['north-full','north-short']);
 });

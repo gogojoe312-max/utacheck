@@ -26,7 +26,7 @@
  function only(value,required,optional=[]){if(!object(value)||Object.keys(value).some(k=>![...required,...optional].includes(k))||required.some(k=>!own(value,k)))fail('INVALID_MANIFEST');}
  function safePacket(v){check(v);const todo=[v];while(todo.length){const x=todo.pop();for(const [k,val]of Object.entries(x)){if(secrets.has(k))fail('PRIVATE_CONNECTION_FIELD');if(val&&typeof val==='object')todo.push(val);}}}
  function checkOriginalExcel(packet){
-  safePacket(packet);only(packet,['app','version','name','size','sha256','base64'],['exportFile']);
+  safePacket(packet);only(packet,['app','version','name','size','sha256','base64'],['exportFile','displayCuts']);
   if(packet.app!=='utacheck-original-excel'||packet.version!==1)fail('INVALID_OPERATION');
   const file=(value,extension)=>{
    if(typeof value.name!=='string'||!value.name||value.name.length>1000||/[\\/\x00-\x1f\x7f]/.test(value.name)||!extension.test(value.name)
@@ -37,6 +37,13 @@
   };
   file(packet,/\.(xlsx|xls|xlsb)$/i);
   if(own(packet,'exportFile')){only(packet.exportFile,['name','size','sha256','base64']);if(!/\.(xls|xlsb)$/i.test(packet.name))fail('INVALID_OPERATION');file(packet.exportFile,/\.xlsx$/i);}
+  if(own(packet,'displayCuts')){
+   if(!Array.isArray(packet.displayCuts)||!packet.displayCuts.length||packet.displayCuts.length>20)fail('INVALID_OPERATION');
+   for(const range of packet.displayCuts){
+    only(range,['sheetName','fromCell','toCell','fromText','toText','fromSinger','toSinger']);
+    if(Object.values(range).some(v=>typeof v!=='string'||!v.trim()||v.length>4000)||![range.fromCell,range.toCell].every(v=>/^[A-Z]{1,3}[1-9]\d{0,6}$/.test(v)))fail('INVALID_OPERATION');
+   }
+  }
   return packet;
  }
  async function digest(value,cryptoProvider=root.crypto){const result=await cryptoProvider.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(value)));return [...new Uint8Array(result)].map(x=>x.toString(16).padStart(2,'0')).join('');}

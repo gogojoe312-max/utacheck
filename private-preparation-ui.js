@@ -102,7 +102,7 @@
   if(status.kind==='invalid-read-token')return 'GitHubで作成した読み取り専用の fine-grained token を入力してください。';
   const originals=status.originals,originalText=originals?.files?' 元Excel '+originals.files+'件を保存、'+originals.linked+'曲にリンクしました。'+(originals.unmatched?' '+originals.unmatched+'件は一致する曲がなく、原本を保管しています。':''):'';
   if(status.kind==='applied')return '進行アプリから資料を取り込みました。'+originalText+(status.conflicts?'既存の内容と重なる資料は保留しています。':'');
-  if(status.kind==='current')return '進行アプリの資料は、この端末に反映済みです。'+originalText;
+  if(status.kind==='current')return (originals?.unmatched?'資料の受信は完了しましたが、曲とリンクできていない元Excelが残っています。':'進行アプリの資料は、この端末に反映済みです。')+originalText;
   if(status.kind==='checking')return '進行アプリの資料を確認しています…';
   if(status.kind==='active-plan')return '進行中の枠が残っているため、予定の反映を待っています。実際には未開始なら、その枠の「その他」から開始状態だけ解除できます。';
   if(status.kind==='deferred')return waitingText(status.reason);
@@ -237,14 +237,17 @@
   }
   return true;
  }
- async function originalTargetFingerprint(current){
+ async function originalTargetFingerprint(current,packet){
   // Track matching inputs across reloads, including deliberate cell edits and
   // new performance/take copies. Notes, recordings and attachment timestamps
   // cannot change which workbook belongs to a song and do not trigger parsing.
   const keys=['id','title','artist','groupId','showId','take','xlsSourceId','sheetName','micSheet','micMap','blocks','blockCells','blockRows','roster','lines'];
-  const songs=items=>(items||[]).filter(so=>!so.hidden&&Array.isArray(so.lines)&&(so.xls||so.xlsSourceId||so.sheetName||so.lines.some(line=>line.cell||line.lcell)))
+  const title=value=>String(value||'').normalize('NFKC').replace(/\.(xlsx|xls|xlsb)$/i,'').replace(/\s/g,'').toLowerCase();
+  const targets=[...(current.songs||[]),...(current.rsongs||[])];
+  const matching=packet?new Set(targets.filter(so=>so.xlsSourceId==='sha256-'+packet.sha256||so.xlsSourceId==='sha256-'+packet.exportFile?.sha256||title(so.title)===title(packet.name)).map(so=>so.id)):null;
+  const songs=items=>(items||[]).filter(so=>(!matching?.size||matching.has(so.id))&&!so.hidden&&Array.isArray(so.lines)&&(so.xls||so.xlsSourceId||so.sheetName||so.lines.some(line=>line.cell||line.lcell)))
    .map(so=>Object.fromEntries(keys.filter(key=>Object.prototype.hasOwnProperty.call(so,key)).map(key=>[key,so[key]])));
-  return PrivatePreparation.digest({originalMatcherVersion:2,songs:songs(current.songs),rsongs:songs(current.rsongs),members:(current.members||[]).map(member=>[member.id,member.name])});
+  return PrivatePreparation.digest({originalMatcherVersion:3,songs:songs(current.songs),rsongs:songs(current.rsongs),members:(current.members||[]).map(member=>[member.id,member.name])});
  }
  function originalSummary(manifest){
   const result={files:0,linked:0,stored:0,unmatched:0};
@@ -285,7 +288,7 @@
   }
   if(!isActive())throw failure('DEFERRED');
  }
- async function applyOriginalBatch(operations,token,sourceSha){
+ async function applyOriginalBatch(operations,token,sourceSha,batch={}){
   if(!ready()||sourceToken()!==token||!operations.length)throw failure('DEFERRED');
    if(typeof prepareOriginalExcelAttachment!=='function')throw failure('UNSUPPORTED');
    const state=S,revision=stateRevision,viewState=U,original=JSON.stringify(S),view=JSON.stringify(U);
@@ -306,9 +309,8 @@
    await new Promise(resolve=>setTimeout(resolve,0));
   }
   if(!unchanged())throw failure('DEFERRED');
-  const targetSha256=await originalTargetFingerprint(next);
-  for(const {operation,prepared}of preparedResults)next=PrivatePreparation.apply(next,operation,{originalExcel:()=>({...prepared,state:next,targetSha256})}).state;
-  const batch={};await confirmOriginalSource(operations[0],token,sourceSha,batch,responsive);
+  for(const {operation,prepared}of preparedResults){const targetSha256=await originalTargetFingerprint(next,operation.packet);next=PrivatePreparation.apply(next,operation,{originalExcel:()=>({...prepared,state:next,targetSha256})}).state;}
+  await confirmOriginalSource(operations[0],token,sourceSha,batch,responsive);
   for(const operation of operations)if(batch.confirmed.get(operation.id)!==JSON.stringify(operation))throw failure('PREPARATION_SOURCE_CHANGED');
   if(!unchanged())throw failure('DEFERRED');
   const gate=recordingInboxIntegration?.gate,releaseGate=gate?.acquire();if(!releaseGate)throw failure('DEFERRED');
@@ -403,10 +405,10 @@
    const manifest=await PrivatePreparation.validate(source.manifest,config.owner);
    if(!ready()||sourceToken()!==token)throw failure('DEFERRED');
    const activeSlots=(S.plan?.slots||[]).filter(x=>x.a0!=null&&x.a1==null),activePlan=activeSlots.length>0;
-   const unapplied=[],targetSha256=manifest.operations.some(op=>op.type==='original-excel')?await originalTargetFingerprint(S):null;
+   const unapplied=[];
    for(const op of manifest.operations){
     const receipt=S.privatePreparations?.[op.id];
-    if(!receipt||receipt.sha256!==op.sha256||receipt.type!==op.type||op.type==='original-excel'&&(receipt.targetSha256!==targetSha256||!await originalExcelPresent(op.packet)))unapplied.push(op);
+    if(!receipt||receipt.sha256!==op.sha256||receipt.type!==op.type||op.type==='original-excel'&&(receipt.targetSha256!==await originalTargetFingerprint(S,op.packet)||!await originalExcelPresent(op.packet)))unapplied.push(op);
     if(!ready()||sourceToken()!==token)throw failure('DEFERRED');
    }
    // A past slot left started must not hide an independent future session.
@@ -427,8 +429,12 @@
     catch(error){if(error.preparationCode==='OPERATION_ID_REUSED')throw error;conflicts++;continue;}
     if(await applyOne(operation,token,source.sourceSha)){count++;if(['recording-song','recording-addition'].includes(operation.type))addedRecording=true;}
    }
-   const originalOperations=pending.filter(op=>op.type==='original-excel');
-   if(originalOperations.length)count+=await applyOriginalBatch(originalOperations,token,source.sourceSha);
+   const currentTitles=new Set((S.songs||[]).filter(so=>so.showId===S.showId).map(so=>String(so.title).normalize('NFKC').replace(/\s/g,'')));
+   const priority=op=>op.packet.displayCuts?0:currentTitles.has(op.packet.name.normalize('NFKC').replace(/\.(xlsx|xls|xlsb)$/i,'').replace(/\s/g,''))?1:2;
+   const originalOperations=pending.filter(op=>op.type==='original-excel').sort((a,b)=>priority(a)-priority(b)),batch={};
+   // Commit bounded batches. A later touch must not discard already verified
+   // workbooks, and each receipt tracks only the corresponding source's songs.
+   for(let i=0;i<originalOperations.length;i+=3)count+=await applyOriginalBatch(originalOperations.slice(i,i+3),token,source.sourceSha,batch);
    if(addedRecording){U.recArtistFilter='';render();}
    const originals=originalSummary(manifest);setStatus({kind:count?'applied':conflicts?'conflict':'current',count,conflicts,sourceSha:source.sourceSha,originals});return {status:status.kind,count,conflicts,originals};
   }catch(error){const code=error.preparationCode||error.code||'PREPARATION_CONFLICT';
