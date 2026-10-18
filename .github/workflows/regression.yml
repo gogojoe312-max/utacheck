@@ -29,30 +29,9 @@ jobs:
         with:
           name: preflight-evidence
           path: release-evidence/
-      - name: Prepare tested site
-        if: github.ref == 'refs/heads/main'
-        run: node scripts/prepare-pages.cjs
-      - name: Upload tested site
-        if: github.ref == 'refs/heads/main'
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: _site
-  deploy:
+  final-check:
     if: github.ref == 'refs/heads/main'
     needs: preflight
-    runs-on: ubuntu-latest
-    permissions:
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - name: Publish only the tested revision
-        id: deployment
-        uses: actions/deploy-pages@v4
-  final-check:
-    needs: deploy
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:

@@ -13,3 +13,10 @@ test('public verification cannot borrow an old, partial or failed preflight rece
  for(const bad of [{...good,revision:'old'},{...good,passed:false},{...good,checks:['behavior']},{...good,stage:'post'},null])assert.throws(()=>validatePreflight(bad,'a'));
  assert.throws(()=>executeChecks('other',()=>0));
 });
+const {successfulRun}=require('../scripts/publish-verified.cjs');
+test('publication cannot use another commit, branch, skipped or failed candidate run',()=>{
+ const good={id:1,head_sha:'a',head_branch:'candidate',name:'Verify and publish',event:'push',status:'completed',conclusion:'success'};
+ assert.equal(successfulRun([good],'a','candidate'),good);
+ for(const bad of [{...good,head_sha:'old'},{...good,head_branch:'main'},{...good,event:'pull_request'},{...good,status:'in_progress'}])assert.equal(successfulRun([bad],'a','candidate'),null);
+ for(const conclusion of ['failure','cancelled','skipped','timed_out'])assert.throws(()=>successfulRun([{...good,conclusion}],'a','candidate'));
+});

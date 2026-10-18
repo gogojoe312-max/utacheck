@@ -13,7 +13,10 @@ For every fix:
    Verify related screens and preserve lyrics, assignments, notes and original files.
 3. Add the browser scenario to tests/settings-rec-browser.cjs so both engines and
    the published site execute it. A script only in /tmp is not a lasting check.
-4. Use the Verify and publish workflow. Preflight must pass before Pages deployment.
+4. Commit the changes and run `node scripts/publish-verified.cjs`. This pushes a
+   candidate branch, waits for its exact-commit CI preflight, and only then pushes
+   that same commit to main (the existing Pages source). Do not push directly to
+   main: this account cannot change Pages settings or branch protection.
    Wait for final-check and its exact-revision verified-release.json receipt before
    saying publication and final verification are complete. Keep logs/screenshots
    in workflow artifacts. On failure, fix the failure; do not report completion.
