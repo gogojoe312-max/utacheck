@@ -37,3 +37,8 @@ test('busy input waits and automatically retrying the check keeps the original n
 test('member display works without any owner save or network access',async()=>{
  const f=await setup();f.c.VIEW=()=>true;await f.check();assert.equal(f.status().display,true);assert.equal(f.saves,0);assert.equal(f.badge.dataset.checkState,'verified');assert.equal(f.writes,0);
 });
+test('a lost in-memory cut is detected and repaired even without a state revision',async()=>{
+ const f=await setup();await f.check();const revision=f.c.stateRevision;
+ delete f.c.S.songs[0].lines[1].cut;assert.equal(f.c.stateRevision,revision);
+ await f.check();assert.equal(f.c.S.songs[0].lines[1].cut,1);assert.equal(f.status().saved,true);assert.equal(f.status().display,true);
+});

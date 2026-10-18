@@ -48,7 +48,9 @@
  async function check(){
   if(running||!allowed())return;
   const current=typeof song==='function'?song():null;
-  if(lastState===S&&lastRevision===stateRevision&&(!current||reports.has(current.id)||cache.has(current.lines))){auditDOM();return;}
+  const currentReport=current&&reports.get(current.id);
+  const intact=!currentReport||ArrangementVerification.audit(current,currentReport.plan).ok;
+  if(intact&&lastState===S&&lastRevision===stateRevision&&(!current||reports.has(current.id)||cache.has(current.lines))){auditDOM();return;}
   running=true;const state=S;let release;
   try{
    const ordered=allSongs().sort((a,b)=>(b===current)-(a===current)),plans=[];
