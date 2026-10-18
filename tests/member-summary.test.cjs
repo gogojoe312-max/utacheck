@@ -167,3 +167,20 @@ test('source section metadata restores on import and older publications remain r
  assert.equal(run("buildSong({lines:[['全','古い形式']]}).lines[0].sec"),undefined);
 });
 
+
+test('one-half feedback hides cut-only notes and skips cut lyrics in ranges and context without deleting data',()=>{
+ const {c,run}=fixture();
+ c.S.songs[0].lines=[{t:'残す前'},{t:'カット前',cut:1},{t:'残す対象'},{t:'カット中',cut:1},{t:'残す後'},{t:'カット後',cut:1}];
+ c.notes=[{id:'cut',songId:'s1',showId:'day1',lineIdx:1,memberIds:[],tags:[],memo:'カットだけの指摘'},
+ {id:'range',songId:'s1',showId:'day1',lineIdx:2,lineEnd:4,memberIds:[],tags:[],memo:'残す範囲の指摘'}];
+ const before=JSON.stringify(c.notes),html=run('viewerSummaryBody()');
+ assert(!html.includes('カット'));assert(html.includes('残す対象\n残す後'));assert(html.includes('残す範囲の指摘'));
+ assert.equal(run("memberNoteLocation({songId:'s1',lineIdx:2}).previous"),'残す前');
+ assert.equal(run("memberNoteLocation({songId:'s1',lineIdx:2}).next"),'残す後');
+ assert.equal(run("noteInArrangement({songId:'s1',lineIdx:1})"),false);
+ assert.equal(run("noteInArrangement({songId:'s1',lineIdx:1,lineEnd:2})"),true);
+ assert.equal(run("memberLyricHTML({songId:'s1',lineIdx:1,lineEnd:2})"),'<mark class="member-target">残す対象</mark>');
+ vm.runInContext(src.slice(src.indexOf('const shownNotes ='),src.indexOf('let pushTimer =')),c);
+ assert.equal(run('shownNotes().length'),1);c.U.allShows=true;assert.equal(run('shownNotes().length'),1);
+ assert.equal(JSON.stringify(c.notes),before);
+});

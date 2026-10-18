@@ -39,6 +39,7 @@ test('previous correction is automatically fixed if no correction is recorded th
  const {c,run}=setup();c.S.songs[0].lines=[{t:'歌詞'}];c.prevShowId=()=> 'r';c.summaryHeader=()=>'';c.SONGS=()=>[c.S.songs[0]];c.prevSongOf=()=>({id:'prev',title:'前回',showId:'r',lines:[{t:'歌詞'}]});
  c.NOTES=()=>[{id:'n',songId:'prev',showId:'r',lineIdx:0,tags:['fast'],memberIds:[],memo:'前回の指摘'}];
  Object.assign(c,{h:String,names:()=>'',tagName:x=>x,handHTML:()=>'',songName:so=>so.title,showName:()=>''});
+ vm.runInContext(block('function noteInArrangement(', 'const shownNotes ='),c);
  vm.runInContext(block('function viewDiff()', '// 古い曲から'),c);const html=run('viewDiff()');assert(html.includes('直った 1'));assert(!html.includes('未確認'));assert(!html.includes('続いている 1'));
 });
 test('selecting the group changes both the current show destination and subsequent import group',()=>{

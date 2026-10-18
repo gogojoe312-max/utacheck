@@ -25,7 +25,7 @@ function fixture(){
  c.restoreViewerMember=()=>c.selected;c.viewerMembers=()=>c.S.members.slice(0,4);c.compactMemberLabel=n=>n;
  c.summarySongs=()=>c.U.allShows?c.S.songs:c.SONGS();c.showName=id=>c.S.shows.find(s=>s.id===(id||c.S.showId))?.name||'';
  vm.createContext(c);
- for(const name of ['rowNo','memberChangePerformances','recordAssignmentChange','confirmAbsentAssignments','memberReviewNav','memberAbsenceContext','memberAbsenceChanges','absenceSelectableMembers','memberAbsenceRows','viewMemberAbsence','viewerSummaryBody','lineStatus','blockStatus','viewAbsent'])vm.runInContext(read(name),c);
+ for(const name of ['noteInArrangement','rowNo','memberChangePerformances','recordAssignmentChange','confirmAbsentAssignments','memberReviewNav','memberAbsenceContext','memberAbsenceChanges','absenceSelectableMembers','memberAbsenceRows','viewMemberAbsence','viewerSummaryBody','lineStatus','blockStatus','viewAbsent'])vm.runInContext(read(name),c);
  for(const so of c.S.songs){
   const key=so.showId+'|'+so.id;
   for(const [index,after] of Object.entries(c.S.subs[key]||{}))c.recordAssignmentChange(so,'lines',Number(index),after);

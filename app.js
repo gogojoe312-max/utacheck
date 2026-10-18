@@ -118,7 +118,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.42";
+const APP_VER = "16.41.58.43";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -2313,7 +2313,13 @@ function staffMemoCard(so) {
     <textarea class="field" id="staffmemo" aria-describedby="staffmemo-help" rows="3" placeholder="スタッフへの連絡・確認事項" style="resize:vertical">${h(value)}</textarea>
   </div>`;
 }
-const shownNotes = () => (U.allShows ? NOTES() : NOTES().filter((n) => n.showId === S.showId));
+function noteInArrangement(n) {
+  const lines = S.songs.find(so => so.id === n.songId)?.lines;
+  if (!lines || !Number.isInteger(n.lineIdx) || !lines[n.lineIdx]) return true;
+  const end = n.from == null && Number.isInteger(n.lineEnd) ? Math.max(n.lineIdx, Math.min(n.lineEnd, lines.length - 1)) : n.lineIdx;
+  return lines.slice(n.lineIdx, end + 1).some(line => !line.cut);
+}
+const shownNotes = () => (U.allShows ? NOTES() : NOTES().filter((n) => n.showId === S.showId)).filter(noteInArrangement);
 let pushTimer = null, pushState = "", publishIssues = [];
 let undoStack = [];
 let readTimer = null;
@@ -7364,7 +7370,9 @@ ${shows}</div>
 /* ---- summary ---- */
 const lyricOf = (n) => {
   const so = S.songs.find((x) => x.id === n.songId);
-  return so ? (so.lines[n.lineIdx] || {}).t || "" : "";
+  if (!so) return "";
+  const end = n.from == null && Number.isInteger(n.lineEnd) ? Math.max(n.lineIdx, n.lineEnd) : n.lineIdx;
+  return (so.lines.slice(n.lineIdx, end + 1).find(line => !line.cut) || {}).t || "";
 };
 const partOf = (n) => (n.from != null ? Array.from(lyricOf(n)).slice(n.from, n.to + 1).join("") : "");
 const songTitle = (n) => { const so = S.songs.find((x) => x.id === n.songId); return so ? songName(so) : "?"; };
@@ -7428,7 +7436,7 @@ function memberNoteLocation(n) {
   if (!Number.isInteger(start) || start < 0 || start >= lines.length) return null;
   const end = n.from == null && Number.isInteger(n.lineEnd) ? Math.max(start, Math.min(n.lineEnd, lines.length - 1)) : start;
   const text = i => String(lines[i]?.t || "").trim();
-  const isLyric = i => !lines[i].gap && !!text(i) && !(lines[i].sec && text(i) === String(lines[i].sec).trim());
+  const isLyric = i => !lines[i].cut && !lines[i].gap && !!text(i) && !(lines[i].sec && text(i) === String(lines[i].sec).trim());
   const lyricRows = lines.map((_,i) => i).filter(isLyric);
   const previous = lyricRows.filter(i => i < start).at(-1);
   const next = lyricRows.find(i => i > end);
@@ -7448,7 +7456,7 @@ function memberNoteLocation(n) {
 function memberLyricHTML(n) {
   const so = S.songs.find(so => so.id === n.songId);
   const lines = so?.lines || [];
-  const first = String(lines[n.lineIdx]?.t ?? lyricOf(n));
+  const first = String(lines[n.lineIdx]?.cut ? "" : lines[n.lineIdx]?.t ?? lyricOf(n));
   const chars = Array.from(first);
   const highlight = text => `<mark class="member-target">${h(text)}</mark>`;
   if (n.from != null) {
@@ -7458,7 +7466,7 @@ function memberLyricHTML(n) {
     return h(chars.slice(0, n.from).join("")) + highlight(chars.slice(n.from, end).join("")) + h(chars.slice(end).join(""));
   }
   const end = Number.isInteger(n.lineEnd) ? Math.min(n.lineEnd, lines.length - 1) : n.lineIdx;
-  const text = [first, ...lines.slice(n.lineIdx + 1, Math.max(n.lineIdx, end) + 1).map(line => line.t || "")].join("\n");
+  const text = [ ...(lines[n.lineIdx]?.cut ? [] : [first]), ...lines.slice(n.lineIdx + 1, Math.max(n.lineIdx, end) + 1).filter(line => !line.cut).map(line => line.t || "")].join("\n");
   return text.trim() ? highlight(text) : '<span class="member-caption">歌詞のない箇所</span>';
 }
 function memberNoteBody(n, showMembers = true) {
@@ -7475,7 +7483,7 @@ function memberNoteBody(n, showMembers = true) {
 function viewerSummaryBody() {
   const selected = restoreViewerMember();
   const byMember = !!selected;
-  const all = shownNotes();
+  const all = shownNotes().filter(noteInArrangement);
   const ns = byMember && selected ? all.filter(n => !(n.memberIds || []).length || n.memberIds.includes(selected.id)) : all;
   const picker = `<label class="summary-show-picker member-picker"><span>メンバー</span>
     <select id="summary-member" aria-label="メンバー"><option value="">全員</option>
@@ -7688,8 +7696,8 @@ function viewDiff() {
   const cards = SONGS().map((so) => {
     const prevSong = prevSongOf(so);
     if (!prevSong) return "";
-    const now = NOTES().filter((n) => n.songId === so.id && n.showId === S.showId && !n.tags.includes("good"));
-    const bef = NOTES().filter((n) => n.songId === prevSong.id && !n.tags.includes("good"));
+    const now = NOTES().filter((n) => n.songId === so.id && n.showId === S.showId && !n.tags.includes("good") && noteInArrangement(n));
+    const bef = NOTES().filter((n) => n.songId === prevSong.id && !n.tags.includes("good") && noteInArrangement(n));
     const nowK = new Set(now.map(key)), befK = new Set(bef.map(key));
     const fixed = bef.filter((n) => !nowK.has(key(n)));
     const kept = now.filter((n) => befK.has(key(n)));
