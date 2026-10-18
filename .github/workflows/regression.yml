@@ -1,4 +1,4 @@
-name: Regression checks
+name: Verify and publish
 on:
   push:
     branches: [main, 'codex/**']
@@ -7,44 +7,71 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: regression-${{ github.ref }}
-  cancel-in-progress: true
+  group: verified-release-${{ github.ref }}
+  cancel-in-progress: false
 jobs:
-  regression:
+  preflight:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
-      - name: Read the exact revision
-        env:
-          REPO_URL: https://github.com/${{ github.repository }}.git
-          CHECK_SHA: ${{ github.sha }}
-        run: |
-          git init .
-          git remote add origin "$REPO_URL"
-          git fetch --depth=1 origin "$CHECK_SHA"
-          git checkout --detach FETCH_HEAD
-      - name: Run data and behavior tests
-        run: node --test tests/*.test.cjs
+      - uses: actions/checkout@v4
       - name: Install isolated test browsers
-        id: browsers
         run: |
           npm install --prefix "$RUNNER_TEMP/utacheck-browser" --no-save --package-lock=false playwright@1.56.1
           "$RUNNER_TEMP/utacheck-browser/node_modules/.bin/playwright" install --with-deps chromium webkit
-      - name: Check Chromium layout and controls
+      - name: Verify behavior, received member data, save and reload
         env:
-          BROWSER_ENGINE: chromium
-        run: NODE_PATH="$RUNNER_TEMP/utacheck-browser/node_modules" node tests/settings-rec-browser.cjs
-      - name: Check WebKit layout and controls
-        if: ${{ !cancelled() && steps.browsers.outcome == 'success' }}
-        env:
-          BROWSER_ENGINE: webkit
-        run: NODE_PATH="$RUNNER_TEMP/utacheck-browser/node_modules" node tests/settings-rec-browser.cjs
-      - name: Verify the existing published site
+          NODE_PATH: ${{ runner.temp }}/utacheck-browser/node_modules
+        run: node scripts/release-gate.cjs pre
+      - name: Preserve check results even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: preflight-evidence
+          path: release-evidence/
+      - name: Prepare tested site
         if: github.ref == 'refs/heads/main'
-        run: node tests/published-assets.cjs
-      - name: Check the published interface with WebKit
+        run: node scripts/prepare-pages.cjs
+      - name: Upload tested site
         if: github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    needs: preflight
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Publish only the tested revision
+        id: deployment
+        uses: actions/deploy-pages@v4
+  final-check:
+    needs: deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: preflight-evidence
+          path: release-evidence
+      - name: Install isolated test browsers
+        run: |
+          npm install --prefix "$RUNNER_TEMP/utacheck-browser" --no-save --package-lock=false playwright@1.56.1
+          "$RUNNER_TEMP/utacheck-browser/node_modules/.bin/playwright" install --with-deps chromium webkit
+      - name: Check exact public assets and public member screens
         env:
-          BROWSER_ENGINE: webkit
-          QA_BASE_URL: https://gogojoe312-max.github.io/utacheck/
-        run: NODE_PATH="$RUNNER_TEMP/utacheck-browser/node_modules" node tests/settings-rec-browser.cjs
+          NODE_PATH: ${{ runner.temp }}/utacheck-browser/node_modules
+        run: node scripts/release-gate.cjs post
+      - name: Keep final result, logs and screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-release-evidence
+          path: release-evidence/

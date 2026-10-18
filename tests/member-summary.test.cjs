@@ -205,3 +205,15 @@ test('one-half feedback hides cut-only notes and skips cut lyrics in ranges and 
  assert.equal(run('shownNotes().length'),1);c.U.allShows=true;assert.equal(run('shownNotes().length'),1);
  assert.equal(JSON.stringify(c.notes),before);
 });
+
+test('known artists with legacy publication labels use their formal roster when roster metadata is absent',()=>{
+ for(const [name,expected] of [['OCHA NORMA',['斉藤','広本','米村','窪田','中山','西﨑','北原','筒井']],['ロージークロニクル',['橋田','吉田','小野田','村越','植村','松原','島川','上村','相馬']]]){
+  const {c,run}=fixture();c.S.groups=[{id:'g',name}];c.song=()=>c.S.songs[0];
+  const labels=['下斉藤','中窪','広西','広西米','斉中','広西北','ア','エ','イ','オ','お客さん','筒井ハモ','間奏','A','北'];
+  c.S.sourceMemberNames=[...expected,...labels];c.S.members=c.S.sourceMemberNames.map((name,i)=>({id:'m'+i,name}));
+  c.S.songs[0].roster=c.S.members.map(m=>m.id);
+  const before=JSON.stringify(c.S);
+  assert.deepEqual(Array.from(run('viewerMembers()'),m=>m.name),expected);
+  assert.equal(JSON.stringify(c.S),before);
+ }
+});

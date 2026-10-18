@@ -7,6 +7,7 @@ const {checkFolderInteractions}=require('./folder-interactions-browser-helper.cj
 const {checkLyricBreaks}=require('./lyric-break-browser-helper.cjs');
 const {checkRecordingBrowse}=require('./recording-browse-browser-helper.cjs');
 const {checkArrangementDevice}=require('./arrangement-device-browser-helper.cjs');
+const {checkMemberRoster}=require('./member-roster-browser-helper.cjs');
 const engine=process.env.BROWSER_ENGINE||'chromium';assert(['chromium','webkit'].includes(engine));
 const root=path.resolve(__dirname,'..'),out=process.env.QA_OUTPUT||path.join(require('node:os').tmpdir(),'utacheck-settings-qa',engine);
 fs.mkdirSync(out,{recursive:true});
@@ -129,7 +130,8 @@ async function readableTitles(page,rec){
    await assertFits(page);await screenshot(page,width,'save-error');assert.deepEqual(JSON.parse(await page.evaluate(()=>qaContent())),expected);
    const progressConnection=await checkProgressPreparation(page,{relay:width===390,automaticInteraction:width===390});
    const arrangementDevice=await checkArrangementDevice(page);
-   results.push({width,arrangementDevice,progressConnection,...folderResult,...recordingBrowseResult,...absenceResult,...lyricBreakResult,excelOriginal:excelCheck,settings:true,pdfLiveRecView:true,fullTitles:true,footer:true,draftPreserved:true,saveErrorVisible:true});await context.close();contexts.delete(context);
+   const memberRoster=await checkMemberRoster(page);
+   results.push({width,memberRoster,arrangementDevice,progressConnection,...folderResult,...recordingBrowseResult,...absenceResult,...lyricBreakResult,excelOriginal:excelCheck,settings:true,pdfLiveRecView:true,fullTitles:true,footer:true,draftPreserved:true,saveErrorVisible:true});await context.close();contexts.delete(context);
   }
   assert.deepEqual(errors,[]);assert.equal(blocked.filter(x=>x.method!=='GET').length,0);
   const report={passed:true,engine,results,errors,blocked,externalRequestsAllowed:0,syntheticDataOnly:true};

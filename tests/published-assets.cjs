@@ -3,6 +3,17 @@
 const fs=require('node:fs'),assert=require('node:assert/strict'),{createHash}=require('node:crypto');
 const base='https://gogojoe312-max.github.io/utacheck/';
 const paths=['arrangement-catalog.js','arrangement-verification.js','arrangement-verification-ui.js','index.html','app.js','sw.js','operation-progress.js','manifest.webmanifest','startup/iphone-1206x2622.png','recovery-delivery.js','ui.js','ui.css','absence-changes.js','private-preparation-source.js','private-preparation-ui.js'];
+// Cover every directly referenced runtime script/style and offline-cache asset,
+// including files added by future fixes, rather than a hand-maintained subset.
+const html=fs.readFileSync(require('node:path').join(__dirname,'..','index.html'),'utf8');
+const sw=fs.readFileSync(require('node:path').join(__dirname,'..','sw.js'),'utf8');
+for(const match of html.matchAll(/(?:src|href)="([^"?#]+)(?:\?[^"]*)?"/g)){
+ const value=match[1].replace(/^\.\//,'');
+ if(!value.includes(':')&&!value.startsWith('/')&&/\.(?:js|css|webmanifest|png)$/.test(value)&&!paths.includes(value))paths.push(value);
+}
+for(const match of sw.matchAll(/"\.\/([^"]+)"/g)){
+ const value=match[1];if(value&&!paths.includes(value))paths.push(value);
+}
 const hash=content=>createHash('sha256').update(content).digest('hex');
 (async()=>{
  const expected=new Map(paths.map(path=>[path,hash(fs.readFileSync(require('node:path').join(__dirname,'..',path)))]));
