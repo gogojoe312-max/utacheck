@@ -67,7 +67,7 @@
    if(S!==state||!allowed())return;
    const writable=!VIEW()&&!preview;
    if(writable)release=recordingInboxAdmitWriter();
-   let changed=false,needsSave=false;
+   let changed=false,visibleChanged=false,needsSave=false;
    for(const {so,plan}of plans){
     const previous=reports.get(so.id),selected=new Set(plan.indices);
     const differs=plan.indices.some(i=>so.lines[i].cut!==1||so.lines[i].sourceCut!==plan.lines[i].sourceCut);
@@ -75,11 +75,12 @@
      // Merge metadata into the live lines; never replace lyrics, assignments,
      // notes, drawings or a newer edit with a staged whole-state snapshot.
      so.lines=so.lines.map((line,i)=>selected.has(i)?{...line,cut:1,sourceCut:plan.lines[i].sourceCut}:line);changed=true;
+     if(U.view==='summary' || so===current)visibleChanged=true;
     }
     const report={plan,saved:!differs&&previous?.saved===true,display:false,recorded:!differs&&previous?.recorded===true};
     reports.set(so.id,report);if(!report.saved)needsSave=true;
    }
-   if(changed)render();
+   if(changed&&visibleChanged)render(true);
    if(writable&&needsSave){
     save();await saveNow();
     if(saveErr)throw Error('ARRANGEMENT_SAVE_UNVERIFIED');

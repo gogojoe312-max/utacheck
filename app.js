@@ -118,7 +118,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.50";
+const APP_VER = "16.41.58.51";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -4380,7 +4380,8 @@ function recordingLineSegments(line) {
     const override = index ? line?.recBarOverrides?.[from] : null;
     const bars = Number.isSafeInteger(override?.bars) && override.bars > 0 ? override.bars : Number(line?.bars || 4);
     const at = index ? (Number.isSafeInteger(override?.at) && override.at > 0 ? override.at : null) : (line?.at == null ? null : Number(line.at));
-    return { index, from, to, text: chars.slice(from, to).join(""), bars, at };
+    const sec = index ? override?.sec : line?.sec;
+    return { index, from, to, text: chars.slice(from, to).join(""), bars, at, ...(sec ? {sec} : {}) };
   });
 }
 function recordingBarRows(so) {
@@ -4405,6 +4406,7 @@ function pruneRecordingBarOverrides(line) {
   for (const offset of lyricBreakOffsets(line)) {
     const old = line.recBarOverrides?.[offset], entry = {};
     for (const field of ["at", "bars"]) if (Number.isSafeInteger(old?.[field]) && old[field] > 0) entry[field] = old[field];
+    if (typeof old?.sec === "string" && old.sec.trim()) entry.sec = old.sec;
     if (Object.keys(entry).length) kept[offset] = entry;
   }
   if (Object.keys(kept).length) line.recBarOverrides = kept;
@@ -4423,6 +4425,48 @@ function setRecordingSegmentBar(line, segmentIndex, field, value) {
     pruneRecordingBarOverrides(line);
   }
   return true;
+}
+function setRecordingSegmentSection(line, segmentIndex, value) {
+  const segment = recordingLineSegments(line)[segmentIndex];
+  if (!segment || typeof value !== "string") return false;
+  const sec = value.trim();
+  if (!segment.index) {
+    if (sec) line.sec = sec; else delete line.sec;
+  } else {
+    const entries = line.recBarOverrides || {}, entry = entries[segment.from] || {};
+    if (sec) { entry.sec = sec; if (line.sec === sec) delete line.sec; }
+    else delete entry.sec;
+    entries[segment.from] = entry; line.recBarOverrides = entries;
+    pruneRecordingBarOverrides(line);
+  }
+  return true;
+}
+// Repair only the exact legacy source signature confirmed in the supplied backup.
+// Source text and annotation offsets are never rewritten.
+function repairRecordingSectionMarker(line, digest) {
+  if (digest !== "0e139f9c935ceb8f1046a7dc2f3b46c5ba77168d28989d4abd0201901065ef9b"
+    || Array.from(line.t || "").length !== 16 || line.sec !== "Rap"
+    || !lyricBreakOffsets(line).includes(9) || line.recBarOverrides?.[9]?.sec) return false;
+  return setRecordingSegmentSection(line, lyricBreakOffsets(line).indexOf(9) + 1, "Rap");
+}
+const checkedRecordingSections = new WeakSet();
+let repairingRecordingSection = false;
+async function repairCurrentRecordingSection() {
+  if (repairingRecordingSection || syncing || manualSync || U.busy || U.importing || recordingStartPending || recordingFinalizePending || recordingInboxIntegration?.gate?.applying || !S.recMode || VIEW() || preview || U.menu || U.sheet || typingNow() || REC || !recordingInboxCanWrite()) return;
+  const state = S, so = recSong(); if (!so) return;
+  repairingRecordingSection = true;
+  try {
+    let changed = false;
+    for (const line of so.lines) {
+      if (checkedRecordingSections.has(line) || line.sec !== "Rap" || Array.from(line.t || "").length !== 16 || !lyricBreakOffsets(line).includes(9)) continue;
+      const before = JSON.stringify(line);
+      const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(line.t));
+      if (S !== state || recSong() !== so || U.menu || U.sheet || typingNow() || REC || !recordingInboxCanWrite() || JSON.stringify(line) !== before) return;
+      checkedRecordingSections.add(line);
+      changed = repairRecordingSectionMarker(line, Array.from(new Uint8Array(bytes), n => n.toString(16).padStart(2,"0")).join("")) || changed;
+    }
+    if (changed) { save(); await saveNow(); if (!saveErr && S === state && recSong() === so) render(true); }
+  } finally { repairingRecordingSection = false; }
 }
 function recordingBarMenuTarget() {
   const so = recSong(), menu = U.menu;
@@ -6108,7 +6152,7 @@ function render(background = false) {
   renderSheet();
   if (U.view === "live" && !U.overview) queueInkPaint();
   if (U.view === "print" || U.view === "recprint") setTimeout(fitPrintDOM, 0);
-  if (S.recMode) setTimeout(() => { tickPlan(); scrollTab(); }, 0);
+  if (S.recMode) setTimeout(() => { tickPlan(); scrollTab(); void repairCurrentRecordingSection(); }, 0);
   if (U.view === "setup") setTimeout(() => {
     const cv = document.getElementById("ptcv");
     if (cv && !cv.dataset.ready) { cv.dataset.ready = "1"; pitchTouch(cv); }
@@ -6223,9 +6267,13 @@ function groupPos(lines) {
 
 // その行が属している区切り（区切り名は上から引き継がれる）。
 // 表記の枠（ガヤなど）は、その表記が付いている行だけを見る。
-function secOfLine(so, i) {
+function secOfLine(so, i, segmentIndex = 0) {
   const ls = so.lines || [];
-  for (let k = i; k >= 0; k--) if (ls[k].sec) return ls[k].sec;
+  for (let k = i; k >= 0; k--) {
+    const segments = recordingLineSegments(ls[k]);
+    for (let j = k === i ? segmentIndex : segments.length - 1; j >= 0; j--)
+      if (segments[j]?.sec) return segments[j].sec;
+  }
   return "";
 }
 function linesInSec(so, nm) {
@@ -6238,7 +6286,7 @@ function linesInSec(so, nm) {
     if (l.gap) return;
     /* Gaya を選べば Gaya1 も Gaya2 も出す。Gaya2 を選べばその分だけ。 */
     if (isTag ? (tagNum(nm) ? l.tag === nm : tagBase(l.tag) === nm)
-              : secOfLine(so, i) === nm) out.push(i);
+              : recordingLineSegments(l).some(segment => secOfLine(so, i, segment.index) === nm)) out.push(i);
   });
   return out;
 }
@@ -6307,7 +6355,10 @@ function viewLive() {
           <div class="grow" style="min-width:0"><button data-act="noteblock" data-i="${i}"
             style="display:block;width:100%;text-align:left;min-height:14px">${gm}</button>${gp2}${gns.filter(n => n.lineIdx === i).map(n => handHTML(n)).join("")}</div></div>`;
       }
-      const ns = ns0.filter((n) => covers(n, i));
+      const visibleSegments = S.recMode ? numberedRows[i].filter(segment => !fsec || tagSecNames().includes(fsec) || tagSecNames().includes(tagBase(fsec)) || secOfLine(s, i, segment.index) === fsec) : [];
+      const firstSegment = visibleSegments[0];
+      const visibleChar = ci => !S.recMode || visibleSegments.some(segment => ci >= segment.from && ci < segment.to);
+      const ns = ns0.filter((n) => covers(n, i) && (n.from == null || !S.recMode || visibleSegments.some(segment => n.to >= segment.from && n.from < segment.to)));
       const chars = Array.from(S.recMode && l.add ? "（" + l.t + "）" : l.t);
       const badge = (n) => {
         const c = noteColor(n);
@@ -6321,13 +6372,14 @@ function viewLive() {
       const lineBreaks = new Set(lyricBreakOffsets(l).map(n => n + (S.recMode && l.add ? 1 : 0)));
       const numberedBreaks = new Map((numberedRows[i] || []).slice(1).map(segment => [segment.from + (l.add ? 1 : 0), segment]));
       let cells = chars.map((ch, ci) => {
+        if (!visibleChar(S.recMode && l.add ? Math.max(0, Math.min(chars.length - 3, ci - 1)) : ci)) return "";
         const mk = ns.find((n) => n.from != null && ci >= n.from && ci <= n.to);
         const st = mk ? markStyle(mk) : "border-bottom-color:transparent";
         const tail = ns.filter((n) => n.from != null && n.to === ci).map(badge).join("");
         const segment = numberedBreaks.get(ci);
-        const separator = segment && !preserveInkLayout
-          ? `<button class="rec-lyric-number" data-act="rbar" data-i="${i}" data-segment="${segment.index}" aria-label="${segment.number == null ? "この行の小節" : "小節 " + segment.number}">${S.recBars && segment.number != null ? segment.number : ""}</button>`
-          : lineBreaks.has(ci) ? "<br>" : "";
+        const separator = segment && segment !== firstSegment && !preserveInkLayout
+          ? `${segment.sec ? `<div class="secdiv" id="sec-${h(segment.sec)}"><span>${h(segment.sec)}</span></div>` : ""}<button class="rec-lyric-number" data-act="rbar" data-i="${i}" data-segment="${segment.index}" aria-label="${segment.number == null ? "この行の小節" : "小節 " + segment.number}">${segment.sec ? h(segment.sec) + " " : ""}${S.recBars && segment.number != null ? segment.number : ""}</button>`
+          : lineBreaks.has(ci) && (!S.recMode || segment !== firstSegment) ? "<br>" : "";
         return `${separator}<span data-c="${ci}" style="${st}">${ch === " " ? "&nbsp;" : h(ch)}</span>${tail}`;
       }).join("");
       cells += ns.filter((n) => n.from == null && n.lineIdx === i).map(badge).join("");
@@ -6343,19 +6395,19 @@ function viewLive() {
           ${n.ro ? "" : `<button class="pill-del" data-act="delnote" data-id="${n.id}" aria-label="この指摘を削除">×</button>`}
         </span>`).join("");
       const st2 = lineStatus(s, i);
-      const newSec = S.recMode && l.sec && l.sec !== (s.lines[i - 1] || {}).sec;
+      const newSec = S.recMode && firstSegment?.sec;
       const foc = S.recMode ? recLineFocus(s, i) === "rec-focus-own" : U.focus && partsOf(s, i).includes(U.focus);
       const tint = st2 === "need" ? "var(--bad)" : st2 === "changed" ? (VIEW() ? "#ff9183" : "#F0B23C")
         : foc ? "#4C9BFF" : (ns.length ? noteColor(ns[0]) : "");
       const strength = (st2 || foc) ? 18 : 9;
       const vtc = S.recMode ? vtColor(vtOf(l)) : "";
       const vh = vm.info[i];
-      return `${newSec ? `<div class="secdiv" id="sec-${h(l.sec)}"><span>${h(l.sec)}</span></div>` : ""}
+      return `${newSec ? `<div class="secdiv" id="sec-${h(firstSegment.sec)}"><span>${h(firstSegment.sec)}</span></div>` : ""}
       ${vh ? `<div class="vtdiv" style="color:${vh.c}"><span>${h(vh.vt)}</span></div>` : ""}
       <div data-lyric-line="${i}" class="ln ${S.recMode ? recLineFocus(s, i) : ""}${S.recMode && l.add ? " lnadd" : ""}${S.recMode && l.skip ? " lnskip" : ""}${l.cut ? " lncut" : ""}${isAgeri(l) ? " lnage" : ""}"${
         l.tag && tanc[l.tag] === i ? ` id="sec-${h(l.tag)}"` : ""} style="${tint ? `background:color-mix(in srgb,${tint} ${strength}%,transparent);` : ""}${vtc ? `box-shadow:inset 3px 0 0 ${vtc}` : ""}">
-        <button class="lbl" data-act="${S.recMode ? "rbar" : "noteblock"}" data-i="${i}"${S.recMode ? ' data-segment="0"' : ""}${S.recMode || VIEW() ? "" : ` data-hold="assignline"`}
-          style="${st2 ? `color:${st2 === "need" ? "var(--bad)" : "#F0B23C"}` : ""}">${S.recMode && l.tag ? `<b class="tagmk">${h(l.tag)}</b>` : ""}${l.cut ? `<b class="cutmk">カット</b>` : ""}${VIEW() && st2 === "changed" ? '<b class="member-change-badge">歌割変更</b>' : ""}${labelHTML(s, i)}</button>
+        <button class="lbl" data-act="${S.recMode ? "rbar" : "noteblock"}" data-i="${i}"${S.recMode ? ` data-segment="${firstSegment?.index || 0}"` : ""}${S.recMode || VIEW() ? "" : ` data-hold="assignline"`}
+          style="${st2 ? `color:${st2 === "need" ? "var(--bad)" : "#F0B23C"}` : ""}">${S.recMode && l.tag ? `<b class="tagmk">${h(l.tag)}</b>` : ""}${l.cut ? `<b class="cutmk">カット</b>` : ""}${VIEW() && st2 === "changed" ? '<b class="member-change-badge">歌割変更</b>' : ""}${S.recMode && firstSegment?.index ? h((firstSegment.sec ? firstSegment.sec + " " : "") + (S.recBars && firstSegment.number != null ? firstSegment.number : "")) : labelHTML(s, i)}</button>
         <div class="brk ${gp[i]}"></div>
         <div class="grow" style="min-width:0">
           <div class="txt" data-l="${i}" style="font-size:${S.size + 6}px;line-height:${S.lyricLineHeight === 1.8 ? 1.8 : S.lyricLineHeight === 1.5 ? 1.5 : 1.6}">${cells}</div>${pills}
@@ -6513,11 +6565,9 @@ function viewOverview(s) {
     const one = (l, i) => {
       if (l.cut || hiddenRecLines.has(i)) return "";
       if (l.gap) return `<div style="height:1em"></div>`;
-      const newSec = l.sec && l.sec !== (s.lines[i - 1] || {}).sec;
       const vh2 = vm2.info[i];
-      return `${newSec ? `<div class="secdiv" id="sec-${h(l.sec)}"><span>${h(l.sec)}</span></div>` : ""}
-        ${vh2 ? `<div class="vtdiv vtdivov" style="color:${vh2.c}"><span>${h(vh2.vt)}</span></div>` : ""}
-        ${numberedRows[i].map(segment => `<button class="ovw ${recLineFocus(s, i)}${l.add ? " lnadd" : ""}${S.recMode && l.skip ? " lnskip" : ""}${l.cut ? " lncut" : ""}" data-act="jumpline" data-i="${i}" data-segment="${segment.index}"
+      return `${vh2 ? `<div class="vtdiv vtdivov" style="color:${vh2.c}"><span>${h(vh2.vt)}</span></div>` : ""}
+        ${numberedRows[i].map(segment => `${segment.sec ? `<div class="secdiv" id="sec-${h(segment.sec)}"><span>${h(segment.sec)}</span></div>` : ""}<button class="ovw ${recLineFocus(s, i)}${l.add ? " lnadd" : ""}${S.recMode && l.skip ? " lnskip" : ""}${l.cut ? " lncut" : ""}" data-act="jumpline" data-i="${i}" data-segment="${segment.index}"
           style="${vtColor(vtOf(l)) ? `box-shadow:inset 3px 0 0 ${vtColor(vtOf(l))}` : ""}">
           <span class="ovwn">${l.tag && !segment.index ? `<b class="tagmk">${h(l.tag)}</b>` : ""}${S.recBars && segment.number != null ? segment.number : ""}</span>
           <span>${l.add && !segment.index ? "（" : ""}${h(segment.text)}${l.add && segment.index === numberedRows[i].length - 1 ? "）" : ""}</span></button>`).join("")}`;
@@ -7084,9 +7134,9 @@ function renderSheet() {
       <div class="chips">
         ${secs.map((x) => `<button class="chip sm" data-act="${edSec ? "rworddel" : "rsecq"}" data-id="${edSec ? "sec|" : ""}${h(x)}"
           style="${edSec ? "color:var(--bad);border:1px solid var(--bad)"
-            : (l || {}).sec === x ? "background:var(--accent);color:#0A0A0A;font-weight:700" : ""}">${h(x)}${edSec ? " ✕" : ""}</button>`).join("")}
+            : selected?.sec === x ? "background:var(--accent);color:#0A0A0A;font-weight:700" : ""}">${h(x)}${edSec ? " ✕" : ""}</button>`).join("")}
         ${edSec ? "" : `<button class="chip sm" data-act="rsecfree" style="color:var(--dim)">その他…</button>`}
-        ${!edSec && (l || {}).sec ? `<button class="chip sm" data-act="rsecq" data-id="" style="color:var(--dim)">外す</button>` : ""}
+        ${!edSec && selected?.sec ? `<button class="chip sm" data-act="rsecq" data-id="" style="color:var(--dim)">外す</button>` : ""}
       </div>
       ${edSec ? `<div style="font-size:10px;color:var(--dim);margin-top:6px">押すと選べる一覧から消えます。行に付いている区切りは消えません</div>` : ""}
 
@@ -9444,7 +9494,7 @@ function sectionNames() {
   const so = recSong();
   if (!so) return [];
   const out = [];
-  so.lines.forEach((l) => { if (!l.gap && l.sec && !out.includes(l.sec)) out.push(l.sec); });
+  so.lines.forEach((l) => { if (!l.gap) recordingLineSegments(l).forEach(segment => { if (segment.sec && !out.includes(segment.sec)) out.push(segment.sec); }); });
   return out;
 }
 // 区切りになっていない表記（ガヤ・フェイクなど）も、録る時間が要るので枠として立てる。
@@ -9597,11 +9647,13 @@ function secBars() {
       out[l.tag].all += b || 4;
       if (!l.skip) out[l.tag].live += b || 4;
     }
-    if (l.sec) cur = l.sec;
-    if (!cur) return;
-    if (out[cur] == null) out[cur] = { all: 0, live: 0 };
-    out[cur].all += b;
-    if (!l.skip) out[cur].live += b;
+    for (const segment of recordingLineSegments(l)) {
+      if (segment.sec) cur = segment.sec;
+      if (!cur) continue;
+      if (out[cur] == null) out[cur] = { all: 0, live: 0 };
+      out[cur].all += segment.bars;
+      if (!l.skip) out[cur].live += segment.bars;
+    }
   });
   return out;
 }
@@ -10045,7 +10097,7 @@ function viewRecPrint() {
     if (l.gap) return `<tr class="prz"><td class="prn"></td><td class="prx"></td></tr>`;
     const vh3 = vm3.info[i];
     const hd = vh3 ? `<tr class="prv"><td class="prn"></td><td class="prx"><b>${h(vh3.vt)}</b></td></tr>` : "";
-    return hd + numberedRows[i].map(segment => `<tr data-line="${i}" data-segment="${segment.index}"><td class="prn">${l.tag && !segment.index ? "［" + h(l.tag) + "］" : ""}${l.sec && !segment.index ? h(l.sec) + " " : ""}${S.recBars && segment.number != null ? segment.number : ""}</td><td class="prx">${l.add && !segment.index ? "（" : ""}${h(segment.text)}${l.add && segment.index === numberedRows[i].length - 1 ? "）" : ""}</td></tr>`).join("");
+    return hd + numberedRows[i].map(segment => `<tr data-line="${i}" data-segment="${segment.index}"><td class="prn">${l.tag && !segment.index ? "［" + h(l.tag) + "］" : ""}${segment.sec ? h(segment.sec) + " " : ""}${S.recBars && segment.number != null ? segment.number : ""}</td><td class="prx">${l.add && !segment.index ? "（" : ""}${h(segment.text)}${l.add && segment.index === numberedRows[i].length - 1 ? "）" : ""}</td></tr>`).join("");
   });
   return `
   <div class="hd noprint"><button class="ic" data-act="recback">‹</button><b>PDF・印刷</b>
@@ -11286,11 +11338,13 @@ document.addEventListener("click", async (e) => {
     case "rmore": U.rmore = !U.rmore; renderSheet(); break;
     case "rsecfree": {
       const so = recSong(); if (!so) break;
-      const v = prompt("区切りの名前", (so.lines[U.menu.i] || {}).sec || "");
+      const target = recordingBarMenuTarget(); if (!target) break;
+      const v = prompt("区切りの名前", target.segment.sec || "");
       if (v == null) break;
       pushUndo();
       const t = String(v).trim();
-      if (t) { so.lines[U.menu.i].sec = t; rememberSec(t); } else delete so.lines[U.menu.i].sec;
+      setRecordingSegmentSection(target.line, target.segment.index, t);
+      if (t) rememberSec(t);
       save(); U.menu = null; renderSheet(); render(); break;
     }
     case "rtagfree": {
@@ -11381,10 +11435,11 @@ document.addEventListener("click", async (e) => {
       save(); U.menu = null; renderSheet(); render(); break;
     }
     case "rsecq": {
-      const so = recSong(); if (!so) break;
+      const target = recordingBarMenuTarget(); if (!target) break;
       pushUndo();
-      const l4 = so.lines[U.menu.i];
-      if (!id || l4.sec === id) delete l4.sec; else { l4.sec = id; rememberSec(id); }
+      const value = !id || target.segment.sec === id ? "" : id;
+      setRecordingSegmentSection(target.line, target.segment.index, value);
+      if (value) rememberSec(value);
       save(); U.menu = null; renderSheet(); render(); break;
     }
     case "rlen": {
