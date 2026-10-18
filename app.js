@@ -118,7 +118,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.44";
+const APP_VER = "16.41.58.45";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -6129,6 +6129,7 @@ function render(background = false) {
   } catch (e) { /* 名前を変えられない場合は既定のまま */ }
   if (U.view === "setup") setTimeout(() => showPianoAtC4(app), 0);
   if (typeof warmAbsentExcelExports === "function") warmAbsentExcelExports();
+  if (typeof ArrangementVerificationUI !== "undefined") ArrangementVerificationUI.notify();
 }
 
 // 今日の日付（ファイル名用）
@@ -6401,6 +6402,7 @@ function viewLive() {
       <div class="t1">${S.recMode
         ? `録音${s ? " ・ " + h(recordingClassification(s).artist) : ""}`
         : `${s ? h((S.groups.find((x) => x.id === (VIEW() ? s.groupId : songDeliveryGroupId(s))) || {}).name || "") + " ・ " : ""}${h(showName() || "公演名未設定")}${SONGS().length ? ` ・ ${U.songIdx + 1}/${SONGS().length}` : ""}${showNoPub() ? ` ・ <span style="color:var(--dim)">配信しない</span>` : `<span data-push-state style="color:${/未送信|保留|一部送信|確認待ち|確認事項|結果不明/.test(publicationStatus) ? "var(--bad)" : "var(--dim)"}">${publicationStatus ? " ・ " + h(publicationStatus) : ""}</span>`}`}${recWho()}${S.recMode ? `<span id="pcd2" style="margin-left:8px;font-variant-numeric:tabular-nums"></span>` : ""}</div>
+      ${typeof ArrangementVerificationUI !== "undefined" ? ArrangementVerificationUI.html(s) : ""}
       ${VIEW() && S.pubAt ? `<div class="song-freshness">${freshLine()}</div>` : ""}
     </button>
     ${s ? `<button class="ic" data-act="overview" style="font-size:12px">全体</button>` : ""}
@@ -8180,6 +8182,7 @@ async function toggleAbsenceMember(id, button) {
     document.querySelectorAll('[data-act="toggleabsent"]').forEach(el=>{el.disabled=false;});
     if (button?.isConnected) { button.textContent=label; button.removeAttribute("aria-busy"); }
     if (typeof warmAbsentExcelExports === "function") warmAbsentExcelExports();
+  if (typeof ArrangementVerificationUI !== "undefined") ArrangementVerificationUI.notify();
   }
 }
 
