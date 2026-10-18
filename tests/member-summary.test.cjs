@@ -228,3 +228,25 @@ test('registered rosters polluted by imported assignment labels cannot override 
  assert.deepEqual(Array.from(run('viewerMembers()'),m=>m.name),formal);
  assert.equal(JSON.stringify(c.S),before);
 });
+test('member feedback resolves short names and each songs A/B assignments, including updated group assignments',()=>{
+ const {c,run}=fixture(),formal=['斉藤','広本','米村','窪田','中山','西﨑','北原','筒井'];
+ c.S.groups=[{id:'g',name:'OCHA NORMA'}];c.S.rosters={'OCHA NORMA':[...formal,'斉','広','a','B','お客さん']};
+ c.S.members=[...formal,'斉','広','a','B','お客さん'].map((name,i)=>({id:'m'+i,name}));c.member=id=>c.S.members.find(m=>m.id===id);c.song=()=>c.S.songs[0];
+ c.S.songs[0].roster=c.S.members.map(m=>m.id);c.S.songs[0].blocks={A:['m8','m9'],B:['m2','m3']};
+ c.notes=[['a-note','m10','A割への指摘'],['b-note','m11','B割への指摘'],['short-note','m8','略記への指摘']].map(([id,mid,memo],i)=>({id,songId:'s1',showId:'day1',memberIds:[mid],lineIdx:i,tags:[],memo}));
+ c.S.songs[1].blocks={A:['m4']};c.notes.push({id:'other-a',songId:'s2',showId:'day1',memberIds:['m10'],lineIdx:0,tags:[],memo:'別の曲のA割への指摘'});
+ c.S.rosters={'OCHA NORMA':formal};
+ vm.runInContext(src.slice(src.indexOf('function memberViewNotes('),src.indexOf('const NOTES =')),c);c.shownNotes=()=>c.memberViewNotes(c.notes);
+ const original=JSON.stringify(c.S.members);
+ run("selectViewerMember('m0')");let html=run('viewerSummaryBody()');assert(html.includes('A割への指摘'));assert(html.includes('略記への指摘'));assert(!html.includes('B割への指摘'));assert(!html.includes('別の曲のA割への指摘'));
+ run("selectViewerMember('')");html=run('viewerSummaryBody()');assert(html.includes('斉藤・広本'));assert(!html.includes('<span>a</span>'));
+ run("selectViewerMember('m1')");html=run('viewerSummaryBody()');assert(html.includes('A割への指摘'));assert(!html.includes('略記への指摘'));
+ c.S.gsubs={'day1|s1':{A:['m2']}};
+ run("selectViewerMember('m0')");assert(!run('viewerSummaryBody()').includes('A割への指摘'));
+ run("selectViewerMember('m2')");assert(run('viewerSummaryBody()').includes('A割への指摘'));
+ assert.equal(JSON.stringify(c.S.members),original);
+});
+test('remembered abbreviated member names restore to the formal member after reopening',()=>{
+ const {c,stored,run}=fixture();stored.set('utacheck.member:source1','山');c.U={};
+ assert.equal(run('restoreViewerMember().name'),'山田');assert.equal(c.U.sumOpen,'a');assert.equal(c.U.memberName,'山田');
+});

@@ -118,7 +118,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.49";
+const APP_VER = "16.41.58.50";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1853,14 +1853,11 @@ const showsNewestFirst = () => S.shows.map((show,index)=>({show,index})).sort((a
 const showName = (id) => (S.shows.find((x) => x.id === (id || S.showId)) || {}).name || "";
 function memberViewNotes(notes) {
   if (!VIEW()) return notes;
-  const gn = (group() || {}).name || S.srcGroup || "";
-  const roster = (S.rosters || {})[gn];
-  const permitted = new Set(roster && roster.length ? roster : (S.sourceMemberNames || []).length ? S.sourceMemberNames
-    : S.songs.flatMap(so => songRoster(so)).map(id => (member(id) || {}).name).filter(Boolean));
-  const songIds = new Set(S.songs.filter(so => !so.groupId || so.groupId === S.groupId).map(so => so.id));
-  return notes.filter(n => songIds.has(n.songId)).flatMap(n => {
-    const memberIds = (n.memberIds || []).filter(id => permitted.has((member(id) || {}).name));
-    return memberIds.length || !(n.memberIds || []).length ? [{ ...n, memberIds }] : [];
+  const formal=viewerMembers(),permitted=new Set(formal.map(m=>m.id));
+  const songs=new Map(S.songs.filter(so=>!so.groupId||so.groupId===S.groupId).map(so=>[so.id,so]));
+  return notes.filter(n=>songs.has(n.songId)).flatMap(n=>{
+    const memberIds=viewerAssignmentIds(n.memberIds,songs.get(n.songId),false,formal).filter(id=>permitted.has(id));
+    return memberIds.length||!(n.memberIds||[]).length?[{...n,memberIds}]:[];
   });
 }
 const NOTES = () => memberViewNotes(S.notes.concat(S.pubNotes));
@@ -2534,7 +2531,9 @@ const member = (id) => S.members.find((m) => m.id === id);
 function compactMemberLabel(value) {
   return String(value == null ? "" : value).replace(/\s*[（(]OCHA\s*NORMA[）)]\s*$/i, "");
 }
-const names = (ids) => (ids || []).map((i) => (member(i) || {}).name).filter(Boolean).join("・");
+const names = (ids) => typeof VIEW==='function'&&VIEW()&&typeof viewerAssignmentNames==='function'
+  ? viewerAssignmentNames(ids,typeof song==='function'?song():null)
+  : (ids || []).map((i) => (member(i) || {}).name).filter(Boolean).join("・");
 
 function addMember(name) {
   let m = S.members.find((x) => x.name === name);
@@ -7480,6 +7479,35 @@ function viewerMemberIds(id) {
     return name===key||name&&key.startsWith(name)&&names.filter(full=>full.startsWith(name)).length===1;
   }).map(m=>m.id);
 }
+// Resolve display identities without rewriting source names, Excel labels or IDs.
+function viewerAssignmentIds(ids, so, original=false, formal=viewerMembers()) {
+  const keys=formal.map(m=>viewerMemberName(m.name));
+  const canonical=id=>{
+    const raw=(S.members||[]).find(m=>m.id===id),key=viewerMemberName(raw?.name||'');
+    const exact=formal.find((m,i)=>keys[i]===key);
+    const prefix=key?formal.filter((m,i)=>keys[i].startsWith(key)):[];
+    return (exact||(prefix.length===1?prefix[0]:null))?.id||id;
+  };
+  const blocks=so?.blocks||{},staged=original?{}:(S.gsubs||{})[(so?.showId||S.showId)+'|'+so?.id]||{};
+  const labels=Object.keys(blocks),out=[];
+  const expand=(id,visiting)=>{
+    const name=viewerMemberName((S.members||[]).find(m=>m.id===id)?.name||'').toUpperCase();
+    const label=labels.find(key=>viewerMemberName(key).toUpperCase()===name);
+    if(label!=null){
+      if(visiting.has(label))return;
+      const next=new Set(visiting);next.add(label);
+      const members=Array.isArray(staged[label])?staged[label]:blocks[label];
+      for(const mid of members||[])expand(mid,next);
+    }else{const resolved=canonical(id);if(!out.includes(resolved))out.push(resolved);}
+  };
+  for(const id of ids||[])expand(id,new Set());
+  return out;
+}
+function viewerAssignmentNames(ids, so, original=false) {
+  const formal=viewerMembers();
+  return viewerAssignmentIds(ids,so,original,formal).map(id=>formal.find(m=>m.id===id)?.name||(S.members||[]).find(m=>m.id===id)?.name)
+    .filter(Boolean).map(compactMemberLabel).join('・');
+}
 function viewerMemberKey() { return "utacheck.member:" + (S.linkSrc || S.src || S.groupId || "default"); }
 function restoreViewerMember() {
   const key = viewerMemberKey();
@@ -7488,7 +7516,11 @@ function restoreViewerMember() {
     U.memberName = "";
     if (!preview) { try { U.memberName = localStorage.getItem(key) || ""; } catch (_) {} }
   }
-  const m = viewerMembers().find(m => m.name === U.memberName);
+  const formal=viewerMembers(),nameKey=viewerMemberName(U.memberName);
+  const exact=formal.find(m=>viewerMemberName(m.name)===nameKey);
+  const aliases=nameKey?formal.filter(m=>viewerMemberName(m.name).startsWith(nameKey)):[];
+  const m=exact||(aliases.length===1?aliases[0]:null);
+  if(m)U.memberName=m.name;
   U.sumOpen = m ? m.id : "";
   return m || null;
 }
@@ -7554,7 +7586,7 @@ function memberNoteBody(n, showMembers = true) {
     ${at?.previous ? `<div class="member-lyric-context"><span>前</span>${h(at.previous)}</div>` : ""}
     <div class="member-lyric">${memberLyricHTML(n)}</div>
     ${at?.next ? `<div class="member-lyric-context"><span>次</span>${h(at.next)}</div>` : ""}
-    ${showMembers ? `<div class="member-note-members"><span>対象メンバー</span><span>${h(names(n.memberIds) || "全員")}</span></div>` : ""}
+    ${showMembers ? `<div class="member-note-members"><span>対象メンバー</span><span>${h((VIEW() ? viewerAssignmentNames(n.memberIds,S.songs.find(so=>so.id===n.songId)) : names(n.memberIds)) || "全員")}</span></div>` : ""}
     ${n.memo ? `<div class="member-note-memo">${h(n.memo)}</div>` : ""}${handHTML(n)}`;
 }
 function viewerSummaryBody() {
@@ -7562,7 +7594,7 @@ function viewerSummaryBody() {
   const byMember = !!selected;
   const all = shownNotes().filter(noteInArrangement);
   const selectedIds=new Set(selected?viewerMemberIds(selected.id):[]);
-  const ns = byMember && selected ? all.filter(n => !(n.memberIds || []).length || (n.memberIds||[]).some(id=>selectedIds.has(id))) : all;
+  const ns = byMember && selected ? all.filter(n => !(n.memberIds || []).length || viewerAssignmentIds(n.memberIds,S.songs.find(so=>so.id===n.songId)).some(id=>selectedIds.has(id))) : all;
   const picker = `<label class="summary-show-picker member-picker"><span>メンバー</span>
     <select id="summary-member" aria-label="メンバー"><option value="">全員</option>
     ${viewerMembers().map(m => `<option value="${h(m.id)}" ${selected && selected.id === m.id ? "selected" : ""}>${h(compactMemberLabel(m.name))}</option>`).join("")}</select></label>
@@ -8303,9 +8335,16 @@ function memberAbsenceContext(so) {
 }
 function memberAbsenceChanges(so, memberId="", byMember=false) {
   if (typeof AbsenceChanges === "undefined") return [];
-  const selectedIds=memberId?viewerMemberIds(memberId):[];
+  const selectedIds=memberId?viewerMemberIds(memberId):[],formal=viewerMembers();
   return AbsenceChanges.entries(so,{...memberAbsenceContext(so),includeGroupReductions:true})
     .filter(entry=>entry.status === "changed")
+    .map(entry=>{
+      const before=viewerAssignmentIds(entry.before,so,true,formal),after=viewerAssignmentIds(entry.after,so,false,formal);
+      return {...entry,before,after,involved:[...new Set(before.concat(after))],added:after.filter(id=>!before.includes(id)),removed:before.filter(id=>!after.includes(id)),
+        beforeMain:viewerAssignmentIds(entry.beforeMain,so,true,formal),beforeExtra:viewerAssignmentIds(entry.beforeExtra,so,true,formal),
+        afterMain:viewerAssignmentIds(entry.afterMain,so,false,formal),afterExtra:viewerAssignmentIds(entry.afterExtra,so,false,formal)};
+    })
+    .filter(entry=>entry.added.length||entry.removed.length)
     .filter(entry=>memberId ? selectedIds.some(id=>AbsenceChanges.forMember(entry,id))
       : !byMember || entry.involved.some(id=>AbsenceChanges.forMember(entry,id)));
 }
@@ -8320,12 +8359,16 @@ function absenceSelectableMembers() {
   return showRoster().map(member).filter(m=>m && allowed.has(m.id));
 }
 function memberAbsenceRows(so, entries, memberId="") {
-  const assignment=(main,extra)=>(names(main) || "—")+(extra.length ? "　ハモ "+names(extra) : "");
+  const assignment=(main,extra,original=false)=>{
+    const display=ids=>VIEW()?viewerAssignmentNames(ids,so,original):names(ids);
+    return (display(main)||"—")+(extra.length?"　ハモ "+display(extra):"");
+  };
+  const selectedIds=new Set(memberId?viewerMemberIds(memberId):[]);
   return entries.map(entry=>{
     const status=entry.status==="need" ? "調整中" : !memberId ? "変更"
-      : entry.added.includes(memberId) ? "新しく担当" : entry.removed.includes(memberId) ? "担当から外れます" : "一緒に歌うメンバーが変更";
+      : entry.added.some(id=>selectedIds.has(id)) ? "新しく担当" : entry.removed.some(id=>selectedIds.has(id)) ? "担当から外れます" : "一緒に歌うメンバーが変更";
     const content='<span class="member-note-top"><span class="member-note-location">'+h(entry.kind==="block" ? "ブロック "+entry.label : rowNo(so,entry.lineIdx)+"行目"+(entry.lineIndices.length>1 ? "から "+entry.lineIndices.length+"行" : ""))+'</span><span class="member-note-tag">'+status+'</span></span>'
-      +'<span class="member-note-members"><span>変更前</span><span>'+h(assignment(entry.beforeMain,entry.beforeExtra))+'</span></span>'
+      +'<span class="member-note-members"><span>変更前</span><span>'+h(assignment(entry.beforeMain,entry.beforeExtra,true))+'</span></span>'
       +'<span class="member-note-members"><span>変更後</span><span>'+h(assignment(entry.afterMain,entry.afterExtra))+'</span></span>'
       +(entry.text ? '<span class="member-lyric" style="display:block;white-space:pre-wrap;overflow-wrap:anywhere">'+h(entry.text)+'</span>' : '');
     const attrs=' class="member-note member-note-link member-absence-change" data-absence-status="'+entry.status+'"';

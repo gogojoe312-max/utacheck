@@ -45,8 +45,11 @@ test('members can swipe lyrics to change songs while editors keep lyric gestures
 });
 test('member notes use the current group roster and never change editor data',()=>{
  const raw=[{id:'a',songId:'song',memberIds:['in','out']},{id:'b',songId:'song',memberIds:['out']},{id:'c',songId:'stale',memberIds:['in']},{id:'d',songId:'song',memberIds:[]}];
- const c=vm.createContext({S:{groupId:'g',songs:[{id:'song',groupId:'g',roster:['in','out']}],rosters:{Current:['Alice'],Other:['Bob']}},VIEW:()=>true,group:()=>({name:'Current'}),member:id=>({name:id==='in'?'Alice':'Bob'}),songRoster:so=>so.roster,raw});
- const app=source('app.js'),start=app.indexOf('function memberViewNotes(');vm.runInContext(app.slice(start,app.indexOf('\n}',start)+2),c);
+ const c=vm.createContext({S:{members:[{id:'in',name:'Alice'},{id:'out',name:'Bob'}],groupId:'g',songs:[{id:'song',groupId:'g',roster:['in','out']}],rosters:{Current:['Alice'],Other:['Bob']}},VIEW:()=>true,group:()=>({name:'Current'}),member:id=>({name:id==='in'?'Alice':'Bob'}),songRoster:so=>so.roster,raw});
+ const app=source('app.js'),start=app.indexOf('function memberViewNotes(');
+ vm.runInContext(app.slice(app.indexOf('function compactMemberLabel('),app.indexOf('const names = (ids)')),c);
+ vm.runInContext(app.slice(app.indexOf('function viewerMemberName('),app.indexOf('function viewerMemberKey(')),c);
+ vm.runInContext(app.slice(start,app.indexOf('\n}',start)+2),c);
  const result=JSON.parse(vm.runInContext('JSON.stringify(memberViewNotes(raw))',c));
  assert.deepEqual(result.map(n=>n.id),['a','d']);assert.deepEqual(result[0].memberIds,['in']);assert.deepEqual(raw[0].memberIds,['in','out']);
  c.VIEW=()=>false;assert.equal(vm.runInContext('memberViewNotes(raw)===raw',c),true);

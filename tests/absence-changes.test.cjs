@@ -25,7 +25,7 @@ function fixture(){
  c.restoreViewerMember=()=>c.selected;c.viewerMembers=()=>c.S.members.slice(0,4);c.compactMemberLabel=n=>n;
  c.summarySongs=()=>c.U.allShows?c.S.songs:c.SONGS();c.showName=id=>c.S.shows.find(s=>s.id===(id||c.S.showId))?.name||'';
  vm.createContext(c);
- for(const name of ['viewerMemberName','viewerMemberIds','absentVersionNames','noteInArrangement','rowNo','memberChangePerformances','recordAssignmentChange','confirmAbsentAssignments','memberReviewNav','memberAbsenceContext','memberAbsenceChanges','absenceSelectableMembers','memberAbsenceRows','viewMemberAbsence','viewerSummaryBody','lineStatus','blockStatus','viewAbsent'])vm.runInContext(read(name),c);
+ for(const name of ['viewerMemberName','viewerMemberIds','viewerAssignmentIds','viewerAssignmentNames','absentVersionNames','noteInArrangement','rowNo','memberChangePerformances','recordAssignmentChange','confirmAbsentAssignments','memberReviewNav','memberAbsenceContext','memberAbsenceChanges','absenceSelectableMembers','memberAbsenceRows','viewMemberAbsence','viewerSummaryBody','lineStatus','blockStatus','viewAbsent'])vm.runInContext(read(name),c);
  for(const so of c.S.songs){
   const key=so.showId+'|'+so.id;
   for(const [index,after] of Object.entries(c.S.subs[key]||{}))c.recordAssignmentChange(so,'lines',Number(index),after);
@@ -213,4 +213,17 @@ test('one formal member selection includes the same persons abbreviated assignme
  c.viewerMembers=()=>[c.S.members[0]];c.S.songs[0].lines=[{t:'synthetic',parts:['short']}];
  c.S.shows[0].absent=['short'];c.S.subs={'show|song':{0:['m2']}};c.S.gsubs={};
  const entries=c.memberAbsenceChanges(c.S.songs[0],'m1',true);assert.equal(entries.length,1);
+});
+test('member assignment changes normalize short names and do not announce spelling-only changes',()=>{
+ const c=fixture(),so=c.S.songs[0];c.S.members[0].name='斉藤';c.S.members.push({id:'short',name:'斉'});
+ c.S.shows[0].absent=[];so.lines=[{t:'same person',parts:['short'],main:['short'],extra:[],label:'斉'}];so.blocks={};
+ c.S.subs={'show|song':{0:['m1']}};c.S.gsubs={};c.S.assignmentEdits={};c.recordAssignmentChange(so,'lines',0,['m1']);
+ assert.deepEqual(json(c.memberAbsenceChanges(so)),[]);
+});
+test('A/B assignments expand to actual people before applying the three-person unison rule',()=>{
+ const c=fixture(),so=c.S.songs[0];c.S.members.push({id:'aid',name:'a'},{id:'bid',name:'B'});c.S.shows[0].absent=[];
+ so.blocks={A:['m1','m2','m3'],B:['m2','m3','m4']};so.lines=[{t:'group assignment',parts:['aid'],main:['aid'],extra:[],label:'group'}];
+ c.S.subs={'show|song':{0:['bid']}};c.S.gsubs={};c.S.assignmentEdits={};c.recordAssignmentChange(so,'lines',0,['bid']);
+ assert.equal(c.memberAbsenceChanges(so).length,1);
+ assert.equal(c.memberAbsenceChanges(so,'m2',true).length,0);
 });
