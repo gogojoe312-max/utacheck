@@ -16,6 +16,27 @@ function fixture(){
  vm.runInContext(src.slice(src.indexOf('function summaryShows()'),src.indexOf('function viewSummary()')),c);
  return {c,stored,run:code=>vm.runInContext(code,c)};
 }
+test('both member pickers use the current song formal roster and exclude labels, aliases and duplicate restored IDs',()=>{
+ const {c,run}=fixture();c.S.groups=[{id:'g',name:'正式グループ'}];c.S.rosters={'正式グループ':['山田','田中']};c.song=()=>c.S.songs[0];
+ c.S.members.unshift({id:'old-a',name:'山田'});
+ c.S.members.push(...['間奏','*回替わり','A','B','山','田','対象外'].map((name,i)=>({id:'extra-'+i,name})));
+ c.S.songs[0].roster=['a','b','extra-0','extra-1','extra-2','extra-3','extra-4','extra-5','extra-6'];
+ const before=JSON.stringify(c.S);
+ assert.deepEqual(Array.from(run('viewerMembers()'),m=>[m.id,m.name]),[['a','山田'],['b','田中']]);
+ assert.equal(JSON.stringify(c.S),before);
+ c.notes=[{songId:'s1',showId:'day1',memberIds:['extra-4'],lineIdx:0,tags:[],memo:'略記の人への指摘'}];
+ run("selectViewerMember('a')");assert(run('viewerSummaryBody()').includes('略記の人への指摘'));
+});
+test('legacy copies without a formal roster stay within the selected show and collapse short aliases',()=>{
+ const {c,run}=fixture();c.S.members.push(...['間奏','*回替わり','A','B','山','田','別グループ'].map((name,i)=>({id:'extra-'+i,name})));
+ c.S.songs[0].roster=['a','b','extra-0','extra-1','extra-2','extra-3','extra-4','extra-5'];
+ assert.deepEqual(Array.from(run('viewerMembers()'),m=>m.name),['山田','田中']);
+});
+test('an older published source name list cannot reintroduce assignment labels or short aliases',()=>{
+ const {c,run}=fixture();c.S.sourceMemberNames=['山田','田中','山','田','間奏','*回替わり','A','B'];
+ c.S.members.push(...['山','田','間奏','*回替わり','A','B'].map((name,i)=>({id:'extra-'+i,name})));
+ assert.deepEqual(Array.from(run('viewerMembers()'),m=>m.name),['山田','田中']);
+});
 test('personal view displays shared summaries including songs with zero notes',()=>{
  const {run}=fixture();run("selectViewerMember('a')");const html=run('viewerSummaryBody()');
  for(const text of ['共通の総括','指摘ゼロでも表示','全員共通','山田向け'])assert(html.includes(text),text);

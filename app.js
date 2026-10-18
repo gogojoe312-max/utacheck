@@ -118,7 +118,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.46";
+const APP_VER = "16.41.58.47";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -7421,9 +7421,55 @@ function selectSummaryShow(id) {
 }
 
 // Member preferences stay on this device, separately from published/replaced data.
+function viewerMemberName(value) {
+  return compactMemberLabel(value).normalize('NFKC').replace(/﨑/g,'崎').replace(/\s/g,'');
+}
 function viewerMembers() {
-  const roster = (S.rosters || {})[(group() || {}).name || S.srcGroup] || [];
-  return roster.length ? roster.map(name => S.members.find(m => m.name === name)).filter(Boolean) : S.members;
+  const current=typeof song==='function'?song():null;
+  const songs=(S.songs||[]).filter(so=>so.showId===S.showId);
+  const sourceGroup=(S.groups||[]).find(g=>g.id===current?.groupId);
+  const contexts=[sourceGroup?.name,(group()||{}).name,S.srcGroup].filter(Boolean);
+  const roster=contexts.map(name=>(S.rosters||{})[name]).find(list=>Array.isArray(list)&&list.length)
+    ||(VIEW()&&S.sourceMemberNames?.length?S.sourceMemberNames:null);
+  const used=new Set(songs.flatMap(so=>[...(so.roster||[]),...Object.values(so.blocks||{}).flat(),...(so.lines||[]).flatMap(l=>l.parts||[])]));
+  const role=name=>/^(?:[A-D]|全(?:員)?|ALL|間奏|前奏|後奏|イントロ|アウトロ|煽り|[*＊※・]*(?:回[替代変]わ?り|日替わ?り))$/i.test(viewerMemberName(name));
+  const candidates=S.members.filter(m=>m&&!role(m.name));
+  const preferred=items=>items.find(m=>used.has(m.id))||items[0];
+  const seen=new Set(),out=[];
+  if(roster){
+    const rosterNames=roster.filter(name=>!role(name));
+    const formal=[...new Map(rosterNames.filter(name=>{
+      const key=viewerMemberName(name);
+      return !(key.length===1&&rosterNames.some(other=>viewerMemberName(other).length>1&&viewerMemberName(other).startsWith(key)));
+    }).map(name=>[viewerMemberName(name),name])).entries()];
+    for(const [key,name]of formal){
+      const exact=candidates.filter(m=>viewerMemberName(m.name)===key);
+      const aliases=exact.length?[]:candidates.filter(m=>{
+        const short=viewerMemberName(m.name);return short&&key.startsWith(short)&&formal.filter(([full])=>full.startsWith(short)).length===1;
+      });
+      const found=preferred(exact.length?exact:aliases);
+      if(found&&!seen.has(key)){seen.add(key);out.push({...found,name});}
+    }
+  }else{
+    // Older member copies may lack the formal roster. Stay within this
+    // performance, remove explicit labels, and collapse duplicate spellings.
+    const scoped=candidates.filter(m=>!used.size||used.has(m.id));
+    for(const m of scoped){
+      const key=viewerMemberName(m.name);
+      if(!key||seen.has(key)||key.length===1&&scoped.some(other=>viewerMemberName(other.name).length>1&&viewerMemberName(other.name).startsWith(key)))continue;
+      seen.add(key);out.push(m);
+    }
+  }
+  return out;
+}
+function viewerMemberIds(id) {
+  const formal=viewerMembers(),selected=formal.find(m=>m.id===id);
+  if(!selected)return [id];
+  const key=viewerMemberName(selected.name),names=formal.map(m=>viewerMemberName(m.name));
+  return S.members.filter(m=>{
+    const name=viewerMemberName(m.name);
+    return name===key||name&&key.startsWith(name)&&names.filter(full=>full.startsWith(name)).length===1;
+  }).map(m=>m.id);
 }
 function viewerMemberKey() { return "utacheck.member:" + (S.linkSrc || S.src || S.groupId || "default"); }
 function restoreViewerMember() {
@@ -7506,7 +7552,8 @@ function viewerSummaryBody() {
   const selected = restoreViewerMember();
   const byMember = !!selected;
   const all = shownNotes().filter(noteInArrangement);
-  const ns = byMember && selected ? all.filter(n => !(n.memberIds || []).length || n.memberIds.includes(selected.id)) : all;
+  const selectedIds=new Set(selected?viewerMemberIds(selected.id):[]);
+  const ns = byMember && selected ? all.filter(n => !(n.memberIds || []).length || (n.memberIds||[]).some(id=>selectedIds.has(id))) : all;
   const picker = `<label class="summary-show-picker member-picker"><span>メンバー</span>
     <select id="summary-member" aria-label="メンバー"><option value="">全員</option>
     ${viewerMembers().map(m => `<option value="${h(m.id)}" ${selected && selected.id === m.id ? "selected" : ""}>${h(compactMemberLabel(m.name))}</option>`).join("")}</select></label>
@@ -8247,9 +8294,10 @@ function memberAbsenceContext(so) {
 }
 function memberAbsenceChanges(so, memberId="", byMember=false) {
   if (typeof AbsenceChanges === "undefined") return [];
+  const selectedIds=memberId?viewerMemberIds(memberId):[];
   return AbsenceChanges.entries(so,{...memberAbsenceContext(so),includeGroupReductions:true})
     .filter(entry=>entry.status === "changed")
-    .filter(entry=>memberId ? AbsenceChanges.forMember(entry,memberId)
+    .filter(entry=>memberId ? selectedIds.some(id=>AbsenceChanges.forMember(entry,id))
       : !byMember || entry.involved.some(id=>AbsenceChanges.forMember(entry,id)));
 }
 function absenceSelectableMembers() {

@@ -25,7 +25,7 @@ function fixture(){
  c.restoreViewerMember=()=>c.selected;c.viewerMembers=()=>c.S.members.slice(0,4);c.compactMemberLabel=n=>n;
  c.summarySongs=()=>c.U.allShows?c.S.songs:c.SONGS();c.showName=id=>c.S.shows.find(s=>s.id===(id||c.S.showId))?.name||'';
  vm.createContext(c);
- for(const name of ['absentVersionNames','noteInArrangement','rowNo','memberChangePerformances','recordAssignmentChange','confirmAbsentAssignments','memberReviewNav','memberAbsenceContext','memberAbsenceChanges','absenceSelectableMembers','memberAbsenceRows','viewMemberAbsence','viewerSummaryBody','lineStatus','blockStatus','viewAbsent'])vm.runInContext(read(name),c);
+ for(const name of ['viewerMemberName','viewerMemberIds','absentVersionNames','noteInArrangement','rowNo','memberChangePerformances','recordAssignmentChange','confirmAbsentAssignments','memberReviewNav','memberAbsenceContext','memberAbsenceChanges','absenceSelectableMembers','memberAbsenceRows','viewMemberAbsence','viewerSummaryBody','lineStatus','blockStatus','viewAbsent'])vm.runInContext(read(name),c);
  for(const so of c.S.songs){
   const key=so.showId+'|'+so.id;
   for(const [index,after] of Object.entries(c.S.subs[key]||{}))c.recordAssignmentChange(so,'lines',Number(index),after);
@@ -206,4 +206,11 @@ test('member absence heading uses the same unambiguous full names as Excel expor
  assert.deepEqual(Array.from(c.absentVersionNames()),['北原']);
  const html=vm.runInContext('viewMemberAbsence()',c);assert(html.includes('北原 が欠席'));assert(!html.includes('北原・北'));
  assert.deepEqual(c.S.shows[0].absent,['north-full','north-short']);
+});
+test('one formal member selection includes the same persons abbreviated assignment without listing the abbreviation',()=>{
+ const c=fixture();c.S.members.push({id:'short',name:'Person'});
+ // Only one formal name can match this legacy abbreviation.
+ c.viewerMembers=()=>[c.S.members[0]];c.S.songs[0].lines=[{t:'synthetic',parts:['short']}];
+ c.S.shows[0].absent=['short'];c.S.subs={'show|song':{0:['m2']}};c.S.gsubs={};
+ const entries=c.memberAbsenceChanges(c.S.songs[0],'m1',true);assert.equal(entries.length,1);
 });
