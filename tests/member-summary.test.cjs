@@ -217,3 +217,14 @@ test('known artists with legacy publication labels use their formal roster when 
   assert.equal(JSON.stringify(c.S),before);
  }
 });
+
+test('registered rosters polluted by imported assignment labels cannot override known artist membership',()=>{
+ const {c,run}=fixture();c.S.groups=[{id:'g',name:'OCHA NORMA'}];c.song=()=>c.S.songs[0];
+ const formal=['斉藤','広本','米村','窪田','中山','西﨑','北原','筒井'];
+ const junk=['上窪田','下斉藤','中窪','広西','広西米','斉中','広西北','ア','エ','イ','オ','お客さん','筒井ハモ','北'];
+ c.S.rosters={'OCHA NORMA':[...formal,...junk]};
+ c.S.members=[...formal,...junk].map((name,i)=>({id:'person-'+i,name}));c.S.songs[0].roster=c.S.members.map(m=>m.id);
+ const before=JSON.stringify(c.S);
+ assert.deepEqual(Array.from(run('viewerMembers()'),m=>m.name),formal);
+ assert.equal(JSON.stringify(c.S),before);
+});

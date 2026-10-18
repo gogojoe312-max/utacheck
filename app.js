@@ -118,7 +118,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.48";
+const APP_VER = "16.41.58.49";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -7430,15 +7430,16 @@ function viewerMembers() {
   const sourceGroup=(S.groups||[]).find(g=>g.id===current?.groupId);
   const contexts=[sourceGroup?.name,(group()||{}).name,S.srcGroup].filter(Boolean);
   // Imported assignment labels are not a roster. Older publications include
-  // arbitrary labels in sourceMemberNames, so known artists need a formal fallback.
+  // arbitrary labels in both sourceMemberNames AND registered rosters. For known
+  // artists, only their formal members may become selectable people.
   const known=contexts.map(name=>{
     const key=String(name).normalize('NFKC').replace(/\s/g,'');
     if(/^OCHANORMA(?:$|旧資料|10[/／])/.test(key))return ['斉藤','広本','米村','窪田','中山','西﨑','北原','筒井'];
     if(/^ロージークロニクル(?:$|旧資料|REC)/.test(key))return ['橋田','吉田','小野田','村越','植村','松原','島川','上村','相馬'];
     return null;
   }).find(Boolean);
-  const roster=contexts.map(name=>(S.rosters||{})[name]).find(list=>Array.isArray(list)&&list.length)
-    ||known||(VIEW()&&S.sourceMemberNames?.length?S.sourceMemberNames:null);
+  const roster=known||contexts.map(name=>(S.rosters||{})[name]).find(list=>Array.isArray(list)&&list.length)
+    ||(VIEW()&&S.sourceMemberNames?.length?S.sourceMemberNames:null);
   const used=new Set(songs.flatMap(so=>[...(so.roster||[]),...Object.values(so.blocks||{}).flat(),...(so.lines||[]).flatMap(l=>l.parts||[])]));
   const role=name=>/^(?:[A-D]|全(?:員)?|ALL|間奏|前奏|後奏|イントロ|アウトロ|煽り|[*＊※・]*(?:回[替代変]わ?り|日替わ?り))$/i.test(viewerMemberName(name));
   const candidates=S.members.filter(m=>m&&!role(m.name));
