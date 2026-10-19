@@ -118,7 +118,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.51";
+const APP_VER = "16.41.58.52";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -10589,10 +10589,12 @@ function viewSetup() {
 }
 
 /* ---------------- events ---------------- */
-// Hold editable fields until the pre-edit restore point has been verified.
+// Persisted text edits require a restore point. The note memo is only a UI draft;
+// making it readonly during its trusted focus gesture suppresses the iOS keyboard
+// and needlessly serializes every song before any note has been committed.
 document.addEventListener('focusin', async event => {
   const field=event.target;
-  if (VIEW() || preview || !field || !/^(INPUT|TEXTAREA)$/.test(field.tagName) || field.type==='file' || field.matches?.('[data-private-preparation-token]') || field.closest?.('[data-save-on-submit]') || field.readOnly || field.disabled || ['checkbox','radio','button','submit'].includes(field.type)) return;
+  if (VIEW() || preview || !field || !/^(INPUT|TEXTAREA)$/.test(field.tagName) || field.type==='file' || field.matches?.('[data-private-preparation-token]') || field.closest?.('[data-save-on-submit]') || (field.id === 'memo' && U.sheet && overlay?.contains(field)) || field.readOnly || field.disabled || ['checkbox','radio','button','submit'].includes(field.type)) return;
   field.readOnly=true;
   if (await automaticBackupBeforeEdit('text-edit') && field.isConnected) field.readOnly=false;
 });
@@ -14242,8 +14244,9 @@ setInterval(() => {
 setInterval(() => {
   if (!recordingInboxCanWrite() || document.hidden || preview) return;
   // 変わっていれば送る（別の端末とすぐ揃うように）
-  if (VIEW() || backupInFlight || syncing || Date.now() < backupRetryAt) return;
-  if (S.ghToken && bkSignature() !== S.bkHash && Date.now() - (S.bkAt || 0) > 20000) doBackup(true);
+  if (VIEW() || backupInFlight || syncing || Date.now() < backupRetryAt || U.sheet || U.menu || U.picker
+    || typingNow() || renderPointers.size || Date.now() < scrollingUntil) return;
+  if (S.ghToken && Date.now() - (S.bkAt || 0) > 20000 && bkSignature() !== S.bkHash) doBackup(true);
   else checkOther();
 }, 30000);
 

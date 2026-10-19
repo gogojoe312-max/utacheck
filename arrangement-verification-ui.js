@@ -56,6 +56,12 @@
    const ordered=allSongs().sort((a,b)=>(b===current)-(a===current)),plans=[];
    for(const so of ordered){
     if(!Array.isArray(so.lines))continue;
+    // Most restored songs have no matching source arrangement. Do not serialize
+    // their full lyrics again after every newly saved feedback note.
+    const candidates=ArrangementCatalog.filter(rule=>rule.sheetName===so.sheetName);
+    if(!candidates.length || !candidates.some(rule=>rule.rowCount===so.lines.filter(line=>String(line.t||'').trim()).length)){
+     cache.set(so.lines,{noCandidates:true});reports.delete(so.id);continue;
+    }
     const content=ArrangementVerification.canonical(so),addresses=JSON.stringify(so.lines.map(l=>l.lcell||''));
     let cached=cache.get(so.lines);
     if(!cached||cached.content!==content||cached.sheet!==so.sheetName||cached.addresses!==addresses){

@@ -38,3 +38,14 @@ REC split-section / background refresh acceptance:
   REC lyric DOM and scroll position while the corrections are saved. Exercise the
   periodic arrangement audit as well. Retain the previous-code failing checks and
   fixed-code browser screenshots. A real phone remains a separate verification.
+
+LIVE feedback input acceptance:
+- Use the LIVE lyric character tap and its actual memo input with a restored-size
+  library. Inspect writable focus inside the original trusted gesture, repeated
+  opening, retained input DOM, Japanese input, close/save, real reload and member
+  publication/receive. Never use asynchronous unlock as proof of native keyboard
+  availability. Keep persisted-field checkpoint protection intact.
+- Draft focus must not serialize/copy the whole library. Background cloud backup
+  and remote checks must pause while a draft, keyboard or interaction is active;
+  local note save and later cloud synchronization must remain functional. Unrelated
+  worksheets must not be canonicalized for every new feedback note.

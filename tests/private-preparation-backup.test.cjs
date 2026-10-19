@@ -13,7 +13,7 @@ function fixture(options={}) {
  const c=testContext({S:{ghToken:TOKEN,bkGistId:TARGET,bkKey:KEY,bkAt:0,bkSeen:100,bkHash:0,
   shows:[{id:'show',name:'Synthetic private rehearsal'}],songs:[{id:'song',title:'Synthetic prepared song',lines:[{t:'PRIVATE_SYNTHETIC_LYRIC'}]}],
   notes:[{id:'note',memo:'Keep later local note'}],rsongs:[],groups:[{id:'private-group',nopub:true}],draws:{keep:[1,2]},recs:{keep:{id:'clip'}},privatePreparations:receipt(),...options.state},
-  U:{view:'live'},preview:null,VIEW:()=>false,APP_VER:'synthetic',startupRecoveryNetworkHold:false,document:{hidden:false},
+  U:{view:'live'},typingNow:()=>false,renderPointers:new Set(),scrollingUntil:0,preview:null,VIEW:()=>false,APP_VER:'synthetic',startupRecoveryNetworkHold:false,document:{hidden:false},
   Date,Number,Array,JSON,Error,Promise,URL,Response,Uint8Array,TextEncoder,TextDecoder,AbortSignal,crypto:webcrypto,CompressionStream,DecompressionStream,
   b64e:x=>Buffer.from(x).toString('base64'),b64d:x=>new Uint8Array(Buffer.from(x,'base64')),packState:x=>x,unpackState:x=>x,
   save(){writes++},render(){},commitFields(){},restoreViewSelection(){},alert:x=>alerts.push(x),backupToFile:async()=>{throw Error('unexpected file fallback')},
