@@ -6,6 +6,7 @@ const {checkAbsence}=require('./absence-view-browser-helper.cjs');
 const {checkFolderInteractions}=require('./folder-interactions-browser-helper.cjs');
 const {checkRecordingSegmentSections}=require('./recording-segment-section-browser-helper.cjs');
 const {checkLiveNoteInput}=require('./live-note-input-browser-helper.cjs');
+const {checkRecordingAutoStart}=require('./recording-auto-start-browser-helper.cjs');
 const {checkLyricBreaks}=require('./lyric-break-browser-helper.cjs');
 const {checkRecordingBrowse}=require('./recording-browse-browser-helper.cjs');
 const {checkArrangementDevice}=require('./arrangement-device-browser-helper.cjs');
@@ -127,6 +128,7 @@ async function readableTitles(page,rec){
    const lyricBreakResult=await checkLyricBreaks(page,width,{mode,assertFits,screenshot});
    const recSegmentResult=await checkRecordingSegmentSections(page,width,{screenshot});
    const liveNoteResult=await checkLiveNoteInput(page,width,{screenshot});
+   const recAutoResult=await checkRecordingAutoStart(page,width,{screenshot});
    const excelCheck=await checkExcelReattach(page,width,dialogs);
    await page.evaluate(async()=>{await saveNow();saveErr=true;renderPointers.clear();scrollingUntil=0;render(true);});
    await page.waitForSelector('[data-settings-panel="storage"][open]');assert.equal(await page.getByText('いま保存できていません',{exact:false}).isVisible(),true);
@@ -137,7 +139,7 @@ async function readableTitles(page,rec){
    const memberRoster=await checkMemberRoster(page);
    const legacyMemberRoster=await checkMemberRoster(page,{legacy:true});
    const cleanMemberRoster=await checkMemberRoster(page,{clean:true});
-   results.push({width,memberRoster,legacyMemberRoster,cleanMemberRoster,arrangementDevice,progressConnection,...folderResult,...recordingBrowseResult,...absenceResult,...lyricBreakResult,...recSegmentResult,...liveNoteResult,excelOriginal:excelCheck,settings:true,pdfLiveRecView:true,fullTitles:true,footer:true,draftPreserved:true,saveErrorVisible:true});await context.close();contexts.delete(context);
+   results.push({width,memberRoster,legacyMemberRoster,cleanMemberRoster,arrangementDevice,progressConnection,...folderResult,...recordingBrowseResult,...absenceResult,...lyricBreakResult,...recSegmentResult,...liveNoteResult,...recAutoResult,excelOriginal:excelCheck,settings:true,pdfLiveRecView:true,fullTitles:true,footer:true,draftPreserved:true,saveErrorVisible:true});await context.close();contexts.delete(context);
   }
   assert.deepEqual(errors,[]);assert.equal(blocked.filter(x=>x.method!=='GET').length,0);
   const report={passed:true,engine,results,errors,blocked,externalRequestsAllowed:0,syntheticDataOnly:true};

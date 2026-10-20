@@ -11,7 +11,7 @@ function declaration(name){
  return source.slice(start,source.indexOf('\n}',start)+2);
 }
 function state(){
- const c=vm.createContext({Date,console,setTimeout:()=>{},document:{getElementById:()=>null},save:()=>{},render:()=>{},pushUndo:()=>{},alert:()=>{throw Error('Unexpected alert');}});
+ const c=vm.createContext({Date,console,recordingInboxCanWrite:()=>true,REC:null,recordingStartPending:false,recordingFinalizePending:false,pitchStartPending:false,PT:{on:false},micStream:null,setTimeout:()=>{},document:{getElementById:()=>null},save:()=>{},render:()=>{},pushUndo:()=>{},alert:()=>{throw Error('Unexpected alert');}});
  vm.runInContext(`let S={recMode:true,rsongId:'second',rsongs:[{id:'first'},{id:'second'}],planAuto:true,plan:{start:'10:00',slots:[{id:'a',kind:'member',name:'A',min:60},{id:'b',kind:'break',name:'休憩',min:15},{id:'c',kind:'member',name:'C',min:60}]}}, U={songIdx:0,secView:''};let autoMsg='',preview=null;const VIEW=()=>false;const nowMin=()=>600;const PREP='RH';const SEC_MIN=5;const sectionOrder=()=>['1A'];const secBars=()=>({});const tagBase=s=>s;const isTagSec=()=>false;`,c);
  for(const name of ['hm2min','planRows','performanceDateOrder','recordingPlanExpired','focusRow','sectionsOf','startSlot','finishSlot','recScheduleClock','recScheduledRow','recScheduleEditing','pauseRecSchedule','autoPlan'])vm.runInContext(declaration(name),c);
  for(const name of ['recSong','song'])vm.runInContext(source.split('\n').find(l=>l.startsWith('const '+name+' =')),c);

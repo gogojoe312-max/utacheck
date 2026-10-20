@@ -49,3 +49,15 @@ LIVE feedback input acceptance:
   and remote checks must pause while a draft, keyboard or interaction is active;
   local note save and later cloud synchronization must remain functional. Unrelated
   worksheets must not be canonicalized for every new feedback note.
+
+REC scheduled start acceptance (supersedes the former display-only schedule mode):
+- On the actual REC progression screen, cross a confirmed Tokyo start time using
+  the real one-second clock loop. The slot must become started, its countdown must
+  run from the planned timestamp, and no Start tap is required. Retain screen
+  evidence, save and reload without resetting the start or takes, and verify the
+  next scheduled slot, explicit pause, manual starts, ambiguous dates/overlaps,
+  active microphone and editing guards. Clock ticks must preserve the screen DOM.
+- Automatic start/finish is owner-side progression metadata; preserve lyrics,
+  assignments, notes, recordings and scheduled times. Suspended/closed apps cannot
+  run JS timers; resume catches up only to the current confirmed slot, never marks
+  every missed slot as recorded or invokes the microphone.

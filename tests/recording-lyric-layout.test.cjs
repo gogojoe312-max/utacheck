@@ -168,31 +168,18 @@ test('REC section labels start dim; unassigned lyrics and assigned singing remai
   assert.deepEqual(f.localWrites,local);
 });
 
-test('REC planned Tokyo slots switch and count down without starting takes or writing state',async()=>{
-  const f=await fixture();
-  f.run(`S.plan.slots=[{id:'a',name:'担当A',kind:'member',day:'10/8',at:690,min:90,takes:{'1A':4},secLog:{'1A':7}},
-    {id:'b',name:'担当B',kind:'member',day:'10/8',at:780,min:60},
-    {id:'c',name:'担当C',kind:'member',day:'10/9',at:690,min:90}];
-    S.planFocus='';U.recFocusId='';U.recScheduleId='';U.recSchedulePaused=false;
-    Date.now=()=>Date.parse('2026-10-08T02:45:00Z');`);
-  const before=f.run('JSON.stringify(S)'),stored=f.idb.snapshot(),local=clone(f.localWrites);
-  assert.equal(f.run('recScheduledRow().left'),4500);
-  f.run('autoPlan()');
-  assert.equal(f.run('focusRow().s.id'),'a');
-  assert.equal(f.run('focusRow().scheduled'),true);
-  assert.equal(f.run('recFocusMember().id'),'member-0');
-  assert.equal(f.run('takeCtx()'),'');
-  assert.match(f.run('recWho()'),/担当A/);
-  const el={textContent:'',style:{}};f.elements.set('pcd',el);f.run('tickPlan()');assert.equal(el.textContent,'75:00');
-  f.run(`Date.now=()=>Date.parse('2026-10-08T04:00:00Z');tickPlan()`);
-  assert.equal(f.run('focusRow().s.id'),'b');assert.equal(el.textContent,'60:00');
-  f.run(`Date.now=()=>Date.parse('2026-10-08T04:12:30Z');tickPlan()`);assert.equal(el.textContent,'47:30');
-  unchanged(f,before,stored,local);
+test('REC planned Tokyo slots now start and persist timers at the scheduled time',async()=>{
+ const f=await fixture();f.run(`save=()=>{callsForQA.saves++};S.plan.slots=[{id:'a',name:'担当A',day:'10/8',at:690,min:90,takes:{'1A':4}}, {id:'b',name:'担当B',day:'10/8',at:780,min:60}];S.planFocus='';U.recSchedulePaused=false;U.recScheduleId='';Date.now=()=>Date.parse('2026-10-08T02:45:00Z');`);
+ const lyrics=f.run('JSON.stringify([S.songs,S.rsongs,S.notes,S.recs])');
+ f.run('autoPlan()');assert.equal(f.run('focusRow().s.id'),'a');assert.equal(f.run('focusRow().live'),true);assert.equal(f.run('S.plan.slots[0].a0'),690);assert.equal(f.run("S.plan.slots[0].takes['1A']"),4);
+ const el={textContent:'',style:{}};f.elements.set('pcd2',el);f.run('tickPlan()');assert.match(el.textContent,/75:00/);
+ f.run(`Date.now=()=>Date.parse('2026-10-08T04:00:00Z');tickPlan()`);assert.equal(f.run('focusRow().s.id'),'b');assert.equal(f.run('S.plan.slots[0].a1'),780);assert.match(el.textContent,/60:00/);
+ assert.equal(f.run('JSON.stringify([S.songs,S.rsongs,S.notes,S.recs])'),lyrics);assert.equal(f.calls.network.length,0);
 });
 
 test('REC automatic schedule defers editing and respects manual choice, dates and actual takes',async()=>{
   const f=await fixture();
-  f.run(`S.plan.slots=[{id:'a',name:'担当A',day:'10/8',at:690,min:90},{id:'b',name:'担当B',day:'10/8',at:780,min:60}];
+  f.run(`save=()=>{};S.plan.slots=[{id:'a',name:'担当A',day:'10/8',at:690,min:90},{id:'b',name:'担当B',day:'10/8',at:780,min:60}];
     S.planFocus='';U.recScheduleId='';U.recSchedulePaused=false;Date.now=()=>Date.parse('2026-10-08T02:45:00Z');U.menu={kind:'note'};autoPlan()`);
   assert.equal(f.run('U.recScheduleId'),'');
   f.run('U.menu=null;autoPlan()');assert.equal(f.run('U.recScheduleId'),'a');
@@ -266,5 +253,5 @@ test('expired REC plans cannot focus a singer or auto-select a past-year slot; e
 test('REC explicit slot dates override yearless labels and plan year prevents annual reuse',async()=>{
  const f=await fixture();f.run(`S.plan={year:2025,start:'10:00',slots:[{id:'old',name:'担当A',kind:'member',day:'10/14',at:600,min:90},{id:'future',name:'担当B',day:'10/15',date:'2027-10-15',at:600,min:90}]};Date.now=()=>Date.parse('2026-10-14T10:30:00+09:00');`);
  assert.equal(f.run('recordingPlanExpired()'),false);assert.equal(f.run('recScheduledRow()'),null);
- f.run(`S.plan.slots[0].date='2026-10-14'`);assert.equal(f.run('recScheduledRow().s.id'),'old');
+ f.run(`S.plan.slots[0].date='2026-10-14'`);assert.equal(f.run('recScheduledRow().s.id'),'old');f.run('U.recSchedulePaused=true');
 });
