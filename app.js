@@ -118,7 +118,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.53";
+const APP_VER = "16.41.58.54";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -2071,12 +2071,12 @@ function blockBar(so) {
   }).join("")}</div>`;
 }
 // 2人以上の行から欠席者を抜く。ソロと全員欠席の行は赤のまま残す。
-function autoSubs() {
-  const ab = absentIds();
+function autoSubs(songs = SONGS(), showId = S.showId, persist = true) {
+  const ab = absentIds(showId);
   if (!ab.length) return 0;
   let n = 0;
-  SONGS().forEach((so) => {
-    const k = subKey(so.id);
+  songs.forEach((so) => {
+    const k = showId + "|" + so.id;
     // まずブロックの中身から欠席者を抜く
     blocksOf(so).forEach((b) => {
       const g = S.gsubs[k];
@@ -2103,8 +2103,29 @@ function autoSubs() {
       }
     });
   });
-  if (n) save();
+  if (n && persist) save();
   return n;
+}
+// Reconcile newly received/imported songs against their own show's absence list.
+// Cache identities, not a whole-library serialization, and never reset manual edits.
+function reconcileNewAbsenceSongs() {
+  if (VIEW() || preview || !recordingInboxCanWrite()) return 0;
+  const shows = (S.shows || []).filter(sw => sw.absent?.length);
+  if (!shows.length) return 0;
+  const all = reconcileNewAbsenceSongs.cache ||= new WeakMap();
+  let seen = all.get(S);if (!seen) { seen = new WeakMap();all.set(S,seen); }
+  let count = 0;
+  for (const sw of shows) {
+    const signature = sw.absent.join("|");
+    const fresh = (S.songs || []).filter(so => {
+      if (so.showId !== sw.id) return false;
+      const old = seen.get(so);
+      if (old?.lines === so.lines && old?.blocks === so.blocks && old.absent === signature) return false;
+      seen.set(so,{lines:so.lines,blocks:so.blocks,absent:signature});return true;
+    });
+    count += autoSubs(fresh,sw.id,false);
+  }
+  return count;
 }
 // 一度決めた振り分けは覚えておく。曲名・グループ・欠席の顔ぶれが同じなら次も使う。
 const libKey = (so) => `${sigOf(so)}|${so.groupId}|${absentIds().slice().sort().join(",")}`;
@@ -2412,6 +2433,7 @@ async function flushSave() {
 function save() {
   if (!recordingInboxCanWrite()) { saveErr = true; return false; }
   if (preview) return;
+  if (typeof reconcileNewAbsenceSongs === "function") reconcileNewAbsenceSongs();
   stateRevision++;
   if (!booted) touched = true;      // 起動の読み込みより先に触った
   if (!idbOK) {                    // IndexedDBが使えない時だけ、今まで通り
@@ -6107,6 +6129,7 @@ function render(background = false) {
   if (typeof OperationProgress !== "undefined") OperationProgress.sync(U.busy);
   if (U.view !== "absent" || VIEW() || preview || absenceEditBatch && !absenceEditScopeMatches(absenceEditBatch)) resetAbsenceEditBatch();
   if (!recordingInboxCanWrite()) return;
+  if (typeof reconcileNewAbsenceSongs === "function" && reconcileNewAbsenceSongs()) save();
   // Cached member data may have the same version as the server (or be offline),
   // so applySetlist need not run. Member screens always use LIVE navigation.
   if (VIEW()) S.recMode = false;
@@ -10792,17 +10815,7 @@ document.addEventListener("click", async (e) => {
       break;
     case "go-live": commitFields(); U.view = "live"; render(); break;
     case "note": openSheet(i, null, null, e.detail ? {x:e.clientX, y:e.clientY} : null); break;
-    case "assignline": {
-      if (VIEW()) break;
-      const so2 = song(); if (!so2) break;
-      const ln = so2.lines[i] || {};
-      // 歌詞だけで歌割が書かれていない行（カットした所など）は触らない
-      if (!(ln.parts || []).length && !(ln.labelRaw || ln.label)) { U.menu = null; renderSheet(); break; }
-      const bb = blockOf(so2, i);
-      if (bb) { U.menu = { kind: "block", id: so2.id, b: bb }; renderSheet(); break; }
-      U.menu = { kind: "assign", id: so2.id, i, idx: runAt(so2, i) };
-      renderSheet(); break;
-    }
+    case "assignline": openAssignmentForLine(i);break;
     case "noteblock": {
       // その行が属する歌割りのかたまり（名前が付いた行＋続きの行）をまとめて選ぶ
       const so = song(); if (!so) break;
@@ -11167,10 +11180,10 @@ document.addEventListener("click", async (e) => {
       const sid = U.menu.id, list = U.menu.idx || [U.menu.i];
       const k = subKey(sid);
       S.subs[k] = S.subs[k] || {};
-      const cur6 = S.subs[k][list[0]] || [];
+      const so3 = S.songs.find((x) => x.id === sid);
+      const cur6 = so3 ? partsOf(so3,list[0]) : (S.subs[k][list[0]] || []);
       const next = cur6.includes(id) ? cur6.filter((x) => x !== id) : cur6.concat(id);
       S.subsMan[k] = S.subsMan[k] || {};
-      const so3 = S.songs.find((x) => x.id === sid);
       list.forEach((li) => {
         S.subs[k][li] = next.slice();
         S.subsMan[k][li] = 1;
@@ -12928,42 +12941,48 @@ document.addEventListener("pointerdown", (e) => {
   dragOn = false;
 });
 
-/* 左の名前を長押ししたら歌割りの編集へ。短く押した時は指摘。 */
+function openAssignmentForLine(i, expected) {
+  const so = song();
+  if (VIEW() || preview || S.recMode || !recordingInboxCanWrite() || !so || !Number.isSafeInteger(i)
+    || expected && (expected.songId !== so.id || expected.showId !== S.showId)) return false;
+  const line = so.lines[i];
+  if (!line || !(line.parts || []).length && !(line.labelRaw || line.label)) return false;
+  const block = blockOf(so,i);
+  U.sheet = null;
+  U.menu = block ? {kind:"block",id:so.id,b:block} : {kind:"assign",id:so.id,i,idx:runAt(so,i)};
+  renderSheet();return true;
+}
+
+/* Short taps add feedback; a stable long press edits the displayed assignment. */
 (function () {
-  let t = null, fired = false, el = null;
-  const target = (n) => (n && n.closest ? n.closest("[data-hold]") : null);
-
-  document.addEventListener("pointerdown", (e) => {
-    fired = false;
-    clearTimeout(t);
-    el = target(e.target);
-    if (!el) return;
-    t = setTimeout(() => {
-      fired = true;
-      /* 一時的に役目を入れ替えて、いつもの処理に流す */
-      const keep = el.dataset.act;
-      el.dataset.act = el.dataset.hold;
-      el.click();
-      el.dataset.act = keep;
-    }, 500);
-  }, true);
-
-  const stop = (e) => {
-    clearTimeout(t); t = null;
-    if (!fired) return;
-    /* 長押しで開いた後は、続けて指摘が開かないように止める */
-    e.preventDefault(); e.stopPropagation();
-    if (e.stopImmediatePropagation) e.stopImmediatePropagation();
-  };
-  document.addEventListener("pointerup", stop, true);
-  document.addEventListener("pointercancel", () => { clearTimeout(t); fired = false; }, true);
-  document.addEventListener("pointermove", () => { clearTimeout(t); }, true);
-  document.addEventListener("click", (e) => {
-    if (!fired || e.isTrusted === false) return;   /* 自分で起こしたものは通す */
-    fired = false;
-    e.preventDefault(); e.stopPropagation();
-    if (e.stopImmediatePropagation) e.stopImmediatePropagation();
-  }, true);
+  let press = null, suppress = false;
+  const target = node => node?.closest?.('[data-hold="assignline"]');
+  const clear = () => { if (press) clearTimeout(press.timer);press = null; };
+  document.addEventListener("pointerdown", event => {
+    clear();suppress = false;
+    const el = target(event.target);
+    if (!el || event.button !== 0 || event.isPrimary === false || VIEW() || preview || S.recMode) return;
+    const current = {el,id:event.pointerId,x:event.clientX,y:event.clientY,songId:song()?.id,showId:S.showId};
+    press = current;
+    current.timer = setTimeout(() => {
+      if (press !== current || !el.isConnected || U.menu || U.sheet) return;
+      if (openAssignmentForLine(Number(el.dataset.i),current)) suppress = true;
+    },500);
+  },true);
+  document.addEventListener("pointermove", event => {
+    if (press && event.pointerId === press.id && Math.hypot(event.clientX - press.x,event.clientY - press.y) > 10) clear();
+  },true);
+  document.addEventListener("pointerup", event => {
+    if (!press || event.pointerId !== press.id) return;
+    clear();
+    if (suppress) { event.preventDefault();event.stopImmediatePropagation(); }
+  },true);
+  document.addEventListener("pointercancel", () => { clear();suppress = false; },true);
+  document.addEventListener("contextmenu", event => { if (target(event.target)) event.preventDefault(); },true);
+  document.addEventListener("click", event => {
+    if (!suppress || !event.isTrusted) return;
+    suppress = false;event.preventDefault();event.stopImmediatePropagation();
+  },true);
 })();
 
 let holdTimer = null;

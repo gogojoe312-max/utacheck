@@ -3,6 +3,7 @@
 const playwright=require('playwright'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),http=require('node:http');
 const {checkProgressPreparation}=require('./progress-preparation-browser-helper.cjs');
 const {checkAbsence}=require('./absence-view-browser-helper.cjs');
+const {checkNewAbsenceSongs}=require('./absence-new-songs-browser-helper.cjs');
 const {checkFolderInteractions}=require('./folder-interactions-browser-helper.cjs');
 const {checkRecordingSegmentSections}=require('./recording-segment-section-browser-helper.cjs');
 const {checkLiveNoteInput}=require('./live-note-input-browser-helper.cjs');
@@ -125,6 +126,7 @@ async function readableTitles(page,rec){
    const folderResult=await checkFolderInteractions(page,width,{mode,assertFits,screenshot,confirmNext:()=>{confirmReply=true;}});
    const recordingBrowseResult=await checkRecordingBrowse(page,width,{mode,assertFits,screenshot});
    const absenceResult=await checkAbsence(page,width,{mode,assertFits,screenshot});
+   const newAbsenceResult=await checkNewAbsenceSongs(page,width,{screenshot});
    const lyricBreakResult=await checkLyricBreaks(page,width,{mode,assertFits,screenshot});
    const recSegmentResult=await checkRecordingSegmentSections(page,width,{screenshot});
    const liveNoteResult=await checkLiveNoteInput(page,width,{screenshot});
@@ -139,7 +141,7 @@ async function readableTitles(page,rec){
    const memberRoster=await checkMemberRoster(page);
    const legacyMemberRoster=await checkMemberRoster(page,{legacy:true});
    const cleanMemberRoster=await checkMemberRoster(page,{clean:true});
-   results.push({width,memberRoster,legacyMemberRoster,cleanMemberRoster,arrangementDevice,progressConnection,...folderResult,...recordingBrowseResult,...absenceResult,...lyricBreakResult,...recSegmentResult,...liveNoteResult,...recAutoResult,excelOriginal:excelCheck,settings:true,pdfLiveRecView:true,fullTitles:true,footer:true,draftPreserved:true,saveErrorVisible:true});await context.close();contexts.delete(context);
+   results.push({width,memberRoster,legacyMemberRoster,cleanMemberRoster,arrangementDevice,progressConnection,...folderResult,...recordingBrowseResult,...absenceResult,...newAbsenceResult,...lyricBreakResult,...recSegmentResult,...liveNoteResult,...recAutoResult,excelOriginal:excelCheck,settings:true,pdfLiveRecView:true,fullTitles:true,footer:true,draftPreserved:true,saveErrorVisible:true});await context.close();contexts.delete(context);
   }
   assert.deepEqual(errors,[]);assert.equal(blocked.filter(x=>x.method!=='GET').length,0);
   const report={passed:true,engine,results,errors,blocked,externalRequestsAllowed:0,syntheticDataOnly:true};

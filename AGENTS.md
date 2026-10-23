@@ -61,3 +61,15 @@ REC scheduled start acceptance (supersedes the former display-only schedule mode
   assignments, notes, recordings and scheduled times. Suspended/closed apps cannot
   run JS timers; resume catches up only to the current confirmed slot, never marks
   every missed slot as recorded or invokes the microphone.
+
+Absence additions / lyric-name assignment acceptance:
+- Create absence settings first, then add a song using the actual file picker.
+  Verify the target show's absence rules also apply when another show or REC was
+  selected at the save boundary. Preserve manual overrides, original lyrics and
+  linked Excel bytes; unresolved solos must remain visibly pending.
+- On the LIVE lyric card, hold the actual performer-name control while moving
+  two pixels, then change its assignment. A short tap remains feedback and a
+  scrolling gesture must not open assignment editing. Toggle an already selected
+  original singer before any override exists; the displayed selection is the
+  starting assignment. Save, reload, export the original-format version sheet,
+  and receive/render the new song's changes on the member screen.
