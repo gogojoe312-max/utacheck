@@ -118,7 +118,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.54";
+const APP_VER = "16.41.58.55";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1991,9 +1991,18 @@ function gapWhere(so, i) {
   return "";
 }
 // 名前を出す。「ハモ ◯◯」の部分は色を変えて、ひと目で分かるようにする。
+function recordingAssignmentHintText(hint) {
+  if (!hint || typeof hint !== "object") return "";
+  if (hint.type === "count" && Number.isInteger(hint.count) && hint.count > 0 && hint.count < 100) return "予想" + hint.count + "人";
+  if (hint.type === "group" && /^[AB]$/.test(hint.label)) return "暫定" + hint.label + "組（人数未定）";
+  if (hint.type === "all") return "暫定全員";
+  return "";
+}
 function labelHTML(so, i) {
   const t = labelOf(so, i);
   if (!t) return "";
+  const predicted = S.recMode && recordingAssignmentHintText(so.lines[i]?.recAssignmentHint);
+  if (predicted) return h(t.slice(0,t.length-predicted.length)) + '<b class="rec-assignment-hint">' + h(predicted) + '</b>';
   const m = /^([\s\S]*?)[\s　]*((?:ハモ|コーラス|Cho)[\s\S]*)$/.exec(t);
   if (!m) return h(t);
   return `${h(m[1])}${m[1] ? "<br>" : ""}<b class="hamomk">${h(m[2])}</b>`;
@@ -2006,7 +2015,8 @@ function labelOf(so, i) {
     const position = (l.sec ? l.sec + " " : "") + (S.recBars && b != null ? b : "");
     const assignment = l.labelRaw || l.label || "";
     const extra = l.extraRaw && !assignment.includes(l.extraRaw) ? " " + l.extraRaw : "";
-    return position + (assignment ? " " + assignment : "") + extra;
+    const predicted = typeof recordingAssignmentHintText === "function" ? recordingAssignmentHintText(l.recAssignmentHint) : "";
+    return position + (predicted ? "　" + predicted : (assignment ? " " + assignment : "") + extra);
   }
   // 続きの行（結合セルの2行目以降）は、元と同じで名前を出さない。
   // ここで名前を出すと、ひとまとまりの歌割が行ごとに分かれて見える。
@@ -3408,6 +3418,18 @@ async function parseXLSX(file, buf, local) {
     const sc = vals.reduce((a, v) => a + nameScore(v), 0) / vals.length;
     kind.push(sc >= 0.6 ? "N" : "L");
   }
+  // REC drafts use the assignment column for head counts instead of names.
+  // Keep this opt-in: microphone numbers and ordinary LIVE sheets retain their interpretation.
+  const predictedCols = new Set();
+  if (local?.recording && !/マイク|ﾏｲｸ|番号/i.test(pickedName)) {
+    const count = value => /^[1-9]\d?(?:人)?$/.test(String(value).normalize("NFKC").trim());
+    for (let c = 0; c < w; c++) {
+      const vals = colVals[c];
+      if (!vals.some(count) || !vals.every(v => count(v) || /^(?:[ABＡＢ]|全)$/.test(v))) continue;
+      if (![c+1,c+2].some(d => d < w && kind[d] === "L" && colVals[d].some(v => !count(v) && nameScore(v) < 0.6))) continue;
+      predictedCols.add(c);kind[c] = "N";
+    }
+  }
   // 名前列の右隣（2列以内）にある歌詞列を組にする。1つの歌詞列は1つの組にしか入れない。
   const blocks = [];
   const usedL = new Set();
@@ -3480,7 +3502,7 @@ async function parseXLSX(file, buf, local) {
     if (orphan.has(bi)) return;
     for (let ri = 0; ri < grid.length; ri++) {
       const v = cleanText(grid[ri][nc] || "");
-      if (v && nameScore(v) >= 0.6) { bodyStart = Math.min(bodyStart, ri); break; }
+      if (v && (nameScore(v) >= 0.6 || predictedCols.has(nc))) { bodyStart = Math.min(bodyStart, ri); break; }
     }
   });
   blocks.forEach(([nc, lc], bi) => {
@@ -3524,13 +3546,13 @@ async function parseXLSX(file, buf, local) {
       // 新しいまとまりが始まる行の手前で、持っていた煽りを出す
       if (pend.length && nv) flushPend();
       // 名前列の上のほうに「2026年9月研修生発表会」のような見出しだけが入っていることがある
-      if (nv && !lv && topRun && nameScore(nv) < 0.6) { head.push(nvRaw); return; }
+      if (nv && !lv && topRun && nameScore(nv) < 0.6 && !predictedCols.has(nc)) { head.push(nvRaw); return; }
       if (nv) topRun = false;
       // いちばん上から続く、名前の無い行は見出し（曲名・メンバー一覧など）
       if (!nv && topRun && bi > 0 && ri < bodyStart) { head.push(lv); return; }
       if (!nv && !noName && !rows.length && lead.length < 3 && ri < bodyStart) { lead.push(["→", lv, col(nc) + (ri + 1), col(lc) + (ri + 1), "", "", "", ""]); return; }
       // 名前がまだ一度も出ていない組の歌詞は、前の組の担当を引き継がず、担当なしで入れる
-      rows.push([nv || (noName || topRun ? "" : "→"), lv, col(nc) + (ri + 1), col(lc) + (ri + 1), extraRaw, extraCell, nvRaw, softText(ac != null ? (r[ac] || "") : ""), cut ? "cut" : ""]);
+      rows.push([nv || (noName || topRun ? "" : "→"), lv, col(nc) + (ri + 1), col(lc) + (ri + 1), extraRaw, extraCell, nvRaw, softText(ac != null ? (r[ac] || "") : ""), cut ? "cut" : "", ...(predictedCols.has(nc) ? ["predicted"] : [])]);
     });
     flushPend();
   });
@@ -6430,7 +6452,7 @@ function viewLive() {
       <div data-lyric-line="${i}" class="ln ${S.recMode ? recLineFocus(s, i) : ""}${S.recMode && l.add ? " lnadd" : ""}${S.recMode && l.skip ? " lnskip" : ""}${l.cut ? " lncut" : ""}${isAgeri(l) ? " lnage" : ""}"${
         l.tag && tanc[l.tag] === i ? ` id="sec-${h(l.tag)}"` : ""} style="${tint ? `background:color-mix(in srgb,${tint} ${strength}%,transparent);` : ""}${vtc ? `box-shadow:inset 3px 0 0 ${vtc}` : ""}">
         <button class="lbl" data-act="${S.recMode ? "rbar" : "noteblock"}" data-i="${i}"${S.recMode ? ` data-segment="${firstSegment?.index || 0}"` : ""}${S.recMode || VIEW() ? "" : ` data-hold="assignline"`}
-          style="${st2 ? `color:${st2 === "need" ? "var(--bad)" : "#F0B23C"}` : ""}">${S.recMode && l.tag ? `<b class="tagmk">${h(l.tag)}</b>` : ""}${l.cut ? `<b class="cutmk">カット</b>` : ""}${VIEW() && st2 === "changed" ? '<b class="member-change-badge">歌割変更</b>' : ""}${S.recMode && firstSegment?.index ? h((firstSegment.sec ? firstSegment.sec + " " : "") + (S.recBars && firstSegment.number != null ? firstSegment.number : "")) : labelHTML(s, i)}</button>
+          style="${st2 ? `color:${st2 === "need" ? "var(--bad)" : "#F0B23C"}` : ""}">${S.recMode && l.tag ? `<b class="tagmk">${h(l.tag)}</b>` : ""}${l.cut ? `<b class="cutmk">カット</b>` : ""}${VIEW() && st2 === "changed" ? '<b class="member-change-badge">歌割変更</b>' : ""}${S.recMode && firstSegment?.index ? h((firstSegment.sec ? firstSegment.sec + " " : "") + (S.recBars && firstSegment.number != null ? firstSegment.number : "")) + (recordingAssignmentHintText(l.recAssignmentHint) ? ' <b class="rec-assignment-hint">' + h(recordingAssignmentHintText(l.recAssignmentHint)) + '</b>' : "") : labelHTML(s, i)}</button>
         <div class="brk ${gp[i]}"></div>
         <div class="grow" style="min-width:0">
           <div class="txt" data-l="${i}" style="font-size:${S.size + 6}px;line-height:${S.lyricLineHeight === 1.8 ? 1.8 : S.lyricLineHeight === 1.5 ? 1.5 : 1.6}">${cells}</div>${pills}
@@ -6592,7 +6614,7 @@ function viewOverview(s) {
       return `${vh2 ? `<div class="vtdiv vtdivov" style="color:${vh2.c}"><span>${h(vh2.vt)}</span></div>` : ""}
         ${numberedRows[i].map(segment => `${segment.sec ? `<div class="secdiv" id="sec-${h(segment.sec)}"><span>${h(segment.sec)}</span></div>` : ""}<button class="ovw ${recLineFocus(s, i)}${l.add ? " lnadd" : ""}${S.recMode && l.skip ? " lnskip" : ""}${l.cut ? " lncut" : ""}" data-act="jumpline" data-i="${i}" data-segment="${segment.index}"
           style="${vtColor(vtOf(l)) ? `box-shadow:inset 3px 0 0 ${vtColor(vtOf(l))}` : ""}">
-          <span class="ovwn">${l.tag && !segment.index ? `<b class="tagmk">${h(l.tag)}</b>` : ""}${S.recBars && segment.number != null ? segment.number : ""}</span>
+          <span class="ovwn">${l.tag && !segment.index ? `<b class="tagmk">${h(l.tag)}</b>` : ""}${S.recBars && segment.number != null ? segment.number : ""}${recordingAssignmentHintText(l.recAssignmentHint) ? ' <b class="rec-assignment-hint">' + h(recordingAssignmentHintText(l.recAssignmentHint)) + '</b>' : ""}</span>
           <span>${l.add && !segment.index ? "（" : ""}${h(segment.text)}${l.add && segment.index === numberedRows[i].length - 1 ? "）" : ""}</span></button>`).join("")}`;
     };
     const brks = (s.colBreaks || []).filter((x) => x > 0 && x < s.lines.length);
@@ -9264,11 +9286,12 @@ function recMemberSelector() {
   const selected = recFocusMember();
   const candidates = focusList();
   const assigned = recSong() && recSong().lines.some(l => (l.parts || []).length);
-  const missing = recSong() ? recSong().lines.filter(l => !l.gap && !l.cut && !(l.parts || []).length).length : 0;
+  const predicted = recSong() && recSong().lines.some(l => recordingAssignmentHintText(l.recAssignmentHint));
+  const missing = recSong() ? recSong().lines.filter(l => !l.gap && !l.cut && !(l.parts || []).length && !recordingAssignmentHintText(l.recAssignmentHint)).length : 0;
   return `<div class="rec-member-focus"><span>歌割を確認する人</span><div class="chips">
     <button class="chip sm" data-act="recfocus" data-id="" aria-pressed="${!U.recFocusId}">進行表の人</button>
     ${candidates.map(m => `<button class="chip sm" data-act="recfocus" data-id="${h(m.id)}" aria-pressed="${selected && selected.id === m.id}">${h(compactMemberLabel(m.name))}</button>`).join("")}
-    </div><p class="note">${!assigned ? "この曲の歌割が未登録です。資料の担当を確認してから登録してください。" : (selected ? h(compactMemberLabel(selected.name)) + "の担当を強調しています。" : "進行表の人を選ぶか、メンバーを選んでください。") + (missing ? " 担当未登録が" + missing + "行あります。" : "")}</p></div>`;
+    </div><p class="note">${!assigned && predicted ? "暫定の予想人数を表示しています。メンバーの担当は未確定です。" : (!assigned ? "この曲の歌割が未登録です。資料の担当を確認してから登録してください。" : (selected ? h(compactMemberLabel(selected.name)) + "の担当を強調しています。" : "進行表の人を選ぶか、メンバーを選んでください。")) + (missing ? " 担当未登録が" + missing + "行あります。" : "")}</p></div>`;
 }
 
 function recBar() {
@@ -10156,7 +10179,7 @@ function viewRecPrint() {
     if (l.gap) return `<tr class="prz"><td class="prn"></td><td class="prx"></td></tr>`;
     const vh3 = vm3.info[i];
     const hd = vh3 ? `<tr class="prv"><td class="prn"></td><td class="prx"><b>${h(vh3.vt)}</b></td></tr>` : "";
-    return hd + numberedRows[i].map(segment => `<tr data-line="${i}" data-segment="${segment.index}"><td class="prn">${l.tag && !segment.index ? "［" + h(l.tag) + "］" : ""}${segment.sec ? h(segment.sec) + " " : ""}${S.recBars && segment.number != null ? segment.number : ""}</td><td class="prx">${l.add && !segment.index ? "（" : ""}${h(segment.text)}${l.add && segment.index === numberedRows[i].length - 1 ? "）" : ""}</td></tr>`).join("");
+    return hd + numberedRows[i].map(segment => `<tr data-line="${i}" data-segment="${segment.index}"><td class="prn">${l.tag && !segment.index ? "［" + h(l.tag) + "］" : ""}${segment.sec ? h(segment.sec) + " " : ""}${S.recBars && segment.number != null ? segment.number : ""}${recordingAssignmentHintText(l.recAssignmentHint) ? '<br><b class="rec-assignment-hint">' + h(recordingAssignmentHintText(l.recAssignmentHint)) + '</b>' : ""}</td><td class="prx">${l.add && !segment.index ? "（" : ""}${h(segment.text)}${l.add && segment.index === numberedRows[i].length - 1 ? "）" : ""}</td></tr>`).join("");
   });
   return `
   <div class="hd noprint"><button class="ic" data-act="recback">‹</button><b>PDF・印刷</b>
@@ -13281,6 +13304,23 @@ function captureImportFiles(files) {
 // レコーディングの歌詞（Word / PDF）を読み込む
 // どの画面からでも使えるよう、本体に1つだけ置いておく。
 // 画面の中に書くと、その画面が出ていない時（レコーディング中など）に使えない。
+function recordingLinesFromParsed(parsed) {
+  let hint = null;
+  return parsed.lines.map(r => {
+    if (!r[1]) { hint = null;return {gap:true,t:""}; }
+    if (r[0] !== "→") {
+      hint = null;
+      if (r[9] === "predicted") {
+        const label = String(r[0]).normalize("NFKC").trim();
+        if (/^[1-9]\d?(?:人)?$/.test(label)) hint = {type:"count",count:parseInt(label,10)};
+        else if (/^[AB]$/.test(label)) hint = {type:"group",label};
+        else if (label === "全") hint = {type:"all"};
+      }
+    }
+    return {t:r[1],bars:4,...(r[8] === "cut" ? {cut:1} : {}),
+      ...(hint ? {recAssignmentHint:{...hint},cell:r[2] || "",lcell:r[3] || ""} : {})};
+  });
+}
 function recFileInput() {
   let el = document.getElementById("recfile");
   if (el && el.tagName === "INPUT") return el;
@@ -13299,7 +13339,7 @@ async function loadRecDocs(picked) {
   if (!recordingInboxRelease) return false;
   try {
   let last = null;
-  const list = captureImportFiles(picked), failed = [], succeeded = [];
+  const list = captureImportFiles(picked), failed = [], succeeded = [], warnings = [];
   if (!await automaticBackupBeforeEdit('recording-lyric-import')) return false;
   ensurePersonalPrivateGroup();
   const targetGroupId = S.groups.find(g => String(g.name || '').normalize('NFKC').replace(/\s/g,'') === '配信しない')?.id;
@@ -13314,13 +13354,19 @@ async function loadRecDocs(picked) {
       if (!result.buffer.byteLength) throw new Error("ファイルが空です。");
       const f = {name:item.name,arrayBuffer:async () => result.buffer};
       const ext = f.name.split(".").pop().toLowerCase();
-      const parsed = ext === "pdf" ? await parsePDF(f) : ["xlsx","xlsm","xlsb","xls","csv"].includes(ext) ? await parseXLSX(f,result.buffer) : null;
+      const parsed = ext === "pdf" ? await parsePDF(f) : ["xlsx","xlsm","xlsb","xls","csv"].includes(ext) ? await parseXLSX(f,result.buffer,{recording:true}) : null;
       const so = parsed ? {id:uid(),title:parsed.title,credit:parsed.credit,intro:8,
-        lines:parsed.lines.map(r => r[1] ? {t:r[1],bars:4,...(r[8]==="cut"?{cut:1}:{})} : {gap:true,t:""}),cols:1,colBreaks:[],at:Date.now()}
+        lines:recordingLinesFromParsed(parsed),cols:1,colBreaks:[],at:Date.now()}
         : await parseDocx(f);
       so.groupId = targetGroupId;
       if (U.recArtistFilter) so.recArtist = U.recArtistFilter;
       S.rsongs.push(so); S.rsongId = so.id; last = so; save(); succeeded.push(item.name);
+      if (parsed?.sheetName) {
+        try {
+          so.xlsSourceId = await importTimeout(storeOriginalExcel(new Blob([result.buffer])),10000,"元Excelを保存できませんでした");
+          so.xls = 1;so.sheetName = parsed.sheetName;so.xlsAt = Date.now();
+        } catch (error) { warnings.push(item.name + "（元Excelの保存）\n歌詞と予想人数は読み込み済みです。" + fileFailureReason(error)); }
+      }
     } catch (e) { failed.push(item.name + "（取り込み）\n" + fileFailureReason(e)); }
   }
   U.busy = "";
@@ -13330,7 +13376,7 @@ async function loadRecDocs(picked) {
     U.view = "live"; U.picker = false; U.overview = false;
   }
   save(); U.menu = null; render();
-  if (list.length > 1 || failed.length) showFileReport("取り込み結果", succeeded, failed);
+  if (list.length > 1 || failed.length || warnings.length) showFileReport("取り込み結果", succeeded, failed,warnings);
   } finally { recordingInboxRelease(); }
 }
 

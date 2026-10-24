@@ -73,3 +73,14 @@ Absence additions / lyric-name assignment acceptance:
   original singer before any override exists; the displayed selection is the
   starting assignment. Save, reload, export the original-format version sheet,
   and receive/render the new song's changes on the member screen.
+
+REC provisional headcounts acceptance:
+- Import a two-panel Excel with numeric assignment columns A/D, lyric columns
+  C/F, merged cells, continuation blanks and A/B placeholders. Digits must never
+  appear as lyric-only rows or become member IDs. Preserve source lyric order,
+  display predicted headcounts separately from bar numbers, and keep unknown A/B
+  membership and headcounts explicitly tentative. Ordinary LIVE/microphone sheets
+  retain their parser contract. Preserve and reread immutable workbook bytes.
+- Exercise the actual REC file picker, lyric view, settings, overview/print,
+  private receive with song-linked schedule, save and reload. Include the supplied
+  workbook in a scoped private check; no private lyrics/schedules go in public code.

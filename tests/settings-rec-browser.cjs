@@ -8,6 +8,7 @@ const {checkFolderInteractions}=require('./folder-interactions-browser-helper.cj
 const {checkRecordingSegmentSections}=require('./recording-segment-section-browser-helper.cjs');
 const {checkLiveNoteInput}=require('./live-note-input-browser-helper.cjs');
 const {checkRecordingAutoStart}=require('./recording-auto-start-browser-helper.cjs');
+const {checkRecordingHeadcounts}=require('./recording-headcount-browser-helper.cjs');
 const {checkLyricBreaks}=require('./lyric-break-browser-helper.cjs');
 const {checkRecordingBrowse}=require('./recording-browse-browser-helper.cjs');
 const {checkArrangementDevice}=require('./arrangement-device-browser-helper.cjs');
@@ -141,7 +142,18 @@ async function readableTitles(page,rec){
    const memberRoster=await checkMemberRoster(page);
    const legacyMemberRoster=await checkMemberRoster(page,{legacy:true});
    const cleanMemberRoster=await checkMemberRoster(page,{clean:true});
-   results.push({width,memberRoster,legacyMemberRoster,cleanMemberRoster,arrangementDevice,progressConnection,...folderResult,...recordingBrowseResult,...absenceResult,...newAbsenceResult,...lyricBreakResult,...recSegmentResult,...liveNoteResult,...recAutoResult,excelOriginal:excelCheck,settings:true,pdfLiveRecView:true,fullTitles:true,footer:true,draftPreserved:true,saveErrorVisible:true});await context.close();contexts.delete(context);
+   // The owner-only REC receive flow gets its own native IDB/ownership context;
+   // member preview fixtures above intentionally leave a different role active.
+   await context.close();contexts.delete(context);
+   const headcountContext=engine==='webkit'
+    ? await playwright.webkit.launchPersistentContext(fs.mkdtempSync(path.join(require('node:os').tmpdir(),'utacheck-headcounts-webkit-')),{headless:true,viewport:{width,height:844},serviceWorkers:'block'})
+    : await browser.newContext({viewport:{width,height:844},serviceWorkers:'block'});
+   contexts.add(headcountContext);
+   await headcountContext.route('**/*',route=>{const request=route.request(),url=new URL(request.url());if(url.origin!==allowedOrigin||request.method()!=='GET'){blocked.push({origin:url.origin,method:request.method()});return route.abort('blockedbyclient');}return route.continue();});
+   const headcountPage=await headcountContext.newPage();headcountPage.setDefaultTimeout(20000);headcountPage.on('pageerror',e=>errors.push(e.stack||e.message));headcountPage.on('dialog',d=>d.dismiss());
+   await headcountPage.goto(origin);await headcountPage.waitForFunction(()=>typeof normalStartupInitialized!=='undefined'&&normalStartupInitialized);
+   const recHeadcountResult=await checkRecordingHeadcounts(headcountPage,width,{screenshot});await headcountContext.close();contexts.delete(headcountContext);
+   results.push({width,memberRoster,legacyMemberRoster,cleanMemberRoster,arrangementDevice,progressConnection,...folderResult,...recordingBrowseResult,...absenceResult,...newAbsenceResult,...lyricBreakResult,...recSegmentResult,...liveNoteResult,...recAutoResult,...recHeadcountResult,excelOriginal:excelCheck,settings:true,pdfLiveRecView:true,fullTitles:true,footer:true,draftPreserved:true,saveErrorVisible:true});
   }
   assert.deepEqual(errors,[]);assert.equal(blocked.filter(x=>x.method!=='GET').length,0);
   const report={passed:true,engine,results,errors,blocked,externalRequestsAllowed:0,syntheticDataOnly:true};

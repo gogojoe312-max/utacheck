@@ -3,7 +3,7 @@ const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const fs=require('node:fs'),vm=require('node:vm'),path=require('node:path');
 const XLSX=require('../vendor/xlsx.full.min.js');
-const source=fs.readFileSync(path.join(__dirname,'../app.js'),'utf8');
+const source=fs.readFileSync(process.env.QA_APP_SOURCE||path.join(__dirname,'../app.js'),'utf8');
 function fn(name){const i=source.indexOf('function '+name+'(');assert(i>=0,name);return source.slice(source.lastIndexOf('\n',i)+1,source.indexOf('\n}',i)+2);}
 function setup(overrides={}){
  let id=0;const alerts=[],captures=[],originals=new Map();
@@ -18,6 +18,7 @@ function setup(overrides={}){
  vm.runInContext(source.match(/^const NAMESEP = .+$/m)[0]+source.match(/^const HAMO_RE = .+$/m)[0]+source.match(/^const cleanName = .+$/m)[0],c);
  vm.runInContext('const looksName = v => nameScore(v) >= 0.6; const SONGS=()=>S.recMode ? S.rsongs : S.songs.filter(s=>s.showId===S.showId);',c);
  for(const n of ['startupExcelWithinBudget','startupExcelDigest','storeOriginalExcel','ensurePersonalPrivateGroup','fileFailureReason','showFileReport','cleanText','softText','stripParens','splitNames','nameScore','pickSheet','readBubbles','trimExcelRange','parseXLSX','finalize','compareSongTitles','sortSongsByTitle','importTimeout','captureImportFiles','handleFiles','loadRecDocs','importSelection']) vm.runInContext(fn(n),c);
+ for(const n of ['recordingLinesFromParsed','recordingAssignmentHintText'])if(source.includes('function '+n+'('))vm.runInContext(fn(n),c);
  return {c,alerts,captures};
 }
 function workbook(n,type='xlsx'){
@@ -26,6 +27,20 @@ function workbook(n,type='xlsx'){
  ]),'歌割');return XLSX.write(w,{type:'buffer',bookType:type,compression:true});
 }
 const file=(name,data)=>({name,arrayBuffer:async()=>new Uint8Array(data).buffer});
+test('REC provisional headcount columns stay paired with lyrics across two columns and merged continuations',async()=>{
+ const {c}=setup();c.S.recMode=true;const wb=require('./recording-headcount-fixture.cjs')(XLSX);
+ await c.loadRecDocs([file('暫定合成曲_歌割.xlsx',XLSX.write(wb,{type:'buffer'}))]);
+ const rows=c.S.rsongs[0].lines.filter(l=>!l.gap);
+ assert.deepEqual(Array.from(rows,l=>l.t),['左の最初の合成歌詞','左の続きの合成歌詞','左の暫定グループ','人数が明示された歌詞','右の最初の合成歌詞','右の続きの合成歌詞','右の暫定グループ','最後の合成歌詞']);
+ assert.deepEqual(Array.from(rows,l=>JSON.parse(JSON.stringify(l.recAssignmentHint))),[{type:'count',count:1},{type:'count',count:1},{type:'group',label:'A'},{type:'count',count:3},{type:'count',count:2},{type:'count',count:2},{type:'group',label:'B'},{type:'count',count:1}]);
+ assert.equal(rows[0].lcell,'C4');assert.equal(rows[4].lcell,'F4');assert(!c.S.members?.some(m=>/^[1-9AB]$/.test(m.name)));
+});
+test('numeric microphone sheets and ordinary LIVE imports are not classified as predicted headcounts',async()=>{
+ const {c}=setup(),wb=require('./recording-headcount-fixture.cjs')(XLSX),data=XLSX.write(wb,{type:'buffer'});
+ const live=await c.parseXLSX(file('歌割.xlsx',data));assert(live.lines.every(r=>r[9]!=='predicted'));
+ wb.Sheets['マイク番号']=wb.Sheets['歌割'];delete wb.Sheets['歌割'];wb.SheetNames=['マイク番号'];
+ const mic=await c.parseXLSX(file('マイク番号.xlsx',XLSX.write(wb,{type:'buffer'})),null,{recording:true});assert(mic.lines.every(r=>r[9]!=='predicted'));
+});
 test('mixed Excel imports keep original bytes and place numbered encores after the main set',async()=>{
  const {c,alerts,captures}=setup();const f=[file('EN10_最後.xlsx',workbook(110)),file('M10.xlsx',workbook(10)),file('en 2_続き.xls',workbook(102,'biff8')),file('M2.xls',workbook(2,'biff8')),file('ＥＮ１_アンコール.xlsx',workbook(101)),file('M16.xlsx',workbook(16)),file('M1.xlsx',workbook(1))];
  await c.handleFiles(f);assert.deepEqual(Array.from(c.S.songs,s=>s.title),['M1','M2','M10','M16','ＥＮ１_アンコール','en 2_続き','EN10_最後']);

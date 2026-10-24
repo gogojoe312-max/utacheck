@@ -1,3 +1,5 @@
+/* Predicted singer counts are separate from REC bar numbers and member assignments. */
+.rec-assignment-hint{display:inline-block;padding:2px 6px;border:1px solid currentColor;border-radius:5px;font-size:12px;line-height:1.5;font-weight:600;white-space:normal;color:var(--accent,#325f9e)}
 /* Quiet, high-contrast controls for stage and studio. Screen only: printed lyrics keep their layout. */
 @media screen {
 :root{color-scheme:dark;--bg:#111215;--panel:#1c1e23;--panel2:#2a2d34;--line:#343740;--text:#f3f4f7;--dim:#a9adb8;--accent:#a6c8ff;--good:#91d7ae;--bad:#f4a295}
