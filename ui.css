@@ -1,5 +1,12 @@
 /* Predicted singer counts are separate from REC bar numbers and member assignments. */
 .rec-assignment-hint{display:inline-block;padding:2px 6px;border:1px solid currentColor;border-radius:5px;font-size:12px;line-height:1.5;font-weight:600;white-space:normal;color:var(--accent,#325f9e)}
+[data-recording-kind="solo"],[data-recording-cue="solo"],[data-recording-current="solo"]{--rec-cue-color:#a6c8ff}
+[data-recording-kind="unison"],[data-recording-cue="unison"],[data-recording-current="unison"]{--rec-cue-color:#91d7ae}
+.ln[data-recording-kind],.ovw[data-recording-kind]{border-inline-start:2px solid var(--rec-cue-color)}
+.rec-assignment-hint[data-recording-cue]{color:var(--rec-cue-color)}
+.rec-current-cue{position:sticky;top:0;height:0;z-index:4;pointer-events:none}
+.rec-current-cue>[data-recording-current]{position:absolute;right:12px;top:4px;padding:3px 7px;border:1px solid var(--rec-cue-color);border-radius:5px;background:var(--bg,#111215);color:var(--rec-cue-color);font-size:11px;line-height:1.4}
+@media print{[data-recording-cue="solo"]{--rec-cue-color:#245b91}[data-recording-cue="unison"]{--rec-cue-color:#24664a}.rec-current-cue{display:none!important}}
 /* Quiet, high-contrast controls for stage and studio. Screen only: printed lyrics keep their layout. */
 @media screen {
 :root{color-scheme:dark;--bg:#111215;--panel:#1c1e23;--panel2:#2a2d34;--line:#343740;--text:#f3f4f7;--dim:#a9adb8;--accent:#a6c8ff;--good:#91d7ae;--bad:#f4a295}

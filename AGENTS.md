@@ -84,3 +84,17 @@ REC provisional headcounts acceptance:
 - Exercise the actual REC file picker, lyric view, settings, overview/print,
   private receive with song-linked schedule, save and reload. Include the supplied
   workbook in a scoped private check; no private lyrics/schedules go in public code.
+
+Sparse REC cues / imported schedule acceptance:
+- Use ソロ for one singer and ユニゾン for multiple singers; show a label only
+  when the source category/count/group changes. Continuations retain thin blue
+  or green rails. Scroll within each category and verify the current cue stays
+  visible without replacing the lyric DOM. Keep source counts and A/B intact.
+- A manual import may have a random ID and filename title while the received
+  schedule uses a fixed ID and song title. From the manually imported song's
+  actual 進行表 button, open both scheduled days when one exact immutable
+  workbook hash and unchanged source lyrics identify the schedule. Preserve
+  both song records, notes, recordings and the original file. Different files,
+  changed lyrics, explicit other sessions, past-only and ambiguous schedules
+  must remain separate. Ordinary navigation must not save or change an active
+  session merely to display its plan. Phone receipt still requires separate evidence.

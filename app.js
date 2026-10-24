@@ -118,7 +118,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.55";
+const APP_VER = "16.41.58.56";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1993,16 +1993,47 @@ function gapWhere(so, i) {
 // 名前を出す。「ハモ ◯◯」の部分は色を変えて、ひと目で分かるようにする。
 function recordingAssignmentHintText(hint) {
   if (!hint || typeof hint !== "object") return "";
-  if (hint.type === "count" && Number.isInteger(hint.count) && hint.count > 0 && hint.count < 100) return "予想" + hint.count + "人";
-  if (hint.type === "group" && /^[AB]$/.test(hint.label)) return "暫定" + hint.label + "組（人数未定）";
-  if (hint.type === "all") return "暫定全員";
+  if (hint.type === "count" && Number.isInteger(hint.count) && hint.count > 0 && hint.count < 100) return hint.count === 1 ? "ソロ" : "ユニゾン・" + hint.count + "人";
+  if (hint.type === "group" && /^[AB]$/.test(hint.label)) return "ユニゾン・" + hint.label;
+  if (hint.type === "all") return "ユニゾン・全員";
   return "";
+}
+function recordingAssignmentCue(so, i) {
+  const hint = so?.lines?.[i]?.recAssignmentHint, text = recordingAssignmentHintText(hint);
+  if (!text) return null;
+  const kind = hint.type === "count" && hint.count === 1 ? "solo" : "unison";
+  let previous = i - 1;
+  while (previous >= 0 && (so.lines[previous].gap || so.lines[previous].cut || !String(so.lines[previous].t || "").trim())) previous--;
+  return {kind,text,start:previous < 0 || recordingAssignmentHintText(so.lines[previous].recAssignmentHint) !== text};
+}
+function recordingAssignmentBadge(so, i, continuation = false) {
+  const cue = recordingAssignmentCue(so,i);
+  return cue?.start && !continuation ? '<b class="rec-assignment-hint" data-recording-cue="' + cue.kind + '">' + h(cue.text) + '</b>' : "";
+}
+function updateRecordingAssignmentIndicator() {
+  const indicator = app.querySelector('[data-recording-current]'), scroll = app.querySelector('#app > .scroll');
+  if (!indicator || !scroll) return;
+  const edge = scroll.getBoundingClientRect().top;
+  const rows = scroll.querySelectorAll('[data-recording-kind]');
+  const active = [...rows].find(row => row.getBoundingClientRect().bottom > edge + 1);
+  const label = active?.querySelector('[data-recording-cue]');
+  const show = !!active && (!label || label.getBoundingClientRect().bottom <= edge);
+  indicator.hidden = !show;
+  if (show) {
+    if (indicator.textContent !== active.dataset.recordingText) indicator.textContent = active.dataset.recordingText;
+    if (indicator.dataset.recordingCurrent !== active.dataset.recordingKind) indicator.dataset.recordingCurrent = active.dataset.recordingKind;
+  }
+}
+let recordingAssignmentIndicatorFrame = 0;
+function queueRecordingAssignmentIndicator() {
+  if (recordingAssignmentIndicatorFrame) return;
+  recordingAssignmentIndicatorFrame = requestAnimationFrame(() => { recordingAssignmentIndicatorFrame = 0;updateRecordingAssignmentIndicator(); });
 }
 function labelHTML(so, i) {
   const t = labelOf(so, i);
   if (!t) return "";
   const predicted = S.recMode && recordingAssignmentHintText(so.lines[i]?.recAssignmentHint);
-  if (predicted) return h(t.slice(0,t.length-predicted.length)) + '<b class="rec-assignment-hint">' + h(predicted) + '</b>';
+  if (predicted) return h(t.slice(0,t.length-predicted.length)) + recordingAssignmentBadge(so,i);
   const m = /^([\s\S]*?)[\s　]*((?:ハモ|コーラス|Cho)[\s\S]*)$/.exec(t);
   if (!m) return h(t);
   return `${h(m[1])}${m[1] ? "<br>" : ""}<b class="hamomk">${h(m[2])}</b>`;
@@ -6136,7 +6167,7 @@ document.addEventListener("scroll", e => {
   if (!e.target.matches?.("#app > .scroll, .mask .sheet, .note-details-content")) return;
   scrollingUntil = Date.now() + 120;
   resumeRender();
-  if (e.target.matches("#app > .scroll")) queueInkPaint();
+  if (e.target.matches("#app > .scroll")) { queueInkPaint();if (typeof queueRecordingAssignmentIndicator === "function") queueRecordingAssignmentIndicator(); }
 }, {capture:true, passive:true});
 window.addEventListener("resize", () => { if (U.view === "live") queueInkPaint(); });
 function typingNow() {
@@ -6193,6 +6224,7 @@ function render(background = false) {
   }
   const sc = app.querySelector(".scroll");
   if (sc && sameView) sc.scrollTop = st;
+  if (typeof updateRecordingAssignmentIndicator === "function") updateRecordingAssignmentIndicator();
   if (VIEW()) applyMemberNavigation();
   renderSheet();
   if (U.view === "live" && !U.overview) queueInkPaint();
@@ -6447,12 +6479,13 @@ function viewLive() {
       const strength = (st2 || foc) ? 18 : 9;
       const vtc = S.recMode ? vtColor(vtOf(l)) : "";
       const vh = vm.info[i];
+      const cue = S.recMode ? recordingAssignmentCue(s,i) : null;
       return `${newSec ? `<div class="secdiv" id="sec-${h(firstSegment.sec)}"><span>${h(firstSegment.sec)}</span></div>` : ""}
       ${vh ? `<div class="vtdiv" style="color:${vh.c}"><span>${h(vh.vt)}</span></div>` : ""}
-      <div data-lyric-line="${i}" class="ln ${S.recMode ? recLineFocus(s, i) : ""}${S.recMode && l.add ? " lnadd" : ""}${S.recMode && l.skip ? " lnskip" : ""}${l.cut ? " lncut" : ""}${isAgeri(l) ? " lnage" : ""}"${
+      <div data-lyric-line="${i}"${cue ? ` data-recording-kind="${cue.kind}" data-recording-text="${h(cue.text)}"` : ""} class="ln ${S.recMode ? recLineFocus(s, i) : ""}${S.recMode && l.add ? " lnadd" : ""}${S.recMode && l.skip ? " lnskip" : ""}${l.cut ? " lncut" : ""}${isAgeri(l) ? " lnage" : ""}"${
         l.tag && tanc[l.tag] === i ? ` id="sec-${h(l.tag)}"` : ""} style="${tint ? `background:color-mix(in srgb,${tint} ${strength}%,transparent);` : ""}${vtc ? `box-shadow:inset 3px 0 0 ${vtc}` : ""}">
         <button class="lbl" data-act="${S.recMode ? "rbar" : "noteblock"}" data-i="${i}"${S.recMode ? ` data-segment="${firstSegment?.index || 0}"` : ""}${S.recMode || VIEW() ? "" : ` data-hold="assignline"`}
-          style="${st2 ? `color:${st2 === "need" ? "var(--bad)" : "#F0B23C"}` : ""}">${S.recMode && l.tag ? `<b class="tagmk">${h(l.tag)}</b>` : ""}${l.cut ? `<b class="cutmk">カット</b>` : ""}${VIEW() && st2 === "changed" ? '<b class="member-change-badge">歌割変更</b>' : ""}${S.recMode && firstSegment?.index ? h((firstSegment.sec ? firstSegment.sec + " " : "") + (S.recBars && firstSegment.number != null ? firstSegment.number : "")) + (recordingAssignmentHintText(l.recAssignmentHint) ? ' <b class="rec-assignment-hint">' + h(recordingAssignmentHintText(l.recAssignmentHint)) + '</b>' : "") : labelHTML(s, i)}</button>
+          style="${st2 ? `color:${st2 === "need" ? "var(--bad)" : "#F0B23C"}` : ""}">${S.recMode && l.tag ? `<b class="tagmk">${h(l.tag)}</b>` : ""}${l.cut ? `<b class="cutmk">カット</b>` : ""}${VIEW() && st2 === "changed" ? '<b class="member-change-badge">歌割変更</b>' : ""}${S.recMode && firstSegment?.index ? h((firstSegment.sec ? firstSegment.sec + " " : "") + (S.recBars && firstSegment.number != null ? firstSegment.number : "")) + recordingAssignmentBadge(s,i,true) : labelHTML(s, i)}</button>
         <div class="brk ${gp[i]}"></div>
         <div class="grow" style="min-width:0">
           <div class="txt" data-l="${i}" style="font-size:${S.size + 6}px;line-height:${S.lyricLineHeight === 1.8 ? 1.8 : S.lyricLineHeight === 1.5 ? 1.5 : 1.6}">${cells}</div>${pills}
@@ -6509,6 +6542,7 @@ function viewLive() {
   ${memberReviewNav()}
   ${s ? blockBar(s) : ""}
   <div class="scroll" style="position:relative">
+    ${S.recMode ? '<div class="rec-current-cue"><span data-recording-current hidden></span></div>' : ""}
     <canvas id="ink" class="ink" style="pointer-events:${U.draw && !VIEW() ? "auto" : "none"};touch-action:${U.draw ? "none" : "auto"}"></canvas>
     ${body}
     ${s && !S.recMode && (!VIEW() || songMemo(s.id).trim()) ? `<div class="card" style="margin:18px 12px 0">
@@ -6612,9 +6646,9 @@ function viewOverview(s) {
       if (l.gap) return `<div style="height:1em"></div>`;
       const vh2 = vm2.info[i];
       return `${vh2 ? `<div class="vtdiv vtdivov" style="color:${vh2.c}"><span>${h(vh2.vt)}</span></div>` : ""}
-        ${numberedRows[i].map(segment => `${segment.sec ? `<div class="secdiv" id="sec-${h(segment.sec)}"><span>${h(segment.sec)}</span></div>` : ""}<button class="ovw ${recLineFocus(s, i)}${l.add ? " lnadd" : ""}${S.recMode && l.skip ? " lnskip" : ""}${l.cut ? " lncut" : ""}" data-act="jumpline" data-i="${i}" data-segment="${segment.index}"
+        ${numberedRows[i].map(segment => `${segment.sec ? `<div class="secdiv" id="sec-${h(segment.sec)}"><span>${h(segment.sec)}</span></div>` : ""}<button${recordingAssignmentCue(s,i) ? ` data-recording-kind="${recordingAssignmentCue(s,i).kind}" data-recording-text="${h(recordingAssignmentCue(s,i).text)}"` : ""} class="ovw ${recLineFocus(s, i)}${l.add ? " lnadd" : ""}${S.recMode && l.skip ? " lnskip" : ""}${l.cut ? " lncut" : ""}" data-act="jumpline" data-i="${i}" data-segment="${segment.index}"
           style="${vtColor(vtOf(l)) ? `box-shadow:inset 3px 0 0 ${vtColor(vtOf(l))}` : ""}">
-          <span class="ovwn">${l.tag && !segment.index ? `<b class="tagmk">${h(l.tag)}</b>` : ""}${S.recBars && segment.number != null ? segment.number : ""}${recordingAssignmentHintText(l.recAssignmentHint) ? ' <b class="rec-assignment-hint">' + h(recordingAssignmentHintText(l.recAssignmentHint)) + '</b>' : ""}</span>
+          <span class="ovwn">${l.tag && !segment.index ? `<b class="tagmk">${h(l.tag)}</b>` : ""}${S.recBars && segment.number != null ? segment.number : ""}${recordingAssignmentBadge(s,i,segment.index > 0)}</span>
           <span>${l.add && !segment.index ? "（" : ""}${h(segment.text)}${l.add && segment.index === numberedRows[i].length - 1 ? "）" : ""}</span></button>`).join("")}`;
     };
     const brks = (s.colBreaks || []).filter((x) => x > 0 && x < s.lines.length);
@@ -6712,7 +6746,7 @@ function viewOverview(s) {
     <button class="ic" data-act="ovsize">${S.recMode ? S.recOvSize : U.ovSize}px</button>
   </div>
   ${blockBar(s)}
-  <div class="scroll" style="padding:8px 10px">${bodyHTML}
+  <div class="scroll" style="padding:8px 10px">${S.recMode ? '<div class="rec-current-cue"><span data-recording-current hidden></span></div>' : ""}${bodyHTML}
     ${songMemo(s.id) && !S.recMode ? `<div class="card" style="margin-top:12px">
       <h4 style="font-size:11px;color:var(--dim);margin-bottom:6px">総括</h4>
       <div style="font-size:13px;white-space:pre-wrap">${h(songMemo(s.id))}</div></div>` : ""}
@@ -8702,7 +8736,7 @@ function recSongActionsHTML(id) {
   const action = (act, label, danger = false) => `<button class="organize-action" data-act="${act}" data-id="${h(so.id)}"${danger ? ' style="color:var(--bad)"' : ""}>${label}</button>`;
   return `<button class="sp" data-act="closemenu" aria-label="閉じる"></button><div class="sheet organize-sheet" role="dialog" aria-modal="true" aria-label="曲の操作">
     <div class="row"><b class="grow settings-song-title">${h(so.title)}</b><button class="chip" data-act="closemenu">閉じる</button></div>
-    ${(S.plan?.slots || []).some(slot => slot.songId === so.id) ? action("rec-song-plan", "進行表をひらく") : ""}${action("song-rename", "曲名を変更")}${action("rpdf", "PDFにする")}${action("rec-classify", "日付・アーティストを変更")}${action("rdel", "曲を削除", true)}
+    ${(S.plan?.slots || []).some(slot => slot.songId === (typeof recordingPlanSourceId === "function" ? recordingPlanSourceId(so.id) : so.id)) ? action("rec-song-plan", "進行表をひらく") : ""}${action("song-rename", "曲名を変更")}${action("rpdf", "PDFにする")}${action("rec-classify", "日付・アーティストを変更")}${action("rdel", "曲を削除", true)}
   </div>`;
 }
 
@@ -8881,8 +8915,9 @@ function recordingBrowseDates(song) {
   const dated = labeled.filter(item => item.date.year != null);
   if (dated.length) return dated;
   const planned = [];
+  const scheduleId = typeof recordingPlanSourceId === "function" ? recordingPlanSourceId(song.id) : song.id;
   for (const slot of S.plan?.slots || []) {
-    if (!song.id || slot.songId !== song.id) continue;
+    if (!song.id || slot.songId !== scheduleId) continue;
     let match, date;
     if (slot.date) {
       match = /^(20\d{2})-(\d{2})-(\d{2})$/.exec(String(slot.date));
@@ -9172,7 +9207,8 @@ function recordingPlanExpired(now=Date.now()) {
 }
 function recordingPlanEntryHTML() {
   const song = S.rsongs.find(so => so.id === S.rsongId);
-  const linked = song && (S.plan?.slots || []).some(slot => slot.songId === song.id);
+  const target = song && (typeof recordingPlanSourceId === "function" ? recordingPlanSourceId(song.id) : song.id);
+  const linked = song && (S.plan?.slots || []).some(slot => slot.songId === target);
   return '<div class="card"><button class="primary" data-act="goplan">この曲の進行表をひらく</button>' + (linked ? '' : '<p class="note">'+(song ? 'この曲に連携した進行表はありません。' : 'RECの曲を選択してください。')+'</p>') + '</div>';
 }
 function recordingGroupSelector() {
@@ -9291,7 +9327,7 @@ function recMemberSelector() {
   return `<div class="rec-member-focus"><span>歌割を確認する人</span><div class="chips">
     <button class="chip sm" data-act="recfocus" data-id="" aria-pressed="${!U.recFocusId}">進行表の人</button>
     ${candidates.map(m => `<button class="chip sm" data-act="recfocus" data-id="${h(m.id)}" aria-pressed="${selected && selected.id === m.id}">${h(compactMemberLabel(m.name))}</button>`).join("")}
-    </div><p class="note">${!assigned && predicted ? "暫定の予想人数を表示しています。メンバーの担当は未確定です。" : (!assigned ? "この曲の歌割が未登録です。資料の担当を確認してから登録してください。" : (selected ? h(compactMemberLabel(selected.name)) + "の担当を強調しています。" : "進行表の人を選ぶか、メンバーを選んでください。")) + (missing ? " 担当未登録が" + missing + "行あります。" : "")}</p></div>`;
+    </div><p class="note">${!assigned && predicted ? "暫定のソロ・ユニゾンを表示しています。担当メンバーは未確定です。" : (!assigned ? "この曲の歌割が未登録です。資料の担当を確認してから登録してください。" : (selected ? h(compactMemberLabel(selected.name)) + "の担当を強調しています。" : "進行表の人を選ぶか、メンバーを選んでください。")) + (missing ? " 担当未登録が" + missing + "行あります。" : "")}</p></div>`;
 }
 
 function recBar() {
@@ -9381,9 +9417,27 @@ function recScheduleClock(at = Date.now()) {
   const p = Object.fromEntries(parts.map(x => [x.type,x.value]));
   return {day:p.year+"-"+p.month+"-"+p.day, year:Number(p.year), month:Number(p.month), date:Number(p.day), seconds:Number(p.hour)*3600+Number(p.minute)*60+Number(p.second)};
 }
+// A manual REC import and a private delivery can have different IDs. Only the
+// same immutable workbook and unchanged source lyrics can share an upcoming
+// schedule. Never borrow another session by title, artist or approximate date.
+function recordingPlanSourceId(id) {
+  const slots = S.plan?.slots || [], song = S.rsongs.find(so => so.id === id);
+  if (!song || slots.some(slot => slot.songId === id) || song.recSession?.id || song.folder
+    || !/^sha256-[a-f0-9]{64}$/.test(song.xlsSourceId || "")) return id;
+  const importedAt = Number(song.at);
+  const importedDay = new Date((Number.isFinite(importedAt) && importedAt > 0 && importedAt < 8e15 ? importedAt : Date.now()) + 9*3600000).toISOString().slice(0,10);
+  const text = JSON.stringify((song.lines || []).map(line => [!!line.gap,line.t || ""]));
+  const matches = S.rsongs.filter(other => other.id !== id && other.xlsSourceId === song.xlsSourceId
+    && (!song.recArtist || !other.recArtist || song.recArtist === other.recArtist)
+    && JSON.stringify((other.lines || []).map(line => [!!line.gap,line.t || ""])) === text
+    && slots.some(slot => slot.songId === other.id && /^\d{4}-\d{2}-\d{2}$/.test(slot.date || "") && slot.date >= importedDay
+      && Number.isFinite(Date.parse(slot.date + "T00:00:00Z")) && new Date(slot.date + "T00:00:00Z").toISOString().slice(0,10) === slot.date));
+  return matches.length === 1 ? matches[0].id : id;
+}
 // A song's imported schedule is linked by its exact ID, independently of the
 // older session that may still be selected in the global progression table.
 function chooseRecordingSongPlanDay(id, at = Date.now(), scoped = false) {
+  if (typeof recordingPlanSourceId === "function") id = recordingPlanSourceId(id);
   const slots = S.plan?.slots || [];
   if (!scoped && slots.some(slot => slot.a0 != null && slot.a1 == null)) return false;
   const linked = slots.filter(slot => {
@@ -9423,7 +9477,8 @@ function planEditSlot(id, breakOnly = false) {
   }
   return slot;
 }
-function openRecordingSongPlan(id) {
+function openRecordingSongPlan(id, edit = false) {
+  if (typeof recordingPlanSourceId === "function") id = recordingPlanSourceId(id);
   if (VIEW() || preview || !S.recMode || S.rsongs.filter(so => so.id === id).length !== 1) return false;
   if (U.planSongId !== id) U.planSongDay = U.planDay;
   const canSelect = recordingPlanSongCanSelect(id);
@@ -9432,7 +9487,7 @@ function openRecordingSongPlan(id) {
     chooseRecordingSongPlanDay(id);
   }
   chooseRecordingSongPlanDay(id, Date.now(), true);
-  U.planSongId = id; U.planSongEditing = false; U.planSec = ""; U.secOrd = false; U.menu = null; U.view = "recplan";
+  U.planSongId = id; U.planSongEditing = edit; U.planSec = ""; U.secOrd = false; U.menu = null; U.view = "recplan";
   if (canSelect) save();
   renderSheet(); render();
   return true;
@@ -10179,7 +10234,7 @@ function viewRecPrint() {
     if (l.gap) return `<tr class="prz"><td class="prn"></td><td class="prx"></td></tr>`;
     const vh3 = vm3.info[i];
     const hd = vh3 ? `<tr class="prv"><td class="prn"></td><td class="prx"><b>${h(vh3.vt)}</b></td></tr>` : "";
-    return hd + numberedRows[i].map(segment => `<tr data-line="${i}" data-segment="${segment.index}"><td class="prn">${l.tag && !segment.index ? "［" + h(l.tag) + "］" : ""}${segment.sec ? h(segment.sec) + " " : ""}${S.recBars && segment.number != null ? segment.number : ""}${recordingAssignmentHintText(l.recAssignmentHint) ? '<br><b class="rec-assignment-hint">' + h(recordingAssignmentHintText(l.recAssignmentHint)) + '</b>' : ""}</td><td class="prx">${l.add && !segment.index ? "（" : ""}${h(segment.text)}${l.add && segment.index === numberedRows[i].length - 1 ? "）" : ""}</td></tr>`).join("");
+    return hd + numberedRows[i].map(segment => `<tr data-line="${i}" data-segment="${segment.index}"><td class="prn">${l.tag && !segment.index ? "［" + h(l.tag) + "］" : ""}${segment.sec ? h(segment.sec) + " " : ""}${S.recBars && segment.number != null ? segment.number : ""}${recordingAssignmentBadge(so,i,segment.index > 0) ? "<br>" + recordingAssignmentBadge(so,i,segment.index > 0) : ""}</td><td class="prx">${l.add && !segment.index ? "（" : ""}${h(segment.text)}${l.add && segment.index === numberedRows[i].length - 1 ? "）" : ""}</td></tr>`).join("");
   });
   return `
   <div class="hd noprint"><button class="ic" data-act="recback">‹</button><b>PDF・印刷</b>
@@ -11535,12 +11590,15 @@ document.addEventListener("click", async (e) => {
       U.view = "recprint"; render();
       break;
     }
-    case "goplan":
+    case "goplan": {
+      const linkedId = typeof recordingPlanSourceId === "function" ? recordingPlanSourceId(S.rsongId) : S.rsongId;
+      if (linkedId !== S.rsongId) { openRecordingSongPlan(linkedId,true);break; }
       U.planSongId = S.rsongId || ""; U.planSongDay = U.planDay;
       U.planSongEditing = true;
       chooseRecordingSongPlanDay(U.planSongId, Date.now(), true);
       U.planSec = ""; U.secOrd = false;
       U.view = "recplan"; render(); break;
+    }
     case "rec-song-plan": openRecordingSongPlan(id); break;
     case "plan-all":
       U.planSongDay = ""; U.planSec = ""; U.secOrd = false; render(); break;
