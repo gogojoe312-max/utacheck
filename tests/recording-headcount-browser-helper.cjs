@@ -49,18 +49,23 @@ async function checkRecordingHeadcounts(page,width,{screenshot}){
   assert.equal(await page.evaluate(()=>S.plan.slots.filter(s=>s.songId==='qa-rec-count-received').length),1);
   await page.evaluate(()=>{S.recMode=true;Object.assign(U,{view:'setup',menu:null,sheet:null,recArtistFilter:''});renderPointers.clear();scrollingUntil=0;render();});
   await page.locator('[data-act="ruse"][data-id="'+manualId+'"]').click();
+  await page.locator('[data-lyric-line="0"] [data-act="rbar"]').first().click();await page.locator('.mask [data-act="rsecq"][data-id="1C"]').click();await page.locator('[data-act="jumpsec"][data-id="1C"]').click();
   const beforePlan=await page.evaluate(()=>JSON.stringify([S.rsongs,S.notes,S.recs,S.plan]));
   await page.locator('[data-act="goplan"]').first().click();await page.waitForSelector('.plan-row');
   assert.equal(await page.locator('.plan-row').count(),1);assert.match(await page.locator('.plan-row').innerText(),/12:00.*13:30/s);assert.match(await page.locator('.plan-row').innerText(),/検証担当/);
-  assert.equal(await page.evaluate(()=>S.rsongId),'qa-rec-count-received');assert.equal(await page.evaluate(()=>JSON.stringify([S.rsongs,S.notes,S.recs,S.plan])),beforePlan);
+  assert.equal(await page.evaluate(()=>JSON.stringify([S.rsongs,S.notes,S.recs,S.plan])),beforePlan);
   await screenshot(page,width,'rec-original-schedule-linked');
-  await page.evaluate(()=>{U.view='live';U.secView='';renderPointers.clear();scrollingUntil=0;render();});await check();await screenshot(page,width,'rec-predicted-headcounts-received');
-  await page.locator('[data-act="overview"]').first().click();assert.equal(await page.locator('#app .rec-assignment-hint,#app [data-recording-current],#app .ovw[data-recording-kind]').count(),0);assert.equal(await page.locator('#app .song-heading .t1').innerText(),'REC ・ 全体表示');assert.equal(await page.locator('#app .ovw').count(),8);await screenshot(page,width,'rec-overview-without-singer-cues');await page.locator('[data-act="overview"]').first().click();await check();
+  await page.locator('[data-act="recback"]').click();await screenshot(page,width,'rec-custom-section-after-plan-back');
+  assert.equal(await page.locator('.sectabs [data-act="jumpsec"][data-id="1C"]').count(),1,'The created section must remain on the actual lyric screen after returning from the plan');assert.equal(await page.evaluate(()=>S.rsongId),manualId);assert.equal(await page.evaluate(()=>U.secView),'1C');
+  await page.locator('[data-act="goplan"]').first().click();
+
+  await page.locator('[data-act="psecopen"]').first().click();assert.equal(await page.locator('[data-act="psecgo"]').first().isEnabled(),true);assert.match(await page.locator('#app').innerText(),/1C/);await page.locator('[data-act="psecgo"]').first().click();assert.equal(await page.evaluate(()=>S.rsongId),manualId);assert.equal(await page.evaluate(()=>U.secView),'1C');assert.equal(await page.evaluate(()=>recSong().lines[0].sec),'1C');await page.locator('[data-act="jumpsec"][data-id="1C"]').click();await check();await screenshot(page,width,'rec-predicted-headcounts-received');
+  await page.locator('[data-act="overview"]').first().click();await page.waitForFunction(()=>U.overview&&document.querySelectorAll('#app .ovw').length===8);assert.equal(await page.locator('#app .rec-assignment-hint,#app [data-recording-current],#app .ovw[data-recording-kind]').count(),0);assert.equal(await page.locator('#app .song-heading .t1').innerText(),'REC ・ 全体表示');assert.equal(await page.locator('#app .ovw').count(),8);await screenshot(page,width,'rec-overview-without-singer-cues');await page.locator('[data-act="overview"]').first().click();await page.waitForFunction(()=>!U.overview&&document.querySelector('[data-lyric-line]'));await check();
   await page.evaluate(()=>{U.view='recprint';renderPointers.clear();scrollingUntil=0;render();});assert.match(await page.locator('#prpage').innerText(),/ソロ/);assert.match(await page.locator('#prpage').innerText(),/ユニゾン・A/);
   await screenshot(page,width,'rec-predicted-headcounts-print');
  }finally{await page.evaluate(async saved=>{S=JSON.parse(saved.state);Object.keys(U).forEach(k=>delete U[k]);Object.assign(U,JSON.parse(saved.ui));startupRecoveryNetworkHold=saved.hold;saveErr=false;renderPointers.clear();scrollingUntil=0;save();await saveNow();window.qaContent=()=>JSON.stringify(Object.fromEntries(['groups','shows','songs','rsongs','notes','memos','staffMemos','recs','plan'].map(k=>[k,S[k]])));render();},saved);
 
  }
- return {recPredictedHeadcountsImported:true,recPredictedCountsSeparateFromMembers:true,recPredictedHeadcountsReloadAndPrint:true,recPredictedHeadcountsScheduleReceive:true,recSparseSoloUnisonCues:true,recCueScrollWithoutRedraw:true,recManualOriginalOpensReceivedSchedule:true,recScheduleReceivedWithProgressLoginOnly:true,recSlowResponseRecoveredOnSettings:true,recDeadlineRetryOpenedPlan:true,recOverviewHidesAssignmentCues:true};
+ return {recPredictedHeadcountsImported:true,recPredictedCountsSeparateFromMembers:true,recPredictedHeadcountsReloadAndPrint:true,recPredictedHeadcountsScheduleReceive:true,recSparseSoloUnisonCues:true,recCueScrollWithoutRedraw:true,recManualOriginalOpensReceivedSchedule:true,recCreatedSectionsSurvivePlanAndMemberSelection:true,recScheduleReceivedWithProgressLoginOnly:true,recSlowResponseRecoveredOnSettings:true,recDeadlineRetryOpenedPlan:true,recOverviewHidesAssignmentCues:true};
 }
 module.exports={checkRecordingHeadcounts};

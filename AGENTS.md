@@ -145,3 +145,21 @@ REC simplification / section-strip acceptance:
   must label its own mode and must not show that LIVE show's title/date. Keep
   this failing state in the receive/overview/reload fixture; do not normalize it
   away to satisfy the caption check. LIVE overview retains its show caption.
+
+REC section completion / plan navigation / assignment boundaries acceptance:
+- Completion defaults to the whole selected section. Only an explicit
+  ソロ／ユニゾンに分ける action exposes category filters and independent completion.
+  Verify whole undo, Unison-only partial, merge without falsely completing Solo,
+  resplit restoring partial status, both completed, another person/section and
+  actual save/reload. Legacy elapsed secLog must not imply confirmed recording.
+  Preserve legacy takes, media, PT settings, source lyrics and source numbering.
+- With separate manual-import and received IDs for the same exact workbook,
+  create a section through the REC lyric number control, open that song's actual
+  進行表, return and select a person from that table. Retain the manual song,
+  created section and selected section; scheduled automatic start must retain it
+  as well. Different/ambiguous originals must remain separate. Keep the failing
+  previous-code regression and exact-screen browser evidence.
+- Adjacent Solo assignments need visible thin horizontal separators too.
+  Open Solo via the optional split controls, inspect actual rendered separators
+  and original row numbers. Real continuation rows from one assignment stay
+  together. Lines are overlays, so lyric/handwriting geometry is unchanged.

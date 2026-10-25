@@ -118,7 +118,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.60";
+const APP_VER = "16.41.58.61";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -2013,20 +2013,84 @@ function recordingAssignmentBadge(so, i, continuation = false) {
 function recordingSingerKind(so, i) {
   const line = so?.lines?.[i];
   if (!line || line.gap || line.cut || !String(line.t || "").trim()) return "";
+  if (line.vt === "ソロ" || line.vt === "ユニゾン") return line.vt === "ソロ" ? "solo" : "unison";
   const hint = line.recAssignmentHint;
   if (recordingAssignmentHintText(hint)) return hint.type === "count" && hint.count === 1 ? "solo" : "unison";
   const ids = [...new Set(partsOf(so,i))];
   if (!ids.length || ids.some(id => !member(id) || /^[AB]$/.test(String(member(id).name || "").trim()))) return "";
   return ids.length === 1 ? "solo" : "unison";
 }
+function recordingSectionContext(so = recSong(), section = focusSec()) {
+  if (!S.recMode || !so) return null;
+  const slots = S.plan?.slots || [], selected = slots.filter(s => s.id === S.planFocus);
+  const slot = selected.length === 1 ? selected[0] : focusRow()?.s;
+  if (!slot || slot.kind === "break" || !slot.id || !String(slot.name || "").trim() || slots.filter(s => s.id === slot.id).length !== 1) return null;
+  const songId = typeof recordingPlanSourceId === "function" ? recordingPlanSourceId(so.id) : so.id;
+  if (slot.songId && slot.songId !== songId && slot.songId !== so.id) return null;
+  section ||= slot.secCur || "";
+  if (!section || !linesInSec(so,section).some(i => !so.lines[i].gap && !so.lines[i].cut && String(so.lines[i].t || "").trim())) return null;
+  return {so,slot,section,key:JSON.stringify([songId,section])};
+}
+function recordingSectionRecord(ctx) {
+  if (!ctx) return null;
+  const records = ctx.slot.sectionChecks;
+  if (records === undefined) return {version:1,split:false,whole:false,solo:false,unison:false};
+  if (!records || typeof records !== "object" || Array.isArray(records)) return null;
+  if (!Object.prototype.hasOwnProperty.call(records,ctx.key)) return {version:1,split:false,whole:false,solo:false,unison:false};
+  const value = records[ctx.key];
+  return value && value.version === 1 && ["split","whole","solo","unison"].every(k => typeof value[k] === "boolean") ? value : null;
+}
+function recordingSectionSummary(ctx) {
+  const value = recordingSectionRecord(ctx);
+  return {value,done:!!value && (value.split ? value.solo && value.unison : value.whole),partial:!!value && !value.whole && (value.solo || value.unison)};
+}
+function updatedRecordingSectionState(value, action) {
+  if (!value || !["split","merge","whole","solo","unison"].includes(action)) return null;
+  const next = {...value};
+  if (action === "split") next.split = true;
+  else if (action === "merge") { next.split = false;next.whole = next.solo && next.unison; }
+  else if (action === "whole" && !next.split) { next.whole = !next.whole;next.solo = next.unison = next.whole; }
+  else if (["solo","unison"].includes(action) && next.split) { next[action] = !next[action];next.whole = next.solo && next.unison; }
+  else return null;
+  return next;
+}
+function changeRecordingSectionProgress(action, button) {
+  if (VIEW() || preview || U.view !== "live" || U.overview || U.sheet || U.menu || !recordingInboxCanWrite()) return false;
+  const ctx = recordingSectionContext(), next = updatedRecordingSectionState(recordingSectionRecord(ctx),action);
+  if (!ctx || !next || button?.dataset.slot !== ctx.slot.id || button.dataset.song !== ctx.so.id || button.dataset.section !== ctx.section) return false;
+  pushUndo();ctx.slot.sectionChecks = {...ctx.slot.sectionChecks,[ctx.key]:next};
+  if (action === "split") {
+    U.recSingerSongId = ctx.so.id;U.recSingerSlotId = ctx.slot.id;U.recSingerSection = ctx.section;U.recSingerFilter = "unison";
+  } else if (action === "merge") U.recSingerFilter = "";
+  save();render();return true;
+}
+function recordingSectionControlsHTML(so) {
+  const ctx = recordingSectionContext(so), state = recordingSectionSummary(ctx);
+  if (!ctx) return '<p class="note rec-section-help">進行表で対象の人を選び、セクションを選ぶと録り終わりを記録できます。</p>';
+  if (!state.value) return '<p class="note rec-section-help">保存された完了記録を確認できません。現在の記録は保持しています。</p>';
+  const value = state.value, selected = recordingSingerFilter(so);
+  const attributes = ' data-slot="'+h(ctx.slot.id)+'" data-song="'+h(so.id)+'" data-section="'+h(ctx.section)+'"';
+  const doneButton = kind => { const done=value[kind],label=kind === "whole" ? "" : kind === "solo" ? "ソロを" : "ユニゾンを";
+    return '<button class="chip rec-recorded-toggle'+(done?' is-recorded':'')+'" data-act="rec-section-progress" data-id="'+kind+'"'+attributes+' aria-pressed="'+done+'">'+(done?'✓ '+label.replace(/を$/,'')+'済（戻す）':label+'録り終わりにする')+'</button>'; };
+  const caption = '<div class="rec-section-caption">'+h(compactMemberLabel(ctx.slot.name))+' ・ '+h(ctx.section)+(state.partial?' <span>一部済</span>':'')+'</div>';
+  if (!value.split) return '<div class="rec-section-controls">'+caption+'<div class="row">'+doneButton('whole')+'<button class="chip sm" data-act="rec-section-progress" data-id="split"'+attributes+'>ソロ／ユニゾンに分ける</button></div></div>';
+  const filters = [["","すべて"],["unison","ユニゾン"],["solo","ソロ"]].map(([kind,label])=>'<button class="chip sm'+(kind&&value[kind]?' is-recorded':'')+'" data-act="rec-singer-filter" data-id="'+kind+'" aria-pressed="'+(selected===kind)+'">'+label+(kind&&value[kind]?' ✓済':'')+'</button>').join('');
+  return '<div class="rec-section-controls">'+caption+'<div class="rec-singer-filter">'+filters+'<button class="chip sm" data-act="rec-section-progress" data-id="merge"'+attributes+'>まとめる</button></div><div class="row">'+(selected?doneButton(selected):doneButton('unison')+doneButton('solo'))+'</div></div>';
+}
+function recordingAssignmentBoundary(so, i) {
+  const line=so.lines[i],previous=so.lines[i-1];
+  if (!line || line.gap || line.cut) return false;
+  if (!previous || previous.gap || previous.cut || secOfLine(so,i)!==secOfLine(so,i-1) || recordingSingerKind(so,i)!==recordingSingerKind(so,i-1)) return true;
+  if (JSON.stringify(partsOf(so,i))!==JSON.stringify(partsOf(so,i-1))) return true;
+  if (line.cont === true) return false;
+  if (line.cell && previous.cell) return line.cell !== previous.cell;
+  return true;
+}
 function recordingSingerFilter(so) {
-  return S.recMode && so?.id === U.recSingerSongId && ["solo","unison"].includes(U.recSingerFilter) ? U.recSingerFilter : "";
+  const ctx=recordingSectionContext(so), value=recordingSectionRecord(ctx);
+  return value?.split && so?.id===U.recSingerSongId && ctx.slot.id===U.recSingerSlotId && ctx.section===U.recSingerSection && ["solo","unison"].includes(U.recSingerFilter) ? U.recSingerFilter : "";
 }
-function recordingSingerFilterHTML(so) {
-  if (!so || !so.lines.some((_,i) => recordingSingerKind(so,i))) return "";
-  const selected = recordingSingerFilter(so);
-  return '<div class="rec-singer-filter" aria-label="歌詞の表示">' + [["","すべて"],["unison","ユニゾン"],["solo","ソロ"]].map(([kind,label]) => '<button class="chip sm" data-act="rec-singer-filter" data-id="'+kind+'" aria-pressed="'+(selected === kind)+'">'+label+'</button>').join("") + '</div>';
-}
+function recordingSingerFilterHTML(so) { return recordingSectionControlsHTML(so); }
 function updateRecordingAssignmentIndicator() {
   const indicator = app.querySelector('[data-recording-current]'), scroll = app.querySelector('#app > .scroll');
   if (!indicator || !scroll) return;
@@ -6414,6 +6478,7 @@ function viewLive() {
   let body = "";
   const fsec = s ? focusSec() : "";
   const fset = fsec ? new Set(linesInSec(s, fsec)) : null;
+  const singerFilter = S.recMode ? recordingSingerFilter(s) : "";
   if (!s) {
     body = `<div style="padding:64px 26px;text-align:center;color:var(--dim);font-size:14px">曲がありません</div>`;
   } else {
@@ -6440,7 +6505,7 @@ function viewLive() {
     body = s.lines.map((l, i) => {
       if (l.cut || hiddenRecLines.has(i)) return "";
       if (fset && !fset.has(i)) return "";
-      if (recordingSingerFilter(s) && recordingSingerKind(s,i) !== recordingSingerFilter(s)) return "";
+      if (singerFilter && recordingSingerKind(s,i) !== singerFilter) return "";
       if (l.gap) {
         const gns = ns0.filter((n) => covers(n, i));
         if (VIEW() && !gns.length) return `<div class="gap"></div>`;
@@ -6508,7 +6573,7 @@ function viewLive() {
       const cue = S.recMode ? recordingAssignmentCue(s,i) : null;
       return `${newSec ? `<div class="secdiv" id="sec-${h(firstSegment.sec)}"><span>${h(firstSegment.sec)}</span></div>` : ""}
       ${vh ? `<div class="vtdiv" style="color:${vh.c}"><span>${h(vh.vt)}</span></div>` : ""}
-      <div data-lyric-line="${i}"${cue ? ` data-recording-kind="${cue.kind}" data-recording-text="${h(cue.text)}"` : ""} class="ln ${S.recMode ? recLineFocus(s, i) : ""}${S.recMode && l.add ? " lnadd" : ""}${S.recMode && l.skip ? " lnskip" : ""}${l.cut ? " lncut" : ""}${isAgeri(l) ? " lnage" : ""}"${
+      <div data-lyric-line="${i}"${cue ? ` data-recording-kind="${cue.kind}" data-recording-text="${h(cue.text)}"` : ""} class="ln ${S.recMode ? recLineFocus(s, i) : ""}${S.recMode && l.add ? " lnadd" : ""}${S.recMode && l.skip ? " lnskip" : ""}${l.cut ? " lncut" : ""}${isAgeri(l) ? " lnage" : ""}${S.recMode && recordingAssignmentBoundary(s,i) ? " rec-assignment-start" : ""}"${
         l.tag && tanc[l.tag] === i ? ` id="sec-${h(l.tag)}"` : ""} style="${tint ? `background:color-mix(in srgb,${tint} ${strength}%,transparent);` : ""}${vtc ? `box-shadow:inset 3px 0 0 ${vtc}` : ""}">
         <button class="lbl" data-act="${S.recMode ? "rbar" : "noteblock"}" data-i="${i}"${S.recMode ? ` data-segment="${firstSegment?.index || 0}"` : ""}${S.recMode || VIEW() ? "" : ` data-hold="assignline"`}
           style="${st2 ? `color:${st2 === "need" ? "var(--bad)" : "#F0B23C"}` : ""}">${S.recMode && l.tag ? `<b class="tagmk">${h(l.tag)}</b>` : ""}${l.cut ? `<b class="cutmk">カット</b>` : ""}${VIEW() && st2 === "changed" ? '<b class="member-change-badge">歌割変更</b>' : ""}${S.recMode && firstSegment?.index ? h((firstSegment.sec ? firstSegment.sec + " " : "") + (S.recBars && firstSegment.number != null ? firstSegment.number : "")) + recordingAssignmentBadge(s,i,true) : labelHTML(s, i)}</button>
@@ -9361,8 +9426,9 @@ function recBar() {
 
   const tabList = secs.length ? secs : sectionOrder().map((nm) => ({ name: nm }));
   const tabs = tabList.map((e) => {
-    const cls = (e.live || e.name === U.secView || tagBase(U.secView) === e.name) ? "on" : e.done ? "dn" : "";
-    return `<button class="sectab ${cls} ${recSectionFocus(recSong(), e.name)}" id="tab-${h(e.name)}" data-act="jumpsec" data-id="${h(e.name)}">${e.done ? "✓" : ""}${h(e.name)}</button>`;
+    const progress = recordingSectionSummary(recordingSectionContext(recSong(),e.name));
+    const cls = (U.secView ? e.name === U.secView || tagBase(U.secView) === e.name : e.live) ? "on" : "";
+    return `<button aria-label="${h(e.name)}：${progress.done ? "録り終わり" : progress.partial ? "一部済" : "未完了"}" class="sectab ${cls}${progress.done ? " rec-section-done" : progress.partial ? " rec-section-partial" : ""} ${recSectionFocus(recSong(), e.name)}" id="tab-${h(e.name)}" data-act="jumpsec" data-id="${h(e.name)}"><span class="rec-section-mark" aria-hidden="true">${progress.done ? "✓" : progress.partial ? "•" : ""}</span>${h(e.name)}</button>`;
   }).join("");
 
   /* Gaya のような表記を選んでいる時は、Gaya1 Gaya2 … を小さく並べる。
@@ -9468,13 +9534,13 @@ function chooseRecordingSongPlanDay(id, at = Date.now(), scoped = false) {
   return true;
 }
 function recordingPlanSongCanSelect(id) {
-  if (S.rsongId === id) return true;
+  if (S.rsongId === id || typeof recordingPlanSourceId === "function" && recordingPlanSourceId(S.rsongId) === id) return true;
   return !(S.plan?.slots || []).some(slot => slot.a0 != null && slot.a1 == null)
     && !REC && !recordingStartPending && !recordingFinalizePending && !pitchStartPending && !PT.on && !micStream;
 }
 function recordingPlanEditableSongId() {
   const id = U.planSongId || S.rsongId;
-  if (!S.recMode || U.view !== "recplan" || !U.planSongEditing || id !== S.rsongId
+  if (!S.recMode || U.view !== "recplan" || !U.planSongEditing || id !== (typeof recordingPlanSourceId === "function" ? recordingPlanSourceId(S.rsongId) : S.rsongId)
     || S.rsongs.filter(so => so.id === id).length !== 1 || VIEW() || preview
     || REC || recordingStartPending || recordingFinalizePending || pitchStartPending || PT.on || micStream
     || (S.plan?.slots || []).some(slot => slot.a0 != null && slot.a1 == null && slot.songId !== id)) return "";
@@ -9491,17 +9557,18 @@ function planEditSlot(id, breakOnly = false) {
   return slot;
 }
 function openRecordingSongPlan(id, edit = false) {
+  const requestedId = id;
   if (typeof recordingPlanSourceId === "function") id = recordingPlanSourceId(id);
   if (VIEW() || preview || !S.recMode || S.rsongs.filter(so => so.id === id).length !== 1) return false;
   if (U.planSongId !== id) U.planSongDay = U.planDay;
-  const canSelect = recordingPlanSongCanSelect(id);
-  if (canSelect) {
-    S.rsongId = id; U.songIdx = SONGS().findIndex(so => so.id === id);
+  const canSelect = recordingPlanSongCanSelect(id), sameSong = S.rsongId === requestedId || (typeof recordingPlanSourceId === "function" ? recordingPlanSourceId(S.rsongId) : S.rsongId) === id;
+  if (canSelect && !sameSong) {
+    S.rsongId = requestedId; U.songIdx = SONGS().findIndex(so => so.id === requestedId);
     chooseRecordingSongPlanDay(id);
   }
   chooseRecordingSongPlanDay(id, Date.now(), true);
   U.planSongId = id; U.planSongEditing = edit; U.planSec = ""; U.secOrd = false; U.menu = null; U.view = "recplan";
-  if (canSelect) save();
+  if (canSelect && !sameSong) save();
   renderSheet(); render();
   return true;
 }
@@ -9553,8 +9620,8 @@ function autoPlan() {
     const matches = row.s.songId ? S.rsongs.filter(so => so.id === row.s.songId) : [];
     if (!row.s.songId || matches.length === 1) {
       if (matches.length) {
-        S.rsongId = matches[0].id;U.songIdx = SONGS().findIndex(so => so.id === S.rsongId);
-        if (U.view === "recplan") { U.planSongId = S.rsongId;U.planSongDay = row.s.day || "";U.planSongEditing = false; }
+        if ((typeof recordingPlanSourceId === "function" ? recordingPlanSourceId(S.rsongId) : S.rsongId) !== matches[0].id) { S.rsongId = matches[0].id;U.songIdx = SONGS().findIndex(so => so.id === S.rsongId); }
+        if (U.view === "recplan") { U.planSongId = matches[0].id;U.planSongDay = row.s.day || "";U.planSongEditing = false; }
       }
       const midnight = Date.parse(recScheduleClock(now).day + "T00:00:00+09:00");
       startSlot(row.s, true, {at:row.pS, ms:midnight + row.pS * 60000, endAt:midnight + row.pE * 60000, endMinute:row.pE});
@@ -10041,7 +10108,7 @@ function viewPlan() {
   const songId = U.planSongId || S.rsongId;
   const matches = S.rsongs.filter(so => so.id === songId);
   const scopedSong = matches.length === 1 ? matches[0] : null;
-  const readOnlyScope = songScoped && (!scopedSong || S.rsongId !== scopedSong.id || !recordingPlanSongCanSelect(scopedSong.id)
+  const readOnlyScope = songScoped && (!scopedSong || (typeof recordingPlanSourceId === "function" ? recordingPlanSourceId(S.rsongId) : S.rsongId) !== scopedSong.id || !recordingPlanSongCanSelect(scopedSong.id)
     || (S.plan?.slots || []).some(slot => slot.a0 != null && slot.a1 == null && slot.songId !== scopedSong.id));
   const canEdit = !songScoped || !!recordingPlanEditableSongId();
   const allRows = planRows().filter(row => !songScoped || scopedSong && row.s.songId === scopedSong.id);
@@ -11109,8 +11176,9 @@ document.addEventListener("click", async (e) => {
     case "focus": U.focus = id; U.picker = false; render(); break;
     case "recschedule": U.recSchedulePaused=!U.recSchedulePaused; U.recScheduleId=""; if(!U.recSchedulePaused)autoPlan(); render(); break;
     case "recfocus": pauseRecSchedule(); U.recFocusId = id; render(); break;
+    case "rec-section-progress": changeRecordingSectionProgress(id,b); break;
     case "rec-singer-filter":
-      if (S.recMode && recSong() && ["","solo","unison"].includes(id)) { U.recSingerSongId = recSong().id; U.recSingerFilter = id; render(); }
+      { const ctx=recordingSectionContext(); if (ctx && recordingSectionRecord(ctx)?.split && ["","solo","unison"].includes(id)) { U.recSingerSongId = ctx.so.id;U.recSingerSlotId=ctx.slot.id;U.recSingerSection=ctx.section;U.recSingerFilter = id;render(); } }
       break;
     case "jumpshow": selectShow(id); renderSheet(); render(); break;
 
@@ -11607,7 +11675,7 @@ document.addEventListener("click", async (e) => {
     }
     case "goplan": {
       const linkedId = typeof recordingPlanSourceId === "function" ? recordingPlanSourceId(S.rsongId) : S.rsongId;
-      if (linkedId !== S.rsongId) { openRecordingSongPlan(linkedId,true);break; }
+      if (linkedId !== S.rsongId) { openRecordingSongPlan(S.rsongId,true);break; }
       U.planSongId = S.rsongId || ""; U.planSongDay = U.planDay;
       U.planSongEditing = true;
       chooseRecordingSongPlanDay(U.planSongId, Date.now(), true);
@@ -11659,7 +11727,8 @@ document.addEventListener("click", async (e) => {
       if (S.recMode && U.view === "recplan" && (!sl?.songId || sl.songId !== (U.planSongId || S.rsongId))) break;
       if (sl?.songId && S.rsongs.filter(so => so.id === sl.songId).length === 1) {
         if (!recordingPlanSongCanSelect(sl.songId)) break;
-        S.rsongId = sl.songId; U.songIdx = SONGS().findIndex(so => so.id === sl.songId); U.secView = "";
+        const sameSong = (typeof recordingPlanSourceId === "function" ? recordingPlanSourceId(S.rsongId) : S.rsongId) === sl.songId;
+        if (!sameSong) { S.rsongId = sl.songId; U.songIdx = SONGS().findIndex(so => so.id === sl.songId); U.secView = ""; }
       }
       if (sl) { pauseRecSchedule(); S.planFocus = sl.id; U.recFocusId = ""; U.view = "live"; save(); render(); }
       break;

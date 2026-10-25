@@ -5,9 +5,9 @@ async function checkRecSectionStability(page,width,{screenshot}){
  try{
   await page.evaluate(async()=>{
    const sections=['RH','1A','1B','1C','2A','2B','2C','T','TRap','2ARap','D','DRap','3C',"3C'",'Inter','Outro'];
-   S=Object.assign(structuredClone(S0),{viewer:false,recMode:true,ghToken:'',bkGistId:'',autoPub:false,rsongId:'qa-scroll-song',groups:[{id:'qa-scroll-group',name:'合成',nopub:true}],members:[{id:'qa-scroll-person',name:'検証担当'},{id:'qa-scroll-person-2',name:'もう一人'}],rsongs:[{id:'qa-scroll-song',title:'保持するセクション合成曲',groupId:'qa-scroll-group',take:4,roster:['qa-scroll-person','qa-scroll-person-2'],blocks:{},lines:sections.flatMap((sec,i)=>[{t:'ユニゾンの合成歌詞 '+i,sec,bars:4,parts:['qa-scroll-person','qa-scroll-person-2']},{t:'ソロの合成歌詞 '+i,bars:4,parts:['qa-scroll-person']}])}],recs:{kept:{dur:12,size:4}},pt:{on:true,mode:'direct',url:'https://bridge.invalid',token:'synthetic-preserved-bridge-token'},planFocus:'qa-scroll-slot',plan:{year:2031,timezone:'Asia/Tokyo',slots:[{id:'qa-scroll-slot',songId:'qa-scroll-song',name:'検証担当',kind:'member',date:'2031-10-27',day:'10/27',place:'合成',at:720,min:90,a0:Date.now()-10000,secCur:'1A',secStart:Date.now()-10000,takes:{'1A':7,'2C':3}}]}});
+   S=Object.assign(structuredClone(S0),{viewer:false,recMode:true,ghToken:'',bkGistId:'',autoPub:false,rsongId:'qa-scroll-song',groups:[{id:'qa-scroll-group',name:'合成',nopub:true}],members:[{id:'qa-scroll-person',name:'検証担当'},{id:'qa-scroll-person-2',name:'もう一人'}],rsongs:[{id:'qa-scroll-song',title:'保持するセクション合成曲',groupId:'qa-scroll-group',take:4,roster:['qa-scroll-person','qa-scroll-person-2'],blocks:{},lines:sections.flatMap((sec,i)=>[{t:'ユニゾンの合成歌詞 '+i,sec,bars:4,parts:['qa-scroll-person','qa-scroll-person-2']},{t:'ソロの合成歌詞 '+i,bars:4,parts:['qa-scroll-person'],cell:'A'+(i*3+2)},{t:'次のソロの合成歌詞 '+i,bars:4,parts:['qa-scroll-person-2'],cell:'A'+(i*3+3)}])}],recs:{kept:{dur:12,size:4}},pt:{on:true,mode:'direct',url:'https://bridge.invalid',token:'synthetic-preserved-bridge-token'},planFocus:'qa-scroll-slot',plan:{year:2031,timezone:'Asia/Tokyo',slots:[{id:'qa-scroll-slot',songId:'qa-scroll-song',name:'検証担当',kind:'member',date:'2031-10-27',day:'10/27',place:'合成',at:720,min:90,a0:Date.now()-10000,secCur:'1A',secStart:Date.now()-10000,secLog:{'1A':4,'2C':8},takes:{'1A':7,'2C':3}},{id:'qa-scroll-slot-2',songId:'qa-scroll-song',name:'もう一人',kind:'member',date:'2031-10-27',day:'10/27',at:810,min:90}]}});
    startupRecoveryNetworkHold=true;Object.assign(U,{view:'live',songIdx:0,menu:null,sheet:null,overview:false,draw:false,secView:'',recSchedulePaused:true});renderPointers.clear();scrollingUntil=0;save();await saveNow();render(true);
-   window.__qaRecRetained=JSON.stringify([S.recs,S.pt,S.rsongs,S.plan.slots[0].takes]);
+   window.__qaRecRetained=JSON.stringify([S.recs,S.pt,S.rsongs,[S.plan.slots[0].takes,S.plan.slots[0].secLog]]);
   });
   const target=page.locator('.sectabs [data-act="jumpsec"][data-id="2C"]').first();
   await page.waitForFunction(()=>document.querySelector('.sectabs')?.scrollWidth>document.querySelector('.sectabs')?.clientWidth);
@@ -22,17 +22,34 @@ async function checkRecSectionStability(page,width,{screenshot}){
   await page.evaluate(()=>{renderPointers.clear();scrollingUntil=0;render(true);});await page.waitForTimeout(100);
   assert(Math.abs(await page.locator('.sectabs').first().evaluate(b=>b.scrollLeft)-before.left)<1);
   const originalNumbers=await page.locator('[data-lyric-line] .lbl').allTextContents();
-  assert.equal(await page.locator('[data-lyric-line]').count(),2);
+  assert.equal(await page.locator('[data-lyric-line]').count(),3);
+  const progress=kind=>page.locator('[data-act="rec-section-progress"][data-id="'+kind+'"]');
+  const filter=kind=>page.locator('[data-act="rec-singer-filter"][data-id="'+kind+'"]');
+  const mainTab=page.locator('.sectabs [data-id="2C"]').first();
+  assert.equal(await filter('solo').count(),0,'Separation is opt-in');assert.equal(await mainTab.getAttribute('aria-label'),'2C：未完了','Legacy elapsed time does not mean recorded');
+  await progress('whole').click();assert.equal(await mainTab.getAttribute('aria-label'),'2C：録り終わり');await progress('whole').click();
+  await progress('split').click();assert.equal(await filter('unison').getAttribute('aria-pressed'),'true');await progress('unison').click();
+  assert.match(await filter('unison').innerText(),/✓済/);assert.doesNotMatch(await filter('solo').innerText(),/✓済/);assert.equal(await mainTab.getAttribute('aria-label'),'2C：一部済');
+  await screenshot(page,width,'rec-section-unison-recorded');await progress('merge').click();assert.equal(await filter('solo').count(),0);assert.equal(await mainTab.getAttribute('aria-label'),'2C：一部済');await progress('split').click();assert.match(await filter('unison').innerText(),/✓済/);
   await page.locator('[data-act="rec-singer-filter"][data-id="unison"]').click();
   assert.equal(await page.locator('[data-lyric-line]').count(),1);assert.match(await page.locator('[data-lyric-line] .txt').innerText(),/ユニゾン/);assert.equal(await page.locator('[data-lyric-line] .lbl').innerText(),originalNumbers[0]);
   await screenshot(page,width,'rec-section-unison-only');
   await page.locator('[data-act="rec-singer-filter"][data-id="solo"]').click();
-  assert.equal(await page.locator('[data-lyric-line]').count(),1);assert.match(await page.locator('[data-lyric-line] .txt').innerText(),/ソロ/);assert.equal(await page.locator('[data-lyric-line] .lbl').innerText(),originalNumbers[1]);
+  assert.equal(await page.locator('[data-lyric-line]').count(),2);assert((await page.locator('[data-lyric-line] .txt').allTextContents()).every(t=>t.includes('ソロ')));assert.deepEqual(await page.locator('[data-lyric-line] .lbl').allTextContents(),originalNumbers.slice(1));
+  const boundaries=await page.locator('[data-lyric-line]').evaluateAll(rows=>rows.map(row=>({start:row.classList.contains('rec-assignment-start'),height:getComputedStyle(row,'::before').height,color:getComputedStyle(row,'::before').backgroundColor})));
+  assert(boundaries.every(b=>b.start&&b.height==='1px'&&b.color==='rgb(86, 91, 100)'),JSON.stringify(boundaries));
+  await progress('solo').click();assert.equal(await mainTab.getAttribute('aria-label'),'2C：録り終わり');
+  assert(Math.abs(await mainTab.evaluate(t=>t.parentElement.scrollLeft)-before.left)<1,'Completion must retain section strip position');
   await screenshot(page,width,'rec-section-solo-only');
-  await page.locator('[data-act="overview"]').first().click();assert.equal(await page.locator('.ovw').count(),32);await page.locator('[data-act="overview"]').first().click();
-  assert.equal(await page.locator('[data-lyric-line]').count(),1);
+  await page.locator('[data-act="overview"]').first().click();assert.equal(await page.locator('.ovw').count(),48);await page.locator('[data-act="overview"]').first().click();
+  assert.equal(await page.locator('[data-lyric-line]').count(),2);
   assert.equal(await page.locator('[data-act="takeup"],[data-act="takedown"],[data-act="recstart"],#ptpill,#ptbar,#ptwrap,script[src*="ptlink"]').count(),0);
-  assert.equal(await page.evaluate(()=>JSON.stringify([S.recs,S.pt,S.rsongs,S.plan.slots[0].takes])===__qaRecRetained),true);
+  assert.equal(await page.evaluate(()=>JSON.stringify([S.recs,S.pt,S.rsongs,[S.plan.slots[0].takes,S.plan.slots[0].secLog]])===__qaRecRetained),true);
+  await page.locator('[data-act="goplan"]').first().click();await page.locator('[data-act="psecgo"][data-id="qa-scroll-slot-2"]').click();
+  assert.equal(await filter('solo').count(),0,'Other member defaults to unsplit');assert.equal(await mainTab.getAttribute('aria-label'),'2C：未完了');
+  await page.locator('[data-act="goplan"]').first().click();await page.locator('[data-act="psecgo"][data-id="qa-scroll-slot"]').click();
+  assert.equal(await mainTab.getAttribute('aria-label'),'2C：録り終わり');assert.match(await filter('unison').innerText(),/✓済/);assert.match(await filter('solo').innerText(),/✓済/);
+  await page.locator('.sectabs [data-id="1C"]').first().click();assert.equal(await filter('solo').count(),0);await mainTab.click();assert.equal(await filter('solo').count(),1);
   await page.locator('[data-act="go-setup"]').click();
   assert.equal(await page.locator('[data-act="pt-settings"],[data-act="ptstart"],[data-act="recstart"],[data-act="takeup"],[data-act="takedown"]').count(),0);
   assert.equal(await page.getByRole('button',{name:'Pro Tools操作・表示設定',exact:true}).count(),0);
@@ -41,9 +58,13 @@ async function checkRecSectionStability(page,width,{screenshot}){
   await screenshot(page,width,'rec-settings-without-recording-or-pt');
   const retained=await page.evaluate(async()=>{save();await saveNow();return __qaRecRetained;});
   await page.reload();await page.waitForFunction(()=>typeof normalStartupInitialized!=='undefined'&&normalStartupInitialized);
-  assert.equal(await page.evaluate(retained=>JSON.stringify([S.recs,S.pt,S.rsongs,S.plan.slots[0].takes])===retained,retained),true);
+  assert.equal(await page.evaluate(retained=>JSON.stringify([S.recs,S.pt,S.rsongs,[S.plan.slots[0].takes,S.plan.slots[0].secLog]])===retained,retained),true);
   assert.equal(await page.locator('#ptpill,#ptbar,script[src*="ptlink"]').count(),0);
+  await page.evaluate(()=>{S.recMode=true;U.view='live';U.menu=null;U.sheet=null;U.secView='2C';renderPointers.clear();scrollingUntil=0;render(true);});
+  assert.equal(await mainTab.getAttribute('aria-label'),'2C：録り終わり');assert.match(await filter('unison').innerText(),/✓済/);assert.match(await filter('solo').innerText(),/✓済/);
+  await screenshot(page,width,'rec-section-completion-reloaded');
+
  }finally{await page.evaluate(async saved=>{S=JSON.parse(saved.state);Object.keys(U).forEach(k=>delete U[k]);Object.assign(U,JSON.parse(saved.ui));saveErr=false;renderPointers.clear();scrollingUntil=0;save();await saveNow();render();},saved);}
- return {recSelectedSectionScrollStable:true,recUnusedTransportRemoved:true,recLegacyAudioTakesAndBridgePreserved:true,recSectionSoloUnisonFilterWithoutTakes:true};
+ return {recSelectedSectionScrollStable:true,recUnusedTransportRemoved:true,recLegacyAudioTakesAndBridgePreserved:true,recSectionSoloUnisonFilterWithoutTakes:true,recSectionCompletionOptInAndReload:true,recSectionCompletionIsolatedPerPerson:true,recSoloAssignmentBoundariesVisible:true};
 }
 module.exports={checkRecSectionStability};

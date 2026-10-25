@@ -403,3 +403,19 @@ select.field{appearance:auto}textarea.field{resize:vertical}
 .rec-singer-filter{display:flex;gap:6px;padding:4px 10px;background:var(--panel);flex:0 0 auto}
 .rec-singer-filter .chip[aria-pressed="true"]{background:var(--accent);color:#0a0a0a}
 .rec-singer-empty{padding:16px}
+/* Explicit recording completion is independent of elapsed schedule time. */
+.rec-section-controls{flex:0 0 auto;padding:4px 10px;background:var(--panel)}
+.rec-section-caption{font-size:11px;color:var(--dim);margin-bottom:4px}
+.rec-section-caption span{color:#e8b95b}
+.rec-section-controls .row{gap:6px;flex-wrap:wrap}
+.rec-section-controls .chip{font-size:11px;min-width:0;white-space:normal}
+.rec-section-controls .rec-singer-filter{padding:0 0 4px;flex-wrap:wrap}
+.rec-section-help{flex:0 0 auto;padding:4px 10px;font-size:11px}
+.rec-section-controls .is-recorded,.sectab.rec-section-done{background:#174f37!important;color:#b1f1ce!important}
+.rec-section-controls .chip[aria-pressed="true"],.sectab.rec-section-done.on{outline:1px solid var(--accent);outline-offset:-1px}
+.sectab{font-weight:600}
+.rec-section-mark{display:inline-block;width:12px;text-align:center;color:#91d7ae}
+.rec-section-partial .sectab{font-weight:600}
+.rec-section-mark{color:#e8b95b}
+.ln.rec-assignment-start{position:relative}
+.ln.rec-assignment-start::before{content:"";position:absolute;top:0;left:10px;right:10px;height:1px;background:#565b64;pointer-events:none}

@@ -1,10 +1,10 @@
 'use strict';
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
-const source=fs.readFileSync(__dirname+'/../app.js','utf8');
+const source=fs.readFileSync(process.env.QA_APP_SOURCE||__dirname+'/../app.js','utf8');
 function read(name){let a=source.indexOf('function '+name+'(');assert(a>=0,name);return source.slice(a,source.indexOf('\n}',a)+2);}
 function setup(){let now=Date.parse('2026-10-20T01:00:00Z'),saves=0,renders=0;const songs=[{id:'one',lines:[]},{id:'two',lines:[]}],slots=[{id:'first',songId:'one',name:'担当A',day:'10/20',date:'2026-10-20',at:600,min:10,takes:{'1A':3}},{id:'second',songId:'two',name:'担当B',day:'10/20',date:'2026-10-20',at:610,min:10}];
  const c={S:{recMode:true,rsongs:songs,rsongId:'one',plan:{slots}},U:{view:'recplan'},VIEW:()=>false,preview:null,document:{hidden:false,activeElement:null},RecordingScheduleUI:undefined,REC:null,recordingStartPending:false,recordingFinalizePending:false,pitchStartPending:false,PT:{on:false},micStream:null,recordingInboxCanWrite:()=>true,recordingPlanExpired:()=>false,recSong:()=>songs.find(s=>s.id===c.S.rsongId),SONGS:()=>songs,nowMin:()=>999,min2hm:v=>String(v),sectionsOf:()=>[{name:'RH',prep:true}],save:()=>saves++,render:()=>renders++,autoMsg:'',Date:class extends Date{static now(){return now}},planRows:()=>slots.map(s=>({s,pS:s.at,pE:s.at+s.min,live:s.a0!=null&&s.a1==null,done:s.a1!=null}))};vm.createContext(c);
- for(const name of ['recScheduleClock','recScheduledRow','recScheduleEditing','pauseRecSchedule','startSlot','finishSlot','autoPlan'])vm.runInContext(read(name),c);
+ for(const name of ['recordingPlanSourceId','recScheduleClock','recScheduledRow','recScheduleEditing','pauseRecSchedule','startSlot','finishSlot','autoPlan'])vm.runInContext(read(name),c);
  return {c,slots,tick:()=>c.autoPlan(),at:t=>now=Date.parse(t),counts:()=>({saves,renders})};
 }
 test('the exact scheduled boundary starts the slot and timer once, preserving stored takes and the progression screen',()=>{const f=setup();f.at('2026-10-20T00:59:59Z');f.tick();assert.equal(f.slots[0].a0,undefined);f.at('2026-10-20T01:00:00Z');f.tick();assert.equal(f.slots[0].a0,600);assert.equal(f.slots[0].startAt,Date.parse('2026-10-20T01:00:00Z'));assert.equal(f.slots[0].secCur,'RH');assert.equal(f.slots[0].takes['1A'],3);assert.equal(f.c.U.view,'recplan');f.tick();assert.equal(f.counts().saves,1);});
@@ -16,4 +16,10 @@ test('editing, manual takes, microphone use, stale dates and overlapping slots c
 test('an explicitly cancelled automatic start stays cancelled for that timestamp, while a changed schedule may start',()=>{
  const f=setup();f.slots[0].autoStartSuppressedAt=Date.parse('2026-10-20T01:00:00Z');f.tick();assert.equal(f.slots[0].a0,undefined);
  f.slots[0].at=601;f.at('2026-10-20T01:01:00Z');f.tick();assert.equal(f.slots[0].a0,601);assert.equal(f.slots[0].autoStartSuppressedAt,undefined);
+});
+
+test('scheduled start keeps the edited manual song when its immutable source is the same delivered schedule',()=>{
+ const f=setup(),song=f.c.S.rsongs[0],hash='sha256-'+'b'.repeat(64);song.xlsSourceId=hash;song.lines=[{t:'same source'}];
+ const manual={id:'manual',xlsSourceId:hash,at:Date.parse('2026-10-19T00:00:00Z'),lines:[{t:'same source',sec:'1C'}]};f.c.S.rsongs.push(manual);f.c.S.rsongId=manual.id;f.c.U.secView='1C';
+ f.tick();assert.equal(f.c.S.rsongId,'manual');assert.equal(f.c.U.planSongId,'one');assert.equal(f.c.U.secView,'RH','Automatic start still follows the scheduled preparation section');assert.equal(manual.lines[0].sec,'1C');assert.equal(f.slots[0].a0,600);
 });
