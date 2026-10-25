@@ -12,7 +12,7 @@ async function checkRecordingHeadcounts(page,width,{screenshot}){
    assert.equal(await page.locator('[data-lyric-line] .txt').count(),8);assert(!(await page.locator('[data-lyric-line] .txt').allTextContents()).some(t=>/^[1-9AB]$/.test(t.trim())));
    assert.equal(await page.evaluate(()=>recSong().lines.some(l=>l.parts?.length)),false,'A number never becomes a person ID');
   };
-  await check();assert.equal(await page.locator('[data-lyric-line="1"].rec-assignment-start').count(),0,'A merged assignment continuation is not a new assignment');assert.equal(await page.locator('[data-lyric-line="0"].rec-assignment-start').count(),1);assert.equal(await page.locator('[data-lyric-line="1"] .rec-assignment-hint').count(),0);assert.equal(await page.locator('[data-recording-text="ユニゾン・2人"]').nth(1).locator('.rec-assignment-hint').count(),0);
+  await check();assert.equal(await page.locator('[data-lyric-line="1"].rec-assignment-start').count(),0,'A merged assignment continuation is not a new assignment');assert.equal(await page.locator('[data-lyric-line="1"] .rec-assignment-hint').count(),0);assert.equal(await page.locator('[data-recording-text="ユニゾン・2人"]').nth(1).locator('.rec-assignment-hint').count(),0);
   const colors=await page.evaluate(()=>[...document.querySelectorAll('[data-lyric-line="0"],[data-lyric-line="2"]')].map(el=>getComputedStyle(el).borderInlineStartColor));assert.notEqual(colors[0],colors[1]);
   const originalViewport=page.viewportSize();await page.setViewportSize({width,height:400});
   await page.evaluate(()=>{window.__cueRow=app.querySelector('[data-lyric-line="1"]');const sc=app.querySelector('#app > .scroll');sc.scrollTop=__cueRow.offsetTop-sc.offsetTop+12;});

@@ -149,9 +149,11 @@ REC simplification / section-strip acceptance:
 REC section completion / plan navigation / assignment boundaries acceptance:
 - Completion defaults to the whole selected section. Only an explicit
   ソロ／ユニゾンに分ける action exposes category filters and independent completion.
-  Verify whole undo, Unison-only partial, merge without falsely completing Solo,
-  resplit restoring partial status, both completed, another person/section and
-  actual save/reload. Legacy elapsed secLog must not imply confirmed recording.
+  Complete with the existing OK action. Do not add a separate completion button.
+  Verify Unison-only OK stays in the same section and selects remaining Solo,
+  merge/resplit retains partial status, both completed advances normally, another
+  person/section and actual save/reload. Preserve completion from prior OK secLog.
+  Only show splitting controls when the selected section contains BOTH kinds.
   Preserve legacy takes, media, PT settings, source lyrics and source numbering.
 - With separate manual-import and received IDs for the same exact workbook,
   create a section through the REC lyric number control, open that song's actual
@@ -159,7 +161,10 @@ REC section completion / plan navigation / assignment boundaries acceptance:
   created section and selected section; scheduled automatic start must retain it
   as well. Different/ambiguous originals must remain separate. Keep the failing
   previous-code regression and exact-screen browser evidence.
-- Adjacent Solo assignments need visible thin horizontal separators too.
-  Open Solo via the optional split controls, inspect actual rendered separators
-  and original row numbers. Real continuation rows from one assignment stay
-  together. Lines are overlays, so lyric/handwriting geometry is unchanged.
+- Horizontal lines must follow assignment groups in the ORIGINAL Excel, not
+  each lyric row or repeated count. Reproduce the supplied three-row merged solo
+  followed by a two-row merged solo with missing legacy cont flags. Restore
+  boundaries from the pinned original bytes without reupload or lyric mutations.
+  Inspect the exact REC lyric screen, its lines and row numbers, then OK,
+  mixed-section splitting, save/reload and publication. Preserve source bytes
+  and handwriting geometry. Unknown boundaries must never be guessed.
