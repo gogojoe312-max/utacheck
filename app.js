@@ -13460,7 +13460,7 @@ function recordingLinesFromParsed(parsed) {
         else if (label === "全") hint = {type:"all"};
       }
     }
-    return {t:r[1],bars:4,...(r[8] === "cut" ? {cut:1} : {}),
+    return {t:r[1],bars:4,...(r[0] === "→" ? {cont:true} : {}),...(r[8] === "cut" ? {cut:1} : {}),
       ...(hint ? {recAssignmentHint:{...hint},cell:r[2] || "",lcell:r[3] || ""} : {})};
   });
 }

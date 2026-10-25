@@ -33,6 +33,7 @@ test('REC provisional headcount columns stay paired with lyrics across two colum
  const rows=c.S.rsongs[0].lines.filter(l=>!l.gap);
  assert.deepEqual(Array.from(rows,l=>l.t),['左の最初の合成歌詞','左の続きの合成歌詞','左の暫定グループ','人数が明示された歌詞','右の最初の合成歌詞','右の続きの合成歌詞','右の暫定グループ','最後の合成歌詞']);
  assert.deepEqual(Array.from(rows,l=>JSON.parse(JSON.stringify(l.recAssignmentHint))),[{type:'count',count:1},{type:'count',count:1},{type:'group',label:'A'},{type:'count',count:3},{type:'count',count:2},{type:'count',count:2},{type:'group',label:'B'},{type:'count',count:1}]);
+ assert.equal(rows[0].cont,undefined);assert.equal(rows[1].cont,true);assert.equal(rows[5].cont,true);assert.equal(rows[2].cont,undefined);
  assert.equal(rows[0].lcell,'C4');assert.equal(rows[4].lcell,'F4');assert(!c.S.members?.some(m=>/^[1-9AB]$/.test(m.name)));
 });
 test('numeric microphone sheets and ordinary LIVE imports are not classified as predicted headcounts',async()=>{
