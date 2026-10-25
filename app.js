@@ -118,7 +118,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.58";
+const APP_VER = "16.41.58.59";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -8679,11 +8679,9 @@ function storageSettingsHTML() {
 
 function practiceToolsSettingsHTML() {
   return `<h4 class="head">練習ツール</h4>
-    <details class="practice-tools card" data-settings-panel="practice"><summary>鍵盤・ピッチ・メトロノーム</summary>
+    <details class="practice-tools card" data-settings-panel="practice"><summary>鍵盤・メトロノーム</summary>
       <h4 class="head">音を確かめる</h4>
       <div class="card">${pianoHTML(null)}</div>
-      <h4 class="head">ピッチを見る</h4>
-      ${pitchHTML()}
       <h4 class="head">メトロノーム</h4>
       ${metroHTML()}
     </details>`;
@@ -8789,9 +8787,6 @@ function viewSetupRec() {
     </section>
     ${recMemberSelector()}
     ${lyricDisplaySettings()}
-    <h4 class="head">操作パネル</h4>
-    <div class="card"><button class="primary" data-act="pt-settings">Pro Tools操作・表示設定</button></div>
-
     <h4 class="head">進行</h4>
     ${recordingPlanEntryHTML()}
 

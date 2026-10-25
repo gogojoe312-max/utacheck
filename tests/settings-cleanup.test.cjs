@@ -67,7 +67,7 @@ test('all three modes use one practice renderer and both editors use one storage
  assert.equal((src.match(/\$\{practiceToolsSettingsHTML\(\)\}/g)||[]).length,3);
  assert.equal((src.match(/\$\{storageSettingsHTML\(\)\}/g)||[]).length,1);
  const f=fixture(),html=f.c.practiceToolsSettingsHTML();
- assert.match(html,/data-settings-panel="practice"><summary>/);assert.match(html,/鍵盤/);assert.match(html,/pitch-start/);assert.match(html,/metro-start/);
+ assert.match(html,/data-settings-panel="practice"><summary>/);assert.match(html,/鍵盤/);assert.doesNotMatch(html,/pitch-start/);assert.match(html,/metro-start/);
 });
 
 test('automatic private preparation has no routine management control',()=>{

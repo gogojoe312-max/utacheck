@@ -33,6 +33,12 @@ async function checkRecSectionStability(page,width,{screenshot}){
   assert.equal(await page.locator('[data-lyric-line]').count(),1);
   assert.equal(await page.locator('[data-act="takeup"],[data-act="takedown"],[data-act="recstart"],#ptpill,#ptbar,#ptwrap,script[src*="ptlink"]').count(),0);
   assert.equal(await page.evaluate(()=>JSON.stringify([S.recs,S.pt,S.rsongs,S.plan.slots[0].takes])===__qaRecRetained),true);
+  await page.locator('[data-act="go-setup"]').click();
+  assert.equal(await page.locator('[data-act="pt-settings"],[data-act="ptstart"],[data-act="recstart"],[data-act="takeup"],[data-act="takedown"]').count(),0);
+  assert.equal(await page.getByRole('button',{name:'Pro Tools操作・表示設定',exact:true}).count(),0);
+  await page.locator('[data-settings-panel="practice"] summary').click();
+  assert.equal(await page.locator('[data-act="pt-settings"],[data-act="ptstart"]').count(),0);assert.equal(await page.locator('[data-settings-panel="practice"] .pno').isVisible(),true);
+  await screenshot(page,width,'rec-settings-without-recording-or-pt');
   const retained=await page.evaluate(async()=>{save();await saveNow();return __qaRecRetained;});
   await page.reload();await page.waitForFunction(()=>typeof normalStartupInitialized!=='undefined'&&normalStartupInitialized);
   assert.equal(await page.evaluate(retained=>JSON.stringify([S.recs,S.pt,S.rsongs,S.plan.slots[0].takes])===retained,retained),true);

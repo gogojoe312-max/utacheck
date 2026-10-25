@@ -135,3 +135,8 @@ REC simplification / section-strip acceptance:
   no recorder, take counter or Pro Tools action. Verify Unison then Solo using
   the actual filter controls, stable source row/bar numbers, unknown groups,
   a full overview of all lyrics and save/reload with original data unchanged.
+
+- Removal of Pro Tools must include the REC settings 操作パネル entry, not just
+  the lyric toolbar and script. Open REC settings and the practice disclosure;
+  verify no PT settings or microphone recording start control remains. Retain
+  piano note entry, metronome and historical media; do not erase their data.
