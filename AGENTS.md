@@ -168,3 +168,19 @@ REC section completion / plan navigation / assignment boundaries acceptance:
   Inspect the exact REC lyric screen, its lines and row numbers, then OK,
   mixed-section splitting, save/reload and publication. Preserve source bytes
   and handwriting geometry. Unknown boundaries must never be guessed.
+
+Passive app audio acceptance:
+- With native reference audio already playing in another browser tab, open the
+  actual app, tap LIVE settings, practice disclosure without playing, REC song
+  selection, then save/reload and switch away/back, including pageshow restore.
+  Retain legacy saved audio/PT flags and existing notes/recording metadata.
+- Startup, ordinary taps, received member screen controls and reopening must
+  not create/resume AudioContext, play media, start speech recognition or request
+  microphone capture. No silent looping audio may acquire an iPhone audio session.
+  Keep the previous-code failing native-call audit and exact-screen evidence.
+- Instrument native media calls without substituting playback behavior. Verify
+  real reference playback continues; explicit piano and metronome must still
+  run, stop and avoid automatic restart on returning. Keep the scenario in both
+  local and published browser gates. Real iPhone/native-other-app audio focus
+  remains unverified unless actually tested on that device; browser tabs are
+  separate evidence and must never be described as a native-device test.

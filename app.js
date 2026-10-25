@@ -118,7 +118,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.62";
+const APP_VER = "16.41.58.63";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -4254,29 +4254,20 @@ function freqOf(id) {
   if (!m) return 440;
   return 440 * Math.pow(2, ((SCALE.indexOf(m[1]) - 9) + (Number(m[2]) - 4) * 12) / 12);
 }
-// iPhoneの消音スイッチはWeb Audioを黙らせる。
-// 無音の音声を鳴らしっぱなしにすると音声セッションが「再生」に切り替わり、
-// Web Audioの音も消音スイッチを無視して鳴るようになる。
-const SILENT_WAV = "data:audio/wav;base64,UklGRkQDAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YSADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==";
-let silentEl = null;
+// Audio is initialized only by an explicit sound/microphone action. A global
+// touch unlock or silent media loop takes audio focus from other iPhone apps.
 let micStream = null;
 function unlockAudio() {
   try {
+    // Ambient audio mixes with other playback where the browser supports it.
+    // Do not change the audio session during startup, navigation or restoration.
+    if (navigator.audioSession) navigator.audioSession.type = "ambient";
+  } catch (_) { /* Unsupported session types must not disable requested sound. */ }
+  try {
     AC = AC || new (window.AudioContext || window.webkitAudioContext)();
-    if (AC.state !== "running" && AC.resume) AC.resume();
-    if (!silentEl) {
-      silentEl = new Audio(SILENT_WAV);
-      silentEl.loop = true;
-      silentEl.setAttribute("playsinline", "");
-      const pr = silentEl.play();
-      if (pr && pr.catch) pr.catch(() => {});
-    } else if (silentEl.paused) {
-      const pr = silentEl.play();
-      if (pr && pr.catch) pr.catch(() => {});
-    }
+    if (AC.state !== "running" && AC.resume) { const pending=AC.resume();if(pending?.catch)pending.catch(()=>{}); }
   } catch (e) { /* 音を出せない端末 */ }
 }
-document.addEventListener("pointerdown", unlockAudio, true);
 
 // 使っている間は画面を消させない
 let wakeLock = null;
@@ -6231,7 +6222,6 @@ function freeMic() {
 function resetAudio() {
   try {
     if (AC && AC.close) { const old = AC; AC = null; old.close(); }
-    if (silentEl) { try { silentEl.pause(); } catch (e) {} silentEl = null; }
   } catch (e) { /* 作り直せなくても動く */ }
   unlockAudio();
 }
