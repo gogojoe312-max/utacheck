@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const PrivatePreparationSource = require('../private-preparation-source.js');
-const source = fs.readFileSync(path.join(__dirname, '../progress-preparation-source.js'), 'utf8');
+const source = fs.readFileSync(process.env.QA_PROGRESS_SOURCE || path.join(__dirname, '../progress-preparation-source.js'), 'utf8');
 const OWNER = 'gogojoe312-max', REPO = 'shinkou-data';
 const PROGRESS_TOKEN = 'synthetic-progress-token', LEGACY_TOKEN = 'synthetic-gist-token';
 const manifest = {app:'synthetic-preparations', version:1, operations:[]};
@@ -219,4 +219,26 @@ test('network validation failures keep the original stage without trying the leg
   const failure={status:'unavailable',code:'OWNER_MISMATCH',stage:'identity'};
   const f=fixture(factory,{read:async options=>{tokens.push(options.token);return failure;}});
   const result=await f.read({token:LEGACY_TOKEN});assert.deepEqual(result,failure);assert.deepEqual(tokens,[PROGRESS_TOKEN]);safe(result);exactReads(f,2);
+});
+
+for(const legacy of ['',LEGACY_TOKEN])test('saved progress login reaches owner relay when private repository access is unavailable; legacy='+!!legacy,async()=>{
+ const factory=new ReadonlyDatabaseFixture();await seed(factory,linked());const before=await saved(factory),tokens=[];
+ const f=fixture(factory,{read:async options=>{assert.equal(options.token,PROGRESS_TOKEN);return {status:'unavailable',code:'HTTP_404',stage:'repository'};}});
+ f.context.PreparationRelaySource={read:async options=>{tokens.push(options.token);return ready();}};
+ const result=await f.read({token:legacy});assert.equal(result.status,'ready');assert.deepEqual(tokens,[PROGRESS_TOKEN]);safe(result);assert.deepEqual(await saved(factory),before);
+});
+test('changed progress connection cannot authenticate a relay request or commit a stale relay response',async()=>{
+ for(const during of ['direct','relay']){
+  const factory=new ReadonlyDatabaseFixture();await seed(factory,linked());let calls=0;
+  const f=fixture(factory,{read:async()=>{if(during==='direct')await seed(factory,linked({token:'replacement-token'}));return {status:'unavailable',code:'HTTP_404',stage:'repository'};}});
+  f.context.PreparationRelaySource={read:async()=>{calls++;await seed(factory,linked({token:'replacement-token'}));return ready();}};
+  const result=await f.read();assert.equal(result.code,'INACTIVE');assert.equal(calls,during==='direct'?0:1);safe(result);
+ }
+});
+
+test('progress relay rejection is reported without leaking credentials or changing saved connection',async()=>{
+ const factory=new ReadonlyDatabaseFixture();await seed(factory,linked());const before=await saved(factory);
+ const f=fixture(factory,{read:async()=>({status:'unavailable',code:'HTTP_404',stage:'repository'})});
+ f.context.PreparationRelaySource={read:async()=>({status:'unavailable',code:'HTTP_401',stage:'relay'})};
+ const result=await f.read();assert.equal(result.code,'HTTP_401');assert.equal(result.stage,'relay');safe(result);assert.deepEqual(await saved(factory),before);
 });

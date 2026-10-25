@@ -98,3 +98,11 @@ Sparse REC cues / imported schedule acceptance:
   changed lyrics, explicit other sessions, past-only and ambiguous schedules
   must remain separate. Ordinary navigation must not save or change an active
   session merely to display its plan. Phone receipt still requires separate evidence.
+
+REC preparation credential acceptance:
+- Receive a scheduled REC through the real saved 進行 IndexedDB connection with
+  an empty 歌チェック token and a private repository 404. The owned relay must
+  use that same transient 進行 credential; never substitute a Gist credential.
+  Recheck the saved connection before and after relay access. On the actual
+  imported song, open 進行表, inspect the planned day/member/time, save and
+  reload. Test changed connection and rejected relay without mutation/leaks.

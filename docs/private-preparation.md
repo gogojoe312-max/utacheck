@@ -8,7 +8,7 @@ repository. The public member-delivery path is not a preparation destination.
 
 If the device cannot read the private repository or share 進行 browser storage,
 it can use the owned `https://shinkou-secure.onrender.com/utacheck/prepared` relay.
-The existing login is used only for fixed-owner identity verification. The relay
+The same saved 進行 login (when configured), or the existing editor login, is used only for fixed-owner identity verification. The 進行 reader rechecks its connection before and after relay access; its token never enters application state. The relay
 reads via its configured private repository credential, or decrypts a deployed
 AES-GCM bundle using a separate server key. No GitHub credential is embedded in
 the public app or bundle. Each received manifest is validated and rechecked before

@@ -84,6 +84,18 @@
     const after = await readConnection(active);
     if (!active()) return unavailable(options.signal?.aborted ? 'ABORTED' : 'INACTIVE');
     if (before.snapshot ? after.snapshot !== before.snapshot : !after.missing) return unavailable('INACTIVE');
+    // The saved progress login can prove the owner even when its repository
+    // permission cannot read the preparation file. Keep that same credential
+    // inside this call; the caller's unrelated Gist login is not a substitute.
+    if (before.snapshot && result.status !== 'ready' && typeof root.PreparationRelaySource?.read === 'function'
+        && !['ABORTED','INACTIVE','OWNER_MISMATCH','INVALID_CONFIG'].includes(result.code)) {
+      try { result = await root.PreparationRelaySource.read({owner:OWNER,repo:REPO,token,fetch:options.fetch,signal:options.signal,isActive:active}); }
+      catch (_) { return unavailable('FETCH_FAILED'); }
+      if (!active()) return unavailable(options.signal?.aborted ? 'ABORTED' : 'INACTIVE');
+      const confirmed = await readConnection(active);
+      if (!active()) return unavailable(options.signal?.aborted ? 'ABORTED' : 'INACTIVE');
+      if (confirmed.snapshot !== before.snapshot) return unavailable('INACTIVE');
+    }
     return result;
   }
 

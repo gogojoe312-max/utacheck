@@ -33,7 +33,10 @@ async function checkRecordingHeadcounts(page,width,{screenshot}){
    const packet={app:'utacheck-recording-addition',version:1,group:{id:song.groupId,name:'受信する非公開REC',nopub:true},members:[],roster:[],songs:[song],plan:{year:2031,timezone:'Asia/Tokyo',slots:[{id:'qa-rec-count-slot',songId:song.id,name:'検証担当',day:'10/27',date:'2031-10-27',at:720,min:90,kind:'member',place:'検証スタジオ'}]}};
    return {app:'utacheck-private-preparation',version:1,owner:'gogojoe312-max',revision:'qa-recording-headcounts',createdAt:'2031-01-01T00:00:00Z',operations:[{id:'qa-recording-headcounts-addition',type:'recording-addition',packet,sha256:await PrivatePreparation.digest(packet)}]};
   });
-  const received=await checkProgressPreparation(page,{manifest});assert.equal(received.received.status,'applied');assert.equal(received.slotCount,1);assert.equal(received.receipt,true);assert.equal(received.preserved,true);
+  const received=await checkProgressPreparation(page,{manifest,progressRelay:true});assert.equal(received.received.status,'applied');assert.equal(received.slotCount,1);assert.equal(received.receipt,true);assert.equal(received.preserved,true);
+  await page.reload();await page.waitForFunction(()=>typeof normalStartupInitialized!=='undefined'&&normalStartupInitialized);
+  assert.equal(await page.evaluate(()=>S.plan.slots.filter(s=>s.songId==='qa-rec-count-received').length),1);
+  await page.evaluate(()=>{S.recMode=true;Object.assign(U,{view:'setup',menu:null,sheet:null,recArtistFilter:''});renderPointers.clear();scrollingUntil=0;render();});
   await page.locator('[data-act="ruse"][data-id="'+manualId+'"]').click();
   const beforePlan=await page.evaluate(()=>JSON.stringify([S.rsongs,S.notes,S.recs,S.plan]));
   await page.locator('[data-act="goplan"]').first().click();await page.waitForSelector('.plan-row');
@@ -47,6 +50,6 @@ async function checkRecordingHeadcounts(page,width,{screenshot}){
  }finally{await page.evaluate(async saved=>{S=JSON.parse(saved.state);Object.keys(U).forEach(k=>delete U[k]);Object.assign(U,JSON.parse(saved.ui));startupRecoveryNetworkHold=saved.hold;saveErr=false;renderPointers.clear();scrollingUntil=0;save();await saveNow();window.qaContent=()=>JSON.stringify(Object.fromEntries(['groups','shows','songs','rsongs','notes','memos','staffMemos','recs','plan'].map(k=>[k,S[k]])));render();},saved);
 
  }
- return {recPredictedHeadcountsImported:true,recPredictedCountsSeparateFromMembers:true,recPredictedHeadcountsReloadAndPrint:true,recPredictedHeadcountsScheduleReceive:true,recSparseSoloUnisonCues:true,recCueScrollWithoutRedraw:true,recManualOriginalOpensReceivedSchedule:true};
+ return {recPredictedHeadcountsImported:true,recPredictedCountsSeparateFromMembers:true,recPredictedHeadcountsReloadAndPrint:true,recPredictedHeadcountsScheduleReceive:true,recSparseSoloUnisonCues:true,recCueScrollWithoutRedraw:true,recManualOriginalOpensReceivedSchedule:true,recScheduleReceivedWithProgressLoginOnly:true};
 }
 module.exports={checkRecordingHeadcounts};
