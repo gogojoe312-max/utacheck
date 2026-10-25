@@ -118,7 +118,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.59";
+const APP_VER = "16.41.58.60";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -6764,7 +6764,7 @@ function viewOverview(s) {
     ${viewerBackButton()}
     <div class="song-heading">
       <div class="t2">${h(songName(s))}</div>
-      <div class="t1">${h(showName())} ・ 全体表示</div>
+      <div class="t1">${S.recMode ? "REC" : h(showName())} ・ 全体表示</div>
     </div>
     <button class="ic" data-act="ovsize">${S.recMode ? S.recOvSize : U.ovSize}px</button>
   </div>

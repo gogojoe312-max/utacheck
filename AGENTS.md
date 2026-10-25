@@ -140,3 +140,8 @@ REC simplification / section-strip acceptance:
   the lyric toolbar and script. Open REC settings and the practice disclosure;
   verify no PT settings or microphone recording start control remains. Retain
   piano note entry, metronome and historical media; do not erase their data.
+
+- A restored REC state can still retain the previous LIVE showId. REC overview
+  must label its own mode and must not show that LIVE show's title/date. Keep
+  this failing state in the receive/overview/reload fixture; do not normalize it
+  away to satisfy the caption check. LIVE overview retains its show caption.
