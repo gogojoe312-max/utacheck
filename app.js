@@ -2060,6 +2060,7 @@ function changeRecordingSectionProgress(action, button) {
   if (!ctx || !next || button?.dataset.slot !== ctx.slot.id || button.dataset.song !== ctx.so.id || button.dataset.section !== ctx.section) return false;
   pushUndo();ctx.slot.sectionChecks = {...ctx.slot.sectionChecks,[ctx.key]:next};
   if (action === "split") {
+    if (!focusSec()) U.secView = ctx.section;
     U.recSingerSongId = ctx.so.id;U.recSingerSlotId = ctx.slot.id;U.recSingerSection = ctx.section;U.recSingerFilter = "unison";
   } else if (action === "merge") U.recSingerFilter = "";
   save();render();return true;

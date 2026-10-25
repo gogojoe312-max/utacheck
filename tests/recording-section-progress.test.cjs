@@ -34,3 +34,7 @@ test('stale controls, unrelated plans, readonly profiles and malformed saved pro
 test('solo assignment boundaries remain separate, while a true continuation remains grouped',()=>{
  const {c}=setup(),so=c.S.rsongs[0];assert.equal(c.recordingAssignmentBoundary(so,1),true);assert.equal(c.recordingAssignmentBoundary(so,2),true);assert.equal(c.recordingAssignmentBoundary(so,3),false);
 });
+
+test('splitting from the all-lyrics view selects the current section before filtering',()=>{
+ const {c,action}=setup();c.S.plan.slots[0].secCur='1C';c.U.secView='';assert.equal(action('split'),true);assert.equal(c.U.secView,'1C');
+});

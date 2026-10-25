@@ -9,6 +9,10 @@ async function checkRecSectionStability(page,width,{screenshot}){
    startupRecoveryNetworkHold=true;Object.assign(U,{view:'live',songIdx:0,menu:null,sheet:null,overview:false,draw:false,secView:'',recSchedulePaused:true});renderPointers.clear();scrollingUntil=0;save();await saveNow();render(true);
    window.__qaRecRetained=JSON.stringify([S.recs,S.pt,S.rsongs,[S.plan.slots[0].takes,S.plan.slots[0].secLog]]);
   });
+  assert.equal(await page.locator('[data-act="rec-singer-filter"]').count(),0);
+  await page.locator('[data-act="rec-section-progress"][data-id="split"]').click();
+  assert.equal(await page.evaluate(()=>U.secView),'1A');assert.equal(await page.locator('[data-lyric-line]').count(),1,'Splitting from all lyrics must filter only the current section');
+  await page.locator('[data-act="rec-section-progress"][data-id="merge"]').click();await page.locator('.sectabs [data-id="1A"]').first().click();
   const target=page.locator('.sectabs [data-act="jumpsec"][data-id="2C"]').first();
   await page.waitForFunction(()=>document.querySelector('.sectabs')?.scrollWidth>document.querySelector('.sectabs')?.clientWidth);
   await page.evaluate(()=>{const b=document.querySelector('.sectabs'),t=b.querySelector('[data-id="2C"]');b.scrollLeft=t.offsetLeft-b.clientWidth+t.offsetWidth+28;});
