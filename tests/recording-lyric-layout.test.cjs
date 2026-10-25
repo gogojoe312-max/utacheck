@@ -60,8 +60,8 @@ function capture(f,name){
 test('REC live and overview omit the selector; settings keeps all choices inside its scroll area',async()=>{
   const f=await fixture(),before=f.run('JSON.stringify(S)'),stored=f.idb.snapshot(),local=clone(f.localWrites);
   assert.doesNotMatch(f.app.innerHTML,/rec-member-focus|data-act="recfocus"/);
-  assert.match(f.app.innerHTML,/data-act="takeup"/);
-  assert.match(f.app.innerHTML,/data-act="takedown"/);
+  assert.doesNotMatch(f.app.innerHTML,/data-act="takeup"/);
+  assert.doesNotMatch(f.app.innerHTML,/data-act="takedown"/);
   assert.match(f.app.innerHTML,/data-act="pnextsec"/);
   capture(f,'rec-live');
   f.click('overview');

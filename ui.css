@@ -2,7 +2,7 @@
 .rec-assignment-hint{display:inline-block;padding:2px 6px;border:1px solid currentColor;border-radius:5px;font-size:12px;line-height:1.5;font-weight:600;white-space:normal;color:var(--accent,#325f9e)}
 [data-recording-kind="solo"],[data-recording-cue="solo"],[data-recording-current="solo"]{--rec-cue-color:#a6c8ff}
 [data-recording-kind="unison"],[data-recording-cue="unison"],[data-recording-current="unison"]{--rec-cue-color:#91d7ae}
-.ln[data-recording-kind],.ovw[data-recording-kind]{border-inline-start:2px solid var(--rec-cue-color)}
+.ln[data-recording-kind]{border-inline-start:2px solid var(--rec-cue-color)}
 .rec-assignment-hint[data-recording-cue]{color:var(--rec-cue-color)}
 .rec-current-cue{position:sticky;top:0;height:0;z-index:4;pointer-events:none}
 .rec-current-cue>[data-recording-current]{position:absolute;right:12px;top:4px;padding:3px 7px;border:1px solid var(--rec-cue-color);border-radius:5px;background:var(--bg,#111215);color:var(--rec-cue-color);font-size:11px;line-height:1.4}
@@ -400,3 +400,6 @@ select.field{appearance:auto}textarea.field{resize:vertical}
 #app[data-viewer="1"] .summary-tabs{display:flex;gap:8px}
 #app[data-viewer="1"] .summary-tabs>button{flex:1}
 }
+.rec-singer-filter{display:flex;gap:6px;padding:4px 10px;background:var(--panel);flex:0 0 auto}
+.rec-singer-filter .chip[aria-pressed="true"]{background:var(--accent);color:#0a0a0a}
+.rec-singer-empty{padding:16px}

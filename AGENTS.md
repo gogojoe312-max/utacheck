@@ -106,3 +106,32 @@ REC preparation credential acceptance:
   Recheck the saved connection before and after relay access. On the actual
   imported song, open 進行表, inspect the planned day/member/time, save and
   reload. Test changed connection and rejected relay without mutation/leaks.
+
+Delayed REC reception acceptance:
+- Reproduce the provided settings screen: an imported provisional REC with no
+  linked schedule and a relay TIMEOUT. The old 30-second reader must fail the
+  regression. Hold the first real receiver response beyond 30 seconds; inspect
+  the rendered waiting message and responsive controls with zero new slots.
+  Then release it, or exhaust the first response and recover by automatic retry.
+  Use the same token/endpoint, validate source identity, commit once, open that
+  song's actual progression button, save and reload. Preserve the full prior
+  source queue and restored private input in scoped checks. Test stalled bodies,
+  trickle transfer, total deadline, cancellation and non-retryable auth failures.
+  Fast mocked replies alone are insufficient; actual phone connectivity is separate.
+
+REC simplification / section-strip acceptance:
+- On the active REC lyric screen with an existing legacy section/take history,
+  scroll the actual bottom section strip sideways so the chosen section is near
+  its edge; click it and retain both scrollLeft and that button's screen position.
+  Check another render as well. Main and tag strips have separate positions;
+  changing song must not reuse the previous song's strip. Preserve source lyrics,
+  prior recordings, take counts and saved PT configuration through save/reload.
+- Do not load the Pro Tools transport script or show its controls. Remove new
+  recording/take controls without deleting historical media or version data.
+  REC overview has no Solo/Unison badge, rail or floating cue; normal REC retains
+  those provisional cues and the original section/lyric metadata.
+
+- Solo/Unison separation is a display filter within the selected section, with
+  no recorder, take counter or Pro Tools action. Verify Unison then Solo using
+  the actual filter controls, stable source row/bar numbers, unknown groups,
+  a full overview of all lyrics and save/reload with original data unchanged.

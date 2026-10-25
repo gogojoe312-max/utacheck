@@ -3,8 +3,8 @@ const assert=require('node:assert/strict');
 
 // Native IndexedDB and the real receiver/source/commit path; GitHub responses
 // and credentials are synthetic and cannot leave this isolated browser.
-async function checkProgressPreparation(page,{manifest=null,relay=false,automaticInteraction=false,progressRelay=false}={}){
- const result=await page.evaluate(async({supplied,relay,automaticInteraction,progressRelay})=>{
+async function checkProgressPreparation(page,{manifest=null,relay=false,automaticInteraction=false,progressRelay=false,slowRelay='' }={}){
+ const result=await page.evaluate(async({supplied,relay,automaticInteraction,progressRelay,slowRelay})=>{
   const oldFetch=window.fetch,token='qa-progress-token',oldToken='qa-gist-only-token';
   const reads=[],interaction={};
   const waitUntil=async(test,message,ms=5000)=>{const until=Date.now()+ms;while(!test()){if(Date.now()>until)throw Error(message);await new Promise(resolve=>setTimeout(resolve,40));}};
@@ -20,7 +20,7 @@ async function checkProgressPreparation(page,{manifest=null,relay=false,automati
   document.activeElement?.blur();saveErr=false;S.viewer=false;S.recMode=true;S.ghToken=progressRelay?'':oldToken;
   recordingInboxProfileRequired=true;recordingInboxOwner={canWrite:true};recordingInboxIntegration=setupRecordingInboxIntegration();
   startupRecoveryNetworkHold=true;
-  Object.assign(U,{view:'setup',menu:null,sheet:null,picker:false,showRecovery:false,busy:false,importing:false,recArtistFilter:'歌手A'});
+  Object.assign(U,{view:'setup',menu:null,sheet:null,picker:false,showRecovery:false,busy:false,importing:false,recArtistFilter:progressRelay?'OCHA NORMA':'歌手A'});
   let manifest=supplied;
   if(!manifest){
    const make=(id,title,artist)=>({app:'utacheck-recording-song',version:1,group:{id:'qa-progress-group-'+id,name:'配信しない',nopub:true},song:{id,title,artist,credit:'Synthetic credit',lines:[{t:'Synthetic new lyric',parts:[]}]},source:{file:'synthetic.docx'}});
@@ -42,7 +42,12 @@ async function checkProgressPreparation(page,{manifest=null,relay=false,automati
    const u=new URL(url,location.href);
    if((relay||progressRelay)&&u.href==='https://shinkou-secure.onrender.com/utacheck/prepared'){
     if(options.headers?.Authorization!=='Bearer '+(progressRelay?token:oldToken))throw Error('Relay must use the existing login');
-    reads.push({path:u.pathname,relay:true});interruptFirstResponse();return new Response(JSON.stringify({status:'ready',manifest,sourceSha:'a'.repeat(40),sourcePath:'utacheck/prepared.json'}),{headers:{'Content-Type':'application/json'}});
+    reads.push({path:u.pathname,relay:true});interruptFirstResponse();
+    if(slowRelay&&!window.__qaSlowRelayStarted){
+     window.__qaSlowRelayStarted=true;
+     await new Promise((resolve,reject)=>{const timer=setTimeout(()=>{options.signal.removeEventListener('abort',abort);resolve();},slowRelay==='timeout'?120000:35000);const abort=()=>{clearTimeout(timer);reject(new DOMException('aborted','AbortError'));};options.signal.addEventListener('abort',abort,{once:true});});
+    }
+    return new Response(JSON.stringify({status:'ready',manifest,sourceSha:'a'.repeat(40),sourcePath:'utacheck/prepared.json'}),{headers:{'Content-Type':'application/json'}});
    }
    if(u.origin!=='https://api.github.com')return oldFetch(url,options);
    const allowed=options.headers?.Authorization==='Bearer '+token;
@@ -99,7 +104,7 @@ async function checkProgressPreparation(page,{manifest=null,relay=false,automati
     credentialLeaked:JSON.stringify(S).includes(token)||JSON.stringify(backupState()).includes(token)||document.documentElement.outerHTML.includes(token),
     status:PrivatePreparationUI.getStatus(),visibleArtist:!!added&&document.getElementById('app').textContent.includes(added.recArtist||added.artist)};
   }finally{window.fetch=oldFetch;}
- },{supplied:manifest,relay,automaticInteraction,progressRelay});
+ },{supplied:manifest,relay,automaticInteraction,progressRelay,slowRelay});
  assert.equal(result.legacy.code,'HTTP_404');assert.equal(result.legacy.stage,'repository');
  assert.equal(result.received.status,'applied',JSON.stringify(result.status));assert.equal(result.saved,true);assert.equal(result.receipt,true);
  assert.equal(result.preserved,true);assert.equal(result.filter,'');assert.equal(result.visibleArtist,true);

@@ -1,11 +1,11 @@
 /* 自分のコードは毎回ネットワークを見に行き、圏外のときだけキャッシュを使う。
    重い vendor/ だけはキャッシュ優先。これで「更新したのに変わらない」が起きない。 */
-const CACHE = "utacheck-16.41.58.57";
+const CACHE = "utacheck-16.41.58.58";
 const ASSETS = [
   "./arrangement-catalog.js", "./arrangement-verification.js", "./arrangement-verification-ui.js",
   "./", "./index.html", "./app.js", "./operation-progress.js", "./absence-changes.js", "./verified-edit-backup.js", "./private-preparation.js", "./private-material-input.js", "./private-preparation-source.js", "./progress-preparation-source.js", "./preparation-relay-source.js", "./private-preparation-ui.js", "./recording-schedule-update.js", "./recording-schedule-ui.js", "./recovery-delivery-scope.js", "./recovery-delivery-store.js", "./recovery-delivery.js", "./startup-backup-inspection.js", "./startup-preserved-backup-inspection.js", "./startup-file-inspection.js", "./startup-file-restoration.js", "./startup-local-storage-inventory.js", "./startup-local-publication-recovery.js", "./startup-local-excel-recovery.js", "./startup-saved-publication-reader.js", "./startup-recovered-show-addition.js", "./recording-inbox.js", "./recording-inbox-ownership.js", "./show-recovery.js", "./manifest.webmanifest",
   "./ui.css", "./ui.js", "./voice-notes.js", "./reading.js", "./gestures.js",
-  "./recflow.css", "./ptlink.js", "./ptmac.html",
+  "./recflow.css",
   "./icon-192.png", "./icon-512.png", "./setlist.json",
   "./print-pdf.js", "./vendor/html2canvas.min.js", "./vendor/jspdf.umd.min.js", "./vendor/pdf.min.js", "./vendor/pdf.worker.min.js", "./vendor/xlsx.full.min.js",
 ];

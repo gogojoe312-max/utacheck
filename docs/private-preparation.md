@@ -186,3 +186,14 @@ online and reach a safe editor state. The settings status distinguishes applied,
 unconnected, deferred, conflicting and unverified outcomes. No new permissions
 are silently acquired to hide that boundary.
 
+
+## Slow relay responses
+
+A relay read permits up to 90 seconds for response headers (including service
+startup), then 30 seconds without another body chunk. One read has a 180-second
+overall bound and at most two GET attempts to the same authenticated endpoint.
+A transient network/server error or deadline triggers one automatic retry;
+authentication, configuration, identity, format and size errors are not retried.
+Waiting, slow-response, retry and receiving phases update only the existing
+settings status; they do not lock or redraw lyrics. Source validation and the
+existing editor/transaction gates still precede any application of data.

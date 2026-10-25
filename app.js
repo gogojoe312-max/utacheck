@@ -118,7 +118,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.57";
+const APP_VER = "16.41.58.58";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -2010,6 +2010,23 @@ function recordingAssignmentBadge(so, i, continuation = false) {
   const cue = recordingAssignmentCue(so,i);
   return cue?.start && !continuation ? '<b class="rec-assignment-hint" data-recording-cue="' + cue.kind + '">' + h(cue.text) + '</b>' : "";
 }
+function recordingSingerKind(so, i) {
+  const line = so?.lines?.[i];
+  if (!line || line.gap || line.cut || !String(line.t || "").trim()) return "";
+  const hint = line.recAssignmentHint;
+  if (recordingAssignmentHintText(hint)) return hint.type === "count" && hint.count === 1 ? "solo" : "unison";
+  const ids = [...new Set(partsOf(so,i))];
+  if (!ids.length || ids.some(id => !member(id) || /^[AB]$/.test(String(member(id).name || "").trim()))) return "";
+  return ids.length === 1 ? "solo" : "unison";
+}
+function recordingSingerFilter(so) {
+  return S.recMode && so?.id === U.recSingerSongId && ["solo","unison"].includes(U.recSingerFilter) ? U.recSingerFilter : "";
+}
+function recordingSingerFilterHTML(so) {
+  if (!so || !so.lines.some((_,i) => recordingSingerKind(so,i))) return "";
+  const selected = recordingSingerFilter(so);
+  return '<div class="rec-singer-filter" aria-label="歌詞の表示">' + [["","すべて"],["unison","ユニゾン"],["solo","ソロ"]].map(([kind,label]) => '<button class="chip sm" data-act="rec-singer-filter" data-id="'+kind+'" aria-pressed="'+(selected === kind)+'">'+label+'</button>').join("") + '</div>';
+}
 function updateRecordingAssignmentIndicator() {
   const indicator = app.querySelector('[data-recording-current]'), scroll = app.querySelector('#app > .scroll');
   if (!indicator || !scroll) return;
@@ -2507,12 +2524,13 @@ const SONGS = () => (S.recMode
   : S.songs.filter((x) => x.showId === S.showId));
 // 同じ曲に複数テイクがあれば、テイク1にも番号を出す。
 // 1本しかない曲には付けない（全曲に「テイク1」が並ぶと読みにくいため）。
-// レコーディングでは常に番号を出す（テイク1も）。
+// RECでは既存のテイク情報を保持し、番号の表示と操作は出さない。
 // ライブでは、同じ曲に複数テイクがある時だけ出す。
 const takeLabel = (x) => {
   if (!x) return "";
+  if (S.recMode) return "";
   const n = Number(x.take || 1);
-  if (S.recMode || n > 1) return `テイク${n}`;
+  if (n > 1) return `テイク${n}`;
   const same = (S.songs || []).filter((y) => y && y.title === x.title
     && y.showId === x.showId && y.groupId === x.groupId);
   return same.length > 1 ? `テイク${n}` : "";
@@ -6198,6 +6216,10 @@ function render(background = false) {
     S.rsongId = recSong().id;
     U.songIdx = S.rsongs.findIndex((x) => x.id === S.rsongId);
   }
+  const sectionScrollKey = S.recMode ? JSON.stringify([U.view, recSong()?.id || "", !!U.overview]) : "";
+  const keepSectionTabs = !!sectionScrollKey && app.dataset.sectionScrollKey === sectionScrollKey;
+  const sectionPositions = new Map(keepSectionTabs ? [...app.querySelectorAll("[data-section-strip]")].map(el => [el.dataset.sectionStrip,el.scrollLeft]) : []);
+  app.dataset.sectionScrollKey = sectionScrollKey;
   const keep = app.querySelector(".scroll");
   const st = keep ? keep.scrollTop : 0;
   const sig = JSON.stringify([U.view, S.showId, song()?.id, takeCtx(), U.mode, U.allShows, U.overview, U.memberName]);
@@ -6224,12 +6246,15 @@ function render(background = false) {
   }
   const sc = app.querySelector(".scroll");
   if (sc && sameView) sc.scrollTop = st;
+  if (keepSectionTabs) app.querySelectorAll("[data-section-strip]").forEach(el => {
+    if (sectionPositions.has(el.dataset.sectionStrip)) el.scrollLeft = sectionPositions.get(el.dataset.sectionStrip);
+  });
   if (typeof updateRecordingAssignmentIndicator === "function") updateRecordingAssignmentIndicator();
   if (VIEW()) applyMemberNavigation();
   renderSheet();
   if (U.view === "live" && !U.overview) queueInkPaint();
   if (U.view === "print" || U.view === "recprint") setTimeout(fitPrintDOM, 0);
-  if (S.recMode) setTimeout(() => { tickPlan(); scrollTab(); void repairCurrentRecordingSection(); }, 0);
+  if (S.recMode) setTimeout(() => { tickPlan(); if (!keepSectionTabs) scrollTab(); void repairCurrentRecordingSection(); }, 0);
   if (U.view === "setup") setTimeout(() => {
     const cv = document.getElementById("ptcv");
     if (cv && !cv.dataset.ready) { cv.dataset.ready = "1"; pitchTouch(cv); }
@@ -6415,6 +6440,7 @@ function viewLive() {
     body = s.lines.map((l, i) => {
       if (l.cut || hiddenRecLines.has(i)) return "";
       if (fset && !fset.has(i)) return "";
+      if (recordingSingerFilter(s) && recordingSingerKind(s,i) !== recordingSingerFilter(s)) return "";
       if (l.gap) {
         const gns = ns0.filter((n) => covers(n, i));
         if (VIEW() && !gns.length) return `<div class="gap"></div>`;
@@ -6491,6 +6517,7 @@ function viewLive() {
           <div class="txt" data-l="${i}" style="font-size:${S.size + 6}px;line-height:${S.lyricLineHeight === 1.8 ? 1.8 : S.lyricLineHeight === 1.5 ? 1.5 : 1.6}">${cells}</div>${pills}
         </div></div>`;
     }).join("");
+    if (S.recMode && recordingSingerFilter(s) && !body.trim()) body = '<p class="note rec-singer-empty">このセクションに'+(recordingSingerFilter(s) === "solo" ? "ソロ" : "ユニゾン")+'はありません。</p>';
   }
 
   if (fset && !body.trim()) {
@@ -6552,11 +6579,8 @@ function viewLive() {
         : `<textarea class="field" id="songmemo" rows="4" style="resize:none">${h(songMemo(s.id))}</textarea>`}
     </div>` : ""}
     ${staffMemoCard(s)}
-    ${s && !VIEW() && !S.recMode ? `<div class="pull" id="pull">
-      <div class="pullbar"><i id="pullfill"></i></div>
-      <div class="pulltx" id="pulltx">引き上げて テイク${nextTake(s)} を作る</div>
-    </div>` : `<div style="height:120px"></div>`}</div>
-  ${S.recMode ? recBar() : (s && !VIEW() && !U.draw ? `<div class="aubar">
+    <div style="height:24px"></div></div>
+  ${S.recMode ? recBar() : (s && !VIEW() && !U.draw && (REC || hasRec(s)) ? `<div class="aubar">
     ${REC
       ? `<button data-act="recstop" class="aub" style="background:var(--bad);color:#0A0A0A">■</button>
          <span class="grow" id="rectime" style="color:var(--bad);font-weight:600">● 0:00</span>
@@ -6569,8 +6593,7 @@ function viewLive() {
              <button class="chip sm" data-act="recnext">▶</button>` : ""}
            <span id="autime" style="font-size:11px;color:var(--dim);min-width:74px;text-align:right">0:00 / ${mmss((S.recs[recKeyOf(s)] || {}).dur)}</span>
            <button data-act="delrec" class="aub" style="font-size:13px;color:var(--dim)">✕</button>`
-        : `<button data-act="recstart" class="aub" style="color:var(--bad)">●</button>
-           <span class="grow" style="font-size:11px;color:var(--dim)">録音</span>`}
+        : ""}
   </div>` : "")}
   ${S.recMode ? "" : `<div class="bottom">
     <button data-act="prev" class="${U.songIdx <= 0 ? "off" : ""}">‹</button>
@@ -6646,9 +6669,9 @@ function viewOverview(s) {
       if (l.gap) return `<div style="height:1em"></div>`;
       const vh2 = vm2.info[i];
       return `${vh2 ? `<div class="vtdiv vtdivov" style="color:${vh2.c}"><span>${h(vh2.vt)}</span></div>` : ""}
-        ${numberedRows[i].map(segment => `${segment.sec ? `<div class="secdiv" id="sec-${h(segment.sec)}"><span>${h(segment.sec)}</span></div>` : ""}<button${recordingAssignmentCue(s,i) ? ` data-recording-kind="${recordingAssignmentCue(s,i).kind}" data-recording-text="${h(recordingAssignmentCue(s,i).text)}"` : ""} class="ovw ${recLineFocus(s, i)}${l.add ? " lnadd" : ""}${S.recMode && l.skip ? " lnskip" : ""}${l.cut ? " lncut" : ""}" data-act="jumpline" data-i="${i}" data-segment="${segment.index}"
+        ${numberedRows[i].map(segment => `${segment.sec ? `<div class="secdiv" id="sec-${h(segment.sec)}"><span>${h(segment.sec)}</span></div>` : ""}<button class="ovw ${recLineFocus(s, i)}${l.add ? " lnadd" : ""}${S.recMode && l.skip ? " lnskip" : ""}${l.cut ? " lncut" : ""}" data-act="jumpline" data-i="${i}" data-segment="${segment.index}"
           style="${vtColor(vtOf(l)) ? `box-shadow:inset 3px 0 0 ${vtColor(vtOf(l))}` : ""}">
-          <span class="ovwn">${l.tag && !segment.index ? `<b class="tagmk">${h(l.tag)}</b>` : ""}${S.recBars && segment.number != null ? segment.number : ""}${recordingAssignmentBadge(s,i,segment.index > 0)}</span>
+          <span class="ovwn">${l.tag && !segment.index ? `<b class="tagmk">${h(l.tag)}</b>` : ""}${S.recBars && segment.number != null ? segment.number : ""}</span>
           <span>${l.add && !segment.index ? "（" : ""}${h(segment.text)}${l.add && segment.index === numberedRows[i].length - 1 ? "）" : ""}</span></button>`).join("")}`;
     };
     const brks = (s.colBreaks || []).filter((x) => x > 0 && x < s.lines.length);
@@ -6746,7 +6769,7 @@ function viewOverview(s) {
     <button class="ic" data-act="ovsize">${S.recMode ? S.recOvSize : U.ovSize}px</button>
   </div>
   ${blockBar(s)}
-  <div class="scroll" style="padding:8px 10px">${S.recMode ? '<div class="rec-current-cue"><span data-recording-current hidden></span></div>' : ""}${bodyHTML}
+  <div class="scroll" style="padding:8px 10px">${bodyHTML}
     ${songMemo(s.id) && !S.recMode ? `<div class="card" style="margin-top:12px">
       <h4 style="font-size:11px;color:var(--dim);margin-bottom:6px">総括</h4>
       <div style="font-size:13px;white-space:pre-wrap">${h(songMemo(s.id))}</div></div>` : ""}
@@ -7338,8 +7361,6 @@ function renderSheet() {
       : `<div class="sec">
           ${B("m-mark", (many ? "印を付ける／外す" : ((S.songs.find((y) => y.id === U.menu.id) || {}).mark ? "★ 印を外す" : "★ 印を付ける")))}
           ${many ? "" : B("song-rename", "曲名を変更")}
-          ${B("m-take", "テイクを増やす")}
-          ${many ? "" : B("m-takenum", "テイク番号を変える")}
           ${B("m-pdf", "PDFにする")}
           ${many ? "" : B("m-swap", "歌割を差し替える（記録はそのまま）")}
           ${(() => { const n = S.notes.filter((y) => y.songId === U.menu.id && y.showId === S.showId).length;
@@ -9342,7 +9363,6 @@ function recBar() {
   </div>`;
   const secs = live ? sectionsOf(live.s) : [];
   const cur = secs.find((x) => x.live);
-  const tk = live ? takeNo(live.s) : 1;
 
   const tabList = secs.length ? secs : sectionOrder().map((nm) => ({ name: nm }));
   const tabs = tabList.map((e) => {
@@ -9362,13 +9382,13 @@ function recBar() {
     });
     nums.sort((a, b) => (tagNum(a) || 0) - (tagNum(b) || 0));
     if (nums.length > 1) {
-      subTabs = `<div class="sectabs" style="padding-top:0">` + nums.map((nm) =>
+      subTabs = `<div class="sectabs" data-section-strip="tag-${h(openTag)}" style="padding-top:0">` + nums.map((nm) =>
         `<button class="sectab ${U.secView === nm ? "on" : ""} ${recSectionFocus(recSong(), nm)}" data-act="jumpsec" data-id="${h(nm)}"
           >${h(nm)}</button>`).join("") + `</div>`;
     }
   }
 
-  return `${tabs ? `<div class="sectabs">${tabs}</div>` : ""}${subTabs}
+  return `${tabs ? `<div class="sectabs" data-section-strip="main">${tabs}</div>` : ""}${subTabs}${recordingSingerFilterHTML(recSong())}
   <div class="aubar rec-tools">
     <div class="rec-tools-meta">
       ${recordingPlanExpired() ? '' : '<button class="chip sm" data-act="goplan">進行表</button><button class="chip sm" data-act="recschedule" aria-pressed="'+!U.recSchedulePaused+'">'+(U.recSchedulePaused ? '予定に合わせる' : '自動開始中')+'</button>'}
@@ -9378,8 +9398,6 @@ function recBar() {
       ${U.draw ? `<button class="chip sm" data-act="eraser" aria-label="消しゴム" aria-pressed="${!!U.erase}">消</button>` : ""}
     </div>
     <div class="rec-tools-actions">
-      ${live && live.live ? `<button class="tkbtn" data-act="takedown" aria-label="テイクを減らす">−</button>
-        <button class="tknow" data-act="takeup" aria-label="テイクを増やす"><i>テイク</i><b>${tk}</b></button>` : ""}
       <button class="chip sm" data-act="undoall" aria-label="取り消す">取消</button>
       ${live && live.live ? `<button class="chip sm rec-primary" data-act="pnextsec">${secs.some(x => !x.done && !x.skip && x.name !== live.s.secCur) ? "OK" : "終了"}</button>`
         : live && !live.done ? `<button class="chip sm rec-primary" data-act="pstart" data-id="${live.s.id}">開始</button>` : ""}
@@ -10619,7 +10637,6 @@ function viewSetup() {
       <button class="chip sm" data-act="sorttitle">曲名順</button>
       ${S.songs.some((x) => x.mark) ? `<button class="chip sm" data-act="markonly" style="${U.markOnly ? "background:var(--accent);color:#0A0A0A" : "color:var(--accent)"}">★だけ</button>` : ""}
       ${U.pick.length ? `<button class="chip sm" data-act="pdfpicked" style="background:var(--accent);color:#0A0A0A">${U.pick.length}曲をPDF</button>
-      <button class="chip sm" data-act="picktake">テイク</button>
       <button class="chip sm" data-act="clearpicked">記録を消す</button>
       <button class="chip sm" data-act="pickgroup">グループ</button>
       <button class="chip sm" data-act="delpicked" style="background:var(--bad);color:#0A0A0A">削除</button>` : ""}
@@ -11097,6 +11114,9 @@ document.addEventListener("click", async (e) => {
     case "focus": U.focus = id; U.picker = false; render(); break;
     case "recschedule": U.recSchedulePaused=!U.recSchedulePaused; U.recScheduleId=""; if(!U.recSchedulePaused)autoPlan(); render(); break;
     case "recfocus": pauseRecSchedule(); U.recFocusId = id; render(); break;
+    case "rec-singer-filter":
+      if (S.recMode && recSong() && ["","solo","unison"].includes(id)) { U.recSingerSongId = recSong().id; U.recSingerFilter = id; render(); }
+      break;
     case "jumpshow": selectShow(id); renderSheet(); render(); break;
 
     case "key": {

@@ -15,7 +15,7 @@
   }
   if(dedicatedToken){const direct=await PrivatePreparationSource.read(options);if(direct.status==='ready'||!root.ProgressPreparationSource)return direct;}
   const direct=await (root.ProgressPreparationSource||PrivatePreparationSource).read(options);
-  if(direct.status==='ready'||!root.PreparationRelaySource||!options.token||['ABORTED','INACTIVE','OWNER_MISMATCH','INVALID_CONFIG'].includes(direct.code))return direct;
+  if(direct.status==='ready'||direct.stage==='relay'||!root.PreparationRelaySource||!options.token||['ABORTED','INACTIVE','OWNER_MISMATCH','INVALID_CONFIG'].includes(direct.code))return direct;
   const relayed=await root.PreparationRelaySource.read(options);
   if(relayed.status==='ready')relayToken=options.token;
   return relayed;
@@ -103,7 +103,7 @@
   const originals=status.originals,originalText=originals?.files?' 元Excel '+originals.files+'件を保存、'+originals.linked+'曲にリンクしました。'+(originals.unmatched?' '+originals.unmatched+'件は一致する曲がなく、原本を保管しています。':''):'';
   if(status.kind==='applied')return '進行アプリから資料を取り込みました。'+originalText+(status.conflicts?'既存の内容と重なる資料は保留しています。':'');
   if(status.kind==='current')return (originals?.unmatched?'資料の受信は完了しましたが、曲とリンクできていない元Excelが残っています。':'進行アプリの資料は、この端末に反映済みです。')+originalText;
-  if(status.kind==='checking')return '進行アプリの資料を確認しています…';
+  if(status.kind==='checking')return ({waiting:'進行アプリの資料の応答を待っています…',slow:'資料の応答に時間がかかっています。そのまま受信を待っています…',retrying:'通信を自動で再確認しています…',receiving:'進行アプリの資料を受信しています…'})[status.phase]||'進行アプリの資料を確認しています…';
   if(status.kind==='active-plan')return '進行中の枠が残っているため、予定の反映を待っています。実際には未開始なら、その枠の「その他」から開始状態だけ解除できます。';
   if(status.kind==='deferred')return waitingText(status.reason);
   if(status.kind==='missing-token')return '本人用の自動受信は未接続です。この端末のGitHub接続を確認する必要があります。';
@@ -397,7 +397,8 @@
    await loadCredential();token=sourceToken();
    if(!token&&!root.ProgressPreparationSource){setStatus({kind:'missing-token'});return {status:'missing-token'};}
    setStatus({kind:'checking'});
-   const source=await readSource({...config,token,isActive:()=>startupPhase==='ready'&&!document.hidden&&recordingInboxCanWrite()&&sourceToken()===token});
+   const source=await readSource({...config,token,isActive:()=>startupPhase==='ready'&&!document.hidden&&recordingInboxCanWrite()&&sourceToken()===token,
+    onProgress:progress=>{if(startupPhase==='ready'&&!document.hidden&&sourceToken()===token)setStatus({kind:'checking',phase:progress.phase});}});
    if(source.status!=='ready'){
     const code=source.code,stage=['identity','repository','contents','blob','relay'].includes(source.stage)?source.stage:undefined;setStatus({kind:code==='MISSING_TOKEN'?'missing-token':['OWNER_MISMATCH','REPOSITORY_NOT_PRIVATE','REPOSITORY_MISMATCH','HTTP_401','HTTP_403','HTTP_404'].includes(code)?'access':code==='UNSUPPORTED'?'unsupported':'offline',code,stage});
     return {status:status.kind,code};

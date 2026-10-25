@@ -89,7 +89,7 @@
     // inside this call; the caller's unrelated Gist login is not a substitute.
     if (before.snapshot && result.status !== 'ready' && typeof root.PreparationRelaySource?.read === 'function'
         && !['ABORTED','INACTIVE','OWNER_MISMATCH','INVALID_CONFIG'].includes(result.code)) {
-      try { result = await root.PreparationRelaySource.read({owner:OWNER,repo:REPO,token,fetch:options.fetch,signal:options.signal,isActive:active}); }
+      try { result = await root.PreparationRelaySource.read({owner:OWNER,repo:REPO,token,fetch:options.fetch,signal:options.signal,isActive:active,onProgress:options.onProgress}); }
       catch (_) { return unavailable('FETCH_FAILED'); }
       if (!active()) return unavailable(options.signal?.aborted ? 'ABORTED' : 'INACTIVE');
       const confirmed = await readConnection(active);

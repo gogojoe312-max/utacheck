@@ -497,3 +497,14 @@ test('original fingerprint excludes unrelated songs once this source has identif
  f.run('S.songs[1].lines[0].t="Unrelated workbook change"');
  assert.equal((await f.c.PrivatePreparationUI.receive(true)).status,'current');assert.equal(prepared.calls,calls);
 });
+
+test('relay waiting, slow and receiving phases remain visible on settings until the schedule is actually saved',async()=>{
+ const f=await setup(),before=f.run('JSON.stringify(S)');
+ f.c.ProgressPreparationSource={read:async options=>{if(options.onProgress)for(const [phase,text] of [['waiting','応答を待'],['slow','時間がかか'],['retrying','自動で再確認'],['receiving','受信しています']]){options.onProgress?.({phase});assert(f.c.PrivatePreparationUI.settingsHTML().includes(text));assert.equal(f.run('JSON.stringify(S)'),before);}return {status:'ready',manifest:f.manifest,sourceSha:'a'.repeat(40)};}};
+ const result=await f.c.PrivatePreparationUI.receive(true);assert.equal(result.status,'applied');assert.equal(f.run('S.plan.slots[0].min'),75);assert(f.c.PrivatePreparationUI.settingsHTML().includes('取り込みました'));
+});
+test('an exhausted progress relay never repeats the same timeout with an unrelated Gist credential',async()=>{
+ const f=await setup(),before=f.run('JSON.stringify(S)');let reads=0;
+ f.c.ProgressPreparationSource={read:async()=>({status:'unavailable',code:'TIMEOUT',stage:'relay'})};f.c.PreparationRelaySource={read:async()=>{reads++;throw Error('wrong fallback');}};
+ const result=await f.c.PrivatePreparationUI.receive(true);assert.equal(result.code,'TIMEOUT');assert.equal(reads,0);assert.equal(f.run('JSON.stringify(S)'),before);
+});
