@@ -290,3 +290,10 @@ Member URL / same-name performance acceptance:
   receipt before asserting completion. A concurrent caller's `busy` result is
   not that operation's final outcome. Keep the original imported song/received
   ID distinction and restored data; do not skip the receipt or persistence checks.
+
+Browser-gate infrastructure acceptance:
+- Both preflight and final-check use the shared installer with official HTTPS
+  Ubuntu archives and bounded APT timeouts/retries. Test cases and verification
+  gates stay mandatory. A stalled dependency installation is not a product test
+  failure or success; inspect its logs and recover the setup without skipping
+  actual browser checks. Keep exact-revision post-publication evidence.

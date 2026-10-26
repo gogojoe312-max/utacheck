@@ -16,9 +16,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install isolated test browsers
-        run: |
-          npm install --prefix "$RUNNER_TEMP/utacheck-browser" --no-save --package-lock=false playwright@1.56.1
-          "$RUNNER_TEMP/utacheck-browser/node_modules/.bin/playwright" install --with-deps chromium webkit
+        timeout-minutes: 6
+        run: bash scripts/install-test-browsers.sh
       - name: Verify behavior, received member data, save and reload
         env:
           NODE_PATH: ${{ runner.temp }}/utacheck-browser/node_modules
@@ -41,9 +40,8 @@ jobs:
           name: preflight-evidence
           path: release-evidence
       - name: Install isolated test browsers
-        run: |
-          npm install --prefix "$RUNNER_TEMP/utacheck-browser" --no-save --package-lock=false playwright@1.56.1
-          "$RUNNER_TEMP/utacheck-browser/node_modules/.bin/playwright" install --with-deps chromium webkit
+        timeout-minutes: 6
+        run: bash scripts/install-test-browsers.sh
       - name: Check exact public assets and public member screens
         env:
           NODE_PATH: ${{ runner.temp }}/utacheck-browser/node_modules
