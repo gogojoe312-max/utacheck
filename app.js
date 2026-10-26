@@ -118,7 +118,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.70";
+const APP_VER = "16.41.58.71";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -7846,20 +7846,9 @@ function summaryShows() {
 function summaryShowPicker() {
   if (S.recMode) return "";
   const list = summaryShows();
-  const label = sw => {
-    const same = list.filter(other => String(other.name || "").normalize('NFKC').trim() === String(sw.name || "").normalize('NFKC').trim() && (other.folder || "") === (sw.folder || ""));
-    if (same.length < 2) return sw.name;
-    const absent = show => absentVersionNames(show.absent || []).join("・");
-    const count = show => S.songs.filter(so => so.showId === show.id && (!S.groupId || !so.groupId || (VIEW() ? so.groupId : songDeliveryGroupId(so)) === S.groupId)).length;
-    let variants = same, detail = [];
-    if (new Set(same.map(absent)).size > 1) { detail.push(absent(sw) ? absent(sw) + "欠席" : "通常"); variants = variants.filter(other => absent(other) === absent(sw)); }
-    if (variants.length > 1 && new Set(variants.map(count)).size > 1) { detail.push(count(sw) + "曲"); variants = variants.filter(other => count(other) === count(sw)); }
-    if (variants.length > 1) { const index = variants.findIndex(other => other.id === sw.id); detail.push(index === 0 ? "新しい版" : "前の版" + (index > 1 ? " " + index : "")); }
-    return sw.name + "（" + detail.join("・") + "）";
-  };
   return `<label class="summary-show-picker"><span>公演・日付</span><select id="summary-show" aria-label="公演・日付">
     <option value="" ${U.allShows ? "selected" : ""}>全公演をまとめる</option>
-    ${performanceFolderGroups(list, false, typeof VIEW === "function" && !VIEW() ? S.groupId || "" : null).map(([name, shows]) => `<optgroup label="${h(name || "フォルダなし")}">${shows.map(sw => `<option value="${h(sw.id)}" ${!U.allShows && sw.id === S.showId ? "selected" : ""}>${h(label(sw))}</option>`).join("")}</optgroup>`).join("")}
+    ${performanceFolderGroups(list, false, typeof VIEW === "function" && !VIEW() ? S.groupId || "" : null).map(([name, shows]) => `<optgroup label="${h(name || "フォルダなし")}">${shows.map(sw => `<option value="${h(sw.id)}" ${!U.allShows && sw.id === S.showId ? "selected" : ""}>${h(sw.name)}</option>`).join("")}</optgroup>`).join("")}
   </select></label>`;
 }
 function selectSummaryShow(id) {

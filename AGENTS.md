@@ -257,12 +257,15 @@ Member empty-show / navigation-delivery acceptance:
   Retain old-code failing screenshots and exact-commit published browser evidence.
 
 Member URL / same-name performance acceptance:
-- Seed the actual ambiguous OCHA dates together: 10/25 normal and 北原欠席,
-  10/24.25 normal and 北原欠席, and 10/24 with 20 vs 26 songs. Keep separate
-  IDs, source lyrics, notes and every version. Open the actual 公演・日付 select;
-  its options must distinguish absence variants or song counts, with explicit
-  newer/previous-version labels only for otherwise identical descriptions.
-  Do not silently merge/hide versions or rename stored shows to clean the test.
+- The user's 2026-10-27 clarification supersedes automatic absence/count/version
+  labels: member performance selection must use the user's received folder groups
+  and exact stored show names. Do not append 通常, 欠席, song counts or guessed
+  version names, merge separate IDs or modify source data. Keep the original six
+  same-name OCHA versions (including normal/absence, 20/26 songs) together in the
+  regression and add another user-created folder with a same-name show. Open the
+  actual 公演・日付 selector, inspect each optgroup's original names/IDs, choose
+  every version, then note -> lyric -> back, save and native reload; retain screen
+  evidence. A shared name does not authorize altering or deleting a source copy.
 - In ONE browser profile, receive/save Rosie, leave the document, then open the
   OCHA member URL with OCHA's network response held. Observe every #app mutation
   from the first render: no Rosie show, lyric, note or member control may appear.
