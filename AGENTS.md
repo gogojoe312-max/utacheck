@@ -278,3 +278,7 @@ Member URL / same-name performance acceptance:
   and published Chromium/WebKit gates; retain old-code failing first-frame and
   picker evidence. Also exercise both real published links in one fresh browser
   profile with read-only real responses. This does not verify the actual phone.
+- The リンクを貼ってつなぐ action and hashchange listener must start exactly one
+  receive together. Pasting a different hash uses its navigation event; pasting
+  the unchanged current link explicitly retries once. Retain the regression
+  which fails against the implementation that invokes both paths.

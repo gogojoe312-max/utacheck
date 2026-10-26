@@ -13,3 +13,9 @@ for(const stage of ['response','body'])test('a late previous-source '+stage+' ca
  let release,started;const ready=new Promise(r=>started=r),old={groupName:'ロージークロニクル',songs:[{}]},next={groupName:'OCHA NORMA',songs:[{}]};c.fetch=async url=>{if(url.startsWith('https://example.test/rosie')){if(stage==='response')return new Promise(r=>{release=()=>r({ok:true,json:async()=>old});started();});return {ok:true,json:()=>new Promise(r=>{release=()=>r(old);started();})};}return {ok:true,json:async()=>next};};
  const pending=c.fetchSetlist();await ready;c.S.src='https://example.test/ocha';assert.equal((await c.fetchSetlist()).groupName,'OCHA NORMA');const metadata=c.S.syncAt;release();assert.equal(await pending,null,'A stale previous group must never reach applySetlist');assert.equal(c.S.syncAt,metadata);
 });
+
+for(const same of [false,true])test('pasting a '+(same?'current':'different')+' member URL starts exactly one receive',async()=>{
+ let hash=same?'#g=new':'#g=old',queued=[],receives=0;const c={prompt:()=> 'https://app.test/#g=new',render(){},importFromLink:async()=>{receives++;},location:{get hash(){return hash;},set hash(value){if(value!==hash){hash=value;queued.push(()=>c.onHash());}}},window:{addEventListener(name,handler){if(name==='hashchange')c.onHash=handler;}},alert(){}};vm.createContext(c);
+ const at=source.indexOf('window.addEventListener("hashchange"');vm.runInContext(source.slice(at,source.indexOf('\n});',at)+4),c);
+ const start=source.indexOf('    case "pastelink": {');await vm.runInContext('(async()=>{switch("pastelink"){'+source.slice(start,source.indexOf('    case "askkey":',start))+'}})()',c);for(const work of queued)await work();assert.equal(hash,'#g=new');assert.equal(receives,1,'The hashchange handler and explicit paste action must not both receive the same source');
+});

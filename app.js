@@ -118,7 +118,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.69";
+const APP_VER = "16.41.58.70";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -11681,8 +11681,9 @@ document.addEventListener("click", async (e) => {
       const m2 = /#g=([A-Za-z0-9\-_]+)/.exec(String(t));
       if (!m2) { alert("リンクの形が違います。\n「#g=」から始まる部分を含めて、全部貼ってください。"); break; }
       try {
-        location.hash = "#g=" + m2[1];
-        importFromLink();
+        const nextHash = "#g=" + m2[1];
+        if (location.hash === nextHash) await importFromLink();
+        else location.hash = nextHash;
       } catch (e) { alert("読み取れませんでした。"); }
       break;
     }
