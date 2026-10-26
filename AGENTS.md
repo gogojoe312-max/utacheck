@@ -201,3 +201,8 @@ Reversible song-size display acceptance:
   REC numbering skips display cuts and a hidden section header still anchors its
   remaining visible lyrics. Keep screenshots and the previous-code missing-control
   regression. Browser verification does not establish receipt on the actual phone.
+- A size-edited PDF uses the chosen compact display, so do not start unused
+  original-workbook layout reads. Exercise the actual song-menu PDF with the
+  original-layout preference enabled and an uncached workbook, assert zero
+  preview reads, then immediately save/reload and receive/render the member view.
+  Do not suppress WebKit blob access errors or remove them from the browser gate.

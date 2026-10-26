@@ -118,7 +118,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.64";
+const APP_VER = "16.41.58.65";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -10609,8 +10609,9 @@ function viewPrint() {
   let needWide = false;
   let landVotes = 0, portVotes = 0;
   // 元のExcelの見た目を、まだ読んでいなければ読む（読めたら組み直す）
-  if (prLook() !== "plain" && picked.some((so) => (so.xls || so.xlsSourceId || so.sheetName) && XLOOK[so.id] === undefined)) {
-    U.lookWait = ensureLooks(picked).then(() => { U.lookWait = null; if (U.view === "print") render(); });
+  const originalLayoutSongs = picked.filter(so => !so.lines.some(l => l.sourceCut != null && !!l.cut !== !!l.sourceCut));
+  if (prLook() !== "plain" && originalLayoutSongs.some((so) => (so.xls || so.xlsSourceId || so.sheetName) && XLOOK[so.id] === undefined)) {
+    U.lookWait = ensureLooks(originalLayoutSongs).then(() => { U.lookWait = null; if (U.view === "print") render(); });
   }
   const body = picked.map((so) => {
     const ns0 = NOTES().filter((n) => n.songId === so.id && n.showId === S.showId);

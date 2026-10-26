@@ -1,7 +1,7 @@
 'use strict';
 const assert=require('node:assert/strict');
 async function checkLyricSize(page,width,{mode,assertFits,screenshot}){
- const saved=await page.evaluate(async()=>{document.activeElement?.blur();await saveNow();return {state:JSON.stringify(S),ui:JSON.stringify(U),hold:startupRecoveryNetworkHold};});
+ const saved=await page.evaluate(async()=>{document.activeElement?.blur();await saveNow();return {state:JSON.stringify(S),ui:JSON.stringify(U),hold:startupRecoveryNetworkHold,printLook:prLook()};});
  const open=async()=>{await page.locator('[aria-label="曲のメニュー"]').click();await page.locator('[data-act="lyric-size"]').waitFor({state:'visible',timeout:3000});await page.locator('[data-act="lyric-size"]').click();await page.getByRole('dialog',{name:'歌詞の表示範囲',exact:true}).waitFor();};
  const pick=async(a,b)=>{await page.locator('[data-act="lyric-size-line"][data-i="'+a+'"]').click();if(b!=null)await page.locator('[data-act="lyric-size-line"][data-i="'+b+'"]').click();};
  const close=()=>page.getByRole('dialog',{name:'歌詞の表示範囲',exact:true}).getByRole('button',{name:'閉じる',exact:true}).click();
@@ -51,10 +51,11 @@ async function checkLyricSize(page,width,{mode,assertFits,screenshot}){
     assert.deepEqual(await page.locator('[data-lyric-line] [data-act="rbar"]').allTextContents(),['RH 1','2','1B 3','4','5']);
    }
    await page.locator('[data-act="overview"]').click();let text=await page.locator('#app').innerText();assert(!text.includes('隠す合成フレーズ'));assert(!text.includes('元グレーカット'));assert(text.includes('合成の後半'));await page.locator('[data-act="overview"]').click();
+   await page.evaluate(()=>{setPrLook("xl");delete XLOOK[song().id];window.__sizeOriginalLookCalls=[];window.__sizeOriginalEnsureLooks=ensureLooks;ensureLooks=async songs=>{__sizeOriginalLookCalls.push(...songs.map(s=>s.id));return __sizeOriginalEnsureLooks(songs);};});
    await page.locator('[data-act="go-setup"]').click();
    if(rec){await page.locator('[data-act="rec-song-actions"][data-id="'+initial.id+'"]').click();await page.locator('[data-act="rpdf"]').click();}
    else{await page.locator('[data-act="songmenu"][data-i="0"]').click();await page.locator('[data-act="m-pdf"]').click();}
-   await page.locator('#prpage').waitFor();text=await page.locator('#prpage').innerText();assert(!text.includes('隠す合成フレーズ'));assert(!text.includes('元グレーカット'));assert(text.includes('合成の後半'));
+   await page.locator('#prpage').waitFor();assert.deepEqual(await page.evaluate(()=>__sizeOriginalLookCalls),[],'Size-edited PDF must not start unused original workbook preview reads before save/reload');await page.evaluate(()=>{ensureLooks=__sizeOriginalEnsureLooks;delete window.__sizeOriginalEnsureLooks;});text=await page.locator('#prpage').innerText();assert(!text.includes('隠す合成フレーズ'));assert(!text.includes('元グレーカット'));assert(text.includes('合成の後半'));
    await page.evaluate(async()=>{save();await saveNow();if(saveErr)throw Error('Size edit save failed');});await page.reload();await page.waitForFunction(()=>typeof normalStartupInitialized!=='undefined'&&normalStartupInitialized);await mode(page,rec,false,'live');
    assert.deepEqual(await indices(),[0,3,5,6,7]);assert.deepEqual(await page.evaluate(()=>JSON.parse(JSON.stringify(song().lines))),expected);await screenshot(page,width,rec?'rec-size-reloaded':'live-size-reloaded');
    assert.deepEqual(Buffer.from(await page.evaluate(async key=>[...new Uint8Array(await (await getClip('xls:'+key)).arrayBuffer())],initial.source)),Buffer.from(bytes),'Pinned Excel bytes survive size changes and native reload');
@@ -77,8 +78,8 @@ async function checkLyricSize(page,width,{mode,assertFits,screenshot}){
    await screenshot(page,width,rec?'rec-size-restored':'live-size-restored');
   }
  }catch(error){await screenshot(page,width,'lyric-size-failure');throw error;}finally{
-  await page.evaluate(async saved=>{document.activeElement?.blur();S=JSON.parse(saved.state);Object.keys(U).forEach(k=>delete U[k]);Object.assign(U,JSON.parse(saved.ui));startupRecoveryNetworkHold=saved.hold;saveErr=false;renderPointers.clear();scrollingUntil=0;pendingRender=false;save();await saveNow();window.qaContent=()=>JSON.stringify(Object.fromEntries(['groups','shows','songs','rsongs','notes','memos','staffMemos','recs','plan'].map(k=>[k,S[k]])));renderSheet();render(true);},saved);
+  await page.evaluate(async saved=>{document.activeElement?.blur();if(window.__sizeOriginalEnsureLooks){ensureLooks=__sizeOriginalEnsureLooks;delete window.__sizeOriginalEnsureLooks;}S=JSON.parse(saved.state);Object.keys(U).forEach(k=>delete U[k]);Object.assign(U,JSON.parse(saved.ui));startupRecoveryNetworkHold=saved.hold;setPrLook(saved.printLook);saveErr=false;renderPointers.clear();scrollingUntil=0;pendingRender=false;save();await saveNow();window.qaContent=()=>JSON.stringify(Object.fromEntries(['groups','shows','songs','rsongs','notes','memos','staffMemos','recs','plan'].map(k=>[k,S[k]])));renderSheet();render(true);},saved);
  }
- return {lyricSizeActualLiveRecImport:true,lyricSizeRangeHideRestoreCancel:true,lyricSizeNotesAndOriginalBytesPreserved:true,lyricSizeNativeReload:true,lyricSizeMemberReceiveLyricsAndFeedback:true,lyricSizeOverviewAndPDF:true};
+ return {lyricSizeActualLiveRecImport:true,lyricSizeRangeHideRestoreCancel:true,lyricSizeNotesAndOriginalBytesPreserved:true,lyricSizeNativeReload:true,lyricSizeMemberReceiveLyricsAndFeedback:true,lyricSizeOverviewAndPDF:true,lyricSizePDFWithoutUnusedOriginalReads:true};
 }
 module.exports={checkLyricSize};
