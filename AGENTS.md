@@ -206,3 +206,32 @@ Reversible song-size display acceptance:
   original-layout preference enabled and an uncached workbook, assert zero
   preview reads, then immediately save/reload and receive/render the member view.
   Do not suppress WebKit blob access errors or remove them from the browser gate.
+
+Member first-screen / same-day changes acceptance:
+- Open the actual settings メンバー画面を見る button, then the received member
+  指摘 screen. Keep sender focus on an older show, older cached showId and device
+  preference, newer creation timestamps on older shows, hidden/foreign shows,
+  dated rehearsals and contaminated source member labels AND registered rosters.
+  The first screen must show the latest received performance date, including
+  rehearsals. Manual historical browsing stays put during in-session receives;
+  native reload and the resume handler return to latest. Test no-preference boot.
+- Keep assignment overrides/confirmations for yesterday, today, future and unknown
+  dates in the received data. Only shows on the Tokyo calendar day expose change
+  notices/cards/badges. Check actual changed-person picker and lyric navigation;
+  effective changed assignments and ordinary feedback remain intact on other days.
+  With the screen open, cross Tokyo midnight and inspect the actual rendered UI.
+  Include real source notation 10/24.25: both days apply and sorting uses the last.
+- Preserve all received shows, assignments, notes, original labels and rosters
+  through receive, render, save and reload. Keep old-code failures for both the
+  stale first-show value and notices counting out-of-day changes. Run these paths
+  in local AND public Chromium/WebKit gates and retain exact-screen screenshots.
+- Scope private checks to the actual read-only published OCHA/ロージー packets as
+  available; do not alter the live Gists or equate browser checks with actual
+  phone receipt. Opening a dated rehearsal must not prefer an older main show.
+- The actual reversible-size publication must pass strict delivery validation,
+  retain displayCuts/sourceCut provenance and reach the member screen. Reject
+  malformed indexes, duplicate rows, non-boolean flags and extra/private fields;
+  include display-cut provenance when comparing recovered publication contents.
+- A same-group receive must also keep an open same-day 歌割変更 screen and its
+  selected member. Persist the deliberate show switch when opening its banner;
+  an older device preference must not pull the screen back to another show.

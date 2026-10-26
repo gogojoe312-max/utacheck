@@ -191,7 +191,7 @@
     publication:['version','authorId','src','groupName','members','rosters','alert','groupOrder','folderOrder','lib','songs','shows','gsubs','subs','notes','memos','focusShow'],
     show:['id','name','ts','folder','from','nopub','hidden','absent','recoveredSourceShowId','recoverySource'],
     song:['showId','libIdx','take','fromIdx'],
-    library:['title','credit','groups','order','lines','sections','lyricBreaks','groupRows','sheetName','micSheet','micMap','groupCells'],
+    library:['title','credit','groups','order','lines','sections','lyricBreaks','displayCuts','groupRows','sheetName','micSheet','micMap','groupCells'],
     note:['songIdx','lineIdx','memberNames','tags','memo','hand','pitch','lineEnd','from','to','showId','at'],
     memo:['showId','songIdx','text'],sub:['showId','songIdx','lineIdx','names','confirmed'],gsub:['showId','songIdx','block','names','confirmed']
   };
@@ -270,6 +270,16 @@
           const length=Array.from(entry.lines[row.lineIdx][1]).length;
           let prior=0;
           for(const offset of row.offsets){if(!Number.isSafeInteger(offset)||offset<=prior||offset>=length)fail(bad);prior=offset;}
+        }
+      }
+      if(own(entry,'displayCuts')){
+        if(!Array.isArray(entry.displayCuts))fail(bad);
+        const seen=new Set();
+        for(const row of entry.displayCuts){
+          only(row,['lineIdx','hidden','sourceCut'],bad);
+          if(!Number.isSafeInteger(row.lineIdx)||row.lineIdx<0||row.lineIdx>=entry.lines.length||seen.has(row.lineIdx)
+            ||typeof row.hidden!=='boolean'||typeof row.sourceCut!=='boolean')fail(bad);
+          seen.add(row.lineIdx);
         }
       }
       if(own(entry,'groupRows')){
@@ -422,6 +432,7 @@
       groups:Object.entries(entry.groups||{}),order:entry.order||[],
       lines:entry.lines.map(row=>Array.from({length:9},(_,index)=>index===1?row[index]:empty(row[index]))),
       sections:entry.sections||[],lyricBreaks:(entry.lyricBreaks||[]).slice().sort((a,b)=>a.lineIdx-b.lineIdx),
+      ...(entry.displayCuts?.length?{displayCuts:entry.displayCuts.slice().sort((a,b)=>a.lineIdx-b.lineIdx)}:{}),
       groupRows:(entry.groupRows||[]).map(row=>({b:row.b,ncell:empty(row.ncell),lcell:empty(row.lcell)}))});
       // Intern full strings across both sides, without lossy hashes or expanding
       // a large aliased library again for every show/song that references it.

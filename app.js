@@ -118,7 +118,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.65";
+const APP_VER = "16.41.58.66";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1733,8 +1733,15 @@ function rememberViewSelection() {
 }
 function restoreViewSelection(previousShowId = S.showId, initial = false) {
   if (preview) return false;
+  if (initial && VIEW()) S.recMode = false;
   const saved = readViewSelection();
-  if (!saved) return false;
+  if (!saved) {
+    if (initial && VIEW() && !S.recMode) {
+      const latest = latestPerformance(S.groupId);
+      if (latest) { S.showId = latest.id; U.songIdx = 0; U.allShows = false; }
+    }
+    return false;
+  }
   const validGroup = id => S.groups.some(g => g.id === id);
   U.showFilter = saved.showFilter === "__unassigned__" || saved.showFilter === "__archive__" && !VIEW() || liveGroups().some(g => g.id === saved.showFilter) ? saved.showFilter : "";
   // Restore the LIVE artist even when booting in REC, without changing its song.
@@ -1746,8 +1753,8 @@ function restoreViewSelection(previousShowId = S.showId, initial = false) {
   const fallback = available.find(sw => sw.id === S.showId) || available[0];
   S.showId = (selected || fallback || {}).id || "";
   if (initial) {
-    const latest = latestPerformance(U.showFilter || (!VIEW() && selected && showDeliveryGroupId(selected)) || S.groupId);
-    if (latest) S.showId = latest.id;
+    const latest = latestPerformance(VIEW() ? S.groupId : U.showFilter || (selected && showDeliveryGroupId(selected)) || S.groupId);
+    if (latest) { S.showId = latest.id; if (VIEW()) U.allShows = false; }
   }
   if (!VIEW()) {
     if (selected && validGroup(saved.groupId)) S.groupId = saved.groupId;
@@ -1794,6 +1801,7 @@ function restoreRecordingSelection() {
 function selectShow(id) {
   if (!S.shows.some(sw => sw.id === id)) return;
   S.showId = id; U.songIdx = 0;
+  if (VIEW()) U.memberShowChosen = true;
   syncShowGroup(); rememberViewSelection(); save();
   if (!VIEW()) schedulePush();
 }
@@ -1831,7 +1839,8 @@ function latestPerformance(groupId) {
     ? S.songs.some(so => so.showId === sw.id && (!groupId || !so.groupId || so.groupId === groupId))
     : !recoveryMaterialShow(sw) && (!groupId || showGroupIds(sw).includes(groupId) || sw.deliveryMode === "song" && sw.groupId === groupId)));
   const actual = list.filter(sw => !/リハ|通し|ゲネ|rehearsal|(?:^|\s)(?:GP|RH)(?:\s|$)/i.test(sw.name || ""));
-  return actual[0] || list[0] || null;
+  const candidates = VIEW() ? list : actual.length ? actual : list;
+  return (VIEW() ? performanceSelectionOrder(candidates, memberPerformanceDateOrder) : candidates)[0] || null;
 }
 function setShowFilter(id) {
   const previous = U.showFilter;
@@ -2221,6 +2230,7 @@ function labelOf(so, i) {
 
 // 赤＝まだ決まっていない、黄＝変更済み
 function lineStatus(so, i) {
+  if (VIEW() && !memberPerformanceIsToday(so.showId)) return "";
   if (VIEW() && typeof AbsenceChanges !== "undefined") return AbsenceChanges.line(so,i,memberAbsenceContext(so))?.status === "changed" ? "changed" : "";
   const l = so.lines[i] || {};
   if (l.gap || l.cut) return "";                            // カット（グレー）の行は歌わないので触らない
@@ -2236,6 +2246,7 @@ function lineStatus(so, i) {
 }
 // ブロックの状態
 function blockStatus(so, b) {
+  if (VIEW() && !memberPerformanceIsToday(so.showId)) return "";
   if (VIEW() && typeof AbsenceChanges !== "undefined") return AbsenceChanges.block(so,b,memberAbsenceContext(so))?.status === "changed" ? "changed" : "";
   const ab = absentIds();
   const sub = gsubOf(so.id, b), original = so.blocks?.[b] || [];
@@ -6342,6 +6353,7 @@ function render(background = false) {
   // Cached member data may have the same version as the server (or be offline),
   // so applySetlist need not run. Member screens always use LIVE navigation.
   if (VIEW()) S.recMode = false;
+  if (VIEW() && U.view === "absent" && !memberPerformanceIsToday()) U.view = "summary";
   // メンバーへのお知らせだけは、打っていても割り込ませる
   if ((typingNow() || renderPointers.size || Date.now() < scrollingUntil
     || (background && (U.sheet || U.menu || U.picker))) && !alertPending()) {
@@ -7813,6 +7825,7 @@ function summaryShowPicker() {
 function selectSummaryShow(id) {
   if (S.recMode || (id && !summaryShows().some(sw => sw.id === id))) return;
   U.allShows = !id;
+  if (VIEW()) U.memberShowChosen = true;
   if (id) { S.showId = id; if (!VIEW()) syncShowGroup(); rememberViewSelection(); }
   U.songIdx = 0;
   save(); render();
@@ -8021,6 +8034,7 @@ function openSummarySong(id, lineIdx = null, noteId = "") {
   const so = id ? S.songs.find(so => so.id === id && allowed.has(so.showId)
     && (!S.groupId || !so.groupId || so.groupId === S.groupId)) : SONGS()[U.songIdx] || summarySongs()[0];
   if (!so) return;
+  U.memberShowChosen = true;
   if (U.view === "summary") U.summaryReturn = {
     showId: S.showId, allShows: U.allShows, mode: U.mode,
     scrollTop: app.querySelector(".scroll")?.scrollTop || 0,
@@ -8674,8 +8688,49 @@ async function toggleAbsenceMember(id, button) {
 }
 
 // Read-only view of absence substitutions; use each song's own performance.
+function memberDayKey(now = Date.now()) {
+  return new Date(now + 9 * 60 * 60 * 1000).toISOString().slice(0,10);
+}
+function memberPerformanceDates(sw) {
+  const first = performanceDateOrder(sw);
+  if (!first) return [];
+  const text = String(sw.date || sw.day || sw.name || "").normalize("NFKC");
+  const match = /(?:^|[^0-9])(?:20[0-9]{2}[年/.-])?[0-9]{1,2}[月/.-][0-9]{1,2}(?:日)?(?![0-9])/.exec(text);
+  const tail = match ? text.slice(match.index + match[0].length) : "";
+  const joined = /^(?:[.・、,]\s*[0-9]{1,2}(?:日)?(?![0-9/／月部]))+/.exec(tail)?.[0] || "";
+  const days = [first.day, ...(joined.match(/[0-9]{1,2}/g) || []).map(Number)];
+  const lastDay = new Date(Date.UTC(first.year || 2000,first.month,0)).getUTCDate();
+  return [...new Set(days)].filter(day => day >= 1 && day <= lastDay).map(day => ({...first,day}));
+}
+function memberPerformanceDateOrder(sw) {
+  const dates = memberPerformanceDates(sw);
+  return dates.length ? dates.reduce((latest,date) => date.day > latest.day ? date : latest) : null;
+}
+function memberPerformanceIsToday(id = S.showId, now = Date.now()) {
+  const sw = S.shows.find(sw => sw.id === id);
+  if (!sw) return false;
+  const today = memberDayKey(now).split("-").map(Number);
+  return memberPerformanceDates(sw).some(date => (!date.year || date.year === today[0]) && date.month === today[1] && date.day === today[2]);
+}
+let memberVisibleDay = memberDayKey();
+function refreshMemberPresentation(resume = false) {
+  if (!booted || !VIEW() || preview || document.hidden) return;
+  const today = memberDayKey(), changed = today !== memberVisibleDay;
+  if (!resume && !changed) return;
+  memberVisibleDay = today;
+  if (resume) {
+    U.memberShowChosen = false;
+    restoreViewSelection(S.showId, true);
+    U.summaryReturn = null; U.lyricTarget = null;
+  }
+  if (U.view === "absent" && !memberPerformanceIsToday()) { U.view = "summary"; U.allShows = false; }
+  render();
+}
+setInterval(() => refreshMemberPresentation(), 1000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) refreshMemberPresentation(true); });
+window.addEventListener("pageshow", () => refreshMemberPresentation(true));
 function memberChangePerformances() {
-  return S.shows.filter(sw=>!sw.hidden).map(sw=>({show:sw,count:S.songs
+  return S.shows.filter(sw=>!sw.hidden&&memberPerformanceIsToday(sw.id)).map(sw=>({show:sw,count:S.songs
     .filter(so=>so.showId===sw.id&&(!S.groupId||so.groupId===S.groupId))
     .reduce((n,so)=>n+memberAbsenceChanges(so).length,0)})).filter(row=>row.count);
 }
@@ -8777,6 +8832,7 @@ function memberAbsenceRows(so, entries, memberId="") {
   }).join("");
 }
 function viewMemberAbsence() {
+  if (!memberPerformanceIsToday(S.showId)) return viewSummary();
   const changeShows=memberChangePerformances().map(row=>row.show);
   if(!changeShows.some(sw=>sw.id===S.showId)){
     const current=S.shows.find(sw=>sw.id===S.showId);if(current)changeShows.unshift(current);
@@ -11490,7 +11546,13 @@ document.addEventListener("click", async (e) => {
       break;
     }
     case "absence-scope": if (VIEW()) { U.absenceMode = id === "member" ? "member" : "all"; render(); } break;
-    case "goabsent": commitFields(); if(VIEW() && S.shows.some(sw=>sw.id===id)){S.showId=id;U.songIdx=0;U.allShows=false;} U.view = "absent"; render(); break;
+    case "goabsent":
+      if(VIEW() && !memberPerformanceIsToday(id || S.showId))break;
+      commitFields();
+      if(VIEW() && S.shows.some(sw=>sw.id===id)){
+        S.showId=id;U.songIdx=0;U.allShows=false;U.memberShowChosen=true;rememberViewSelection();
+      }
+      U.view = "absent"; render(); break;
     case "resetsubs":
       if (confirm("この公演の振り替えをすべてやり直しますか？")) {
         SONGS().forEach((so) => {
@@ -15603,6 +15665,7 @@ function resetForNewSource() {
   S.shows = [{ id: nid, name: todayLabel(), ts: Date.now() }];
   S.showId = nid; S.setlistVer = 0; U.songIdx = 0;
   U.summaryReturn = null; U.lyricTarget = null; U.summaryScroll = null;
+  U.memberShowChosen = false;
 }
 
 function applySetlist(d) {
@@ -15613,9 +15676,9 @@ function applySetlist(d) {
   S.recMode = false;
   const initialSource = !S.songs.length || !!(d.groupName && S.srcGroup && d.groupName !== S.srcGroup);
   const currentSelection = S.showId;
-  const summaryContext = VIEW() && U.view === "summary" && S.songs.length
+  const summaryContext = VIEW() && ["summary","absent"].includes(U.view) && S.songs.length
     && (!d.groupName || !S.srcGroup || d.groupName === S.srcGroup)
-    ? {showId:S.showId, memberName:(member(U.sumOpen) || {}).name} : null;
+    ? {view:U.view, showId:S.showId, memberName:(member(U.sumOpen) || {}).name} : null;
   if (!S.groups.some((g) => g.gistId)) { S.songs = []; S.memos = {}; S.pubNotes = []; }
   S.songs = [];
   S.sourceMemberNames = (d.members || []).map(x => x.name).filter(Boolean);
@@ -15708,16 +15771,15 @@ function applySetlist(d) {
       const nid = uid();
       S.shows = [{ id: nid, name: todayLabel(), ts: Date.now() }];
     }
-    const newest = initialSource && latestPerformance(S.groupId);
+    const newest = latestPerformance(S.groupId);
     const focus = newest ? newest.id : d.focusShow && S.shows.some((x) => x.id === d.focusShow)
       ? d.focusShow
       : ((showsNewestFirst().filter((x) => !x.hidden)[0] || {}).id || "");
-    const keepShow = summaryContext && S.shows.some(sw => sw.id === summaryContext.showId)
-      || !initialSource && S.shows.some(sw => sw.id === currentSelection);
+    const keepShow = !initialSource && U.memberShowChosen && S.shows.some(sw => sw.id === currentSelection);
     if (keepShow) S.showId = summaryContext ? summaryContext.showId : currentSelection;
     else if (focus) S.showId = focus;
     // メンバー別の確認中は、公演と開いている人を更新後も保持する。
-    U.view = summaryContext ? "summary" : "live";
+    U.view = summaryContext ? summaryContext.view === "absent" && memberPerformanceIsToday(S.showId) ? "absent" : "summary" : "live";
     if (summaryContext) U.sumOpen = (S.members.find(m => m.name === summaryContext.memberName) || {}).id || "";
     else U.sumOpen = "";
     U.menu = null;
@@ -15726,7 +15788,7 @@ function applySetlist(d) {
     U.picker = false;
   }
   U.songIdx = 0;
-  if (!U.summaryReturn) restoreViewSelection(S.showId, initialSource);
+  if (!U.summaryReturn) restoreViewSelection(S.showId, initialSource || VIEW() && !U.memberShowChosen);
   save(); render();
 }
 
@@ -16094,7 +16156,7 @@ async function importFromLink() {
       S.viewer = true;
       if (changed) resetForNewSource(); // 別グループのリンク
     }
-    S.setlistVer = 0; save();
+    U.memberShowChosen = false; S.setlistVer = 0; save();
     keepLinkInURL();
     await syncSetlist(true);
     if (VIEW()) { U.view = "summary"; U.mode = "member"; U.allShows = false; render(); }

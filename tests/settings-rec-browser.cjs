@@ -14,6 +14,7 @@ const {checkRecSectionStability}=require('./rec-section-stability-browser-helper
 const {checkRecordingHeadcounts}=require('./recording-headcount-browser-helper.cjs');
 const {checkLyricBreaks}=require('./lyric-break-browser-helper.cjs');
 const {checkLyricSize}=require('./lyric-size-browser-helper.cjs');
+const {checkMemberStartDay}=require('./member-start-day-browser-helper.cjs');
 const {checkRecordingBrowse}=require('./recording-browse-browser-helper.cjs');
 const {checkArrangementDevice}=require('./arrangement-device-browser-helper.cjs');
 const {checkMemberRoster}=require('./member-roster-browser-helper.cjs');
@@ -134,6 +135,7 @@ async function readableTitles(page,rec){
    const newAbsenceResult=await checkNewAbsenceSongs(page,width,{screenshot});
    const lyricBreakResult=await checkLyricBreaks(page,width,{mode,assertFits,screenshot});
    const lyricSizeResult=await checkLyricSize(page,width,{mode,assertFits,screenshot});
+   const memberStartDayResult=await checkMemberStartDay(page,width,{screenshot});
    const recSegmentResult=await checkRecordingSegmentSections(page,width,{screenshot});
    const liveNoteResult=await checkLiveNoteInput(page,width,{screenshot});
    const recAutoResult=await checkRecordingAutoStart(page,width,{screenshot});
@@ -164,7 +166,7 @@ async function readableTitles(page,rec){
     : await browser.newContext({viewport:{width,height:844},serviceWorkers:'block'});
    contexts.add(audioContext);await audioContext.route('**/*',route=>{const request=route.request(),url=new URL(request.url());return url.origin===allowedOrigin&&request.method()==='GET'?route.continue():route.abort('blockedbyclient');});
    const passiveAudioResult=await checkPassiveAudio(audioContext,origin,width,{screenshot});await audioContext.close();contexts.delete(audioContext);
-   results.push({width,memberRoster,legacyMemberRoster,cleanMemberRoster,arrangementDevice,progressConnection,...folderResult,...recordingBrowseResult,...absenceResult,...newAbsenceResult,...lyricBreakResult,...lyricSizeResult,...recSegmentResult,...liveNoteResult,...recAutoResult,...recHeadcountResult,...recScrollResult,...recOriginalOKResult,...passiveAudioResult,excelOriginal:excelCheck,settings:true,pdfLiveRecView:true,fullTitles:true,footer:true,draftPreserved:true,saveErrorVisible:true});
+   results.push({width,memberRoster,legacyMemberRoster,cleanMemberRoster,arrangementDevice,progressConnection,...folderResult,...recordingBrowseResult,...absenceResult,...newAbsenceResult,...lyricBreakResult,...lyricSizeResult,...memberStartDayResult,...recSegmentResult,...liveNoteResult,...recAutoResult,...recHeadcountResult,...recScrollResult,...recOriginalOKResult,...passiveAudioResult,excelOriginal:excelCheck,settings:true,pdfLiveRecView:true,fullTitles:true,footer:true,draftPreserved:true,saveErrorVisible:true});
   }
   assert.deepEqual(errors,[]);assert.equal(blocked.filter(x=>x.method!=='GET').length,0);
   const report={passed:true,engine,results,errors,blocked,externalRequestsAllowed:0,syntheticDataOnly:true};
@@ -273,6 +275,7 @@ async function checkMemberPreviewLoading(page,width,{screenshot,assertFits}){
  }
 }
 async function checkExcelReattach(page,width,dialogs){
+ const restoreDate=await require('./browser-date.cjs').withBrowserDate(page,'2026-10-18T03:00:00Z');
  const saved=await page.evaluate(()=>({state:JSON.stringify(S),ui:JSON.stringify(U),hold:startupRecoveryNetworkHold,saveErr}));
  const songId='qa-excel-song',showId='qa-excel-show';
  try{
@@ -292,7 +295,7 @@ async function checkExcelReattach(page,width,dialogs){
    const so=buildSong(parsed,{addMember,uid:()=> 'qa-excel-song'});
    Object.assign(so,{showId:'qa-excel-show',groupId:'qa-excel-group',xls:1,xlsSourceId:'qa-excel-missing',xlsAt:123});
    S.groups.push({id:'qa-excel-group',name:'合成Excel検証',nopub:true});
-   S.shows.push({id:'qa-excel-show',groupId:'qa-excel-group',name:'合成Excel公演',nopub:true,absent:['qa-excel-member-甲']});
+   S.shows.push({id:'qa-excel-show',groupId:'qa-excel-group',name:'2026/10/18 合成Excel公演',nopub:true,absent:['qa-excel-member-甲']});
    S.songs.push(so);S.groupId='qa-excel-group';S.showId='qa-excel-show';
    const lineIdx=so.lines.findIndex(l=>l.t==='Synthetic lyric one to preserve');
    if(lineIdx<0||so.lines[lineIdx].cell!=='A1'||so.lines[lineIdx].lcell!=='B1')throw Error('Synthetic workbook must retain expected cell mapping');
@@ -496,6 +499,7 @@ async function checkExcelReattach(page,width,dialogs){
    if(saveErr)throw Error('Synthetic test could not restore prior state');saveErr=saved.saveErr;delete window.qaExcelBytes;render(true);
   },saved);
   assert.equal(await page.evaluate(()=>JSON.stringify(S)),saved.state,'Excel check restores exact prior application state');
+  await restoreDate();
  }
  return {reattach:true,wrongWorkbookRejected:true,oldWorkbookPreserved:true,idsLyricsNotesPreserved:true,export:true,batchReattach:true,onDemandOriginal:true,restoredSongIndividualAndBatch:true,directNativeShareAndLoading:true};
 }

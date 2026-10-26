@@ -1,10 +1,11 @@
 'use strict';
 const assert=require('node:assert/strict');
 async function checkNewAbsenceSongs(page,width,{screenshot}){
+ const restoreDate=await require("./browser-date.cjs").withBrowserDate(page,"2026-10-18T03:00:00Z");
  const saved=await page.evaluate(async()=>{document.activeElement?.blur();await saveNow();return {state:JSON.stringify(S),ui:JSON.stringify(U),hold:startupRecoveryNetworkHold};});
  try{
   await page.evaluate(async()=>{
-   S=Object.assign(structuredClone(S0),{pt:structuredClone(S.pt||{}),viewer:false,recMode:false,ghToken:'',bkGistId:'',src:'',autoPub:false,groupId:'absence-add-group',showId:'absence-add-show',groups:[{id:'absence-add-group',name:'OCHA NORMA'}],shows:[{id:'absence-add-show',groupId:'absence-add-group',name:'追加曲の合成公演'}],members:['斉藤','広本','米村','窪田','中山','西﨑','北原','筒井'].map(name=>({id:name,name})),notes:[],pubNotes:[],recs:{},rsongs:[],plan:{slots:[]},songs:[{id:'absence-existing',showId:'absence-add-show',groupId:'absence-add-group',title:'既存の合成曲',roster:['北原','斉藤','広本'],blocks:{},lines:[{t:'保持する既存歌詞',parts:['北原','斉藤']}]}]});
+   S=Object.assign(structuredClone(S0),{pt:structuredClone(S.pt||{}),viewer:false,recMode:false,ghToken:'',bkGistId:'',src:'',autoPub:false,groupId:'absence-add-group',showId:'absence-add-show',groups:[{id:'absence-add-group',name:'OCHA NORMA'}],shows:[{id:'absence-add-show',groupId:'absence-add-group',name:'2026/10/18 追加曲の合成公演'}],members:['斉藤','広本','米村','窪田','中山','西﨑','北原','筒井'].map(name=>({id:name,name})),notes:[],pubNotes:[],recs:{},rsongs:[],plan:{slots:[]},songs:[{id:'absence-existing',showId:'absence-add-show',groupId:'absence-add-group',title:'既存の合成曲',roster:['北原','斉藤','広本'],blocks:{},lines:[{t:'保持する既存歌詞',parts:['北原','斉藤']}]}]});
    startupRecoveryNetworkHold=true;Object.assign(U,{view:'absent',songIdx:0,mode:'song',showFilter:S.groupId,menu:null,sheet:null,picker:false,overview:false,draw:false});renderPointers.clear();scrollingUntil=0;save();await saveNow();render(true);
   });
   await page.locator('[data-act="toggleabsent"][data-id="北原"]').click();
@@ -37,6 +38,7 @@ async function checkNewAbsenceSongs(page,width,{screenshot}){
   await screenshot(page,width,'absence-new-song-member-received');
  }finally{
   await page.evaluate(async saved=>{document.activeElement?.blur();S=JSON.parse(saved.state);Object.keys(U).forEach(k=>delete U[k]);Object.assign(U,JSON.parse(saved.ui));startupRecoveryNetworkHold=saved.hold;saveErr=false;renderPointers.clear();scrollingUntil=0;pendingRender=false;save();await saveNow();window.qaContent=()=>JSON.stringify(Object.fromEntries(['groups','shows','songs','rsongs','notes','memos','staffMemos','recs','plan'].map(k=>[k,S[k]])));render();},saved);
+  await restoreDate();
  }
  return {absenceNewSongImportedAndLinked:true,assignmentNameLongPressWithDrift:true,assignmentToggleMatchesDisplayedNames:true,absenceNewSongSaveReloadAndMemberReceive:true};
 }

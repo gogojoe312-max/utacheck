@@ -15,6 +15,8 @@ function setup(storage = new Map()) {
   c.VIEW = () => c.S.viewer;
   c.group = id => c.S.groups.find(g=>g.id===(id||c.S.groupId));
   c.showsNewestFirst = () => c.S.shows.slice().sort((a,b)=>b.ts-a.ts);
+  vm.runInContext(block('function performanceDateOrder(', 'function groupedPerformanceHTML('),c);
+  for(const name of ['memberPerformanceDates','memberPerformanceDateOrder']){const at=source.indexOf('function '+name+'(');vm.runInContext(source.slice(at,source.indexOf('\n}',at)+2),c);}
   vm.runInContext(block('function autoShowGroupId(', 'const showsNewestFirst ='),c);
   vm.runInContext(block('function publicationData(', 'async function gh('),c);
   return {c,storage,run:s=>vm.runInContext(s,c),writes:()=>writes,pushes:()=>pushes};

@@ -1,6 +1,7 @@
 'use strict';
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
 async function checkMemberRoster(page,{legacy=false,clean=false}={}){
+ const restoreDate=await require('./browser-date.cjs').withBrowserDate(page,'2026-10-18T03:00:00Z');
  const saved=await page.evaluate(()=>({state:JSON.stringify(S),ui:JSON.stringify(U),hold:startupRecoveryNetworkHold}));
  const expected=['全員','斉藤','広本','米村','窪田','中山','西﨑','北原','筒井'];
  const options=()=>page.locator('#summary-member option').allTextContents();
@@ -12,7 +13,7 @@ async function checkMemberRoster(page,{legacy=false,clean=false}={}){
    S=Object.assign(structuredClone(S0),{viewer:false,ghToken:'',bkGistId:'',src:'',linkSrc:'',autoPub:false,
     groups:[{id:'qa-roster',name:'OCHA NORMA'}],groupId:'qa-roster',showId:'qa-show',
     rosters:{'OCHA NORMA':clean?formal:[...formal,...junk]},members:[...formal,...junk].map((name,i)=>({id:'person-'+i,name})),
-    shows:[{id:'qa-show',name:'検証公演',absent:['person-6']}],
+    shows:[{id:'qa-show',name:'2026/10/18 検証公演',absent:['person-6']}],
     songs:[{id:'qa-song',showId:'qa-show',groupId:'qa-roster',title:'名簿の検証',roster:[...formal,...junk].map((_,i)=>'person-'+i),blocks:{},
      lines:[...formal,...junk].map((name,i)=>({t:'合成歌詞 '+i,parts:['person-'+i],raw:name,label:name}))}],
     notes:[],pubNotes:[],subs:{'qa-show|qa-song':{6:['person-0']}},gsubs:{},assignmentEdits:{},recs:{},memos:{},plan:{slots:[]}});
@@ -70,6 +71,7 @@ async function checkMemberRoster(page,{legacy=false,clean=false}={}){
   return {memberOptions:await options(),legacyPublicationReceived:legacy,pollutedRosterReceived:!legacy&&!clean,cleanRosterReceived:clean,formalMemberOptions:true,shortNamesUnified:true,groupFeedbackResolved:true,updatedGroupFeedbackResolved:true,dropdownOpenedOnBothScreens:true,reloaded:true,bothMemberScreens:true,assignmentsPreserved:true};
  }finally{
   await page.evaluate(async saved=>{S=JSON.parse(saved.state);U=JSON.parse(saved.ui);startupRecoveryNetworkHold=saved.hold;saveErr=false;save();await saveNow();if(saveErr)throw Error('Could not restore synthetic state');renderPointers.clear();scrollingUntil=0;render(true);},saved);
+  await restoreDate();
  }
 }
 module.exports={checkMemberRoster};

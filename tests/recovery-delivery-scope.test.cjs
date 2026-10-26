@@ -1,6 +1,6 @@
 'use strict';
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
-const API=require('../recovery-delivery-scope.js');
+const API=require(process.env.QA_RECOVERY_SOURCE||'../recovery-delivery-scope.js');
 const clone=value=>structuredClone(value);
 const SHA='a'.repeat(64),REMOTE='b'.repeat(64),GIST='c'.repeat(32);
 const SRC='https://gist.githubusercontent.com/fixture-owner/'+GIST+'/raw/utacheck.json';
@@ -840,4 +840,21 @@ for(const key of ['micSheet','micMap'])test('Excel layout exception never admits
   const payload=publication(true),node=place==='top'?payload:place==='show'?payload.shows[0]:payload.notes[0].hand;node[key]=key==='micSheet'?'Sheet':{Singer:'1'};
   fails('publication-private-field',()=>API.verifyPublication(target(),publication(),payload));
  }
+});
+
+test('actual reversible size publication passes delivery validation and retains original cut provenance',()=>{
+ const f=actualPublicationFixture(),so=f.S.songs[0];Object.assign(so.lines[0],{sourceCut:false,cut:1});
+ const wire=JSON.parse(JSON.stringify(f.context.publicationData('GROUP',undefined,true)));
+ assert.deepEqual(wire.lib[0].displayCuts,[{lineIdx:0,hidden:true,sourceCut:false}]);
+ assert.equal(API.verifyPublication(f.result.targets[0],publication(),wire).ok,true);
+ const result=API.mergeOwnerPublication(f.result.targets[0],publication(),wire);
+ assert.deepEqual(result.payload.lib.find(lib=>lib.displayCuts)?.displayCuts,wire.lib[0].displayCuts);
+ for(const displayCuts of [null,{},[{lineIdx:-1,hidden:true,sourceCut:false}],[{lineIdx:1,hidden:true,sourceCut:false}],[{lineIdx:0,hidden:'true',sourceCut:false}],[{lineIdx:0,hidden:true}],[{lineIdx:0,hidden:false,sourceCut:1}],[{lineIdx:0,hidden:false,sourceCut:false,extra:true}],[{lineIdx:0,hidden:false,sourceCut:false},{lineIdx:0,hidden:false,sourceCut:false}]]){
+  const bad=publication(true);bad.lib[0].displayCuts=displayCuts;fails('payload-publication-invalid',()=>API.verifyPublication(target(),publication(),bad));
+ }
+ const privateField=publication(true);privateField.lib[0].displayCuts=[{lineIdx:0,hidden:false,sourceCut:false,token:'forbidden'}];fails('publication-private-field',()=>API.verifyPublication(target(),publication(),privateField));
+});
+test('recovery comparison keeps differing display-cut provenance instead of silently overwriting it',()=>{
+ const f=equivalentMergeFixture();f.remote.lib[0].displayCuts=[{lineIdx:0,hidden:false,sourceCut:true}];f.local.lib[0].displayCuts=[{lineIdx:0,hidden:false,sourceCut:false}];
+ const out=API.mergePublication(f.target,f.remote,f.local);assert.deepEqual(out.preservedShowIds,['SOURCE_ONE']);assert.deepEqual(out.heldLocalShowIds,['LOCAL_ONE']);assert.deepEqual(out.payload.lib[0].displayCuts,f.remote.lib[0].displayCuts);
 });

@@ -2,6 +2,7 @@
 const assert=require('node:assert/strict');
 // Called inside the existing isolated settings browser context; synthetic data only.
 async function checkAbsence(page,width,{mode,assertFits,screenshot}){
+ const restoreDate=await require("./browser-date.cjs").withBrowserDate(page,"2026-10-15T03:00:00Z");
  const expectLines=async expected=>{
   await page.waitForFunction(ids=>JSON.stringify(
    [...document.querySelectorAll('.member-absence-change')]
@@ -54,7 +55,7 @@ async function checkAbsence(page,width,{mode,assertFits,screenshot}){
    S.groups[0].nopub=false;S.shows[0].nopub=false;
    S.shows.push({id:'newest-normal',groupId:S.groupId,name:'新しい通常公演',absent:[]});
    S.songs.push({...structuredClone(S.songs[0]),id:'newest-song',showId:'newest-normal'});
-   S.showId='newest-normal';
+   selectSummaryShow('newest-normal');
    const wire=publicationData(S.groupId);
    const newlyConfirmed=wire.subs.filter(row=>row.confirmed===true).length;
    for(const row of [...wire.subs,...wire.gsubs])delete row.confirmed;
@@ -185,6 +186,7 @@ async function checkAbsence(page,width,{mode,assertFits,screenshot}){
    renderPointers.clear();scrollingUntil=0;pendingRender=false;render(true);
    delete window.__absenceQA;
   });
+  await restoreDate();
  }
  return {noPermanentAssignmentField:true,manualAssignmentReceipt:true,separatePreLiveChanges:true,absenceAll:true,absencePersonal:true,absenceQuietReduction:true,absenceOwnerGuestPreserved:true,absenceLyricNavigation:true,confirmedChangesOnly:true,publicationRoundtrip:true};
 }

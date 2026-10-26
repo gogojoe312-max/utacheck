@@ -5,9 +5,9 @@ const source=fs.readFileSync(__dirname+'/../app.js','utf8');
 const read=name=>{const a=source.indexOf('function '+name+'(');assert(a>=0,name);return source.slice(source.lastIndexOf('\n',a)+1,source.indexOf('\n}',a)+2);};
 const json=x=>JSON.parse(JSON.stringify(x));
 function fixture(){
- const c={AbsenceChanges:Changes,S:{showId:'show',groupId:'g',groups:[{id:'g',name:'Group'}],rosters:{Group:['Person 1','Person 2','Person 3']},
+ const c={Date:class extends Date {static now(){return Date.parse('2026-10-15T03:00:00Z');}},AbsenceChanges:Changes,S:{showId:'show',groupId:'g',groups:[{id:'g',name:'Group'}],rosters:{Group:['Person 1','Person 2','Person 3']},
   members:[{id:'m1',name:'Person 1'},{id:'m2',name:'Person 2'},{id:'m3',name:'Person 3'},{id:'m4',name:'Guest 4'},{id:'ph',name:'回替わり'},{id:'block',name:'A'}],
-  shows:[{id:'show',name:'Show',absent:['m1']}],songs:[{id:'song',showId:'show',groupId:'g',title:'Song <safe>',roster:['m1','m2','m3','m4','ph','block'],blocks:{A:['m1','m2']},lines:[
+  shows:[{id:'show',name:'Show',date:'2026-10-15',absent:['m1']}],songs:[{id:'song',showId:'show',groupId:'g',title:'Song <safe>',roster:['m1','m2','m3','m4','ph','block'],blocks:{A:['m1','m2']},lines:[
    {t:'quiet trio',parts:['m1','m2','m3'],label:'Person 1・Person 2・Person 3'},
    {t:'visible duo',parts:['m1','m2'],label:'Person 1・Person 2'},
    {t:'visible replacement',parts:['m1'],label:'Person 1'},
@@ -25,7 +25,7 @@ function fixture(){
  c.restoreViewerMember=()=>c.selected;c.viewerMembers=()=>c.S.members.slice(0,4);c.compactMemberLabel=n=>n;
  c.summarySongs=()=>c.U.allShows?c.S.songs:c.SONGS();c.showName=id=>c.S.shows.find(s=>s.id===(id||c.S.showId))?.name||'';
  vm.createContext(c);
- for(const name of ['viewerMemberName','viewerMemberIds','viewerAssignmentIds','viewerAssignmentNames','absentVersionNames','noteInArrangement','rowNo','memberChangePerformances','recordAssignmentChange','confirmAbsentAssignments','memberReviewNav','memberAbsenceContext','memberAbsenceChanges','absenceSelectableMembers','memberAbsenceRows','viewMemberAbsence','viewerSummaryBody','lineStatus','blockStatus','viewAbsent'])vm.runInContext(read(name),c);
+ for(const name of ['performanceDateOrder','memberDayKey','memberPerformanceDates','memberPerformanceDateOrder','memberPerformanceIsToday','viewerMemberName','viewerMemberIds','viewerAssignmentIds','viewerAssignmentNames','absentVersionNames','noteInArrangement','rowNo','memberChangePerformances','recordAssignmentChange','confirmAbsentAssignments','memberReviewNav','memberAbsenceContext','memberAbsenceChanges','absenceSelectableMembers','memberAbsenceRows','viewMemberAbsence','viewerSummaryBody','lineStatus','blockStatus','viewAbsent'])vm.runInContext(read(name),c);
  for(const so of c.S.songs){
   const key=so.showId+'|'+so.id;
   for(const [index,after] of Object.entries(c.S.subs[key]||{}))c.recordAssignmentChange(so,'lines',Number(index),after);
@@ -196,7 +196,7 @@ test('already-created absence changes remain visible without newer confirmation 
  assert.equal(c.memberReviewNav(),'','Unchanged, absent-still-assigned and empty unresolved rows stay hidden');
 });
 test('changes on another performance are accessible even when current performance has none',()=>{
- const c=fixture();c.S.shows.push({id:'newest',name:'Newest',absent:[]});c.S.showId='newest';
+ const c=fixture();c.S.shows.push({id:'newest',name:'Newest',date:'2026-10-15',absent:[]});c.S.showId='newest';
  assert(c.memberReviewNav().includes('data-id="show"'));
  assert(c.viewMemberAbsence().includes('id="summary-show"'));
 });
