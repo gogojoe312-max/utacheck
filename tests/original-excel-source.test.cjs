@@ -432,3 +432,12 @@ test('explicit display cuts verify both original endpoints and retain the origin
   await assert.rejects(c.prepareOriginalExcelAttachment(c.S,wrong),/カット範囲/);
  }
 });
+
+test('reversible display size preserves exact original matching and reattachment without changing source rows',async()=>{
+ const {c,so}=setup();so.lines[0].sourceCut=false;so.lines[0].cut=1;
+ const before=JSON.stringify(so.lines);assert.equal(await c.inspectOriginalExcel(so,fixture()),true);
+ const repaired=await c.originalExcelAttachment(so,fixture());assert(repaired);
+ c.attachOriginalExcelMetadata(so,repaired,'sha256-'+'a'.repeat(64),123);
+ assert.equal(JSON.stringify(so.lines),before);so.lines[0].cut=0;
+ assert.equal(await c.inspectOriginalExcel(so,fixture()),true);
+});

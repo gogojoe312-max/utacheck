@@ -13,6 +13,7 @@ const {checkRecordingOKOriginal}=require('./recording-ok-original-browser-helper
 const {checkRecSectionStability}=require('./rec-section-stability-browser-helper.cjs');
 const {checkRecordingHeadcounts}=require('./recording-headcount-browser-helper.cjs');
 const {checkLyricBreaks}=require('./lyric-break-browser-helper.cjs');
+const {checkLyricSize}=require('./lyric-size-browser-helper.cjs');
 const {checkRecordingBrowse}=require('./recording-browse-browser-helper.cjs');
 const {checkArrangementDevice}=require('./arrangement-device-browser-helper.cjs');
 const {checkMemberRoster}=require('./member-roster-browser-helper.cjs');
@@ -132,6 +133,7 @@ async function readableTitles(page,rec){
    const absenceResult=await checkAbsence(page,width,{mode,assertFits,screenshot});
    const newAbsenceResult=await checkNewAbsenceSongs(page,width,{screenshot});
    const lyricBreakResult=await checkLyricBreaks(page,width,{mode,assertFits,screenshot});
+   const lyricSizeResult=await checkLyricSize(page,width,{mode,assertFits,screenshot});
    const recSegmentResult=await checkRecordingSegmentSections(page,width,{screenshot});
    const liveNoteResult=await checkLiveNoteInput(page,width,{screenshot});
    const recAutoResult=await checkRecordingAutoStart(page,width,{screenshot});
@@ -162,7 +164,7 @@ async function readableTitles(page,rec){
     : await browser.newContext({viewport:{width,height:844},serviceWorkers:'block'});
    contexts.add(audioContext);await audioContext.route('**/*',route=>{const request=route.request(),url=new URL(request.url());return url.origin===allowedOrigin&&request.method()==='GET'?route.continue():route.abort('blockedbyclient');});
    const passiveAudioResult=await checkPassiveAudio(audioContext,origin,width,{screenshot});await audioContext.close();contexts.delete(audioContext);
-   results.push({width,memberRoster,legacyMemberRoster,cleanMemberRoster,arrangementDevice,progressConnection,...folderResult,...recordingBrowseResult,...absenceResult,...newAbsenceResult,...lyricBreakResult,...recSegmentResult,...liveNoteResult,...recAutoResult,...recHeadcountResult,...recScrollResult,...recOriginalOKResult,...passiveAudioResult,excelOriginal:excelCheck,settings:true,pdfLiveRecView:true,fullTitles:true,footer:true,draftPreserved:true,saveErrorVisible:true});
+   results.push({width,memberRoster,legacyMemberRoster,cleanMemberRoster,arrangementDevice,progressConnection,...folderResult,...recordingBrowseResult,...absenceResult,...newAbsenceResult,...lyricBreakResult,...lyricSizeResult,...recSegmentResult,...liveNoteResult,...recAutoResult,...recHeadcountResult,...recScrollResult,...recOriginalOKResult,...passiveAudioResult,excelOriginal:excelCheck,settings:true,pdfLiveRecView:true,fullTitles:true,footer:true,draftPreserved:true,saveErrorVisible:true});
   }
   assert.deepEqual(errors,[]);assert.equal(blocked.filter(x=>x.method!=='GET').length,0);
   const report={passed:true,engine,results,errors,blocked,externalRequestsAllowed:0,syntheticDataOnly:true};

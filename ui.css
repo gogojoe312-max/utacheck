@@ -419,3 +419,13 @@ select.field{appearance:auto}textarea.field{resize:vertical}
 .rec-section-mark{color:#e8b95b}
 .ln.rec-assignment-start{position:relative}
 .ln.rec-assignment-start::before{content:"";position:absolute;top:0;left:10px;right:10px;height:1px;background:#565b64;pointer-events:none}
+.lyric-size-sheet{display:flex;flex-direction:column;max-height:92dvh;overflow:hidden;gap:10px}
+.lyric-size-sheet>.row,.lyric-size-sheet>p,.lyric-size-sheet>form{flex-shrink:0}
+.lyric-size-list{overflow:auto;min-height:80px;overscroll-behavior:contain;border-block:1px solid var(--line)}
+.lyric-size-line{display:flex;align-items:baseline;gap:10px;width:100%;text-align:left;padding:13px 8px;min-height:48px;border-bottom:1px solid var(--line);white-space:pre-wrap;overflow-wrap:anywhere}
+.lyric-size-number,.lyric-size-state{font-size:11px;color:var(--dim);flex-shrink:0}
+.lyric-size-number{min-width:20px}
+.lyric-size-line[aria-pressed="true"]{background:color-mix(in srgb,var(--accent) 22%,transparent);box-shadow:inset 3px 0 var(--accent)}
+.lyric-size-line.is-hidden .grow{text-decoration:line-through;color:var(--dim)}
+.lyric-size-sheet form{display:grid;gap:8px}
+.lyric-size-sheet button:disabled{opacity:.4}

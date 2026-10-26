@@ -184,3 +184,20 @@ Passive app audio acceptance:
   local and published browser gates. Real iPhone/native-other-app audio focus
   remains unverified unless actually tested on that device; browser tabs are
   separate evidence and must never be described as a native-device test.
+
+Reversible song-size display acceptance:
+- Import an original Excel through the actual LIVE and REC file picker, including
+  duplicate lyric text, merged assignment continuations, existing gray-cut rows,
+  manual lyric breaks and notes. From that song's actual ⋯ menu open 歌詞の表示範囲
+  and select the first/last rows in either direction. Hide, cancel, save, restore
+  one range and reset the original size. Draft selection must survive a render.
+- Preserve source rows, lyric text, character note anchors, assignment cells,
+  hidden notes, other songs, original gray-cut flags and immutable Excel bytes.
+  Restoring source gray rows must also remain possible. Size cuts must not break
+  exact original matching or reattachment. Handwriting geometry remains guarded.
+- Verify actual owner lyric/overview/PDF and member publication -> receive ->
+  lyric and feedback screens -> save and native reload. Hidden-only feedback
+  must not appear; remaining merged continuations keep their performer label.
+  REC numbering skips display cuts and a hidden section header still anchors its
+  remaining visible lyrics. Keep screenshots and the previous-code missing-control
+  regression. Browser verification does not establish receipt on the actual phone.
