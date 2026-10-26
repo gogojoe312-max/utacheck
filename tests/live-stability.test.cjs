@@ -20,7 +20,7 @@ test('touching, scrolling and open dialogs defer background renders until intera
  const time=clock(),doc=events(),win=events();doc.activeElement=null;let writes=0;
  const app={dataset:{},querySelector:()=>null,set innerHTML(v){writes++;}};
  const c=testContext({...time,document:doc,window:win,Set,S:{recMode:false},U:{view:'live'},app,
-  song:()=>({id:'song'}),takeCtx:()=>'',alertPending:()=>null,viewLive:()=>'<div>歌詞</div>',saveErr:false,VIEW:()=>false,queueInkPaint(){},renderSheet(){}});
+  song:()=>({id:'song'}),takeCtx:()=>'',alertPending:()=>null,memberLinkScreen:()=>'',viewLive:()=>'<div>歌詞</div>',saveErr:false,VIEW:()=>false,queueInkPaint(){},renderSheet(){}});
  vm.runInContext(block('let pendingRender = false;', '// 今日の日付'),c);
  const run=s=>vm.runInContext(s,c);
  doc.fire('pointerdown');run('render(true)');assert.equal(writes,0);
@@ -121,7 +121,7 @@ test('unchanged publications reuse their check, but new notes and completed send
 
 test('unchanged or failed automatic receive polls leave the live DOM alone',async()=>{
  let renders=0,applied=0;const payload={version:7,songs:[{}]};
- const c=testContext({VIEW:()=>true,S:{songs:[{}],setlistVer:7},fetchSetlist:async()=>payload,render(){renders++;},applySetlist(){applied++;},syncErr:''});
+ const c=testContext({VIEW:()=>true,S:{songs:[{}],setlistVer:7},srcUrl:()=> 'synthetic-source',memberLinkTransition:null,group:()=>({}),resetForNewSource(){},fetchSetlist:async()=>payload,render(){renders++;},applySetlist(){applied++;},syncErr:''});
  vm.runInContext(block('async function syncSetlist(manual)', '/* ---- 共有リンク'),c);
  await vm.runInContext('syncSetlist(false)',c);assert.equal(renders,0);assert.equal(applied,0);
  c.fetchSetlist=async()=>null;await vm.runInContext('syncSetlist(false)',c);assert.equal(renders,0);
@@ -143,7 +143,7 @@ test('changing take at the same list index starts at the top, while edits keep p
  let current={id:'take1'},take='',sc={scrollTop:0};
  const app={dataset:{},querySelector:()=>sc,set innerHTML(v){sc={scrollTop:0};}};
  const c=testContext({...time,document:doc,window:win,Set,S:{recMode:false},U:{view:'live',songIdx:0},app,
-  song:()=>current,takeCtx:()=>take,alertPending:()=>null,viewLive:()=>'<div>歌詞</div>',saveErr:false,VIEW:()=>false,queueInkPaint(){},renderSheet(){}});
+  song:()=>current,takeCtx:()=>take,alertPending:()=>null,memberLinkScreen:()=>'',viewLive:()=>'<div>歌詞</div>',saveErr:false,VIEW:()=>false,queueInkPaint(){},renderSheet(){}});
  vm.runInContext(block('let pendingRender = false;', '// 今日の日付'),c);
  const render=()=>vm.runInContext('render()',c);
  render();sc.scrollTop=1800;render();assert.equal(sc.scrollTop,1800);

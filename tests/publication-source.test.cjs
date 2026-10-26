@@ -90,7 +90,7 @@ test('recovery trusts matching metadata instead of embedded source and rejects m
 test('reopening the same chosen link repairs a previous payload redirect before syncing without resetting records',async()=>{
  const {c,S}=setup();S.groups=[{id:'member'}];S.songs=[{id:'kept'}];S.linkSrc=pinned;S.src=raw(other);
  let synced,reset=0;
- Object.assign(c,{preview:null,TextDecoder,location:{hash:'#g=synthetic'},b64d:()=>new TextEncoder().encode(JSON.stringify({src:pinned})),keepLinkInURL(){},syncSetlist:async()=>{synced=S.src;},resetForNewSource(){reset++;},alert(){}});
+ Object.assign(c,{preview:null,memberLinkTransition:null,TextDecoder,location:{hash:'#g=synthetic'},b64d:()=>new TextEncoder().encode(JSON.stringify({src:pinned})),keepLinkInURL(){},syncSetlist:async()=>{synced=S.src;},resetForNewSource(){reset++;},alert(){}});
  vm.runInContext(block('async function importFromLink()', 'function copyText('),c);
  await c.importFromLink();assert.equal(synced,raw(id));assert.equal(S.songs[0].id,'kept');assert.equal(reset,0);
  c.preview='active-preview';S.src=raw(other);await c.importFromLink();assert.equal(synced,raw(other));

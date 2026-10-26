@@ -255,3 +255,26 @@ Member empty-show / navigation-delivery acceptance:
   Never send a member preview's replacement state as editor data, bypass a held
   destination/manual autoPub preference, or erase pending notes after a failure.
   Retain old-code failing screenshots and exact-commit published browser evidence.
+
+Member URL / same-name performance acceptance:
+- Seed the actual ambiguous OCHA dates together: 10/25 normal and 北原欠席,
+  10/24.25 normal and 北原欠席, and 10/24 with 20 vs 26 songs. Keep separate
+  IDs, source lyrics, notes and every version. Open the actual 公演・日付 select;
+  its options must distinguish absence variants or song counts, with explicit
+  newer/previous-version labels only for otherwise identical descriptions.
+  Do not silently merge/hide versions or rename stored shows to clean the test.
+- In ONE browser profile, receive/save Rosie, leave the document, then open the
+  OCHA member URL with OCHA's network response held. Observe every #app mutation
+  from the first render: no Rosie show, lyric, note or member control may appear.
+  Display a neutral loading screen, then the requested artist. Reverse the real
+  URLs as well, including same-document hash navigation and actual native reload.
+- Keep the prior received copy until a new source has succeeded. A failed read
+  must show a neutral error/retry state while preserving it, never old artist UI
+  under the new link. Hold an older Rosie's response/body until after OCHA has
+  arrived; it must not apply or change the new source's receipt metadata or view.
+  Changing a member link must never delete personal REC songs, media or plans.
+- Include contaminated source labels and registered rosters and open both the
+  show and member selectors. Keep permanent synthetic regressions in both local
+  and published Chromium/WebKit gates; retain old-code failing first-frame and
+  picker evidence. Also exercise both real published links in one fresh browser
+  profile with read-only real responses. This does not verify the actual phone.

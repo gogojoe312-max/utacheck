@@ -1,0 +1,51 @@
+'use strict';
+const assert=require('node:assert/strict');
+async function checkMemberLinkSwitch(page,width,{screenshot,transitionOnly=false}){
+ const saved=await page.evaluate(async()=>{document.activeElement?.blur();await saveNow();return {state:JSON.stringify(S),ui:JSON.stringify(U),hold:startupRecoveryNetworkHold,url:location.href};});
+ const base=saved.url.split('#')[0],src={ocha:'https://gist.githubusercontent.com/qa/'+'1'.repeat(32)+'/raw/utacheck.json',rosie:'https://gist.githubusercontent.com/qa/'+'2'.repeat(32)+'/raw/utacheck.json'};
+ const link=key=>base+'#g='+Buffer.from(JSON.stringify({src:src[key]})).toString('base64url');
+ const routes=[],releases=[];let blocked='',fail='',seen={},wires;
+ const waitSeen=async key=>{for(let i=0;i<80&&!seen[key];i++)await page.waitForTimeout(25);assert(seen[key],'The requested source must be fetched');};
+ try{
+  wires=await page.evaluate(async src=>{
+   const o=['斉藤','広本','米村','窪田','中山','西﨑','北原','筒井'],r=['橋田','吉田','小野田','村越','植村','松原','島川','上村','相馬'],junk=['お客さん','間奏','A','B','上窪田','下斉藤','北','斉','広'];
+   const groups=[{id:'link-o',name:'OCHA NORMA',src:src.ocha},{id:'link-r',name:'ロージークロニクル',src:src.rosie}];
+   const specs=[['o24-short','10/24',20,[]],['o24','10/24',26,[]],['o25','10/25',26,[]],['o2425','10/24.25',46,[]],['o2425-absent','10/24.25',27,['北原']],['o25-absent','10/25',26,['北原','北']]];
+   const members=[...o,...r,...junk].map((name,i)=>({id:'link-person-'+i,name})),mid=name=>members.find(m=>m.name===name).id;
+   const shows=specs.map(([id,name,count,absent],i)=>({id,name,groupId:'link-o',folder:'Original CHAracter',ts:100+i,absent:absent.map(mid)})).concat([{id:'r-current',name:'ロージー用公演10/26',groupId:'link-r',folder:'26IdolBattle',ts:200,absent:[]}]);
+   const songs=shows.flatMap(sw=>Array.from({length:specs.find(row=>row[0]===sw.id)?.[2]||2},(_,i)=>({id:sw.id+'-song-'+i,showId:sw.id,groupId:sw.groupId,title:(sw.groupId==='link-o'?'OCHA用合成曲 ':'ロージー用合成曲 ')+sw.id+'-'+i,roster:(sw.groupId==='link-o'?o:r).map(mid),blocks:{A:[mid(sw.groupId==='link-o'?'斉藤':'橋田')]},lines:[{t:'保持する合成歌詞 '+sw.id+'-'+i,label:sw.groupId==='link-o'?'斉藤':'橋田',parts:[mid(sw.groupId==='link-o'?'斉藤':'橋田')]}]})));
+   S=Object.assign(structuredClone(S0),{viewer:false,recMode:false,ghToken:'',bkGistId:'',src:'',linkSrc:'',autoPub:false,deviceId:'link-owner',groups,groupId:'link-o',showId:'o25-absent',shows,songs,members,notes:shows.map(sw=>({id:'link-note-'+sw.id,songId:sw.id+'-song-0',showId:sw.id,lineIdx:0,memberIds:[mid(sw.groupId==='link-o'?'斉藤':'橋田')],tags:[],memo:'元の指摘 '+sw.id})),pubNotes:[],memos:{},subs:{},gsubs:{},assignmentEdits:{},rosters:{'OCHA NORMA':[...o,...junk],'ロージークロニクル':[...r,...junk]},rsongs:[{id:'link-private-rec',title:'保持するREC',lines:[{t:'保持する個人REC'}]}],recs:{'link-private-rec':{size:2,dur:3}},plan:{slots:[{id:'link-private-slot',songId:'link-private-rec',name:'保持する個人予定'}]}});
+   const wire={ocha:publicationData('link-o'),rosie:publicationData('link-r')};
+   startupRecoveryNetworkHold=false;S.viewer=true;S.deviceId='link-member';S.groups=[{...groups[1]}];S.groupId='link-r';S.src=S.linkSrc=src.rosie;S.notes=[];S.songs=[];S.shows=[];Object.assign(U,{view:'summary',mode:'member',songIdx:0,menu:null,sheet:null,picker:false,overview:false,allShows:false,showFilter:'',memberShowChosen:false,summaryReturn:null,memberName:'',sumOpen:''});applySetlist(wire.rosie);U.view='summary';renderPointers.clear();scrollingUntil=0;save();await saveNow();render(true);return wire;
+  },src);
+  for(const key of ['ocha','rosie']){
+   const handler=async route=>{seen[key]=true;if(blocked===key)await new Promise(resolve=>releases.push(resolve));await route.fulfill(fail===key?{status:503,body:'temporarily unavailable'}:{status:200,contentType:'application/json',body:JSON.stringify(wires[key])});};await page.route(src[key]+'*',handler);routes.push([src[key]+'*',handler]);
+  }
+  await page.addInitScript(()=>{
+   try{if(!sessionStorage.getItem('qa-member-link-watch'))return;}catch(_){return;}
+   window.__linkFrames=[];let last='';const capture=()=>{const text=document.querySelector('#app')?.innerText||'';if(text&&text!==last){__linkFrames.push(text);last=text;}};new MutationObserver(capture).observe(document,{childList:true,subtree:true});document.addEventListener('DOMContentLoaded',capture);
+  });
+  await page.goto('about:blank');await page.goto(link('rosie'));await page.waitForFunction(()=>typeof S!=='undefined'&&S.srcGroup==='ロージークロニクル'&&normalStartupInitialized);await page.waitForSelector('#summary-show');
+  const privateData=await page.evaluate(()=>JSON.stringify([S.rsongs,S.recs,S.plan]));
+  await page.evaluate(()=>sessionStorage.setItem('qa-member-link-watch','yes'));blocked='ocha';seen={};await page.goto('about:blank');await page.goto(link('ocha'));await page.waitForFunction(()=>typeof normalStartupInitialized!=='undefined'&&normalStartupInitialized);await waitSeen('ocha');await screenshot(page,width,'member-ocha-open-first-frames');
+  assert(!(await page.evaluate(()=>__linkFrames)).some(text=>/ロージー用|ロージークロニクル|橋田/.test(text)),'OCHA URL must never paint the cached Rosie show, notes, or member selector, even before reception');assert.equal(await page.locator('[data-member-link-loading]').count(),1);assert.equal(await page.evaluate(()=>S.srcGroup),'ロージークロニクル','The previous received copy remains preserved while the new source is pending');
+  blocked='';releases.splice(0).forEach(r=>r());await page.waitForFunction(()=>S.srcGroup==='OCHA NORMA'&&U.view==='summary');await page.waitForSelector('#summary-show');assert.equal(await page.evaluate(()=>JSON.stringify([S.rsongs,S.recs,S.plan])),privateData);
+  const expected=['全公演をまとめる','10/25（北原欠席）','10/25（通常）','10/24.25（北原欠席）','10/24.25（通常）','10/24（26曲）','10/24（20曲）'];
+  if(!transitionOnly){await page.locator('#summary-show').click();await screenshot(page,width,'member-ocha-actual-show-picker');await page.keyboard.press('Escape');assert.deepEqual(await page.locator('#summary-show option').allTextContents(),expected);}
+  for(const id of ['o25','o25-absent','o24','o24-short','o2425','o2425-absent']){await page.locator('#summary-show').selectOption(id);assert.match(await page.locator('.member-song').innerText(),new RegExp('元の指摘 '+id));}
+  await page.locator('#summary-member').click();await page.keyboard.press('Escape');assert.deepEqual(await page.locator('#summary-member option').allTextContents(),['全員','斉藤','広本','米村','窪田','中山','西﨑','北原','筒井']);await page.locator('.member-note').first().click();await page.waitForSelector('[data-lyric-line]');await page.locator('[data-act="summary-back"]').click();
+  await page.evaluate(async()=>{save();await saveNow();});await page.reload();await page.waitForFunction(()=>typeof normalStartupInitialized!=='undefined'&&normalStartupInitialized);await page.waitForSelector('#summary-show');assert.equal(await page.evaluate(()=>S.srcGroup),'OCHA NORMA');assert.equal(await page.evaluate(()=>S.songs.length),171);assert.equal(await page.evaluate(()=>S.pubNotes.length),6);
+  // Reverse the actual same-document member URL as well. The old source stays
+  // cached until the requested reply arrives, while its UI must be hidden.
+  blocked='rosie';seen={};await page.evaluate(url=>{__linkFrames=[];location.hash=new URL(url).hash;},link('rosie'));await waitSeen('rosie');await page.waitForSelector('[data-member-link-loading]');assert(!(await page.evaluate(()=>__linkFrames)).some(text=>/OCHA用|北原欠席/.test(text)));await screenshot(page,width,'member-reverse-link-pending');blocked='';releases.splice(0).forEach(r=>r());await page.waitForFunction(()=>S.srcGroup==='ロージークロニクル'&&U.view==='summary');await page.waitForSelector('#summary-show');
+  // An older receive is held, then a different link is opened and completed.
+  blocked='rosie';seen={};await page.evaluate(()=>{window.__oldLinkPoll=syncSetlist(false);});await waitSeen('rosie');await page.evaluate(url=>{__linkFrames=[];location.hash=new URL(url).hash;},link('ocha'));await page.waitForFunction(()=>S.srcGroup==='OCHA NORMA'&&U.view==='summary');blocked='';releases.splice(0).forEach(r=>r());await page.evaluate(()=>__oldLinkPoll);assert.equal(await page.evaluate(()=>S.srcGroup),'OCHA NORMA');assert.equal(await page.locator('#summary-show').inputValue(),'o25-absent');assert.equal(await page.evaluate(()=>S.pubNotes.length),6);await screenshot(page,width,'member-late-old-response-ignored');
+  // Failed reception keeps both the prior data and neutral/error presentation.
+  fail='rosie';await page.evaluate(url=>{__linkFrames=[];location.hash=new URL(url).hash;},link('rosie'));await page.waitForSelector('[data-act="member-link-retry"]');assert.equal(await page.evaluate(()=>S.srcGroup),'OCHA NORMA');assert.equal(await page.evaluate(()=>S.songs.length),171);assert(!(await page.evaluate(()=>__linkFrames)).some(text=>/OCHA用合成曲/.test(text)));await screenshot(page,width,'member-link-failure-preserves-data');fail='';await page.locator('[data-act="member-link-retry"]').click();await page.waitForFunction(()=>S.srcGroup==='ロージークロニクル'&&U.view==='summary');await page.waitForSelector('#summary-show');assert.equal(await page.evaluate(()=>JSON.stringify([S.rsongs,S.recs,S.plan])),privateData);await screenshot(page,width,'member-link-retry-received');
+ }catch(error){await screenshot(page,width,'member-link-switch-failure');throw error;}finally{
+  releases.splice(0).forEach(r=>r());for(const [url,route]of routes)await page.unroute(url,route);
+  await page.evaluate(async saved=>{sessionStorage.removeItem('qa-member-link-watch');preview=null;previewLoading=false;if(typeof memberLinkTransition!=='undefined')memberLinkTransition=null;history.replaceState(null,'',saved.url);S=JSON.parse(saved.state);Object.keys(U).forEach(k=>delete U[k]);Object.assign(U,JSON.parse(saved.ui));startupRecoveryNetworkHold=saved.hold;saveErr=false;renderPointers.clear();scrollingUntil=0;save();await saveNow();renderSheet();render(true);},saved);
+ }
+ return {memberDuplicateShowsClearlyLabeled:true,memberDuplicateShowContentsPreserved:true,memberOCHAFirstPaintNeverRosie:true,memberReverseLinkFirstPaintNeverOCHA:true,memberLateOldReceiveIgnored:true,memberLinkFailureAndRetry:true,memberLinkSwitchNativeReload:true,memberLinkSwitchPrivateRECPreserved:true};
+}
+module.exports={checkMemberLinkSwitch};

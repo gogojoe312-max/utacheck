@@ -118,7 +118,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.68";
+const APP_VER = "16.41.58.69";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -2571,6 +2571,28 @@ function pushUndo(songId, notesOnly = false, includeSongOrder = false) {
 let saveErr = false;
 let previewLoading = false, recordingStartPending = false, recordingFinalizePending = false, pitchStartPending = false;
 let preview = null;                    // メンバーの見え方を確認中は、手元に保存しない
+let memberLinkTransition = null;
+function incomingMemberSource() {
+  try {
+    const match = location.hash.match(/^#g=(.+)$/);
+    if (!match) return "";
+    const text = new TextDecoder().decode(b64d(match[1]));
+    return latestRaw(text.startsWith("{") ? JSON.parse(text).src || "" : text);
+  } catch (_) { return ""; }
+}
+function memberLinkScreen() {
+  if (preview || S.groups.some(g => g.gistId)) return "";
+  const source = incomingMemberSource();
+  if (!source) { memberLinkTransition = null; return ""; }
+  const cached = latestRaw((group() || {}).src || S.linkSrc || S.src);
+  if (source !== cached && !memberLinkTransition || memberLinkTransition && memberLinkTransition.src !== source) memberLinkTransition = {src:source, error:""};
+  if (!memberLinkTransition) return "";
+  const error = memberLinkTransition.error;
+  return '<div class="hd"><b>指摘</b></div><div class="card" data-member-link-loading role="status" aria-live="polite" style="margin:24px 12px">'
+    + (error ? '<p>'+h(error)+'</p><button class="primary" data-act="member-link-retry">もう一度読み込む</button>'
+      + (/合言葉/.test(error) ? '<button class="chip" data-act="askkey">合言葉を入れる</button>' : '')
+      : '<p style="display:flex;align-items:center;gap:10px"><span class="operation-progress-spinner" aria-hidden="true"></span>メンバー画面を読み込み中…</p>') + '</div>';
+}
 
 // 同じ曲を公演の数だけ持つと、歌詞が丸ごと複製されて保存領域を食い潰す。
 // 保存する時だけ歌詞を1か所にまとめ、読み込む時に配り直す。
@@ -6349,6 +6371,12 @@ function render(background = false) {
   if (typeof OperationProgress !== "undefined") OperationProgress.sync(U.busy);
   if (U.view !== "absent" || VIEW() || preview || absenceEditBatch && !absenceEditScopeMatches(absenceEditBatch)) resetAbsenceEditBatch();
   if (!recordingInboxCanWrite()) return;
+  const linkedScreen = memberLinkScreen();
+  if (linkedScreen) {
+    document.activeElement?.blur();
+    U.menu = null; U.sheet = null; U.picker = false;
+    app.dataset.screen = "member-loading"; app.innerHTML = linkedScreen; renderSheet(); return;
+  }
   if (typeof reconcileNewAbsenceSongs === "function" && reconcileNewAbsenceSongs()) save();
   // Cached member data may have the same version as the server (or be offline),
   // so applySetlist need not run. Member screens always use LIVE navigation.
@@ -7817,9 +7845,21 @@ function summaryShows() {
 }
 function summaryShowPicker() {
   if (S.recMode) return "";
+  const list = summaryShows();
+  const label = sw => {
+    const same = list.filter(other => String(other.name || "").normalize('NFKC').trim() === String(sw.name || "").normalize('NFKC').trim() && (other.folder || "") === (sw.folder || ""));
+    if (same.length < 2) return sw.name;
+    const absent = show => absentVersionNames(show.absent || []).join("・");
+    const count = show => S.songs.filter(so => so.showId === show.id && (!S.groupId || !so.groupId || (VIEW() ? so.groupId : songDeliveryGroupId(so)) === S.groupId)).length;
+    let variants = same, detail = [];
+    if (new Set(same.map(absent)).size > 1) { detail.push(absent(sw) ? absent(sw) + "欠席" : "通常"); variants = variants.filter(other => absent(other) === absent(sw)); }
+    if (variants.length > 1 && new Set(variants.map(count)).size > 1) { detail.push(count(sw) + "曲"); variants = variants.filter(other => count(other) === count(sw)); }
+    if (variants.length > 1) { const index = variants.findIndex(other => other.id === sw.id); detail.push(index === 0 ? "新しい版" : "前の版" + (index > 1 ? " " + index : "")); }
+    return sw.name + "（" + detail.join("・") + "）";
+  };
   return `<label class="summary-show-picker"><span>公演・日付</span><select id="summary-show" aria-label="公演・日付">
     <option value="" ${U.allShows ? "selected" : ""}>全公演をまとめる</option>
-    ${performanceFolderGroups(summaryShows(), false, typeof VIEW === "function" && !VIEW() ? S.groupId || "" : null).map(([name, shows]) => `<optgroup label="${h(name || "フォルダなし")}">${shows.map(sw => `<option value="${h(sw.id)}" ${!U.allShows && sw.id === S.showId ? "selected" : ""}>${h(sw.name)}</option>`).join("")}</optgroup>`).join("")}
+    ${performanceFolderGroups(list, false, typeof VIEW === "function" && !VIEW() ? S.groupId || "" : null).map(([name, shows]) => `<optgroup label="${h(name || "フォルダなし")}">${shows.map(sw => `<option value="${h(sw.id)}" ${!U.allShows && sw.id === S.showId ? "selected" : ""}>${h(label(sw))}</option>`).join("")}</optgroup>`).join("")}
   </select></label>`;
 }
 function selectSummaryShow(id) {
@@ -11632,6 +11672,7 @@ document.addEventListener("click", async (e) => {
       break;
     }
     case "synow": await syncSetlist(true); break;
+    case "member-link-retry": await importFromLink(); break;
     case "pastelink": {
       // ホーム画面に追加すると、Safariで開いた時の接続情報が引き継がれない。
       // その場でリンクを貼って つなぎ直せるようにする。
@@ -15629,10 +15670,13 @@ let syncErr = "", syncAt = 0, syncBackoff = 0, justUpdated = 0, askedKey = false
 async function fetchSetlist() {
   if(typeof startupCanCommunicate==='function'&&!startupCanCommunicate())return null;
   const u = srcUrl();
+  const state = S, key = S.key;
+  const current = () => S === state && srcUrl() === u && S.key === key;
   if (!u) { syncErr = "つなぎ先がありません。接続リンクを開き直してください。"; return null; }
   const url = u + (u.includes("?") ? "&" : "?") + "t=" + Date.now();
   try {
     const r = await fetch(url, { cache: "no-store" });
+    if (!current()) return null;
     if (!r.ok) {
       if (r.status === 403 || r.status === 429) syncBackoff = Date.now() + 120000;
       syncErr = r.status === 404
@@ -15642,15 +15686,18 @@ async function fetchSetlist() {
       return null;
     }
     let d = await r.json();
+    if (!current()) return null;
     if (d && d.enc) {
       if (!S.key) { syncErr = "合言葉が必要です。"; return "nokey"; }
       if (!crypto || !crypto.subtle) { syncErr = "この端末では合言葉を解けません。"; return "badkey"; }
-      try { d = await openJSON(d, S.key); } catch (e) { syncErr = "合言葉が違います。"; return "badkey"; }
+      try { d = await openJSON(d, key); } catch (e) { if (!current()) return null; syncErr = "合言葉が違います。"; return "badkey"; }
     }
+    if (!current()) return null;
     if (!(d && Array.isArray(d.songs))) { syncErr = "配信の中身が空です。配信元で「今すぐ送信」を押してもらってください。"; return null; }
     syncErr = ""; syncAt = Date.now(); S.syncAt = syncAt; syncBackoff = 0;
     return d;
   } catch (e) {
+    if (!current()) return null;
     syncErr = "通信できませんでした。電波とネットワークの制限を確認してください。";
     return null;
   }
@@ -15659,8 +15706,8 @@ async function fetchSetlist() {
 // 受け取り専用の端末で、つなぎ先が変わった時に前のグループを消す
 function resetForNewSource() {
   if (S.groups.some((g) => g.gistId)) return; // 配信元の端末では絶対に消さない
-  Object.keys(S.recs || {}).forEach((k) => delClip(k));
-  S.songs = []; S.notes = []; S.pubNotes = []; S.memos = {}; S.recs = {};
+  // A member link replaces received LIVE copies, never personal REC/media.
+  S.songs = []; S.notes = []; S.pubNotes = []; S.memos = {};
   const nid = uid();
   S.shows = [{ id: nid, name: todayLabel(), ts: Date.now() }];
   S.showId = nid; S.setlistVer = 0; U.songIdx = 0;
@@ -15798,7 +15845,13 @@ async function syncSetlist(manual) {
   if (!recordingInboxRelease) return false;
   try {
   if (!VIEW()) return;
+  const state = S, source = srcUrl(), key = S.key;
   const d = await fetchSetlist();
+  if (S !== state || srcUrl() !== source || S.key !== key) return false;
+  const transition = memberLinkTransition && memberLinkTransition.src === source;
+  if (transition && (!d || typeof d === "string" || !d.songs?.length)) {
+    memberLinkTransition.error = syncErr || "まだ受信できていません。もう一度読み込んでください。";
+  }
   if (d === "nokey" || d === "badkey") {
     if (d === "badkey") S.key = "";
     // 裏で回っている同期は15秒ごとなので、毎回聞くと使い物にならない。
@@ -15814,14 +15867,20 @@ async function syncSetlist(manual) {
   }
   if (!d || !d.songs.length) {
     if (d && !d.songs.length) syncErr = "配信に曲が入っていません。配信元で「今すぐ送信」を押してもらってください。";
-    if (manual) alert(syncErr || "配信されているセットリストが見つかりませんでした。");
-    if (manual || !S.songs.length) render(true);
+    if (manual && !transition) alert(syncErr || "配信されているセットリストが見つかりませんでした。");
+    if (manual || !S.songs.length || transition) render(true);
     return;
   }
   if (d.authorId && d.authorId === S.deviceId) {
     if (manual) alert("この端末が配信元です。手元の内容が最新です。");
     return;
   }
+  if (transition) {
+    resetForNewSource();
+    memberLinkTransition = null;
+  }
+  const receivedGroup = group();
+  if (receivedGroup && !receivedGroup.gistId) receivedGroup.src = source;
   if (!S.songs.length) { applySetlist(d); return; }
   // 別グループの配信につながっていたら、混ざらないよう丸ごと入れ替える
   if (d.groupName && S.srcGroup && d.groupName !== S.srcGroup) {
@@ -16163,8 +16222,11 @@ async function importFromLink() {
       if (VIEW() && !preview && S.src !== latestRaw(src)) { S.src = latestRaw(src); save(); }
       if (key && !S.key) { S.key = key; save(); }
       keepLinkInURL();
-      await syncSetlist(false);
-      if (VIEW()) { U.view = "summary"; U.mode = "member"; render(); }
+      const view = U.view, transitioning = !!memberLinkTransition;
+      if (memberLinkTransition) { memberLinkTransition.error = ""; render(true); }
+      await syncSetlist(!!memberLinkTransition);
+      if (latestRaw(S.src) !== latestRaw(src)) return;
+      if (VIEW() && (U.view === view || transitioning && !memberLinkTransition)) { U.view = "summary"; U.mode = "member"; render(); }
       return;
     }
     if (S.groups.some((x) => x.gistId)) {
@@ -16175,17 +16237,25 @@ async function importFromLink() {
       return;
     }
     const changed = S.linkSrc && S.linkSrc !== src;
+    if (!S.groups.some(x => x.gistId) && (changed || !S.songs.length || memberLinkTransition)) {
+      const cachedGroup = group();
+      if (S.songs.length && cachedGroup && !cachedGroup.src) cachedGroup.src = S.linkSrc || S.src || "";
+      memberLinkTransition = {src:latestRaw(src), error:""};
+    }
     S.linkSrc = src; S.src = src;
     // 古い形式のリンクは合言葉を持っている。持っていないリンクで上書きして消さない。
     if (key) S.key = key;
     else if (changed) S.key = "";   // 別のグループにつなぎ直した時だけ捨てる
     if (!S.groups.some((x) => x.gistId)) {
       S.viewer = true;
-      if (changed) resetForNewSource(); // 別グループのリンク
+      // Keep the previous received copy until the new source succeeds. The
+      // transition screen prevents it from being painted under another link.
     }
     U.memberShowChosen = false; S.setlistVer = 0; save();
     keepLinkInURL();
+    render(true);
     await syncSetlist(true);
+    if (latestRaw(S.src) !== latestRaw(src)) return;
     if (VIEW()) { U.view = "summary"; U.mode = "member"; U.allShows = false; render(); }
   } catch (e) { alert("接続リンクを読み取れませんでした。"); }
   } finally { recordingInboxRelease(); }
@@ -16217,12 +16287,18 @@ function copyText(t, msg) {
   render(); normalStartupInitialized = true;
   if(startupRecoveryNetworkHold&&startupRecoverySourceKind==='local-excel')void recoveryInspectOriginalBackup();
   if(startupRecoveryNetworkHold){const notice=document.createElement('div');notice.id='recovery-network-notice';notice.textContent=S.recoveryDelivery?.version===2&&S.recoveryDelivery?.targets?.length?'確認した既存先のみ配信を再開できます。原本保持・バックアップと他端末同期は停止中です。':startupRecoverySourceKind==='cloud-backup'?'元のGitHubバックアップから公演・曲・指摘を再開しました。現在の作業と原ファイルを保全し、自動送受信は停止中です。':startupRecoverySourceKind==='local-excel'?'元Excel救出'+(startupRecoveryExcelSummary?' '+startupRecoveryExcelSummary.read+' / '+startupRecoveryExcelSummary.total+'資料':'')+'。元公演との対応・過去の指摘や管理メモ等は未回復です。原本保持・同期停止中です。':['local-publication','cloud-publication'].includes(startupRecoverySourceKind)?'配信コピーから公演・曲・指摘などを部分復旧しました。配信外の管理メモ・録音管理などは未回復です。元ファイルを保持し、自動送受信は停止中です。':'端末内の復元内容で再開しました。自動送受信は停止中です。';notice.hidden=true;notice.setAttribute('role','status');notice.style.cssText='position:fixed;bottom:0;left:0;right:0;z-index:99999;background:#283A52;color:white;padding:10px;text-align:center;font-size:12px;pointer-events:none';document.body.appendChild(notice);}
-  if(!startupRecoveryNetworkHold){importFromLink();syncSetlist(false);}
+  if(!startupRecoveryNetworkHold){
+    if (/^#[ge]=/.test(location.hash)) void importFromLink();
+    else void syncSetlist(false);
+  }
 })();
 // 指摘の画面を開いたままアプリを閉じても、書きかけのメモが消えないように記録してから保存する
 const flushSheet = () => { if (U.sheet && sheetHasInput()) { clearTimeout(sheetTimer); commitNote(); } };
 window.addEventListener("pagehide", () => { if (!recordingInboxCanWrite()) return; flushSheet(); commitFields(); save(); saveNow(); });
 document.addEventListener("visibilitychange", () => { if (document.hidden && recordingInboxCanWrite()) { flushSheet(); commitFields(); save(); saveNow(); } });
+window.addEventListener("hashchange", () => {
+  if (/^#g=/.test(location.hash)) { render(true); void importFromLink(); }
+});
 if ("serviceWorker" in navigator) {
   // 更新の到着だけでリハ中の画面や録音を中断しない。次の起動・再読み込みで反映する。
   navigator.serviceWorker.register("sw.js?v=" + APP_VER).then((r) => r.update()).catch(() => {});
