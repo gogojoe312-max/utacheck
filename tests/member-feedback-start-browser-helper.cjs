@@ -19,7 +19,7 @@ async function checkMemberFeedbackStart(page,width,{screenshot}){
   transport=route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(seed.wire)});await page.route(sourceURL+'*',transport);
   await page.locator('[data-act="pvnow"][data-id="feedback-group"]').click();await page.waitForFunction(()=>!!preview&&U.view==='summary');await page.waitForSelector('#summary-show');
   await screenshot(page,width,'member-feedback-received-latest-preview');
-  assert.equal(await page.locator('#summary-show').inputValue(),'feedback-second','A newer empty つばき10/26 must not hide the 17 received rehearsal notes');assert.equal(await page.locator('.member-note').count(),17);
+  assert.equal(await page.locator('#summary-show').inputValue(),'feedback-empty','The newest show remains the initial selection even before the owner adds feedback');assert.equal(await page.locator('.member-note').count(),0);await page.locator('#summary-show').selectOption('feedback-second');assert.equal(await page.locator('.member-note').count(),17);
   await page.locator('#summary-show').click();await page.keyboard.press('Escape');await page.locator('#summary-member').click();await page.keyboard.press('Escape');assert.deepEqual(await page.locator('#summary-member option').allTextContents(),['全員','橋田','吉田','小野田','村越','植村','松原','島川','上村','相馬']);
   await page.locator('[data-act="endpv"]').click();assert.equal(await page.evaluate(()=>JSON.stringify(S)),seed.owner,'Preview does not change owner data');
   await page.evaluate(async({wire,src})=>{
@@ -27,23 +27,23 @@ async function checkMemberFeedbackStart(page,width,{screenshot}){
    history.replaceState(null,'',location.pathname+'#g='+b64e(new TextEncoder().encode(JSON.stringify({src}))));
    S.setlistVer=0;await importFromLink();save();await saveNow();renderPointers.clear();scrollingUntil=0;render(true);
   },{wire:seed.wire,src:sourceURL});
-  assert.equal(await page.locator('#summary-show').inputValue(),'feedback-second');assert.equal(await page.locator('.member-note').count(),17);assert.equal(await page.evaluate(()=>S.pubNotes.length),60);
+  assert.equal(await page.locator('#summary-show').inputValue(),'feedback-empty');assert.equal(await page.locator('.member-note').count(),0);assert.equal(await page.evaluate(()=>S.pubNotes.length),60);
   const content=await page.evaluate(()=>JSON.stringify([S.shows,S.songs.map(({id,...song})=>song),S.notes,S.pubNotes.map(({id,songId,...note})=>note),S.members,S.rosters,S.subs,S.gsubs,S.memos,S.staffMemos]));
   await page.locator('#summary-show').selectOption('feedback-empty');assert.equal(await page.locator('.member-empty').count(),1);await screenshot(page,width,'member-feedback-newer-empty-still-selectable');
   await page.evaluate(async wire=>{applySetlist({...wire,version:wire.version+1});renderPointers.clear();scrollingUntil=0;render(true);save();await saveNow();},seed.wire);assert.equal(await page.locator('#summary-show').inputValue(),'feedback-empty','In-session explicit navigation survives receiving updates');
-  await page.reload();await page.waitForFunction(()=>typeof normalStartupInitialized!=='undefined'&&normalStartupInitialized);assert.equal(await page.locator('#summary-show').inputValue(),'feedback-second');assert.equal(await page.locator('.member-note').count(),17);
+  await page.reload();await page.waitForFunction(()=>typeof normalStartupInitialized!=='undefined'&&normalStartupInitialized);assert.equal(await page.locator('#summary-show').inputValue(),'feedback-empty');assert.equal(await page.locator('.member-note').count(),0);await page.locator('#summary-show').selectOption('feedback-second');assert.equal(await page.locator('.member-note').count(),17);
   await page.locator('#summary-member').selectOption({label:'橋田'});assert.equal(await page.locator('.member-note').count(),2);await page.locator('#summary-member').click();await page.keyboard.press('Escape');await screenshot(page,width,'member-feedback-latest-reloaded-member-picker');
   await page.locator('.member-note').first().click();await page.waitForSelector('[data-lyric-line="0"]');await page.locator('[data-act="summary-back"]').click();assert.equal(await page.locator('#summary-show').inputValue(),'feedback-second');
   await page.locator('#summary-member').selectOption('');await page.locator('#summary-show').selectOption('feedback-first');assert.equal(await page.locator('.member-note').count(),43);await page.locator('#summary-show').selectOption('feedback-empty');assert.equal(await page.locator('.member-note').count(),0);
   // IDs for newly received songs/notes are device-local. Compare source content
   // and counts across the actual receive/save/reload path, without deleting any.
   assert.equal(await page.evaluate(()=>S.songs.length),16);assert.equal(await page.evaluate(()=>S.pubNotes.length),60);assert.equal(await page.evaluate(()=>S.shows.length),3);
-  await page.evaluate(()=>window.dispatchEvent(new PageTransitionEvent('pageshow',{persisted:true})));await page.waitForFunction(()=>S.showId==='feedback-second');assert.equal(await page.locator('.member-note').count(),17);await screenshot(page,width,'member-feedback-latest-on-resume');
+  await page.evaluate(()=>window.dispatchEvent(new PageTransitionEvent('pageshow',{persisted:true})));await page.waitForFunction(()=>S.showId==='feedback-empty');assert.equal(await page.locator('.member-note').count(),0);await screenshot(page,width,'member-feedback-latest-on-resume');
   assert.equal(await page.evaluate(()=>JSON.stringify([S.shows,S.songs.map(({id,...song})=>song),S.notes,S.pubNotes.map(({id,songId,...note})=>note),S.members,S.rosters,S.subs,S.gsubs,S.memos,S.staffMemos])),content);
  }catch(error){await screenshot(page,width,'member-feedback-start-failure');throw error;}finally{
   await page.evaluate(async saved=>{preview=null;previewLoading=false;history.replaceState(null,'',saved.url);S=JSON.parse(saved.state);Object.keys(U).forEach(k=>delete U[k]);Object.assign(U,JSON.parse(saved.ui));startupRecoveryNetworkHold=saved.hold;saveErr=false;renderPointers.clear();scrollingUntil=0;save();await saveNow();renderSheet();render(true);},saved);
   if(transport)await page.unroute(sourceURL+'*',transport);await restoreDate();
  }
- return {memberFeedbackLatestNotEmpty:true,memberFeedbackRealLinkReceive:true,memberFeedbackOriginalCountsPreserved:true,memberFeedbackLatestReloadResume:true,memberFeedbackManualEmptyShowAccessible:true,memberFeedbackActualNoteNavigation:true};
+ return {memberLatestEmptyShowPreserved:true,memberFeedbackRealLinkReceive:true,memberFeedbackOriginalCountsPreserved:true,memberLatestEmptyShowReloadResume:true,memberFeedbackManualEmptyShowAccessible:true,memberFeedbackActualNoteNavigation:true};
 }
 module.exports={checkMemberFeedbackStart};

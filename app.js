@@ -118,7 +118,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.67";
+const APP_VER = "16.41.58.68";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1839,23 +1839,8 @@ function latestPerformance(groupId) {
     ? S.songs.some(so => so.showId === sw.id && (!groupId || !so.groupId || so.groupId === groupId))
     : !recoveryMaterialShow(sw) && (!groupId || showGroupIds(sw).includes(groupId) || sw.deliveryMode === "song" && sw.groupId === groupId)));
   const actual = list.filter(sw => !/リハ|通し|ゲネ|rehearsal|(?:^|\s)(?:GP|RH)(?:\s|$)/i.test(sw.name || ""));
-  let candidates = VIEW() ? performanceSelectionOrder(list, memberPerformanceDateOrder) : actual.length ? actual : list;
-  if (VIEW()) {
-    // This is the member's feedback landing page. A newer empty setlist must
-    // not hide received feedback for the same latest day. Keep other days and
-    // empty shows in the picker; never replace the latest day with old feedback.
-    const latestDate = memberPerformanceDateOrder(candidates[0] || {});
-    const songs = new Map(S.songs.filter(so => !groupId || !so.groupId || so.groupId === groupId).map(so => [so.id, so]));
-    const feedback = new Set(NOTES().filter(n => songs.get(n.songId)?.showId === n.showId && noteInArrangement(n)).map(n => n.showId));
-    for (const so of songs.values()) if (String((S.memos || {})[so.showId + "|" + so.id] || "").trim()) feedback.add(so.showId);
-    const withFeedback = candidates.filter(sw => {
-      const date = memberPerformanceDateOrder(sw);
-      return latestDate && date && date.month === latestDate.month && date.day === latestDate.day
-        && (!date.year || !latestDate.year || date.year === latestDate.year) && feedback.has(sw.id);
-    });
-    if (withFeedback.length) candidates = withFeedback;
-  }
-  return candidates[0] || null;
+  const candidates = VIEW() ? list : actual.length ? actual : list;
+  return (VIEW() ? performanceSelectionOrder(candidates, memberPerformanceDateOrder) : candidates)[0] || null;
 }
 function setShowFilter(id) {
   const previous = U.showFilter;

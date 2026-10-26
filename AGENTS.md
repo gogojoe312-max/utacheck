@@ -239,8 +239,9 @@ Member first-screen / same-day changes acceptance:
 Member empty-show / navigation-delivery acceptance:
 - Keep the received 10/26リハ (43 notes), 10/26リハ 2回目 (17 notes), and newer
   つばき10/26 (two songs, zero notes) together. On the latest calendar day, the
-  initial member 指摘 screen must prefer the latest show with visible feedback
-  or a public song summary. Do not jump to an older date solely for old notes.
+  initial member 指摘 screen must use the latest performance, even when it has
+  no feedback yet (user clarification 2026-10-26). Do not prefer an older show
+  because it has notes. Select the second rehearsal explicitly to inspect its notes.
   Empty shows remain selectable and manual selection survives in-session receive.
   Keep contaminated received labels AND registered rosters, original note counts,
   source rows and notes for all shows through link receive, save, reload, resume,
