@@ -11,8 +11,8 @@ function fixture(){
   {id:'hidden',name:'2026/11/1 公演',ts:2000,hidden:1}
  ],songs:['old','latest','rh','hidden'].map(showId=>({showId,groupId:'member-source'})).concat([{showId:'other',groupId:'other'}])};
  const c={S,U:{songIdx:4,showFilter:'',allShows:true},viewer:true,preview:null,preference:null,
-  VIEW:()=>c.viewer,showsNewestFirst:()=>S.shows.slice().sort((a,b)=>b.ts-a.ts),liveGroups:()=>S.groups,showGroupIds:sw=>[sw.groupId],recoveryMaterialShow:()=>false,syncShowGroup(){},readViewSelection:()=>c.preference};vm.createContext(c);
- for(const name of ['performanceDateOrder','performanceSelectionOrder','memberPerformanceDates','memberPerformanceDateOrder','latestPerformance','restoreViewSelection','memberDayKey','memberPerformanceIsToday'])vm.runInContext(fn(name),c);
+  VIEW:()=>c.viewer,NOTES:()=>[...(S.notes||[]),...(S.pubNotes||[])],showsNewestFirst:()=>S.shows.slice().sort((a,b)=>b.ts-a.ts),liveGroups:()=>S.groups,showGroupIds:sw=>[sw.groupId],recoveryMaterialShow:()=>false,syncShowGroup(){},readViewSelection:()=>c.preference};vm.createContext(c);
+ for(const name of ['performanceDateOrder','performanceSelectionOrder','memberPerformanceDates','memberPerformanceDateOrder','noteInArrangement','latestPerformance','restoreViewSelection','memberDayKey','memberPerformanceIsToday'])vm.runInContext(fn(name),c);
  return c;
 }
 test('member latest means actual performance date, regardless of creation order or old owner/archive metadata',()=>{
@@ -45,4 +45,20 @@ test('actual 10/24.25 labels include both days, order by the final day, and neve
 test('offline member boot repairs a stale saved REC mode before choosing the first show, without touching REC data',()=>{
  const c=fixture();c.S.recMode=true;c.S.rsongs=[{id:'keep-rec',lines:[{t:'kept'}]}];c.S.plan={slots:[{id:'keep-slot'}]};const kept=JSON.stringify([c.S.rsongs,c.S.plan]);
  c.restoreViewSelection('old',true);assert.equal(c.S.recMode,false);assert.equal(c.S.showId,'rh');assert.equal(JSON.stringify([c.S.rsongs,c.S.plan]),kept);
+});
+
+test('member feedback starts at the latest performance with received feedback, retaining a newer empty つばき10/26',()=>{
+ const c=fixture();c.S.shows=[{id:'first',name:'10/26リハ',ts:10},{id:'second',name:'10/26リハ 2回目',ts:20},{id:'empty',name:'つばき10/26',ts:30}];c.S.songs=c.S.shows.map(sw=>({id:'song-'+sw.id,showId:sw.id,groupId:'member-source',lines:[{t:'保持する歌詞'}]}));
+ c.S.pubNotes=[{songId:'song-first',showId:'first',lineIdx:0},{songId:'song-second',showId:'second',lineIdx:0}];c.S.notes=[];c.S.memos={};
+ const content=JSON.stringify(c.S);assert.equal(c.latestPerformance('member-source').id,'second');assert.equal(JSON.stringify(c.S),content);
+ c.preference={showId:'empty',groupId:'member-source',showFilter:''};c.restoreViewSelection('empty',true);assert.equal(c.S.showId,'second');
+ c.preference={showId:'empty',groupId:'member-source',showFilter:''};c.restoreViewSelection('second',false);assert.equal(c.S.showId,'empty','An explicitly selected no-feedback show remains available');
+ c.S.pubNotes=[];assert.equal(c.latestPerformance('member-source').id,'empty','With no received feedback, use the newest performance');
+});
+
+test('same-day feedback preference never silently opens an older date or a cut-only note',()=>{
+ const c=fixture();c.S.shows=[{id:'old',name:'10/25リハ',ts:100},{id:'current',name:'10/26リハ',ts:200},{id:'empty',name:'つばき10/26',ts:300}];c.S.songs=c.S.shows.map(sw=>({id:'song-'+sw.id,showId:sw.id,groupId:'member-source',lines:[{t:'保持する歌詞',...(sw.id==='current'?{cut:true}:{})}]}));
+ c.S.pubNotes=[{songId:'song-old',showId:'old',lineIdx:0},{songId:'song-current',showId:'current',lineIdx:0}];c.S.notes=[];c.S.memos={};assert.equal(c.latestPerformance('member-source').id,'empty');
+ c.S.memos['current|song-current']='全員への総括';assert.equal(c.latestPerformance('member-source').id,'current');
+ c.S.shows.push({id:'next',name:'10/27',ts:400});c.S.songs.push({id:'song-next',showId:'next',groupId:'member-source',lines:[]});assert.equal(c.latestPerformance('member-source').id,'next');
 });

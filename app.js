@@ -118,7 +118,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.66";
+const APP_VER = "16.41.58.67";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1839,8 +1839,23 @@ function latestPerformance(groupId) {
     ? S.songs.some(so => so.showId === sw.id && (!groupId || !so.groupId || so.groupId === groupId))
     : !recoveryMaterialShow(sw) && (!groupId || showGroupIds(sw).includes(groupId) || sw.deliveryMode === "song" && sw.groupId === groupId)));
   const actual = list.filter(sw => !/リハ|通し|ゲネ|rehearsal|(?:^|\s)(?:GP|RH)(?:\s|$)/i.test(sw.name || ""));
-  const candidates = VIEW() ? list : actual.length ? actual : list;
-  return (VIEW() ? performanceSelectionOrder(candidates, memberPerformanceDateOrder) : candidates)[0] || null;
+  let candidates = VIEW() ? performanceSelectionOrder(list, memberPerformanceDateOrder) : actual.length ? actual : list;
+  if (VIEW()) {
+    // This is the member's feedback landing page. A newer empty setlist must
+    // not hide received feedback for the same latest day. Keep other days and
+    // empty shows in the picker; never replace the latest day with old feedback.
+    const latestDate = memberPerformanceDateOrder(candidates[0] || {});
+    const songs = new Map(S.songs.filter(so => !groupId || !so.groupId || so.groupId === groupId).map(so => [so.id, so]));
+    const feedback = new Set(NOTES().filter(n => songs.get(n.songId)?.showId === n.showId && noteInArrangement(n)).map(n => n.showId));
+    for (const so of songs.values()) if (String((S.memos || {})[so.showId + "|" + so.id] || "").trim()) feedback.add(so.showId);
+    const withFeedback = candidates.filter(sw => {
+      const date = memberPerformanceDateOrder(sw);
+      return latestDate && date && date.month === latestDate.month && date.day === latestDate.day
+        && (!date.year || !latestDate.year || date.year === latestDate.year) && feedback.has(sw.id);
+    });
+    if (withFeedback.length) candidates = withFeedback;
+  }
+  return candidates[0] || null;
 }
 function setShowFilter(id) {
   const previous = U.showFilter;
@@ -15878,6 +15893,33 @@ async function startPreview(src, key) {
   try {
   if (preview || previewLoading) return;
   if(REC || PT.on || micStream || recordingStartPending || recordingFinalizePending || pitchStartPending){alert("録音が終わってからメンバー画面を開いてください。");return;}
+  // Preview temporarily replaces the editor state. Finish this already enabled
+  // destination's pending automatic delivery BEFORE swapping that state, so
+  // navigating here immediately after a note cannot strand its send timer.
+  const target = !VIEW() && S.autoPub && S.ghToken
+    ? S.groups.find(g => g.gistId && latestRaw(g.src || "") === latestRaw(src)) : null;
+  const mayFlush = target && !VIEW() && S.autoPub && S.ghToken && !target.nopub
+    && !privateDeliveryGroup(target) && (!startupRecoveryNetworkHold || RecoveryDelivery.canPublish(target.id));
+  if (mayFlush) {
+    const pending = () => startupRecoveryNetworkHold ? RecoveryDelivery.pending(target.id)
+      : target.publishKeyPending || !samePublicationKey(payloadKey(publicationData(target.id)), target.lastKey);
+    const owner = S, view = U.view;
+    const finish = typeof OperationProgress !== "undefined" ? OperationProgress.begin("指摘の配信を確認中…") : () => {};
+    previewLoading = true;
+    let timeout;
+    try {
+      await Promise.race([(async () => {
+        if (publishInFlight) await publicationQueue;
+        if (S !== owner || !S.groups.includes(target)) throw new Error("配信先が変わりました。");
+        if (pending()) await pushOne(target.id);
+        if (pending()) throw new Error("指摘の配信が完了していません。通信が戻ると自動で再確認します。");
+      })(), new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error("指摘の配信確認が時間切れになりました。送信状態を確認してください。")), 65000); })]);
+      if (S !== owner || U.view !== view || document.hidden) return;
+    } catch (error) {
+      alert(error.message + " 手元の指摘は保持しています。");
+      return;
+    } finally { clearTimeout(timeout); previewLoading = false; finish(); }
+  }
   let recoveredPreview=null;
   if(startupRecoveryNetworkHold){
     previewLoading=true;

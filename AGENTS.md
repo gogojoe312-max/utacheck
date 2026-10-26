@@ -235,3 +235,22 @@ Member first-screen / same-day changes acceptance:
 - A same-group receive must also keep an open same-day 歌割変更 screen and its
   selected member. Persist the deliberate show switch when opening its banner;
   an older device preference must not pull the screen back to another show.
+
+Member empty-show / navigation-delivery acceptance:
+- Keep the received 10/26リハ (43 notes), 10/26リハ 2回目 (17 notes), and newer
+  つばき10/26 (two songs, zero notes) together. On the latest calendar day, the
+  initial member 指摘 screen must prefer the latest show with visible feedback
+  or a public song summary. Do not jump to an older date solely for old notes.
+  Empty shows remain selectable and manual selection survives in-session receive.
+  Keep contaminated received labels AND registered rosters, original note counts,
+  source rows and notes for all shows through link receive, save, reload, resume,
+  actual member picker and note -> lyric -> back navigation.
+- Create a LIVE note via the actual lyric character/memo controls, then leave for
+  settings, REC, or the member-preview button BEFORE its automatic-send timer.
+  Settings/REC must keep sending the original LIVE show's note. The member-preview
+  path must finish already-enabled delivery to its confirmed existing destination
+  before replacing editor state; hold the PATCH response, inspect the waiting UI,
+  then release and verify the new note on the member screen and save/reload.
+  Never send a member preview's replacement state as editor data, bypass a held
+  destination/manual autoPub preference, or erase pending notes after a failure.
+  Retain old-code failing screenshots and exact-commit published browser evidence.

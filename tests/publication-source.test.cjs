@@ -10,7 +10,7 @@ function setup(){
  const S={groups:[{id:'g',name:'Group',gistId:id,src:pinned}],groupId:'g',ghToken:'synthetic',shows:[],songs:[],notes:[],members:[],gsubs:{},subs:{},memos:{},src:pinned};
  const c=testContext({S,U:{},URL,Date,VIEW:()=>true,save(){},render(){},restoreViewSelection(){},h:String,todayLabel:()=> 'Today',
   group:()=>S.groups[0],member:mid=>S.members.find(m=>m.id===mid),addMember:name=>{let m=S.members.find(m=>m.name===name);if(!m)S.members.push(m={id:String(++next),name});return m;},uid:()=>String(++next),
-  buildSong:s=>({...s,id:String(++next),lines:[],blocks:{},roster:[]}),songSig:()=>'',NOTES:()=>S.pubNotes||[],showsNewestFirst:()=>S.shows,
+  buildSong:s=>({...s,id:String(++next),lines:[],blocks:{},roster:[]}),songSig:()=>'',NOTES:()=>S.pubNotes||[],noteInArrangement:()=>true,showsNewestFirst:()=>S.shows,
   wrap:async d=>d,gh:async(path,opts)=>{calls.push({path,opts});return {};}});
  vm.runInContext(src.slice(src.indexOf('function performanceDateOrder('),src.indexOf('function groupedPerformanceHTML(')),c);
  for(const [a,b] of [['function gistRawSource(','// 入れたトークン'],['function autoShowGroupId(', 'function showGroupIds('],['function publicationData(', 'async function gh('],['function payloadKey(', '// 送りすぎるとGitHub'],['const srcUrl =','// 受け取り専用の端末'],['function applySetlist(d)','async function syncSetlist'],['function summaryShows()','function selectSummaryShow(']])vm.runInContext(block(a,b),c);
