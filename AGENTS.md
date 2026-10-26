@@ -282,3 +282,8 @@ Member URL / same-name performance acceptance:
   receive together. Pasting a different hash uses its navigation event; pasting
   the unchanged current link explicitly retries once. Retain the regression
   which fails against the implementation that invokes both paths.
+- REC browser checks must intentionally overlap two real preparation receive
+  calls and observe the admitted operation's expected ID/digest, song and saved
+  receipt before asserting completion. A concurrent caller's `busy` result is
+  not that operation's final outcome. Keep the original imported song/received
+  ID distinction and restored data; do not skip the receipt or persistence checks.

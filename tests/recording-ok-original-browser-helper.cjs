@@ -15,7 +15,7 @@ async function checkRecordingOKOriginal(page,width,{screenshot}){
    return {app:'utacheck-private-preparation',version:1,owner:'gogojoe312-max',revision:'qa-original-groups',createdAt:'2031-01-01T00:00:00Z',operations:[{id:'qa-original-groups-addition',type:'recording-addition',packet,sha256:await PrivatePreparation.digest(packet)}]};
   });
   await page.evaluate(manifest=>PrivatePreparation.apply(S,manifest.operations[0],{schedule:RecordingScheduleUpdate.apply,recording:mergeRecordingAddition}),manifest);
-  const received=await checkProgressPreparation(page,{manifest,progressRelay:true});assert.equal(received.received.status,'applied');
+  const received=await checkProgressPreparation(page,{manifest,progressRelay:true,concurrentReceive:true});assert.equal(received.received.status,'applied');
   await page.evaluate(async manualId=>{
    S.recMode=true;S.rsongId=manualId;S.planPrep=0;const so=recSong();
    // Reproduce the already imported data: the source rows remain intact, but
@@ -60,6 +60,6 @@ async function checkRecordingOKOriginal(page,width,{screenshot}){
   const original=await page.evaluate(async()=>{const b=await getClip('xls:'+recSong().xlsSourceId);return [...new Uint8Array(await b.arrayBuffer())];});assert.deepEqual(Buffer.from(original),bytes);
  }catch(e){console.error('REC exact-screen check state',await page.evaluate(()=>({status:PrivatePreparationUI.getStatus(),songs:S.rsongs.map(s=>s.id),filter:U.recArtistFilter,view:U.view,busy:U.busy})));await screenshot(page,width,'rec-original-groups-failure');throw e;
  }finally{await page.evaluate(async saved=>{S=JSON.parse(saved.state);Object.keys(U).forEach(k=>delete U[k]);Object.assign(U,JSON.parse(saved.ui));startupRecoveryNetworkHold=saved.hold;saveErr=false;renderPointers.clear();scrollingUntil=0;save();await saveNow();render();},saved);}
- return {recOriginalMergedAssignmentGroupsRestored:true,recExistingOKCompletesSplitAndWhole:true,recSoloOnlyHidesSplit:true,recLegacyOKHistoryPreserved:true,recSplitOKReloadAndOriginalBytesPreserved:true};
+ return {recConcurrentPreparationReceiptVerified:true,recOriginalMergedAssignmentGroupsRestored:true,recExistingOKCompletesSplitAndWhole:true,recSoloOnlyHidesSplit:true,recLegacyOKHistoryPreserved:true,recSplitOKReloadAndOriginalBytesPreserved:true};
 }
 module.exports={checkRecordingOKOriginal};

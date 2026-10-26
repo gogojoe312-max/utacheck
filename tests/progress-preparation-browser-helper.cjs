@@ -3,8 +3,8 @@ const assert=require('node:assert/strict');
 
 // Native IndexedDB and the real receiver/source/commit path; GitHub responses
 // and credentials are synthetic and cannot leave this isolated browser.
-async function checkProgressPreparation(page,{manifest=null,relay=false,automaticInteraction=false,progressRelay=false,slowRelay='' }={}){
- const result=await page.evaluate(async({supplied,relay,automaticInteraction,progressRelay,slowRelay})=>{
+async function checkProgressPreparation(page,{manifest=null,relay=false,automaticInteraction=false,progressRelay=false,slowRelay='',concurrentReceive=false }={}){
+ const result=await page.evaluate(async({supplied,relay,automaticInteraction,progressRelay,slowRelay,concurrentReceive})=>{
   const oldFetch=window.fetch,token='qa-progress-token',oldToken='qa-gist-only-token';
   const reads=[],interaction={};
   const waitUntil=async(test,message,ms=5000)=>{const until=Date.now()+ms;while(!test()){if(Date.now()>until)throw Error(message);await new Promise(resolve=>setTimeout(resolve,40));}};
@@ -89,7 +89,23 @@ async function checkProgressPreparation(page,{manifest=null,relay=false,automati
     await waitUntil(()=>S.rsongs.some(song=>song.id===newSong.id)&&PrivatePreparationUI.getStatus().kind==='applied','Automatic preparation did not resume within 5 seconds after interaction');
     interaction.resumeMs=Date.now()-releasedAt;
     const current=PrivatePreparationUI.getStatus();received={status:current.kind,count:current.count,conflicts:current.conflicts};
-   }else received=await PrivatePreparationUI.receive(true);
+   }else{
+    const admitted=concurrentReceive?PrivatePreparationUI.receive(true):null;
+    received=await PrivatePreparationUI.receive(true);
+    if(concurrentReceive&&received.status!=='busy')throw Error('The concurrent manual receiver must report busy');
+    if(received.status==='busy'){
+     // Settings can already have admitted an automatic receive. Observe that
+     // exact packet's real completion instead of mistaking its busy caller for
+     // a failed import. Missing/failed saves still fail the checks below.
+     await waitUntil(()=>PrivatePreparationUI.getStatus().kind==='applied'
+      &&S.privatePreparations?.[last.id]?.sha256===last.sha256
+      &&S.rsongs.some(song=>song.id===newSong.id),'The admitted receive did not commit the expected packet');
+     if(admitted)await admitted;
+     const current=PrivatePreparationUI.getStatus();
+     received={status:current.kind,count:current.count,conflicts:current.conflicts};
+     interaction.joinedExistingReceive=true;
+    }
+   }
    await waitUntil(()=>!renderPointers.size&&Date.now()>=scrollingUntil&&!saving,'The received UI did not settle');
    await waitUntil(()=>document.getElementById('app').textContent.includes(newSong.artist||newSong.recArtist||''),'The new artist did not become visible');
    const added=S.rsongs.find(s=>s.id===newSong.id),persisted=JSON.parse(await loadRaw());
@@ -104,11 +120,12 @@ async function checkProgressPreparation(page,{manifest=null,relay=false,automati
     credentialLeaked:JSON.stringify(S).includes(token)||JSON.stringify(backupState()).includes(token)||document.documentElement.outerHTML.includes(token),
     status:PrivatePreparationUI.getStatus(),visibleArtist:!!added&&document.getElementById('app').textContent.includes(added.recArtist||added.artist)};
   }finally{window.fetch=oldFetch;}
- },{supplied:manifest,relay,automaticInteraction,progressRelay,slowRelay});
+ },{supplied:manifest,relay,automaticInteraction,progressRelay,slowRelay,concurrentReceive});
  assert.equal(result.legacy.code,'HTTP_404');assert.equal(result.legacy.stage,'repository');
  assert.equal(result.received.status,'applied',JSON.stringify(result.status));assert.equal(result.saved,true);assert.equal(result.receipt,true);
  assert.equal(result.preserved,true);assert.equal(result.filter,'');assert.equal(result.visibleArtist,true);
  assert.equal(result.obsoleteControls,0);assert.equal(result.credentialLeaked,false);
+ if(concurrentReceive)assert.equal(result.interaction.joinedExistingReceive,true);
  if(automaticInteraction){
   assert.equal(result.interaction.firstStatus.kind,'deferred');assert.equal(result.interaction.firstStatus.reason,'interaction');
   for(const key of ['injected','pointerHeld','beforeReleaseAbsent','released','editingPreserved','recordingPreserved'])assert.equal(result.interaction[key],true,key);
