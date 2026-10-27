@@ -181,6 +181,7 @@
    if(!after){if(before.kind!=='break'||!equal(project(local,SLOT),before)||Object.keys(local).some(k=>!SLOT.includes(k)&&meaningful(local[k])))fail('REC_UPDATE_BREAK_HISTORY',before.id);slotChanges.set(before.id,null);continue;}
    if(['kind','name'].some(k=>!equal(before[k],after[k]))||['memberId','songId'].some(k=>own(before,k)&&!equal(before[k],after[k])))fail('REC_UPDATE_SLOT_IDENTITY',before.id);
    const next=merge(local,before,after,SLOT.filter(k=>k!=='id'),before.id);
+   if((local.a0!=null||local.a1!=null)&&['date','day','at','min','place'].some(k=>!equal(next[k],local[k]))&&!own(local,'recActualSchedule'))next.recActualSchedule=project(local,['date','day','at','min','place']);
    if(!equal(next,local)){if(local.a0!=null&&local.a1==null)fail('REC_UPDATE_ACTIVE_SLOT',local.id);slotChanges.set(local.id,next);}
   }
   for(const after of packet.after.slots)if(!oldIds.has(after.id)){

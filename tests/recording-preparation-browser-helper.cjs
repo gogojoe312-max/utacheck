@@ -46,9 +46,10 @@ async function checkRecordingPreparation(page,width,{screenshot}){
  assert.match(await page.locator('#app').innerText(),/10\/28/);assert.match(await page.locator('.plan-row').nth(0).innerText(),/12:00–13:30/);assert.match(await page.locator('.plan-row').nth(1).innerText(),/13:30–14:30/);
  // The completed slot keeps its historical actual clock; planned clock is
  // checked in persisted state, never rewritten to make a screenshot match.
+ assert.match(await page.locator('.plan-row').nth(2).innerText(),/14:30–15:15/);assert.match(await page.locator('.plan-row').nth(2).innerText(),/2026-10-27.*10:01–10:59/);assert(!(await page.locator('#app').innerText()).includes('-256分'));
  assert.equal(await page.evaluate(()=>S.plan.slots[2].at),870);assert.equal(await page.evaluate(()=>S.plan.slots[2].min),45);
  await screenshot(page,width,'dot-rec-updated-plan');
- const unchanged=await page.evaluate(()=>JSON.stringify({notes:S.notes,recs:S.recs,songs:S.songs,shows:S.shows,groups:S.groups,autoPub:S.autoPub,bkGistId:S.bkGistId,manual:S.rsongs[0].lines[1],intro:S.rsongs[0].intro,history:{...S.plan.slots.find(s=>s.id==='slot-1'),at:undefined,min:undefined,day:undefined,date:undefined}}));assert.equal(unchanged,preserved);
+ const unchanged=await page.evaluate(()=>JSON.stringify({notes:S.notes,recs:S.recs,songs:S.songs,shows:S.shows,groups:S.groups,autoPub:S.autoPub,bkGistId:S.bkGistId,manual:S.rsongs[0].lines[1],intro:S.rsongs[0].intro,history:{...S.plan.slots.find(s=>s.id==='slot-1'),at:undefined,min:undefined,day:undefined,date:undefined,recActualSchedule:undefined}}));assert.equal(unchanged,preserved);assert.equal(await page.evaluate(()=>S.plan.slots.find(s=>s.id==='slot-1').recActualSchedule.date),'2026-10-27');
  const writes=calls.filter(c=>c.method==='PUT').length;assert.equal((await receive()).status,'current');assert.equal(calls.filter(c=>c.method==='PUT').length,writes);
  await page.evaluate(async()=>{save();await saveNow();if(saveErr)throw Error('save');});await page.reload();await page.waitForFunction(()=>normalStartupInitialized);
  assert.equal(await page.evaluate(()=>S.recordingUpdateHeads['dot-session'].revision),1);assert.equal(await page.evaluate(()=>S.plan.slots.filter(s=>s.id==='break-2').length),1);assert.equal(await page.evaluate(()=>S.plan.slots.some(s=>s.id==='break-1')),false);

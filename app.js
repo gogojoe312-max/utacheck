@@ -10441,7 +10441,7 @@ function viewPlan() {
   const liveIdx = rows.findIndex((r) => r.live);
   const nextIdx = rows.findIndex((r) => !r.done && !r.live);
   const last = rows[rows.length - 1];
-  const gap = last ? last.aE - last.pE : 0;
+  const gap = last && (!last.s.recActualSchedule?.date || last.s.recActualSchedule.date === last.s.date) ? last.aE - last.pE : 0;
 
   const current = rows.find(row => row.live);
   const autoBar = S.recMode ? `<div class="row" style="gap:10px;margin-bottom:12px;flex-wrap:wrap">
@@ -10460,12 +10460,12 @@ function viewPlan() {
       ${songScoped ? "" : `<span class="grip" data-drag="plan:${s.id}">⣿</span>`}
       <button class="grow" style="text-align:left;min-width:0" data-act="psecgo" data-id="${s.id}"${readOnlyScope ? " disabled" : ""}>
         <div class="row" style="gap:8px;min-width:0">
-          <span style="font-size:12px;color:var(--dim);font-variant-numeric:tabular-nums;flex:0 0 auto">${min2hm(r.aS)}–${min2hm(r.aE)}</span>
+          <span style="font-size:12px;color:var(--dim);font-variant-numeric:tabular-nums;flex:0 0 auto">${min2hm(r.done && s.recActualSchedule ? r.pS : r.aS)}–${min2hm(r.done && s.recActualSchedule ? r.pE : r.aE)}</span>
           <span class="trunc" style="color:${col};font-weight:${r.live ? 700 : 400}">${h(compactMemberLabel(s.name || (isBreak ? "休憩" : "—")))}</span>
         </div>
         <div style="font-size:11px;color:var(--dim);margin-top:2px">
           ${s.min}分${s.scheduleTimeUnconfirmed ? "　時刻未確認・自動切替対象外" : ""}
-          ${r.done ? `　実際 ${r.aE - r.aS}分 <span style="color:${diff > 0 ? "var(--bad)" : diff < 0 ? "var(--good)" : "var(--dim)"}">${diff ? dmin(diff) : "ぴったり"}</span>` : ""}
+          ${r.done ? `　実際 ${s.recActualSchedule ? h(s.recActualSchedule.date || s.recActualSchedule.day || "") + " " + min2hm(r.aS) + "–" + min2hm(r.aE) + " · " : ""}${r.aE - r.aS}分 <span style="color:${diff > 0 ? "var(--bad)" : diff < 0 ? "var(--good)" : "var(--dim)"}">${diff ? dmin(diff) : "ぴったり"}</span>` : ""}
           ${r.live ? `　<b data-plan-time="${h(s.id)}" style="color:${rest < 0 ? "var(--bad)" : "var(--accent)"}">${rest >= 0 ? "残り " + rest + "分" : "超過 " + (-rest) + "分"}</b>` : ""}
           ${!r.done && !r.live && i === nextIdx ? `　<span style="color:var(--accent)">次</span>` : ""}
         </div>

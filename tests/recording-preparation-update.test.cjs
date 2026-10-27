@@ -11,6 +11,7 @@ test('dot REC actual dated member reorder, start/end, break deletion/addition, l
  for(const key of ['notes','pubNotes','recs','draws','songs','shows','groups','ghToken','autoPub','bkGistId','unrelated'])assert.deepEqual(r[key],before[key]);
  for(const key of ['a0','a1','takes','secLog'])assert.deepEqual(r.plan.slots[2][key],before.plan.slots[0][key]);
  assert.equal(r.rsongs[0].lines[0].t,'差し替えた歌詞😀');assert.deepEqual(r.rsongs[0].lines[2].parts,['p2']);assert.deepEqual(r.rsongs[0].lines[1],before.rsongs[0].lines[1]);assert.equal(r.rsongs[0].intro,3);
+ assert.deepEqual(r.plan.slots[2].recActualSchedule,{date:'2026-10-27',day:'10/27',at:600,min:60,place:'合成会場'});
  assert.equal(r.recordingUpdateHeads['dot-session'].revision,1);assert.equal(P.apply(r,f.operation,adapters(f)).status,'already-applied');
 });
 test('new protocol cannot silently fall back to old receiver',async()=>{const f=fixture();await P.validate(f.manifest,'gogojoe312-max');assert.equal(apply(f).state.recordingUpdateHeads['dot-session'].operationId,f.operation.id);});

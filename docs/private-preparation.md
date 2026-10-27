@@ -243,6 +243,9 @@ history, handwritten geometry, changed annotated text, manual line breaks/cuts
 whose anchors would move and changed section identities with recording history
 are protected. No clips, actual start/end times, take history, section completion,
 notes, handwriting, original Excel blobs or unrelated records are deleted.
+When a completed slot moves, `recActualSchedule` retains its original date/time/
+place; the actual progression screen shows new planned times separately from
+the preserved dated actual clock. Later updates keep that original history.
 
 Use stable source row IDs where available. Otherwise insertion/deletion/reordering
 needs `lineMaps:{songId:[newIndexOrNull,...]}` (zero-based source indexes). Never
@@ -281,7 +284,9 @@ Use the saved 進行 credential only transiently. Direct Contents write verifies
 GitHub owner and repository privacy, performs optimistic SHA writes and rereads
 the exact report. A scope-limited login can use owner-authenticated
 `POST https://shinkou-secure.onrender.com/utacheck/results`; the existing server
-must already have a private repository writer. Neither an editor Gist credential
+must already have a private repository writer (`PREPARATION_GITHUB_TOKEN` is
+the dedicated fixed-repository setting; existing `GITHUB_TOKEN` is only a
+compatibility fallback and is never changed by this update). Neither an editor Gist credential
 nor a workspace token is silently installed as a server secret. A read-only login,
 unconfigured writer, offline/network/storage conflict, or failed reread leaves
 results **pending**, retained for retry on normal refresh/resume. Do not treat a
