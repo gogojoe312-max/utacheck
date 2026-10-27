@@ -120,7 +120,7 @@
   status=value;document.querySelectorAll?.('[data-private-preparation-status]').forEach(el=>el.textContent=statusText());
  }
  function settingsHTML(){
-  return '<p class="note" data-private-preparation-status role="status">'+h(statusText())+'</p>';
+  return '<p class="note" data-private-preparation-status role="status">'+h(statusText())+'</p><p class="note" data-preparation-result-status role="status">'+h(resultText())+'</p>';
  }
  function openConnection(){
   if(document.querySelector('[data-private-preparation-connection]'))return;
@@ -337,7 +337,14 @@
   }catch(error){if(committed){startupPhase='blocked';setStatus({kind:'unverified'});throw failure('SAVE_UNVERIFIED');}throw error;}
   finally{release?.();releaseGate();applying=false;if(app)app.inert=!recordingInboxCanWrite();}
  }
- async function applyOne(operation,token,sourceSha,localSource){
+ function operationAdapters(operations=[]){
+  return {schedule:RecordingScheduleUpdate.apply,recording:mergeRecordingAddition,operations,
+   recordingUpdate:(current,packet,context)=>{
+    if(typeof root.RecordingPreparationUpdate?.apply!=='function')throw failure('REC_UPDATE_UNSUPPORTED');
+    return root.RecordingPreparationUpdate.apply(current,packet,context);
+   }};
+ }
+ async function applyOne(operation,token,sourceSha,localSource,operations=[]){
   if(!ready()||sourceToken()!==token)throw failure('DEFERRED');
   const receipt=S.privatePreparations?.[operation.id];
   if(receipt){if(receipt.sha256!==operation.sha256||receipt.type!==operation.type)throw failure('OPERATION_ID_REUSED');return false;}
@@ -350,7 +357,7 @@
    const original=JSON.stringify(S),revision=stateRevision,view=JSON.stringify(U);
    const selectedSongId=!S.recMode && typeof song==='function' ? song()?.id : null;
    const active=()=>startupPhase==='ready'&&recordingInboxCanWrite()&&recordingInboxOwner?.canWrite&&!document.hidden&&sourceToken()===token&&stateRevision===revision&&JSON.stringify(S)===original&&JSON.stringify(U)===view&&!REC&&!recordingStartPending&&!recordingFinalizePending&&!pitchStartPending&&!saving&&!syncing&&!manualSync&&!backupInFlight&&!publishInFlight&&!U.busy&&!U.importing&&!U.sheet&&!U.menu&&!U.showRecovery;
-   const next=PrivatePreparation.apply(S,operation,{schedule:RecordingScheduleUpdate.apply,recording:mergeRecordingAddition}).state;
+   const next=PrivatePreparation.apply(S,operation,operationAdapters(operations)).state;
    const slots=await Promise.all([idbGet('state:0'),idbGet('state:1')]),hold=await idbGet('recovery:network-hold:v1'),legacy=localStorage.getItem(KEY);
    if(!active())throw failure('DEFERRED');
    if(localSource){
@@ -361,7 +368,7 @@
     const matched=fresh.operations.find(op=>op.id===operation.id);
     if(!matched||JSON.stringify(matched)!==JSON.stringify(operation))throw failure('PREPARATION_SOURCE_CHANGED');
     if(!active())throw failure('DEFERRED');
-   }else if(root.ProgressPreparationSource||['material-update','recording-song'].includes(operation.type)){
+   }else if(root.ProgressPreparationSource||['material-update','recording-song','recording-update'].includes(operation.type)){
     const fresh=await readSource({...config,token,isActive:active});
     if(fresh.status!=='ready'||fresh.sourceSha!==sourceSha)throw failure('PREPARATION_SOURCE_CHANGED');
     await PrivatePreparation.validate(fresh.manifest,config.owner);
@@ -378,6 +385,30 @@
   }catch(error){if(committed){startupPhase='blocked';setStatus({kind:'unverified'});throw failure('SAVE_UNVERIFIED');}throw error;}
   finally{release?.();releaseGate();applying=false;if(app)app.inert=!recordingInboxCanWrite();}
  }
+ const resultKey='private-preparation:results:v1';
+ let resultDelivery={status:'waiting'};
+ async function reportResults(manifest,sourceSha,outcomes={}){
+  if(!root.PreparationResults||!root.ProgressPreparationSource?.report)return;
+  try{
+   if(!ready())return;
+   const state=JSON.parse(await loadRaw());
+   if(JSON.stringify(state.privatePreparations||{})!==JSON.stringify(S.privatePreparations||{})||JSON.stringify(state.recordingUpdateHeads||{})!==JSON.stringify(S.recordingUpdateHeads||{}))throw failure('RESULT_SAVE_UNVERIFIED');
+   let box=await idbGet(resultKey);
+   if(box&&(!/^device-[a-f0-9]{32}$/.test(box.clientId)||!Number.isSafeInteger(box.sequence)||box.sequence<0))throw failure('RESULT_STORAGE_UNVERIFIED');
+   if(!box){const bytes=crypto.getRandomValues(new Uint8Array(16));box={clientId:'device-'+Array.from(bytes,b=>b.toString(16).padStart(2,'0')).join(''),sequence:0};}
+   const report=root.PreparationResults.build({state,manifest,sourceSha,clientId:box.clientId,sequence:box.sequence+1,appVersion:APP_VER,outcomes});
+   const identity={...report};delete identity.sequence;delete identity.observedAt;
+   const digest=await PrivatePreparation.digest(identity);
+   if(box.digest!==digest){box={clientId:box.clientId,sequence:box.sequence+1,digest,report};await idbPut(resultKey,box);if(JSON.stringify(await idbGet(resultKey))!==JSON.stringify(box))throw failure('RESULT_STORAGE_UNVERIFIED');}
+   if(box.confirmed===box.digest){resultDelivery={status:'confirmed',path:'utacheck/results/'+box.clientId+'.json',sequence:box.sequence};return;}
+   if(!ready())return;
+   const response=await root.ProgressPreparationSource.report({report:box.report,token:S.ghToken,isActive:()=>ready()&&!VIEW()&&!preview});
+   resultDelivery=response;
+   if(response.status==='confirmed'){box.confirmed=box.digest;await idbPut(resultKey,box);}
+  }catch(error){resultDelivery={status:'pending',code:error.preparationCode||'RESULT_STORAGE_UNVERIFIED'};}
+  document.querySelectorAll?.('[data-preparation-result-status]').forEach(el=>el.textContent=resultText());
+ }
+ function resultText(){return resultDelivery.status==='confirmed'?'dotへの適用結果を保存・再読取で確認しました。':resultDelivery.status==='pending'?'dotへの結果送信は未確認です。次の受信確認時に再試行します（'+resultDelivery.code+'）。':'適用結果は受信後に非公開の保存先で確認します。';}
  async function receive(force=false){
   if(connectionPending)return {status:'busy'};
   if(force)manualPending=true;
@@ -417,18 +448,18 @@
    // Same-day corrections and dates we cannot compare still wait.
    const futureAddition=op=>op.type==='recording-addition'&&Array.isArray(op.packet.plan?.slots)&&op.packet.plan.slots.length>0
     &&activeSlots.every(current=>/^\d{4}-\d{2}-\d{2}$/.test(current.date||'')&&op.packet.plan.slots.every(next=>/^\d{4}-\d{2}-\d{2}$/.test(next.date||'')&&next.date>current.date));
-   const eligible=unapplied.filter(op=>!activePlan||['recording-song','original-excel'].includes(op.type)||futureAddition(op));
+   const eligible=unapplied.filter(op=>!activePlan||['recording-song','original-excel','recording-update'].includes(op.type)||futureAddition(op));
    const pending=eligible;
-   if(unapplied.length&&!pending.length){setStatus({kind:'active-plan'});return {status:'deferred'};}
-   if(!pending.length){setStatus({kind:'current',sourceSha:source.sourceSha,originals:originalSummary(manifest)});return {status:'current'};}
+   if(unapplied.length&&!pending.length){setStatus({kind:'active-plan'});await reportResults(manifest,source.sourceSha);return {status:'deferred'};}
+   if(!pending.length){setStatus({kind:'current',sourceSha:source.sourceSha,originals:originalSummary(manifest)});await reportResults(manifest,source.sourceSha);return {status:'current'};}
    await establishOwner();if(sourceToken()!==token)throw failure('DEFERRED');
-   let count=0,conflicts=0,addedRecording=false;
+   let count=0,conflicts=0,addedRecording=false;const outcomes={};
    for(const operation of pending.filter(op=>op.type!=='original-excel')){
     // Check each independent addition against the current device. An older
     // conflicting packet must not keep a later, unrelated session out forever.
-    try{PrivatePreparation.apply(S,operation,{schedule:RecordingScheduleUpdate.apply,recording:mergeRecordingAddition});}
-    catch(error){if(error.preparationCode==='OPERATION_ID_REUSED')throw error;conflicts++;continue;}
-    if(await applyOne(operation,token,source.sourceSha)){count++;if(['recording-song','recording-addition'].includes(operation.type))addedRecording=true;}
+    try{PrivatePreparation.apply(S,operation,operationAdapters(manifest.operations));}
+    catch(error){if(error.preparationCode==='OPERATION_ID_REUSED')throw error;outcomes[operation.id]={status:'held',code:error.preparationCode||'PREPARATION_CONFLICT'};conflicts++;continue;}
+    if(await applyOne(operation,token,source.sourceSha,undefined,manifest.operations)){count++;if(['recording-song','recording-addition'].includes(operation.type))addedRecording=true;}
    }
    const currentTitles=new Set((S.songs||[]).filter(so=>so.showId===S.showId).map(so=>String(so.title).normalize('NFKC').replace(/\s/g,'')));
    const priority=op=>op.packet.displayCuts?0:currentTitles.has(op.packet.name.normalize('NFKC').replace(/\.(xlsx|xls|xlsb)$/i,'').replace(/\s/g,''))?1:2;
@@ -437,7 +468,7 @@
    // workbooks, and each receipt tracks only the corresponding source's songs.
    for(let i=0;i<originalOperations.length;i+=3)count+=await applyOriginalBatch(originalOperations.slice(i,i+3),token,source.sourceSha,batch);
    if(addedRecording){U.recArtistFilter='';render();}
-   const originals=originalSummary(manifest);setStatus({kind:count?'applied':conflicts?'conflict':'current',count,conflicts,sourceSha:source.sourceSha,originals});return {status:status.kind,count,conflicts,originals};
+   const originals=originalSummary(manifest);setStatus({kind:count?'applied':conflicts?'conflict':'current',count,conflicts,sourceSha:source.sourceSha,originals});await reportResults(manifest,source.sourceSha,outcomes);return {status:status.kind,count,conflicts,originals};
   }catch(error){const code=error.preparationCode||error.code||'PREPARATION_CONFLICT';
    const reason=code==='DEFERRED'?waitingReason():undefined;
    setStatus({kind:code==='CREDENTIAL_UNREADABLE'?'connection-error':code==='DEFERRED'?'deferred':code==='MULTIPLE_WINDOWS'?'multiple-windows':code==='OWNER_REQUIRED'?'owner-required':code==='UNSUPPORTED'?'unsupported':code==='SAVE_UNVERIFIED'?'unverified':'conflict',code,reason});
@@ -508,7 +539,7 @@
   void tryConnect(0);
  },true);
  function start(){if(started)return;started=true;setInterval(()=>{void receive();},10000);setTimeout(()=>{void receive();},1200);navigator.serviceWorker?.addEventListener?.('controllerchange',()=>{lastAttempt=0;void receive();});window.addEventListener('online',()=>{lastAttempt=0;void receive();});document.addEventListener('visibilitychange',()=>{if(!document.hidden){lastAttempt=0;void receive();}});}
- root.PrivatePreparationUI=Object.freeze({settingsHTML,receive,readOriginalExcelPackets,importFile,connectReadCredential,start,isApplying:()=>applying,getStatus:()=>({...status})});start();
+ root.PrivatePreparationUI=Object.freeze({settingsHTML,receive,readOriginalExcelPackets,importFile,connectReadCredential,start,isApplying:()=>applying,getStatus:()=>({...status}),getResultStatus:()=>({...resultDelivery})});start();
 })(globalThis);
 
 

@@ -197,3 +197,101 @@ authentication, configuration, identity, format and size errors are not retried.
 Waiting, slow-response, retry and receiving phases update only the existing
 settings status; they do not lock or redraw lyrics. Source validation and the
 existing editor/transaction gates still precede any application of data.
+
+## dot: versioned REC updates (16.41.58.73)
+
+Use `recording-update` for subsequent changes to an already received REC session.
+Do not edit/reuse prior operation IDs or resubmit a changed `recording-addition`.
+The manifest remains version 1 at the same fixed private path. This type does not
+change member publication, destinations, sharing, LIVE state, or recording controls.
+
+The packet is `utacheck-recording-update`, version 1. Required fields are
+`sessionId`, positive integer `revision`, `groupId`, `timezone`, `anchor`, `previous`,
+`before`, `after`, and `source:{revision,files:[{name,sha256}]}`. Both references are
+`{id,sha256}`. `anchor` identifies the immutable original `recording-addition` or
+`recording-song` operation. First update is revision 1; later revisions must be
+consecutive and reference the exact preceding update. Old queue entries must be
+retained. Applied receipts and the current per-session head are saved in the same
+native transaction as the content. A missing predecessor, changed hash, reused ID,
+old revision, or late legacy schedule/material patch is held, never force-applied.
+
+`before` and `after` are `{songs:[...],slots:[...]}` source snapshots. Generate the
+initial managed projection with `RecordingPreparationUpdate.snapshot(anchor)`;
+subsequent `before` is the previous packet's `after`, NOT a fresh copy of local
+hand-edited app state. Song IDs and their array order remain fixed; update their
+title, artist, credit, session, roster, blocks, lines, intro, sections, order and
+explicit Excel metadata. Original workbook bytes are never erased. A replacement
+Excel still needs its separately hashed `original-excel` operation.
+
+Slots have stable `id`, `kind:'member'|'break'`, `name`, full ISO `date`, matching
+`day:'M/D'`, `at` (minutes from midnight), `min` (duration), `place`, and explicit
+`songId`/`memberId` where applicable. End time is `at+min`. List `after.slots` in
+chronological/member order, supplying the corresponding confirmed times. Moving
+across dates, changing starts/ends, reordering members and inserting/removing
+breaks are supported. A break must explicitly carry the intended `songId` to
+appear on that song's actual progression screen. Previously absent song/member
+bindings can be supplied explicitly, but an existing person's identity cannot be
+changed into someone else. New member slots require exact registered member IDs
+(or explicit `members:[{id,name}]` additions). Member slots cannot be deleted;
+only unused, unchanged breaks can be removed. Date/year ambiguity, overlaps,
+unknown surrounding times and local intervening order changes are held.
+
+Merge is three-way by managed field: source unchanged preserves the user's local
+value; only-source changes apply; identical convergent edits succeed; competing
+changes are held atomically. Current/unknown active recordings, completed break
+history, handwritten geometry, changed annotated text, manual line breaks/cuts
+whose anchors would move and changed section identities with recording history
+are protected. No clips, actual start/end times, take history, section completion,
+notes, handwriting, original Excel blobs or unrelated records are deleted.
+
+Use stable source row IDs where available. Otherwise insertion/deletion/reordering
+needs `lineMaps:{songId:[newIndexOrNull,...]}` (zero-based source indexes). Never
+infer a match from repeated lyric text, a filename, a surname or current row
+number. Notes move only across an explicit one-to-one map whose entire annotated
+text/range remains unchanged. An ambiguous manually imported copy sharing the
+same immutable original is held as `REC_UPDATE_LOCAL_COPY` rather than updating
+an invisible source copy and pretending the user's screen changed.
+
+For an initial stream with an already issued legacy `recording-schedule` or REC
+`material-update`, explicitly list its immutable `{id,sha256}` in `bootstrap` in
+source order, set `previous` to the last such operation, and supply the matching
+post-bootstrap `before`. An explicitly held revision can be corrected with a new operation ID and
+`supersedes:{id,sha256}` pointing to that unapplied update. The revision, previous
+reference and before snapshot stay identical. Any device that already applied
+the old operation holds this alternative; do not roll back its head. The private
+result marks the old entry `REC_UPDATE_SUPERSEDED` only after the replacement
+receipt is durably saved. Bootstrap is allowed only on revision 1; it does not
+replace personal edits or bypass predecessor verification.
+
+Offline authoring and dot's operating procedure are documented in
+[dot-rec-updates.md](dot-rec-updates.md). No real private schedule/lyrics belong in
+this public repository's examples, fixtures or artifacts.
+
+### Private application results
+
+The owner app creates a separate device-local random client ID, outside backed-up
+application state, and a persistent outbox. After rereading committed native
+state it builds only fixed metadata: source blob SHA/revision, operation ID/hash,
+`applied|held|deferred`, reason code, current session head, and local override
+field paths. It sends no lyrics, notes, recordings, original bytes or credentials
+in the result body. Results use the fixed **private** path
+`shinkou-data/utacheck/results/device-<32 lowercase hex>.json`.
+
+Use the saved 進行 credential only transiently. Direct Contents write verifies
+GitHub owner and repository privacy, performs optimistic SHA writes and rereads
+the exact report. A scope-limited login can use owner-authenticated
+`POST https://shinkou-secure.onrender.com/utacheck/results`; the existing server
+must already have a private repository writer. Neither an editor Gist credential
+nor a workspace token is silently installed as a server secret. A read-only login,
+unconfigured writer, offline/network/storage conflict, or failed reread leaves
+results **pending**, retained for retry on normal refresh/resume. Do not treat a
+pending result as acknowledgement. Server route accepts only the fixed Pages
+origin and owner, strict metadata schema and monotonic per-device sequence.
+
+A receipt means that operation was saved on that client, not that another phone
+received it. dot must also compare `source.sha` to the prepared blob it published,
+the specific operation hash, the latest session revision and local override paths.
+A later held operation does not make an earlier successful head current. Unchanged
+reports are deduplicated; their observation timestamp is not a continuous heartbeat.
+The app must be open, owner-writable, online and outside guarded input/recording
+operations; suspended iOS apps cannot execute polling.

@@ -2,6 +2,7 @@
 // Isolated browser checks with synthetic data. Every external request is blocked.
 const playwright=require('playwright'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),http=require('node:http');
 const {checkPassiveAudio}=require('./passive-audio-browser-helper.cjs');
+const {checkRecordingPreparation}=require('./recording-preparation-browser-helper.cjs');
 const {checkProgressPreparation}=require('./progress-preparation-browser-helper.cjs');
 const {checkAbsence}=require('./absence-view-browser-helper.cjs');
 const {checkNewAbsenceSongs}=require('./absence-new-songs-browser-helper.cjs');
@@ -167,12 +168,18 @@ async function readableTitles(page,rec){
    await headcountPage.clock.install();
    await headcountPage.goto(origin);await headcountPage.waitForFunction(()=>typeof normalStartupInitialized!=='undefined'&&normalStartupInitialized);
    const recHeadcountResult=await checkRecordingHeadcounts(headcountPage,width,{screenshot});const recScrollResult=await checkRecSectionStability(headcountPage,width,{screenshot});const recOriginalOKResult=await checkRecordingOKOriginal(headcountPage,width,{screenshot});await headcountContext.close();contexts.delete(headcountContext);
+   const dotContext=engine==='webkit'
+    ? await playwright.webkit.launchPersistentContext(fs.mkdtempSync(path.join(require('node:os').tmpdir(),'utacheck-dot-webkit-')),{headless:true,viewport:{width,height:844},serviceWorkers:'block'})
+    : await browser.newContext({viewport:{width,height:844},serviceWorkers:'block'});
+   contexts.add(dotContext);await dotContext.route('**/*',route=>{const request=route.request(),url=new URL(request.url());return url.origin===allowedOrigin&&request.method()==='GET'?route.continue():route.abort('blockedbyclient');});
+   const dotPage=await dotContext.newPage();dotPage.on('pageerror',e=>errors.push(e.stack||e.message));dotPage.on('dialog',d=>d.dismiss());await dotPage.goto(origin);await dotPage.waitForFunction(()=>normalStartupInitialized);
+   const dotRecResult=await checkRecordingPreparation(dotPage,width,{screenshot});await dotContext.close();contexts.delete(dotContext);
    const audioContext=engine==='webkit'
     ? await playwright.webkit.launchPersistentContext(fs.mkdtempSync(path.join(require('node:os').tmpdir(),'utacheck-audio-webkit-')),{headless:true,viewport:{width,height:844},serviceWorkers:'block'})
     : await browser.newContext({viewport:{width,height:844},serviceWorkers:'block'});
    contexts.add(audioContext);await audioContext.route('**/*',route=>{const request=route.request(),url=new URL(request.url());return url.origin===allowedOrigin&&request.method()==='GET'?route.continue():route.abort('blockedbyclient');});
    const passiveAudioResult=await checkPassiveAudio(audioContext,origin,width,{screenshot});await audioContext.close();contexts.delete(audioContext);
-   results.push({width,memberRoster,legacyMemberRoster,cleanMemberRoster,arrangementDevice,progressConnection,...folderResult,...recordingBrowseResult,...absenceResult,...newAbsenceResult,...lyricBreakResult,...lyricSizeResult,...memberStartDayResult,...memberFeedbackStartResult,...noteNavigationDeliveryResult,...memberLinkSwitchResult,...recSegmentResult,...liveNoteResult,...recAutoResult,...recHeadcountResult,...recScrollResult,...recOriginalOKResult,...passiveAudioResult,excelOriginal:excelCheck,settings:true,pdfLiveRecView:true,fullTitles:true,footer:true,draftPreserved:true,saveErrorVisible:true});
+   results.push({width,memberRoster,legacyMemberRoster,cleanMemberRoster,arrangementDevice,progressConnection,...folderResult,...recordingBrowseResult,...absenceResult,...newAbsenceResult,...lyricBreakResult,...lyricSizeResult,...memberStartDayResult,...memberFeedbackStartResult,...noteNavigationDeliveryResult,...memberLinkSwitchResult,...recSegmentResult,...liveNoteResult,...recAutoResult,...recHeadcountResult,...recScrollResult,...recOriginalOKResult,...passiveAudioResult,...dotRecResult,excelOriginal:excelCheck,settings:true,pdfLiveRecView:true,fullTitles:true,footer:true,draftPreserved:true,saveErrorVisible:true});
   }
   assert.deepEqual(errors,[]);assert.equal(blocked.filter(x=>x.method!=='GET').length,0);
   const report={passed:true,engine,results,errors,blocked,externalRequestsAllowed:0,syntheticDataOnly:true};

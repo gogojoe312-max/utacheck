@@ -54,7 +54,7 @@
   const manifest=clone(input),seen=new Set();
   for(const op of manifest.operations){
    only(op,['id','type','sha256','packet']);
-   if(!id(op.id)||seen.has(op.id)||!['recording-song','recording-schedule','recording-addition','live-addition','live-update','material-update','original-excel'].includes(op.type)||!/^[a-f0-9]{64}$/.test(op.sha256))fail('INVALID_OPERATION');
+   if(!id(op.id)||seen.has(op.id)||!['recording-song','recording-schedule','recording-addition','recording-update','live-addition','live-update','material-update','original-excel'].includes(op.type)||!/^[a-f0-9]{64}$/.test(op.sha256))fail('INVALID_OPERATION');
    seen.add(op.id);safePacket(op.packet);if(await digest(op.packet,cryptoProvider)!==op.sha256)fail('HASH_MISMATCH');
    if(op.type==='original-excel')checkOriginalExcel(op.packet);
   }
@@ -249,6 +249,11 @@
   const receipt=own(ledger,operation.id)?ledger[operation.id]:null;
   if(receipt){if(receipt.sha256!==operation.sha256||receipt.type!==operation.type)fail('OPERATION_ID_REUSED');if(operation.type!=='original-excel')return {state:current,status:'already-applied'};}
   else if(own(ledger,operation.id))fail('OPERATION_ID_REUSED');
+  for(const head of Object.values(current.recordingUpdateHeads||{})){
+   const protectedSlots=new Set(head.snapshot?.slots?.map(s=>s.id)||[]),protectedSongs=new Set(head.snapshot?.songs?.map(s=>s.id)||[]);
+   if(operation.type==='recording-schedule'&&[...(operation.packet.updates||[]),...(operation.packet.unconfirmed||[])].some(s=>protectedSlots.has(s.id))
+    ||operation.type==='material-update'&&operation.packet.scope==='recording'&&protectedSongs.has(operation.packet.songId))fail('REC_UPDATE_LEGACY_VERSION');
+  }
   let result;
   if(operation.type==='recording-song')result=mergeRecordingSong(current,operation.packet);
   else if(operation.type==='recording-schedule'){
@@ -267,6 +272,10 @@
   }else if(operation.type==='live-addition')result=mergeLive(current,operation.packet);
   else if(operation.type==='live-update')result=mergeLiveUpdate(current,operation.packet);
   else if(operation.type==='material-update')result=mergeMaterialUpdate(current,operation.packet);
+  else if(operation.type==='recording-update'){
+   if(typeof adapters.recordingUpdate!=='function')fail('REC_UPDATE_UNSUPPORTED');
+   result=adapters.recordingUpdate(current,operation.packet,{operation,operations:adapters.operations||[]});
+  }
   else if(operation.type==='original-excel'){
    checkOriginalExcel(operation.packet);
    if(typeof adapters.originalExcel!=='function')fail('ORIGINAL_EXCEL_NOT_PREPARED');

@@ -40,6 +40,11 @@ async function checkProgressPreparation(page,{manifest=null,relay=false,automati
   const encoded=btoa(Array.from(bytes,b=>String.fromCharCode(b)).join(''));
   window.fetch=async(url,options={})=>{
    const u=new URL(url,location.href);
+   if(u.href==='https://shinkou-secure.onrender.com/utacheck/results'){
+    if(options.method!=='POST'||options.headers?.Authorization!=='Bearer '+(progressRelay?token:oldToken))throw Error('Result relay must keep the same configured login');
+    const report=JSON.parse(options.body);if(report.app!=='utacheck-preparation-results'||JSON.stringify(report).includes('qa-progress-token'))throw Error('Invalid private result body');
+    return new Response(JSON.stringify({status:'pending',code:'RESULT_WRITER_UNAVAILABLE'}),{status:503,headers:{'Content-Type':'application/json'}});
+   }
    if((relay||progressRelay)&&u.href==='https://shinkou-secure.onrender.com/utacheck/prepared'){
     if(options.headers?.Authorization!=='Bearer '+(progressRelay?token:oldToken))throw Error('Relay must use the existing login');
     reads.push({path:u.pathname,relay:true});interruptFirstResponse();

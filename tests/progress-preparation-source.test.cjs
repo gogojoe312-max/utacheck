@@ -242,3 +242,19 @@ test('progress relay rejection is reported without leaking credentials or changi
  f.context.PreparationRelaySource={read:async()=>({status:'unavailable',code:'HTTP_401',stage:'relay'})};
  const result=await f.read();assert.equal(result.code,'HTTP_401');assert.equal(result.stage,'relay');safe(result);assert.deepEqual(await saved(factory),before);
 });
+
+test('private result reporting reuses only the saved progress login and rechecks it before write and after delivery',async()=>{
+ const factory=new ReadonlyDatabaseFixture();await seed(factory,linked());const f=fixture(factory);let calls=0;
+ f.context.PreparationResults={write:async options=>{calls++;assert.equal(options.token,PROGRESS_TOKEN);assert.equal(await options.beforeWrite(),true);return {status:'confirmed',path:'synthetic-private-path',sequence:1};}};
+ const result=await f.context.ProgressPreparationSource.report({report:{},token:LEGACY_TOKEN});assert.equal(result.status,'confirmed');assert.equal(calls,1);safe(result);
+});
+test('changing saved progress connection during reporting prevents the write confirmation and never substitutes a Gist login',async()=>{
+ const factory=new ReadonlyDatabaseFixture();await seed(factory,linked());const f=fixture(factory);
+ f.context.PreparationResults={write:async options=>{assert.equal(options.token,PROGRESS_TOKEN);await seed(factory,linked({on:false}));assert.equal(await options.beforeWrite(),false);return {status:'pending',code:'INACTIVE'};}};
+ assert.equal((await f.context.ProgressPreparationSource.report({report:{},token:LEGACY_TOKEN})).code,'INACTIVE');
+});
+test('scope-limited progress result reporting can use the fixed owner relay with the same transient login',async()=>{
+ const factory=new ReadonlyDatabaseFixture();await seed(factory,linked());const f=fixture(factory);let relayed=0;
+ f.context.PreparationResults={write:async options=>{assert.equal(options.token,PROGRESS_TOKEN);return {status:'pending',code:'HTTP_404'};},relayReport:async options=>{relayed++;assert.equal(options.token,PROGRESS_TOKEN);return {status:'confirmed',path:'synthetic-private-path',sequence:1};}};
+ assert.equal((await f.context.ProgressPreparationSource.report({report:{},token:LEGACY_TOKEN})).status,'confirmed');assert.equal(relayed,1);
+});

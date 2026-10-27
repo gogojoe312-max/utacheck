@@ -99,7 +99,20 @@
     return result;
   }
 
-  const api = Object.freeze({read});
+  async function report(options={}) {
+    const active=()=>!options.signal?.aborted&&(!options.isActive||options.isActive()===true);
+    const before=await readConnection(active);
+    if(before.code&&(!before.missing||!validToken(options.token)))return {status:'pending',code:before.code};
+    const recheck=async()=>{const now=await readConnection(active);return active()&&(before.snapshot?now.snapshot===before.snapshot:now.missing===true);};
+    if(!await recheck())return {status:'pending',code:'INACTIVE'};
+    const results=root.PreparationResults||(typeof module!=='undefined'&&module.exports?require('./preparation-results.js'):null);
+    if(!results)return {status:'pending',code:'UNSUPPORTED'};
+    let result=await results.write({...options,token:before.token||options.token,isActive:active,beforeWrite:recheck});
+    if(result.status!=='confirmed'&&['HTTP_403','HTTP_404'].includes(result.code)&&await recheck()&&results.relayReport)result=await results.relayReport({...options,token:before.token||options.token,isActive:active});
+    if(!await recheck())return {status:'pending',code:'INACTIVE'};
+    return result;
+  }
+  const api = Object.freeze({read,report});
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.ProgressPreparationSource = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);
