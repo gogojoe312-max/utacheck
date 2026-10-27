@@ -81,3 +81,17 @@ test('an explicit line map supports native lyric rows without source IDs, keepin
  f.update.after.songs[0].lines.unshift({t:'新しい行',parts:['p1'],main:['p1'],extra:[],sec:'1A',bars:1});f.update.lineMaps={'dot-song':[1,2,3]};
  const r=apply(f).state;assert.equal(r.notes[0].lineIdx,2);assert.equal(r.notes[0].from,0);assert.deepEqual(r.rsongs[0].lines[2].recBarOverrides,f.state.rsongs[0].lines[1].recBarOverrides);
 });
+test('a superseded operation stays immutable but stops being pending only after its replacement receipt and head are durable',()=>{
+ const f=fixture(),replacement=clone(f.operation);replacement.id='dot-update-replacement';replacement.packet.supersedes={id:f.operation.id,sha256:f.operation.sha256};replacement.sha256=digest(replacement.packet);f.manifest.operations.push(replacement);
+ assert.equal(P.superseded(f.state,f.operation,f.manifest.operations),false);
+ const state=P.apply(f.state,replacement,adapters(f)).state;assert.equal(P.superseded(state,f.operation,f.manifest.operations),true);assert.equal(state.privatePreparations[f.operation.id],undefined);
+ const oldReceipt=clone(state);oldReceipt.privatePreparations[f.operation.id]={type:f.operation.type,sha256:'f'.repeat(64),at:1};assert.equal(P.superseded(oldReceipt,f.operation,f.manifest.operations),false);
+ const missingHead=clone(state);delete missingHead.recordingUpdateHeads;assert.equal(P.superseded(missingHead,f.operation,f.manifest.operations),false);
+ const wrongReceipt=clone(state);wrongReceipt.privatePreparations[replacement.id].sha256='f'.repeat(64);assert.equal(P.superseded(wrongReceipt,f.operation,f.manifest.operations),false);
+ assert.deepEqual(f.manifest.operations[0],f.anchor);
+});
+test('restored update receipts without their atomic session head cannot let an old superseded packet take over',()=>{
+ const f=fixture(),replacement=clone(f.operation);replacement.id='replacement-for-missing-head';replacement.packet.supersedes={id:f.operation.id,sha256:f.operation.sha256};replacement.sha256=digest(replacement.packet);f.manifest.operations.push(replacement);
+ const state=P.apply(f.state,replacement,adapters(f)).state;delete state.recordingUpdateHeads;
+ assert.throws(()=>P.apply(state,f.operation,adapters(f)),e=>e.preparationCode==='REC_UPDATE_STATE');
+});

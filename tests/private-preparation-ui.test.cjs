@@ -508,3 +508,9 @@ test('an exhausted progress relay never repeats the same timeout with an unrelat
  f.c.ProgressPreparationSource={read:async()=>({status:'unavailable',code:'TIMEOUT',stage:'relay'})};f.c.PreparationRelaySource={read:async()=>{reads++;throw Error('wrong fallback');}};
  const result=await f.c.PrivatePreparationUI.receive(true);assert.equal(result.code,'TIMEOUT');assert.equal(reads,0);assert.equal(f.run('JSON.stringify(S)'),before);
 });
+test('a dedicated read-only source login proves ownership to the result relay without attempting a client repository write',async()=>{
+ const f=await setup({token:''}),R=require('../preparation-results.js');let relayed=0;
+ f.idb.replace(AUTH_KEY,{version:1,owner:'gogojoe312-max',repo:'shinkou-data',token:READ_TOKEN});
+ f.c.PreparationResults={...R,write:async()=>{throw Error('Read-only source credential must never PUT');},relayReport:async options=>{relayed++;assert.equal(options.token,READ_TOKEN);assert.equal(options.isActive(),true);assert.equal(options.report.operations[0].status,'applied');return {status:'confirmed',path:'utacheck/results/'+options.report.clientId+'.json',sequence:options.report.sequence};}};
+ assert.equal((await f.c.PrivatePreparationUI.receive(true)).status,'applied');assert.equal(relayed,1);assert.equal(f.c.PrivatePreparationUI.getResultStatus().status,'confirmed');assert.equal(f.run('S.ghToken'),'');assert(!f.run('JSON.stringify(backupState())').includes(READ_TOKEN));
+});

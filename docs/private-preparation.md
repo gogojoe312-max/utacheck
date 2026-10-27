@@ -198,7 +198,7 @@ Waiting, slow-response, retry and receiving phases update only the existing
 settings status; they do not lock or redraw lyrics. Source validation and the
 existing editor/transaction gates still precede any application of data.
 
-## dot: versioned REC updates (16.41.58.73)
+## dot: versioned REC updates (16.41.58.74)
 
 Use `recording-update` for subsequent changes to an already received REC session.
 Do not edit/reuse prior operation IDs or resubmit a changed `recording-addition`.
@@ -265,7 +265,11 @@ post-bootstrap `before`. An explicitly held revision can be corrected with a new
 reference and before snapshot stay identical. Any device that already applied
 the old operation holds this alternative; do not roll back its head. The private
 result marks the old entry `REC_UPDATE_SUPERSEDED` only after the replacement
-receipt is durably saved. Bootstrap is allowed only on revision 1; it does not
+receipt and current session head are durably saved. The receiver excludes that
+old operation from future pending checks but never deletes it or fabricates its
+receipt. A missing head with existing update receipts is held as inconsistent
+state. A dedicated read-only source login proves ownership to the existing
+result relay only; the client never uses it for a repository PUT. Bootstrap is allowed only on revision 1; it does not
 replace personal edits or bypass predecessor verification.
 
 Offline authoring and dot's operating procedure are documented in

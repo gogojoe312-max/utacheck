@@ -388,7 +388,7 @@
  const resultKey='private-preparation:results:v1';
  let resultDelivery={status:'waiting'};
  async function reportResults(manifest,sourceSha,outcomes={}){
-  if(!root.PreparationResults||!root.ProgressPreparationSource?.report)return;
+  if(!root.PreparationResults||!dedicatedToken&&!root.ProgressPreparationSource?.report)return;
   try{
    if(!ready())return;
    const savedRaw=await loadRaw();if(!ready())return;
@@ -403,7 +403,10 @@
    if(box.digest!==digest){box={clientId:box.clientId,sequence:box.sequence+1,digest,report};await idbPut(resultKey,box);if(JSON.stringify(await idbGet(resultKey))!==JSON.stringify(box))throw failure('RESULT_STORAGE_UNVERIFIED');}
    if(box.confirmed===box.digest){resultDelivery={status:'confirmed',path:'utacheck/results/'+box.clientId+'.json',sequence:box.sequence};return;}
    if(!ready())return;
-   const response=await root.ProgressPreparationSource.report({report:box.report,token:S.ghToken,isActive:()=>ready()&&!VIEW()&&!preview});
+   const proofToken=sourceToken(),options={report:box.report,isActive:()=>ready()&&!VIEW()&&!preview&&sourceToken()===proofToken};
+   // The dedicated credential is read-only. It may prove the owner to the
+   // existing server, but must never perform a repository PUT itself.
+   const response=dedicatedToken?await root.PreparationResults.relayReport({...options,token:dedicatedToken}):await root.ProgressPreparationSource.report({...options,token:S.ghToken});
    resultDelivery=response;
    if(response.status==='confirmed'){box.confirmed=box.digest;await idbPut(resultKey,box);}
   }catch(error){resultDelivery={status:'pending',code:error.preparationCode||'RESULT_STORAGE_UNVERIFIED'};}
@@ -440,6 +443,7 @@
    const activeSlots=(S.plan?.slots||[]).filter(x=>x.a0!=null&&x.a1==null),activePlan=activeSlots.length>0;
    const unapplied=[];
    for(const op of manifest.operations){
+    if(PrivatePreparation.superseded(S,op,manifest.operations))continue;
     const receipt=S.privatePreparations?.[op.id];
     if(!receipt||receipt.sha256!==op.sha256||receipt.type!==op.type||op.type==='original-excel'&&(receipt.targetSha256!==await originalTargetFingerprint(S,op.packet)||!await originalExcelPresent(op.packet)))unapplied.push(op);
     if(!ready()||sourceToken()!==token)throw failure('DEFERRED');

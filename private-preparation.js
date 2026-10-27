@@ -244,6 +244,14 @@
   const song={...clone(so),groupId:group.id,roster:[],blocks:{},source:clone(packet.source)};
   return {state:{...current,groups:matches.length?groups:[...groups,group],rsongs:[...(current.rsongs||[]),song]},songs:1,slots:0};
  }
+ function superseded(state,operation,operations=[]){
+  if(operation.type!=='recording-update'||state.privatePreparations?.[operation.id])return false;
+  return operations.some(next=>{
+   if(next.type!=='recording-update'||next.packet?.supersedes?.id!==operation.id||next.packet.supersedes.sha256!==operation.sha256||next.packet.sessionId!==operation.packet.sessionId||next.packet.revision!==operation.packet.revision)return false;
+   const receipt=state.privatePreparations?.[next.id],head=state.recordingUpdateHeads?.[next.packet.sessionId];
+   return !!receipt&&receipt.type===next.type&&receipt.sha256===next.sha256&&Number.isSafeInteger(head?.revision)&&head.revision>=next.packet.revision;
+  });
+ }
  function apply(current,operation,adapters={},now=Date.now()){
   const ledger=current.privatePreparations||{};if(!object(ledger))fail('INVALID_RECEIPTS');
   const receipt=own(ledger,operation.id)?ledger[operation.id]:null;
@@ -291,6 +299,6 @@
   const updatedReceipt=receipt?(operation.type==='original-excel'&&result.targetSha256&&result.targetSha256!==receipt.targetSha256?{...receipt,...counts}:receipt):{sha256:operation.sha256,type:operation.type,at:now,...counts};
   return {...result,status:'applied',state:{...result.state,privatePreparations:{...ledger,[operation.id]:updatedReceipt}}};
  }
- const api=Object.freeze({validate,apply,digest,checkOriginalExcel,mergeLive,mergeLiveUpdate,mergeMaterialUpdate,mergeRecordingSong});if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.PrivatePreparation=api;
+ const api=Object.freeze({validate,apply,digest,superseded,checkOriginalExcel,mergeLive,mergeLiveUpdate,mergeMaterialUpdate,mergeRecordingSong});if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.PrivatePreparation=api;
 })(typeof globalThis!=='undefined'?globalThis:this);
 

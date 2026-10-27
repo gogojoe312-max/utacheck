@@ -140,6 +140,7 @@
   if(!operation||operation.type!=='recording-update'||!id(operation.id)||!hash(operation.sha256)||!object(current)||!Array.isArray(current.rsongs)||!Array.isArray(current.plan?.slots))fail('REC_UPDATE_FORMAT');
   const heads=current.recordingUpdateHeads||{};if(!object(heads))fail('REC_UPDATE_STATE');
   const head=heads[packet.sessionId];
+  if(!head&&operations.some(prior=>prior.type==='recording-update'&&prior.packet.sessionId===packet.sessionId&&current.privatePreparations?.[prior.id]?.sha256===prior.sha256))fail('REC_UPDATE_STATE');
   if(packet.supersedes){
    const prior=operations.find(op=>op.id===packet.supersedes.id&&op.sha256===packet.supersedes.sha256);
    if(!prior||prior.type!=='recording-update'||prior.packet.sessionId!==packet.sessionId||prior.packet.revision!==packet.revision||!equal(prior.packet.previous,packet.previous)||!equal(prior.packet.before,packet.before)||!equal(prior.packet.anchor,packet.anchor))fail('REC_UPDATE_PREDECESSOR');

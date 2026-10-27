@@ -328,3 +328,10 @@ Private dot REC update acceptance:
   reception. A browser mock of private GitHub transport is not proof of the real
   phone's result. Confirm server source capability and exact deployed revision;
   do not install the environment GH_TOKEN as a server secret.
+- Retain the v73 published-screen regression: an unapplied held update stays in
+  the source queue after its explicit correction is applied. Repeat receive
+  without deleting that old packet. The actual REC settings status must remain
+  current, with the replacement's durable receipt/head and private result; it
+  must not return to conflict. Exercise both an existing progress writer and a
+  dedicated read-only source login. That read-only login only proves ownership
+  to the result relay and must never perform a client repository PUT.
