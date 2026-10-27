@@ -335,3 +335,9 @@ Private dot REC update acceptance:
   must not return to conflict. Exercise both an existing progress writer and a
   dedicated read-only source login. That read-only login only proves ownership
   to the result relay and must never perform a client repository PUT.
+- An automatic private receive may set its visible applied state before its
+  private result outbox finishes. Keep synthetic transport interception until
+  isReceiving() becomes false. Retain a delayed repository denial -> result-relay
+  fallback in the fixture, and preserve the assertion that zero external writes
+  escape. The v74 public WebKit failure must not be hidden by removing the held
+  operation, stripping the result sender, or weakening the network-isolation check.

@@ -198,7 +198,7 @@ Waiting, slow-response, retry and receiving phases update only the existing
 settings status; they do not lock or redraw lyrics. Source validation and the
 existing editor/transaction gates still precede any application of data.
 
-## dot: versioned REC updates (16.41.58.74)
+## dot: versioned REC updates (16.41.58.75)
 
 Use `recording-update` for subsequent changes to an already received REC session.
 Do not edit/reuse prior operation IDs or resubmit a changed `recording-addition`.

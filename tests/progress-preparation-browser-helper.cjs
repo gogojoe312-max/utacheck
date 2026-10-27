@@ -57,6 +57,7 @@ async function checkProgressPreparation(page,{manifest=null,relay=false,automati
    if(u.origin!=='https://api.github.com')return oldFetch(url,options);
    const allowed=options.headers?.Authorization==='Bearer '+token;
    reads.push({path:u.pathname,progress:allowed});
+   if((automaticInteraction||concurrentReceive)&&PrivatePreparationUI.getStatus().kind==='applied'&&u.pathname==='/repos/gogojoe312-max/shinkou-data'){interaction.resultWaitInjected=true;await new Promise(resolve=>setTimeout(resolve,400));}
    let body,status=200;
    if(u.pathname==='/user')body={login:'gogojoe312-max'};
    else if(!allowed||progressRelay){body={message:'Not Found'};status=404;}
@@ -111,6 +112,8 @@ async function checkProgressPreparation(page,{manifest=null,relay=false,automati
      interaction.joinedExistingReceive=true;
     }
    }
+   await waitUntil(()=>!PrivatePreparationUI.isReceiving(),'The automatic receive and private result delivery did not finish',10000);
+   interaction.resultDeliveryFinished=true;
    await waitUntil(()=>!renderPointers.size&&Date.now()>=scrollingUntil&&!saving,'The received UI did not settle');
    await waitUntil(()=>document.getElementById('app').textContent.includes(newSong.artist||newSong.recArtist||''),'The new artist did not become visible');
    const added=S.rsongs.find(s=>s.id===newSong.id),persisted=JSON.parse(await loadRaw());
@@ -133,7 +136,7 @@ async function checkProgressPreparation(page,{manifest=null,relay=false,automati
  if(concurrentReceive)assert.equal(result.interaction.joinedExistingReceive,true);
  if(automaticInteraction){
   assert.equal(result.interaction.firstStatus.kind,'deferred');assert.equal(result.interaction.firstStatus.reason,'interaction');
-  for(const key of ['injected','pointerHeld','beforeReleaseAbsent','released','editingPreserved','recordingPreserved'])assert.equal(result.interaction[key],true,key);
+  for(const key of ['injected','pointerHeld','beforeReleaseAbsent','released','editingPreserved','recordingPreserved','resultWaitInjected','resultDeliveryFinished'])assert.equal(result.interaction[key],true,key);
   assert(result.interaction.resumeMs<5000);
  }
  if(relay||progressRelay){assert(result.reads.filter(r=>r.relay).length>=2);if(!progressRelay)assert(!result.reads.some(r=>r.progress));}

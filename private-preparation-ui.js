@@ -544,7 +544,7 @@
   void tryConnect(0);
  },true);
  function start(){if(started)return;started=true;setInterval(()=>{void receive();},10000);setTimeout(()=>{void receive();},1200);navigator.serviceWorker?.addEventListener?.('controllerchange',()=>{lastAttempt=0;void receive();});window.addEventListener('online',()=>{lastAttempt=0;void receive();});document.addEventListener('visibilitychange',()=>{if(!document.hidden){lastAttempt=0;void receive();}});}
- root.PrivatePreparationUI=Object.freeze({settingsHTML,receive,readOriginalExcelPackets,importFile,connectReadCredential,start,isApplying:()=>applying,getStatus:()=>({...status}),getResultStatus:()=>({...resultDelivery})});start();
+ root.PrivatePreparationUI=Object.freeze({settingsHTML,receive,readOriginalExcelPackets,importFile,connectReadCredential,start,isReceiving:()=>running,isApplying:()=>applying,getStatus:()=>({...status}),getResultStatus:()=>({...resultDelivery})});start();
 })(globalThis);
 
 
