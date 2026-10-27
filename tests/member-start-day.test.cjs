@@ -12,7 +12,7 @@ function fixture(){
  ],songs:['old','latest','rh','hidden'].map(showId=>({showId,groupId:'member-source'})).concat([{showId:'other',groupId:'other'}])};
  const c={S,U:{songIdx:4,showFilter:'',allShows:true},viewer:true,preview:null,preference:null,
   VIEW:()=>c.viewer,showsNewestFirst:()=>S.shows.slice().sort((a,b)=>b.ts-a.ts),liveGroups:()=>S.groups,showGroupIds:sw=>[sw.groupId],recoveryMaterialShow:()=>false,syncShowGroup(){},readViewSelection:()=>c.preference};vm.createContext(c);
- for(const name of ['performanceDateOrder','performanceSelectionOrder','memberPerformanceDates','memberPerformanceDateOrder','latestPerformance','restoreViewSelection','memberDayKey','memberPerformanceIsToday'])vm.runInContext(fn(name),c);
+ for(const name of ['performanceDateOrder','performanceSelectionOrder','memberPerformanceDates','memberPerformanceDateOrder','memberPerformanceGroups','latestPerformance','restoreViewSelection','memberDayKey','memberPerformanceIsToday'])vm.runInContext(fn(name),c);
  return c;
 }
 test('member latest means actual performance date, regardless of creation order or old owner/archive metadata',()=>{

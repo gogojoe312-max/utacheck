@@ -12,8 +12,8 @@ function fixture(){
  vm.runInContext(src.slice(src.indexOf('function performanceDateOrder('),src.indexOf('function groupedPerformanceHTML(')),c);
  vm.runInContext(src.slice(src.indexOf('function compactMemberLabel('),src.indexOf('const names = (ids)')),c);
  vm.runInContext(src.slice(src.indexOf('const songMemo ='),src.indexOf('const shownNotes =')),c);
- vm.runInContext(src.slice(src.indexOf('function memberChangePerformances('),src.indexOf('function memberAbsenceContext(')),c);
- vm.runInContext(src.slice(src.indexOf('function summaryShows()'),src.indexOf('function viewSummary()')),c);
+ vm.runInContext(src.slice(src.indexOf('function memberAbsenceNames('),src.indexOf('function memberAbsenceContext(')),c);
+ vm.runInContext(src.slice(src.indexOf('function memberPerformanceGroups('),src.indexOf('function viewSummary()')),c);
  return {c,stored,run:code=>vm.runInContext(code,c)};
 }
 test('both member pickers use the current song formal roster and exclude labels, aliases and duplicate restored IDs',()=>{
@@ -249,4 +249,9 @@ test('member feedback resolves short names and each songs A/B assignments, inclu
 test('remembered abbreviated member names restore to the formal member after reopening',()=>{
  const {c,stored,run}=fixture();stored.set('utacheck.member:source1','山');c.U={};
  assert.equal(run('restoreViewerMember().name'),'山田');assert.equal(c.U.sumOpen,'a');assert.equal(c.U.memberName,'山田');
+});
+
+test('a previous feedback link can still open its exact received working copy while the performance picker stays unique',()=>{
+ const {c,run}=fixture();c.S.shows.push({id:'current-copy',name:'初日',ts:10});c.S.songs.push({id:'current-song',showId:'current-copy',groupId:'g',title:'最新の歌割'});c.S.showId='current-copy';c.S.songs[0].lines=[{t:'元の一行目'},{t:'元の指摘箇所'}];c.notes[0].id='previous-note';c.U.view='summary';c.U.mode='diff';c.app={querySelector:()=>({scrollTop:20})};
+ assert.deepEqual(Array.from(run('summaryShows()'),sw=>sw.id),['current-copy','day2']);run("openSummarySong('s1',1,'previous-note')");assert.equal(c.S.showId,'day1');assert.equal(c.U.lyricTarget.noteId,'previous-note');run('backToSummary()');assert.equal(c.S.showId,'current-copy');assert.equal(c.S.shows.length,3);
 });

@@ -429,3 +429,6 @@ select.field{appearance:auto}textarea.field{resize:vertical}
 .lyric-size-line.is-hidden .grow{text-decoration:line-through;color:var(--dim)}
 .lyric-size-sheet form{display:grid;gap:8px}
 .lyric-size-sheet button:disabled{opacity:.4}
+
+.member-absent-names{display:block;margin-top:5px;font-size:14px;white-space:normal}
+.member-absence-roster{border:1px solid #ff9183;color:#ffb4aa;font-weight:700}

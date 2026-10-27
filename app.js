@@ -118,7 +118,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.71";
+const APP_VER = "16.41.58.72";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1839,7 +1839,7 @@ function latestPerformance(groupId) {
     ? S.songs.some(so => so.showId === sw.id && (!groupId || !so.groupId || so.groupId === groupId))
     : !recoveryMaterialShow(sw) && (!groupId || showGroupIds(sw).includes(groupId) || sw.deliveryMode === "song" && sw.groupId === groupId)));
   const actual = list.filter(sw => !/リハ|通し|ゲネ|rehearsal|(?:^|\s)(?:GP|RH)(?:\s|$)/i.test(sw.name || ""));
-  const candidates = VIEW() ? list : actual.length ? actual : list;
+  const candidates = VIEW() ? memberPerformanceGroups(list).map(row => row.show) : actual.length ? actual : list;
   return (VIEW() ? performanceSelectionOrder(candidates, memberPerformanceDateOrder) : candidates)[0] || null;
 }
 function setShowFilter(id) {
@@ -2230,7 +2230,7 @@ function labelOf(so, i) {
 
 // 赤＝まだ決まっていない、黄＝変更済み
 function lineStatus(so, i) {
-  if (VIEW() && !memberPerformanceIsToday(so.showId)) return "";
+  if (VIEW() && !memberCanReviewAssignments(so.showId)) return "";
   if (VIEW() && typeof AbsenceChanges !== "undefined") return AbsenceChanges.line(so,i,memberAbsenceContext(so))?.status === "changed" ? "changed" : "";
   const l = so.lines[i] || {};
   if (l.gap || l.cut) return "";                            // カット（グレー）の行は歌わないので触らない
@@ -2246,7 +2246,7 @@ function lineStatus(so, i) {
 }
 // ブロックの状態
 function blockStatus(so, b) {
-  if (VIEW() && !memberPerformanceIsToday(so.showId)) return "";
+  if (VIEW() && !memberCanReviewAssignments(so.showId)) return "";
   if (VIEW() && typeof AbsenceChanges !== "undefined") return AbsenceChanges.block(so,b,memberAbsenceContext(so))?.status === "changed" ? "changed" : "";
   const ab = absentIds();
   const sub = gsubOf(so.id, b), original = so.blocks?.[b] || [];
@@ -6381,7 +6381,8 @@ function render(background = false) {
   // Cached member data may have the same version as the server (or be offline),
   // so applySetlist need not run. Member screens always use LIVE navigation.
   if (VIEW()) S.recMode = false;
-  if (VIEW() && U.view === "absent" && !memberPerformanceIsToday()) U.view = "summary";
+  if (VIEW() && (U.view === "summary" || U.view === "absent") && normalizeMemberPerformanceSelection()) save();
+  if (VIEW() && U.view === "absent" && !memberCanReviewAssignments()) U.view = "summary";
   // メンバーへのお知らせだけは、打っていても割り込ませる
   if ((typingNow() || renderPointers.size || Date.now() < scrollingUntil
     || (background && (U.sheet || U.menu || U.picker))) && !alertPending()) {
@@ -7838,10 +7839,40 @@ const partOf = (n) => (n.from != null ? Array.from(lyricOf(n)).slice(n.from, n.t
 const songTitle = (n) => { const so = S.songs.find((x) => x.id === n.songId); return so ? songName(so) : "?"; };
 
 
+// A member chooses a performance, not each stored working copy of it. Keep
+// every source record, but resolve equal folder/name copies to the sender's
+// current version, otherwise the newest copy. Never combine different folders.
+function memberPerformanceGroups(list) {
+  const groups = new Map();
+  for (const sw of list) {
+    const name = String(sw.name || "").normalize("NFKC").trim();
+    const key = name ? JSON.stringify(["performance", sw.folder || "", name]) : JSON.stringify(["id", sw.id]);
+    let row = groups.get(key);
+    if (!row) { row = {show:sw, ids:[]}; groups.set(key, row); }
+    row.ids.push(sw.id);
+    if (sw.id === S.memberSourceFocusShow || row.show.id !== S.memberSourceFocusShow && Number(sw.ts || 0) > Number(row.show.ts || 0)) row.show = sw;
+  }
+  return [...groups.values()];
+}
+function memberAvailableShows() {
+  return showsNewestFirst().filter(sw => !sw.hidden && S.songs.some(so => so.showId === sw.id
+    && (!S.groupId || !so.groupId || so.groupId === S.groupId)));
+}
+function memberPerformanceVersion(id = S.showId) {
+  return memberPerformanceGroups(memberAvailableShows()).find(row => row.ids.includes(id))?.show || null;
+}
+function normalizeMemberPerformanceSelection() {
+  if (!VIEW()) return false;
+  const current = memberPerformanceVersion();
+  if (!current || current.id === S.showId) return false;
+  S.showId = current.id; U.songIdx = 0;
+  return true;
+}
 function summaryShows() {
+  if (VIEW()) return memberPerformanceGroups(memberAvailableShows()).map(row => row.show);
   return showsNewestFirst().filter(sw => !sw.hidden && (
-    S.songs.some(so => so.showId === sw.id && (!S.groupId || !so.groupId || (VIEW() ? so.groupId : songDeliveryGroupId(so)) === S.groupId))
-    || !VIEW() && sw.recoverySource !== "original-workbooks" && !S.songs.some(so => so.showId === sw.id) && (!S.groupId || showGroupIds(sw).includes(S.groupId) || sw.deliveryMode === "song" && sw.groupId === S.groupId)));
+    S.songs.some(so => so.showId === sw.id && (!S.groupId || !so.groupId || songDeliveryGroupId(so) === S.groupId))
+    || sw.recoverySource !== "original-workbooks" && !S.songs.some(so => so.showId === sw.id) && (!S.groupId || showGroupIds(sw).includes(S.groupId) || sw.deliveryMode === "song" && sw.groupId === S.groupId)));
 }
 function summaryShowPicker() {
   if (S.recMode) return "";
@@ -8047,7 +8078,7 @@ function viewerSummaryBody() {
     return `<section class="card member-song">
       <div class="member-song-head"><div class="grow">${U.allShows ? `<div class="member-caption">${h(showName(so.showId))}</div>` : ""}<h3>${h(songName(so))}</h3></div></div>
       ${memo ? `<div class="song-summary"><h4>総括 <span>全員共通</span></h4><div>${h(memo)}</div></div>` : ""}
-      ${notes.length ? `<h4 class="member-notes-title">${byMember && selected ? h(compactMemberLabel(selected.name)) + "さんへの指摘" : "指摘"}<span>${notes.length}件</span></h4>
+      ${notes.length ? `<h4 class="member-notes-title">${byMember && selected ? h(compactMemberLabel(selected.name)) + "さんへの指摘" : "指摘"}</h4>
         ${notes.map(n => `<button class="member-note member-note-link" data-act="summary-note" data-id="${h(so.id)}" data-i="${n.lineIdx}" data-note="${h(n.id || "")}"><span class="member-note-arrow" aria-hidden="true">›</span>${memberNoteBody(n, !byMember || !selected || !(n.memberIds || []).length)}<span class="sr-only">歌詞で見る</span></button>`).join("")}`
         : `<p class="member-hint">${byMember && selected ? h(compactMemberLabel(selected.name)) + "さんへの個別の指摘はありません。" : "個別の指摘はありません。"}</p>`}
     </section>`;
@@ -8059,7 +8090,7 @@ function viewerBackButton() {
 }
 function openSummarySong(id, lineIdx = null, noteId = "") {
   if (!VIEW()) return;
-  const allowed = new Set(summaryShows().map(sw => sw.id));
+  const allowed = new Set(memberAvailableShows().map(sw => sw.id));
   const so = id ? S.songs.find(so => so.id === id && allowed.has(so.showId)
     && (!S.groupId || !so.groupId || so.groupId === S.groupId)) : SONGS()[U.songIdx] || summarySongs()[0];
   if (!so) return;
@@ -8264,7 +8295,7 @@ function viewDiff() {
       </${VIEW() ? "button" : "div"}>`;
     };
     const sec = (title, arr, col, src) => arr.length
-      ? `<div style="margin-top:10px"><b style="font-size:12px;color:${col}">${title} ${arr.length}</b>${arr.map((n) => row(n, src, col)).join("")}</div>`
+      ? `<div style="margin-top:10px"><b style="font-size:12px;color:${col}">${title}${VIEW() ? "" : " " + arr.length}</b>${arr.map((n) => row(n, src, col)).join("")}</div>`
       : "";
     return `<div class="card"><b>${h(songName(so))}</b>
       <span style="font-size:11px;color:var(--dim)">　← ${h(songName(prevSong))}${prevSong.showId !== so.showId ? "（" + h(showName(prevSong.showId)) + "）" : ""}</span>
@@ -8752,23 +8783,33 @@ function refreshMemberPresentation(resume = false) {
     restoreViewSelection(S.showId, true);
     U.summaryReturn = null; U.lyricTarget = null;
   }
-  if (U.view === "absent" && !memberPerformanceIsToday()) { U.view = "summary"; U.allShows = false; }
+  if (U.view === "absent" && !memberCanReviewAssignments()) { U.view = "summary"; U.allShows = false; }
   render();
 }
 setInterval(() => refreshMemberPresentation(), 1000);
 document.addEventListener("visibilitychange", () => { if (!document.hidden) refreshMemberPresentation(true); });
 window.addEventListener("pageshow", () => refreshMemberPresentation(true));
-function memberChangePerformances() {
-  return S.shows.filter(sw=>!sw.hidden&&memberPerformanceIsToday(sw.id)).map(sw=>({show:sw,count:S.songs
-    .filter(so=>so.showId===sw.id&&(!S.groupId||so.groupId===S.groupId))
-    .reduce((n,so)=>n+memberAbsenceChanges(so).length,0)})).filter(row=>row.count);
+function memberAbsenceNames(id = S.showId) {
+  const ids = S.shows.find(sw => sw.id === id)?.absent || [];
+  if (!ids.length) return [];
+  const formal = viewerMembers().map(m => m.name);
+  return [...new Set(absentVersionNames(ids).map(name => {
+    const key = viewerMemberName(name), exact = formal.find(full => viewerMemberName(full) === key);
+    const matches = formal.filter(full => viewerMemberName(full).startsWith(key));
+    return exact || (key && matches.length === 1 ? matches[0] : name);
+  }))];
+}
+function memberCanReviewAssignments(id = S.showId) {
+  return memberAbsenceNames(id).length > 0 || memberPerformanceIsToday(id);
 }
 function memberReviewNav() {
-  if (!VIEW()) return "";
-  const changes=memberChangePerformances(),count=changes.reduce((n,row)=>n+row.count,0);
-  if (!count) return "";
-  const target=changes.find(row=>row.show.id===S.showId)||changes[0];
-  return '<div class="member-review-nav"><button class="member-change-alert" data-act="goabsent" data-id="'+h(target.show.id)+'">歌割変更があります（'+count+'件）</button></div>';
+  if (!VIEW() || U.allShows) return "";
+  const current = S.shows.find(sw => sw.id === S.showId);
+  if (!current || current.hidden) return "";
+  const absent = memberAbsenceNames();
+  if (!absent.length && (!memberPerformanceIsToday() || !SONGS().some(so => memberAbsenceChanges(so).length))) return "";
+  return '<div class="member-review-nav"><button class="member-change-alert" data-act="goabsent" data-id="'+h(current.id)+'">'
+    + (absent.length ? '欠席歌割<span class="member-absent-names">'+h(absent.join("・"))+'が欠席</span>' : '歌割変更') + '</button></div>';
 }
 
 function recordAssignmentChange(so,kind,index,after) {
@@ -8861,12 +8902,8 @@ function memberAbsenceRows(so, entries, memberId="") {
   }).join("");
 }
 function viewMemberAbsence() {
-  if (!memberPerformanceIsToday(S.showId)) return viewSummary();
-  const changeShows=memberChangePerformances().map(row=>row.show);
-  if(!changeShows.some(sw=>sw.id===S.showId)){
-    const current=S.shows.find(sw=>sw.id===S.showId);if(current)changeShows.unshift(current);
-  }
-  const showPicker=changeShows.length>1 ? '<label class="summary-show-picker"><span>公演・日付</span><select id="summary-show" aria-label="公演・日付">'+changeShows.map(sw=>'<option value="'+h(sw.id)+'" '+(sw.id===S.showId?'selected':'')+'>'+h(sw.name)+'</option>').join('')+'</select></label>' : '';
+  if (!memberCanReviewAssignments(S.showId)) return viewSummary();
+  const showPicker = summaryShowPicker();
   const selected=restoreViewerMember(), byMember=!!selected;
   const memberId=byMember && selected ? selected.id : "";
   const picker='<label class="summary-show-picker member-picker"><span>メンバー</span><select id="summary-member" aria-label="メンバー"><option value="">全員</option>'+viewerMembers().map(m=>'<option value="'+h(m.id)+'" '+(selected?.id===m.id ? 'selected' : '')+'>'+h(compactMemberLabel(m.name))+'</option>').join("")+'</select></label>';
@@ -8877,7 +8914,7 @@ function viewMemberAbsence() {
   return '<div class="hd"><button class="ic" data-act="go-live" aria-label="歌詞に戻る">‹</button><b>歌割変更</b><span class="grow"></span><span class="trunc">'+h(showName())+'</span></div>'
     +'<div class="scroll pad"><p class="member-hint">変更後の担当を確認してください。</p>'+showPicker+picker
     +(byMember ? '<p class="member-hint">3人以上のユニゾンは「全員」で確認できます。</p>' : '')
-    +'<div class="card member-hint">'+h(absentVersionNames().join("・") || "欠席なし")+(absentIds().length ? " が欠席" : "")+'</div>'
+    +(memberAbsenceNames().length ? '<div class="card member-absence-roster">'+h(memberAbsenceNames().join("・"))+'が欠席</div>' : "")
     +(cards || '<p class="member-empty">'+(memberId ? h(compactMemberLabel(selected.name))+"さんに関わる" : "")+'歌割の変更はありません。</p>')+'</div>';
 }
 
@@ -11576,7 +11613,7 @@ document.addEventListener("click", async (e) => {
     }
     case "absence-scope": if (VIEW()) { U.absenceMode = id === "member" ? "member" : "all"; render(); } break;
     case "goabsent":
-      if(VIEW() && !memberPerformanceIsToday(id || S.showId))break;
+      if(VIEW() && !memberCanReviewAssignments(id || S.showId))break;
       commitFields();
       if(VIEW() && S.shows.some(sw=>sw.id===id)){
         S.showId=id;U.songIdx=0;U.allShows=false;U.memberShowChosen=true;rememberViewSelection();
@@ -15808,6 +15845,7 @@ function applySetlist(d) {
       const nid = uid();
       S.shows = [{ id: nid, name: todayLabel(), ts: Date.now() }];
     }
+    S.memberSourceFocusShow = S.shows.some(sw => sw.id === d.focusShow) ? d.focusShow : "";
     const newest = latestPerformance(S.groupId);
     const focus = newest ? newest.id : d.focusShow && S.shows.some((x) => x.id === d.focusShow)
       ? d.focusShow
@@ -15815,8 +15853,9 @@ function applySetlist(d) {
     const keepShow = !initialSource && U.memberShowChosen && S.shows.some(sw => sw.id === currentSelection);
     if (keepShow) S.showId = summaryContext ? summaryContext.showId : currentSelection;
     else if (focus) S.showId = focus;
+    normalizeMemberPerformanceSelection();
     // メンバー別の確認中は、公演と開いている人を更新後も保持する。
-    U.view = summaryContext ? summaryContext.view === "absent" && memberPerformanceIsToday(S.showId) ? "absent" : "summary" : "live";
+    U.view = summaryContext ? summaryContext.view === "absent" && memberCanReviewAssignments(S.showId) ? "absent" : "summary" : "live";
     if (summaryContext) U.sumOpen = (S.members.find(m => m.name === summaryContext.memberName) || {}).id || "";
     else U.sumOpen = "";
     U.menu = null;

@@ -377,7 +377,7 @@ async function checkExcelReattach(page,width,dialogs){
     return {count:memberAbsenceChanges(S.songs[0]).length,notice:memberReviewNav(),notes:S.pubNotes.map(n=>n.memo)};
    }finally{S=original;U=JSON.parse(ui);}
   });
-  assert.equal(exportedMemberChange.count,1);assert(exportedMemberChange.notice.includes('歌割変更があります'));assert.deepEqual(exportedMemberChange.notes,['合成指摘を保持']);
+  assert.equal(exportedMemberChange.count,1);assert(exportedMemberChange.notice.includes('欠席歌割'));assert(exportedMemberChange.notice.includes('甲が欠席'));assert(!/\d+件/.test(exportedMemberChange.notice));assert.deepEqual(exportedMemberChange.notes,['合成指摘を保持']);
   assert.equal(exported.count,1);assert.deepEqual(exported.failures,[]);assert(exported.name.endsWith('.xlsx'));
   assert.deepEqual(exported.sheets,[exported.tab,'表紙','歌割']);assert.equal(exported.cover,'Synthetic cover to preserve');
   assert.equal(exported.originalName,'甲');assert.equal(exported.originalLyric,'Synthetic lyric one to preserve');

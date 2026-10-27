@@ -216,8 +216,9 @@ Member first-screen / same-day changes acceptance:
   rehearsals. Manual historical browsing stays put during in-session receives;
   native reload and the resume handler return to latest. Test no-preference boot.
 - Keep assignment overrides/confirmations for yesterday, today, future and unknown
-  dates in the received data. Only shows on the Tokyo calendar day expose change
-  notices/cards/badges. Check actual changed-person picker and lyric navigation;
+  dates in the received data. Manual-only changes expose notices/cards/badges
+  only on the Tokyo calendar day; active absence shows follow the newer
+  per-performance rule below. Check actual changed-person picker and lyric navigation;
   effective changed assignments and ordinary feedback remain intact on other days.
   With the screen open, cross Tokyo midnight and inspect the actual rendered UI.
   Include real source notation 10/24.25: both days apply and sorting uses the last.
@@ -257,15 +258,26 @@ Member empty-show / navigation-delivery acceptance:
   Retain old-code failing screenshots and exact-commit published browser evidence.
 
 Member URL / same-name performance acceptance:
-- The user's 2026-10-27 clarification supersedes automatic absence/count/version
-  labels: member performance selection must use the user's received folder groups
-  and exact stored show names. Do not append 通常, 欠席, song counts or guessed
-  version names, merge separate IDs or modify source data. Keep the original six
-  same-name OCHA versions (including normal/absence, 20/26 songs) together in the
-  regression and add another user-created folder with a same-name show. Open the
-  actual 公演・日付 selector, inspect each optgroup's original names/IDs, choose
-  every version, then note -> lyric -> back, save and native reload; retain screen
-  evidence. A shared name does not authorize altering or deleting a source copy.
+- The user's latest 2026-10-27 screenshot is the acceptance target: each same
+  folder + show name appears ONCE in the actual member 公演・日付 select. Keep
+  all six supplied OCHA versions, notes, assignments and source IDs in received
+  state; also keep a different folder's same-name show. Resolve each display
+  entry to the sender's selected source copy if it belongs to that performance,
+  otherwise the newest timestamp. Never rename, delete or combine source records.
+  Verify representative changes on receipt, stale saved IDs, actual note/lyric/back
+  navigation, all-performance scope and native reload. Retain the previous-code
+  failure showing duplicated 10/25, 10/24.25 and 10/24 options and screen evidence.
+  Reproduce the screenshot's 確認を終わる state through the actual settings
+  メンバー画面を見る button as well as the real member URL; inspect the opened
+  selector and prove ending preview restores every source copy and private REC.
+- Selected active absence arrangements expose a clearly colored 欠席歌割 action
+  and the absent members' formal names, without counts (北/北原 collapse to 北原).
+  This current requirement supersedes the older same-day-only rule for ACTIVE
+  ABSENCE shows. Historical/future active absence stays reviewable on its own
+  show, including after midnight; another show's absence must never leak onto a
+  normal show or the all-performances view. Manual-only changes retain the
+  same-day rule. Open the actual action, member picker, changed lyric and return;
+  receive/save/reload, source-focused normal/absence switches and no-count UI.
 - In ONE browser profile, receive/save Rosie, leave the document, then open the
   OCHA member URL with OCHA's network response held. Observe every #app mutation
   from the first render: no Rosie show, lyric, note or member control may appear.

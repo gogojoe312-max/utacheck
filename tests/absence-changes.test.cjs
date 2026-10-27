@@ -1,7 +1,7 @@
 'use strict';
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 const Changes=require('../absence-changes.js');
-const source=fs.readFileSync(__dirname+'/../app.js','utf8');
+const source=fs.readFileSync(process.env.QA_APP_SOURCE||__dirname+'/../app.js','utf8');
 const read=name=>{const a=source.indexOf('function '+name+'(');assert(a>=0,name);return source.slice(source.lastIndexOf('\n',a)+1,source.indexOf('\n}',a)+2);};
 const json=x=>JSON.parse(JSON.stringify(x));
 function fixture(){
@@ -23,9 +23,9 @@ function fixture(){
  c.blockOf=(s,i)=>s.blocks?.[s.lines[i]?.label]?s.lines[i].label:'';c.blocksOf=s=>Object.keys(s.blocks||{});
  c.blockParts=(s,b)=>c.gsubOf(s.id,b)||s.blocks[b];c.partsOf=(s,i)=>c.subOf(s.id,i)||s.lines[i].parts;
  c.restoreViewerMember=()=>c.selected;c.viewerMembers=()=>c.S.members.slice(0,4);c.compactMemberLabel=n=>n;
- c.summarySongs=()=>c.U.allShows?c.S.songs:c.SONGS();c.showName=id=>c.S.shows.find(s=>s.id===(id||c.S.showId))?.name||'';
+ c.summaryShows=()=>c.S.shows;c.summaryShowPicker=()=>'<select id="summary-show"></select>';c.summarySongs=()=>c.U.allShows?c.S.songs:c.SONGS();c.showName=id=>c.S.shows.find(s=>s.id===(id||c.S.showId))?.name||'';
  vm.createContext(c);
- for(const name of ['performanceDateOrder','memberDayKey','memberPerformanceDates','memberPerformanceDateOrder','memberPerformanceIsToday','viewerMemberName','viewerMemberIds','viewerAssignmentIds','viewerAssignmentNames','absentVersionNames','noteInArrangement','rowNo','memberChangePerformances','recordAssignmentChange','confirmAbsentAssignments','memberReviewNav','memberAbsenceContext','memberAbsenceChanges','absenceSelectableMembers','memberAbsenceRows','viewMemberAbsence','viewerSummaryBody','lineStatus','blockStatus','viewAbsent'])vm.runInContext(read(name),c);
+ for(const name of ['performanceDateOrder','memberDayKey','memberPerformanceDates','memberPerformanceDateOrder','memberPerformanceIsToday','viewerMemberName','viewerMemberIds','viewerAssignmentIds','viewerAssignmentNames','absentVersionNames','noteInArrangement','rowNo','memberAbsenceNames','memberCanReviewAssignments','recordAssignmentChange','confirmAbsentAssignments','memberReviewNav','memberAbsenceContext','memberAbsenceChanges','absenceSelectableMembers','memberAbsenceRows','viewMemberAbsence','viewerSummaryBody','lineStatus','blockStatus','viewAbsent'])if(source.includes('function '+name+'('))vm.runInContext(read(name),c);
  for(const so of c.S.songs){
   const key=so.showId+'|'+so.id;
   for(const [index,after] of Object.entries(c.S.subs[key]||{}))c.recordAssignmentChange(so,'lines',Number(index),after);
@@ -92,14 +92,14 @@ test('each performance and take uses its own substitution key',()=>{
  c.S.songs.push(other);c.S.subs['other|take2']={0:['m3']};c.S.subs['show|take2']={0:['m4']};c.recordAssignmentChange(other,'lines',0,['m3']);
  assert.deepEqual(json(c.memberAbsenceChanges(other)[0].after),['m3']);assert.equal(c.S.showId,'show');
 });
-test('pre-live changes are separate from notes, with only actual changes exposing navigation',()=>{
+test('active absence arrangements are separate from feedback and show their absentee without counts',()=>{
  const c=fixture();delete c.S.songs[0].blocks.A;delete c.S.gsubs['show|song'].A;
  assert(!c.viewerSummaryBody().includes('member-absence-change'));
  assert(!c.viewerSummaryBody().includes('歌割の変更'));
- assert(c.memberReviewNav().includes('歌割変更があります'));assert(!c.memberReviewNav().includes('>歌割変更<'));
+ assert(c.memberReviewNav().includes('欠席歌割'));assert(!c.memberReviewNav().includes('>歌割変更<'));
  c.U.absenceMode='all';let html=c.viewMemberAbsence();assert.equal((html.match(/member-absence-change/g)||[]).length,4);
  c.U.absenceMode='member';c.selected=c.member('m4');html=c.viewMemberAbsence();assert.equal((html.match(/member-absence-change/g)||[]).length,1);assert(html.includes('新しく担当'));
- c.S.subs={};c.S.gsubs={};assert.equal(c.memberReviewNav(),'');assert(!c.viewerSummaryBody().includes('member-absence-change'));
+ c.S.subs={};c.S.gsubs={};assert(c.memberReviewNav().includes('欠席歌割'));assert(!/\d+件/.test(c.memberReviewNav()));assert(!c.viewerSummaryBody().includes('member-absence-change'));
 });
 test('personal changes exclude unison groups before or after replacement but preserve small roles',()=>{
  const song={id:'s',blocks:{A:['a','b','c']},lines:[
@@ -160,7 +160,7 @@ test('VIEW style uses the pure comparison and owner toggle validates allowed IDs
 test('inactive legacy substitutions need explicit confirmation and unchanged assignments stay hidden',()=>{
  const c=fixture(),song=c.S.songs[0],before=json(c.S.subs);c.S.assignmentEdits={};c.S.shows[0].absent=[];c.S.subsMan={'show|song':{0:1,1:1,2:1,3:1}};
  assert.deepEqual(json(c.memberAbsenceChanges(song)),[]);assert.equal(c.memberReviewNav(),'');assert.equal(c.lineStatus(song,2),'');assert.deepEqual(json(c.S.subs),before);
- c.recordAssignmentChange(song,'lines',2,['m4']);assert.equal(c.memberAbsenceChanges(song).length,1);assert(c.memberReviewNav().includes('歌割変更があります（1件）'));
+ c.recordAssignmentChange(song,'lines',2,['m4']);assert.equal(c.memberAbsenceChanges(song).length,1);assert(c.memberReviewNav().includes('歌割変更'));
  c.S.subs['show|song'][2]=['m3'];assert.equal(c.memberReviewNav(),'','A stale receipt is not a new manual change');
  c.recordAssignmentChange(song,'lines',2,['m3']);assert.equal(c.memberAbsenceChanges(song).length,1);
  c.S.subs['show|song'][2]=['m1'];c.recordAssignmentChange(song,'lines',2,['m1']);assert.equal(c.memberReviewNav(),'','Reverting to original removes the notice');
@@ -189,22 +189,22 @@ test('explicit absence selection confirms only changed assignments and restorati
 test('already-created absence changes remain visible without newer confirmation receipts',()=>{
  const c=fixture(),so=c.S.songs[0];c.S.assignmentEdits={};const before=JSON.stringify(c.S);
  assert.deepEqual(json(c.memberAbsenceChanges(so).flatMap(e=>e.lineIndices)),[0,1,2,3]);
- assert(c.memberReviewNav().includes('歌割変更があります'));
+ assert(c.memberReviewNav().includes('欠席歌割'));
  assert.equal(c.memberAbsenceChanges(so,'m2',true).some(e=>e.lineIdx===0),false,'3+ unisons remain song-only');
  assert.equal(JSON.stringify(c.S),before,'Reading existing changes never mutates assignments');
  c.S.subs['show|song']={0:['m1','m2','m3'],1:['m1'],2:[],3:['m1']};c.S.gsubs={};
- assert.equal(c.memberReviewNav(),'','Unchanged, absent-still-assigned and empty unresolved rows stay hidden');
+ assert(c.memberReviewNav().includes('欠席歌割'));assert.equal(c.memberAbsenceChanges(so).length,0,'Unresolved rows do not masquerade as changed assignments');
 });
-test('changes on another performance are accessible even when current performance has none',()=>{
+test('normal performances never show another performance\'s absence arrangement',()=>{
  const c=fixture();c.S.shows.push({id:'newest',name:'Newest',date:'2026-10-15',absent:[]});c.S.showId='newest';
- assert(c.memberReviewNav().includes('data-id="show"'));
+ assert.equal(c.memberReviewNav(),'');c.S.showId='show';assert(c.memberReviewNav().includes('data-id="show"'));
  assert(c.viewMemberAbsence().includes('id="summary-show"'));
 });
 
 test('member absence heading uses the same unambiguous full names as Excel exports',()=>{
  const c=fixture();c.S.members.push({id:'north-short',name:'北'},{id:'north-full',name:'北原'});c.S.shows[0].absent=['north-full','north-short'];
  assert.deepEqual(Array.from(c.absentVersionNames()),['北原']);
- const html=vm.runInContext('viewMemberAbsence()',c);assert(html.includes('北原 が欠席'));assert(!html.includes('北原・北'));
+ const html=vm.runInContext('viewMemberAbsence()',c);assert(html.includes('北原が欠席'));assert(!html.includes('北原・北'));
  assert.deepEqual(c.S.shows[0].absent,['north-full','north-short']);
 });
 test('one formal member selection includes the same persons abbreviated assignment without listing the abbreviation',()=>{
@@ -226,4 +226,10 @@ test('A/B assignments expand to actual people before applying the three-person u
  c.S.subs={'show|song':{0:['bid']}};c.S.gsubs={};c.S.assignmentEdits={};c.recordAssignmentChange(so,'lines',0,['bid']);
  assert.equal(c.memberAbsenceChanges(so).length,1);
  assert.equal(c.memberAbsenceChanges(so,'m2',true).length,0);
+});
+
+test('selected historical absence shows the formal absentee without counts and preserves original aliases',()=>{
+ const c=fixture();c.S.members.push({id:'north-short',name:'北'},{id:'north-full',name:'北原'});c.viewerMembers=()=>[c.member('north-full'),c.member('m2')];c.S.shows[0].date='2026-10-14';c.S.shows[0].absent=['north-short','north-full'];const before=JSON.stringify(c.S);
+ const banner=c.memberReviewNav();assert(banner.includes('欠席歌割'));assert(banner.includes('北原が欠席'));assert(!banner.includes('北原・北'));assert(!/\d+件/.test(banner));assert(c.viewMemberAbsence().includes('北原が欠席'));assert.equal(JSON.stringify(c.S),before);
+ c.S.shows[0].absent=['north-short'];assert(c.memberReviewNav().includes('北原が欠席'));c.U.allShows=true;assert.equal(c.memberReviewNav(),'');
 });

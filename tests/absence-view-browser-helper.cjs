@@ -64,9 +64,10 @@ async function checkAbsence(page,width,{mode,assertFits,screenshot}){
   });
   assert(legacyReceived.newlyConfirmed>0,'Existing absence changes are included in newly published data');
   assert.equal(legacyReceived.show,'newest-normal');assert.equal(legacyReceived.receipts,0,'Old member data really lacks confirmation receipts');
+  assert.equal(await page.locator('.member-review-nav').count(),0,'The normal performance must not advertise another performance\'s absence');await page.locator('#summary-show').selectOption('show');
   await page.locator('.member-review-nav [data-act="goabsent"]').click();
   await expectLines([0,1,2,3,5]);
-  assert.equal(await page.evaluate(()=>S.showId),'show','Notice opens the changed performance even from a newer normal show');
+  assert.equal(await page.evaluate(()=>S.showId),'show','The selected absence performance opens its own arrangement');
   await page.evaluate(()=>{
    S=JSON.parse(window.__legacyAbsenceQA.state);U=JSON.parse(window.__legacyAbsenceQA.ui);
    delete window.__legacyAbsenceQA;renderPointers.clear();scrollingUntil=0;pendingRender=false;render(true);
@@ -101,13 +102,13 @@ async function checkAbsence(page,width,{mode,assertFits,screenshot}){
   assert.equal(await page.locator('.member-absence-change').count(),0,'Notes do not contain assignment changes');
   assert.equal(await page.locator('.summary-tabs [data-act="goabsent"]').count(),0);
   assert.equal(await page.locator('[data-act="mode"][data-id="member"],[data-act="mode"][data-id="song"]').count(),0);
-  assert.equal(await page.locator('.member-review-nav [data-act="goabsent"]').innerText(),'歌割変更があります（5件）');
+  assert.equal(await page.locator('.member-review-nav [data-act="goabsent"]').innerText(),'欠席歌割\n検証甲が欠席');
   await page.locator('.member-review-nav [data-act="goabsent"]').click();await page.waitForFunction(()=>U.view==='absent');
   await expectLines([0,1,2,3,5]);
   assert.equal(await page.locator('.member-song').count(),1);
   assert.equal(await page.locator('.member-absence-change').first().evaluate(el=>getComputedStyle(el).borderLeftColor),'rgb(255, 145, 131)');
   const quiet=await page.evaluate(()=>{const prior=S.subs;try{S.subs={};return summaryHeader();}finally{S.subs=prior;}});
-  assert(!quiet.includes('data-act="goabsent"'),'No change action without actual assignment changes');
+  assert(quiet.includes('data-act="goabsent"'),'An active absence remains accessible while replacements are unresolved');assert(!/\d+件/.test(quiet));
   const row1=await page.locator('.member-absence-change[data-i="1"]').innerText();
   assert(row1.includes('検証甲')&&row1.includes('検証乙'));
   const row2=await page.locator('.member-absence-change[data-i="2"]').innerText();

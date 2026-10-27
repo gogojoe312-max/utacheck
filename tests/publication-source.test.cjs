@@ -13,8 +13,8 @@ function setup(){
   buildSong:s=>({...s,id:String(++next),lines:[],blocks:{},roster:[]}),songSig:()=>'',NOTES:()=>S.pubNotes||[],showsNewestFirst:()=>S.shows,
   wrap:async d=>d,gh:async(path,opts)=>{calls.push({path,opts});return {};}});
  vm.runInContext(src.slice(src.indexOf('function performanceDateOrder('),src.indexOf('function groupedPerformanceHTML(')),c);
- for(const [a,b] of [['function gistRawSource(','// 入れたトークン'],['function autoShowGroupId(', 'function showGroupIds('],['function publicationData(', 'async function gh('],['function payloadKey(', '// 送りすぎるとGitHub'],['const srcUrl =','// 受け取り専用の端末'],['function applySetlist(d)','async function syncSetlist'],['function summaryShows()','function selectSummaryShow(']])vm.runInContext(block(a,b),c);
- for(const name of ['memberPerformanceDates','memberPerformanceDateOrder','showGroupIds','latestPerformance']){const a=src.indexOf('function '+name+'(');vm.runInContext(src.slice(a,src.indexOf('\n}',a)+2),c);}
+ for(const [a,b] of [['function gistRawSource(','// 入れたトークン'],['function autoShowGroupId(', 'function showGroupIds('],['function publicationData(', 'async function gh('],['function payloadKey(', '// 送りすぎるとGitHub'],['const srcUrl =','// 受け取り専用の端末'],['function applySetlist(d)','async function syncSetlist'],['function memberPerformanceGroups(','function selectSummaryShow(']])vm.runInContext(block(a,b),c);
+ for(const name of ['memberAbsenceNames','memberCanReviewAssignments','memberPerformanceIsToday','memberDayKey','memberPerformanceDates','memberPerformanceDateOrder','showGroupIds','latestPerformance']){const a=src.indexOf('function '+name+'(');vm.runInContext(src.slice(a,src.indexOf('\n}',a)+2),c);}
  return {c,S,calls};
 }
 test('strict raw parser unpins only GitHub data URLs, retaining original query and dropping fragments',()=>{
