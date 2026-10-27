@@ -229,7 +229,9 @@ Slots have stable `id`, `kind:'member'|'break'`, `name`, full ISO `date`, matchi
 chronological/member order, supplying the corresponding confirmed times. Moving
 across dates, changing starts/ends, reordering members and inserting/removing
 breaks are supported. A break must explicitly carry the intended `songId` to
-appear on that song's actual progression screen. Previously absent song/member
+appear on that song's actual progression screen. All new or changed slots
+require an explicit song binding; unchanged legacy global slots remain intact,
+but their ambiguous association is not silently guessed. Previously absent song/member
 bindings can be supplied explicitly, but an existing person's identity cannot be
 changed into someone else. New member slots require exact registered member IDs
 (or explicit `members:[{id,name}]` additions). Member slots cannot be deleted;

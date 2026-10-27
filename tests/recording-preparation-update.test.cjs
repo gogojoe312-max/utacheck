@@ -67,3 +67,17 @@ test('explicitly reordered identical lyric rows retain their distinct manual bre
  f.update.before.songs=U.snapshot(f.anchor).songs;f.update.after.songs=clone(f.update.before.songs);f.update.lineMaps={'dot-song':[1,0,2]};
  const r=apply(f).state;assert.equal(r.notes[0].lineIdx,0);assert.deepEqual(r.rsongs[0].lines[0].lyricBreaks,[2]);assert.equal(r.rsongs[0].lines[1].lyricBreaks,undefined);
 });
+test('an unbound new break cannot be reported applied while missing from the actual song progression',()=>rejects('REC_UPDATE_SLOT_IDENTITY',f=>delete f.update.after.slots[1].songId));
+test('moving a legacy global slot requires an explicit song binding instead of an invisible update',()=>rejects('REC_UPDATE_SLOT_IDENTITY',f=>{for(const slot of [f.state.plan.slots[0],f.update.before.slots[0],f.update.after.slots[2],f.anchor.packet.plan.slots[0]])delete slot.songId;f.anchor.sha256=digest(f.anchor.packet);f.update.anchor.sha256=f.update.previous.sha256=f.anchor.sha256;}));
+test('an explicit new binding cannot introduce an unregistered member ID',()=>rejects('REC_UPDATE_MEMBER',f=>{for(const slot of [f.state.plan.slots[0],f.update.before.slots[0],f.anchor.packet.plan.slots[0]])delete slot.memberId;f.update.after.slots[2].memberId='unregistered';f.anchor.sha256=digest(f.anchor.packet);f.update.anchor.sha256=f.update.previous.sha256=f.anchor.sha256;}));
+test('an initial stream can explicitly bootstrap an immutable prior schedule correction',()=>{
+ const f=fixture(),old=f.anchor.packet.plan.slots[2],patch={id:'old-schedule-fix',type:'recording-schedule',sha256:'b'.repeat(64),packet:{updates:[{id:old.id,expected:clone(old),next:{at:700,min:50}}]}};
+ f.manifest.operations.splice(1,0,patch);Object.assign(f.update.before.slots[2],patch.packet.updates[0].next);Object.assign(f.state.plan.slots[2],patch.packet.updates[0].next);f.update.bootstrap=[{id:patch.id,sha256:patch.sha256}];f.update.previous={id:patch.id,sha256:patch.sha256};f.state.privatePreparations[patch.id]={type:patch.type,sha256:patch.sha256,at:2};
+ assert.equal(apply(f).state.plan.slots[0].date,'2026-10-28');
+});
+test('an explicit line map supports native lyric rows without source IDs, keeping Unicode note ranges',()=>{
+ const f=fixture();for(const lines of [f.anchor.packet.songs[0].lines,f.state.rsongs[0].lines,f.update.before.songs[0].lines,f.update.after.songs[0].lines])lines.forEach(l=>delete l.id);
+ f.anchor.sha256=digest(f.anchor.packet);f.state.privatePreparations[f.anchor.id].sha256=f.anchor.sha256;f.update.anchor.sha256=f.update.previous.sha256=f.anchor.sha256;
+ f.update.after.songs[0].lines.unshift({t:'新しい行',parts:['p1'],main:['p1'],extra:[],sec:'1A',bars:1});f.update.lineMaps={'dot-song':[1,2,3]};
+ const r=apply(f).state;assert.equal(r.notes[0].lineIdx,2);assert.equal(r.notes[0].from,0);assert.deepEqual(r.rsongs[0].lines[2].recBarOverrides,f.state.rsongs[0].lines[1].recBarOverrides);
+});

@@ -391,7 +391,8 @@
   if(!root.PreparationResults||!root.ProgressPreparationSource?.report)return;
   try{
    if(!ready())return;
-   const state=JSON.parse(await loadRaw());
+   const savedRaw=await loadRaw();if(!ready())return;
+   const state=JSON.parse(savedRaw);
    if(JSON.stringify(state.privatePreparations||{})!==JSON.stringify(S.privatePreparations||{})||JSON.stringify(state.recordingUpdateHeads||{})!==JSON.stringify(S.recordingUpdateHeads||{}))throw failure('RESULT_SAVE_UNVERIFIED');
    let box=await idbGet(resultKey);
    if(box&&(!/^device-[a-f0-9]{32}$/.test(box.clientId)||!Number.isSafeInteger(box.sequence)||box.sequence<0))throw failure('RESULT_STORAGE_UNVERIFIED');

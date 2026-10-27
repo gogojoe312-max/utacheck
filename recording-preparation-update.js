@@ -160,6 +160,7 @@
   unique(current.rsongs);unique(current.plan.slots);const members=[...(current.members||[])];unique(members);
   for(const person of packet.members||[]){const local=members.find(m=>m.id===person.id);if(local&&local.name!==person.name)fail('REC_UPDATE_MEMBER',person.id);if(!local)members.push(clone(person));}
   const known=new Set(members.map(m=>m.id)),refs=ids=>{if(!Array.isArray(ids)||ids.some(mid=>!known.has(mid)))fail('REC_UPDATE_MEMBER');};
+  for(const slot of packet.after.slots)if(slot.memberId&&!known.has(slot.memberId))fail('REC_UPDATE_MEMBER',slot.id);
   let notes=current.notes||[],pubNotes=current.pubNotes||[];const changedSongs=new Map();
   for(let n=0;n<packet.before.songs.length;n++){
    const before=packet.before.songs[n],after=packet.after.songs[n],so=current.rsongs.find(s=>s.id===before.id);
@@ -182,10 +183,11 @@
    if(['kind','name'].some(k=>!equal(before[k],after[k]))||['memberId','songId'].some(k=>own(before,k)&&!equal(before[k],after[k])))fail('REC_UPDATE_SLOT_IDENTITY',before.id);
    const next=merge(local,before,after,SLOT.filter(k=>k!=='id'),before.id);
    if((local.a0!=null||local.a1!=null)&&['date','day','at','min','place'].some(k=>!equal(next[k],local[k]))&&!own(local,'recActualSchedule'))next.recActualSchedule=project(local,['date','day','at','min','place']);
-   if(!equal(next,local)){if(local.a0!=null&&local.a1==null)fail('REC_UPDATE_ACTIVE_SLOT',local.id);slotChanges.set(local.id,next);}
+   if(!equal(next,local)){if(!next.songId)fail('REC_UPDATE_SLOT_IDENTITY',next.id);if(local.a0!=null&&local.a1==null)fail('REC_UPDATE_ACTIVE_SLOT',local.id);slotChanges.set(local.id,next);}
   }
   for(const after of packet.after.slots)if(!oldIds.has(after.id)){
    if(current.plan.slots.some(s=>s.id===after.id))fail('REC_UPDATE_IDENTITY',after.id);
+   if(!after.songId)fail('REC_UPDATE_SLOT_IDENTITY',after.id);
    if(after.kind==='member'&&(!after.songId||!after.memberId||!members.some(m=>m.id===after.memberId&&m.name===after.name)))fail('REC_UPDATE_MEMBER',after.id);
    slotChanges.set(after.id,clone(after));
   }

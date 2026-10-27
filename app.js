@@ -10424,7 +10424,8 @@ function viewPlan() {
   const canEdit = !songScoped || !!recordingPlanEditableSongId();
   const allRows = planRows().filter(row => !songScoped || scopedSong && row.s.songId === scopedSong.id);
   const dayKey=s=>{const m=/^(\d{1,2})\/(\d{1,2})$/.exec(s.day||"");return m?Number(m[1])*100+Number(m[2]):null;};
-  if(allRows.every(r=>dayKey(r.s)!==null&&Number.isFinite(r.s.at)))allRows.sort((a,b)=>dayKey(a.s)-dayKey(b.s)||a.pS-b.pS);
+  if(allRows.every(r=>/^\d{4}-\d{2}-\d{2}$/.test(r.s.date||'')&&Number.isFinite(r.s.at)))allRows.sort((a,b)=>a.s.date.localeCompare(b.s.date)||a.pS-b.pS);
+  else if(allRows.every(r=>dayKey(r.s)!==null&&Number.isFinite(r.s.at)))allRows.sort((a,b)=>dayKey(a.s)-dayKey(b.s)||a.pS-b.pS);
   const dayList = [...new Set(allRows.map((r) => r.s.day).filter(Boolean))];
   // 日付が複数ある時は、その日だけを見られるようにする
   const selectedDay = songScoped ? U.planSongDay : U.planDay;
