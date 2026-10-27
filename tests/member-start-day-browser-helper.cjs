@@ -24,10 +24,10 @@ async function checkMemberStartDay(page,width,{screenshot,dayOnly=false}){
   // Real settings button and preview receive/render, with the transport returning
   // the exact synthetic publication, including contaminated old labels/roster.
   await page.locator('[data-act="pvnow"][data-id="member-day-group"]').click();await page.waitForFunction(()=>!!preview&&U.view==='summary');
-  if(dayOnly){await page.locator('#summary-show').selectOption('day-latest');await screenshot(page,width,'member-day-only-existing-source');assert.equal(await nav().innerText(),'欠席歌割\n北原が欠席','An explicitly selected active absence is reviewable on its performance');return {memberActiveAbsencePerPerformance:true};}
+  if(dayOnly){await page.locator('#summary-show').selectOption('day-latest');await screenshot(page,width,'member-day-only-existing-source');assert.equal((await nav().innerText()).trim(),'欠席歌割\n北原が欠席','An explicitly selected active absence is reviewable on its performance');return {memberActiveAbsencePerPerformance:true};}
   assert.equal(await selected(),'day-rh','Member preview must open by performance date, not owner focus or creation ts');
   await page.locator('#summary-show').click();await page.keyboard.press('Escape');
-  assert.equal(await nav().count(),1);assert.equal(await nav().getAttribute('data-id'),'day-rh');assert.equal(await nav().innerText(),'欠席歌割\n北原が欠席');
+  assert.equal(await nav().count(),1);assert.equal(await nav().getAttribute('data-id'),'day-rh');assert.equal((await nav().innerText()).trim(),'欠席歌割\n北原が欠席');
   await screenshot(page,width,'member-initial-latest-publication-preview');
   await page.locator('[data-act="endpv"]').click();await page.waitForFunction(()=>!preview);
   assert.deepEqual(await page.evaluate(()=>JSON.parse(JSON.stringify(S))),JSON.parse(seed.owner),'Preview preserves the complete owner state, including other groups and REC data');

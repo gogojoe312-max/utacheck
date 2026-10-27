@@ -102,7 +102,7 @@ async function checkAbsence(page,width,{mode,assertFits,screenshot}){
   assert.equal(await page.locator('.member-absence-change').count(),0,'Notes do not contain assignment changes');
   assert.equal(await page.locator('.summary-tabs [data-act="goabsent"]').count(),0);
   assert.equal(await page.locator('[data-act="mode"][data-id="member"],[data-act="mode"][data-id="song"]').count(),0);
-  assert.equal(await page.locator('.member-review-nav [data-act="goabsent"]').innerText(),'欠席歌割\n検証甲が欠席');
+  assert.equal((await page.locator('.member-review-nav [data-act="goabsent"]').innerText()).trim(),'欠席歌割\n検証甲が欠席');
   await page.locator('.member-review-nav [data-act="goabsent"]').click();await page.waitForFunction(()=>U.view==='absent');
   await expectLines([0,1,2,3,5]);
   assert.equal(await page.locator('.member-song').count(),1);
