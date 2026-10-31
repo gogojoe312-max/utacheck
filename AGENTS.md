@@ -29,6 +29,37 @@ failed, skipped or older run is not completion evidence. Changes that cannot be
 fully exercised with synthetic data need a scoped private check and an explicit
 unverified boundary; they must not be described as fully working end to end.
 
+REC / LIVE group isolation acceptance:
+- Receive a fresh private recording addition through the real owner receiver.
+  Keep a hidden legacy recording show/song AND an empty restored show bound to
+  that group. Also retain REC and LIVE rosters containing the same member IDs.
+  Switch using the actual LIVE/REC control, open the LIVE artist buttons,
+  song/performance picker, show group and delivery pickers, and member-grouped
+  feedback. REC-only groups/roster headings must not appear in those controls.
+- Preserve all source rows, groups, lyrics, assignments, notes, update heads,
+  receipts, private/public connections and recording history; open the REC song
+  and its actual progression button, save and natively reload. Check both an
+  already-received legacy group and a newly received one. A saved REC update
+  head or import scope must keep an orphaned REC group out of LIVE; genuinely
+  mixed-use LIVE songs remain accessible. Never infer scope merely from the
+  artist name or delete data to pass. Retain old-code failures and exact-screen
+  evidence in both local and public Chromium/WebKit gates.
+
+Annotated PDF clipping acceptance:
+- Use the actual LIVE Excel picker, lyric-character memo entry, song menu's PDF
+  action and PDFで保存. Retain a two-panel sheet with nowrap source cells,
+  horizontal merges, short fixed source row heights, overflowing lyric tails
+  and long feedback on the first and final rows. Inspect every rendered glyph
+  against both the page and its clipping ancestors; nominal box width alone
+  does not prove the text is visible. Keep the old-code failing preview.
+- Preserve source columns/merges/fonts, original bytes, all lyrics, assignments
+  and notes. Measure the expanded table before fitting the page. Check original
+  layout and the readable-layout control at phone widths, native save/reload,
+  and the actual generated PDF rendered with the bundled PDF reader. Retain
+  preview screenshots, rendered-file screenshots and PDF files in both engines'
+  local/published browser artifacts. An unavailable screenshot-specific source
+  workbook or the user's phone remains an explicit unverified boundary.
+
 REC split-section / background refresh acceptance:
 - Open the continuation paragraph's number on the REC lyric screen and select Rap.
   Its section divider and number belong to that Unicode character offset, not the

@@ -13,6 +13,23 @@ function fixture(){const S={groups:[{id:'empty',name:'グループ1'},{id:'archi
 test('live groups omit REC-only, recovery-only and unused migration defaults without mutating data',()=>{const c=fixture(),raw=JSON.stringify(c.S);assert.deepEqual(Array.from(c.liveGroups(),g=>g.id),['live']);assert.equal(JSON.stringify(c.S),raw);});
 test('normal live shows exclude recovery originals, archive remains independently accessible',()=>{const c=fixture(),raw=JSON.stringify(c.S);assert.deepEqual(Array.from(c.showsFor(),s=>s.id),['show']);c.setShowFilter('__archive__');assert.deepEqual(Array.from(c.showsFor(),s=>s.id),['archiveShow']);c.setShowFilter('');assert.deepEqual(Array.from(c.showsFor(),s=>s.id),['show']);assert.equal(JSON.stringify(c.S),raw);});
 test('REC title never hides a genuine live group and mixed-use group stays live',()=>{const c=fixture();c.S.songs.push({id:'also-live',showId:'show',groupId:'rec'});assert(c.liveGroups().some(g=>g.id==='rec'));});
+test('hidden recording show and its legacy song do not promote a REC group into LIVE',()=>{
+ const c=fixture();c.S.shows.push({id:'rec-system',groupId:'rec',name:'レコーディング',hidden:1});
+ c.S.songs.push({id:'legacy-rec',showId:'rec-system',groupId:'rec',lines:[{t:'Keep hidden history'}]});
+ const before=JSON.stringify(c.S);assert(!c.liveGroups().some(g=>g.id==='rec'));assert.equal(JSON.stringify(c.S),before);
+});
+test('empty show and a saved REC update head do not turn an orphaned REC group into LIVE',()=>{
+ const c=fixture();c.S.rsongs=[];c.S.recordingUpdateHeads={session:{groupId:'rec',revision:1}};
+ c.S.shows.push({id:'empty-rec',groupId:'rec',name:'Empty restored row'});
+ assert(!c.showsFor().some(sw=>sw.id==='empty-rec'));
+ const before=JSON.stringify(c.S);assert(!c.liveGroups().some(g=>g.id==='rec'));assert.equal(JSON.stringify(c.S),before);
+});
+test('import provenance keeps a REC group out of LIVE after its song was moved or trashed',()=>{
+ const c=fixture();c.S.rsongs=[];c.S.groups.find(g=>g.id==='rec').recordingOnly=true;
+ assert(!c.liveGroups().some(g=>g.id==='rec'));
+ c.S.songs.push({id:'intentional-live',groupId:'rec',showId:'show'});
+ assert(c.liveGroups().some(g=>g.id==='rec'),'Genuine LIVE material remains accessible');
+});
 test('connected or deliberately named empty groups remain available',()=>{const c=fixture();c.S.groups[0].gistId='synthetic-existing';c.S.groups.push({id:'new',name:'新規グループ'});assert(c.liveGroups().some(g=>g.id==='empty'));assert(c.liveGroups().some(g=>g.id==='new'));});
 test('viewer cannot access archive even by stale filter or direct action',()=>{const c=fixture();c.VIEW=()=>true;c.setShowFilter('__archive__');assert.equal(c.U.showFilter,'');c.U.showFilter='__archive__';assert.equal(c.showsFor().length,0);});
 test('old REC-only filter resolves to normal live list rather than empty content',()=>{const c=fixture();c.U.showFilter='rec';assert.deepEqual(Array.from(c.showsFor(),s=>s.id),['show']);});

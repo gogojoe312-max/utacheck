@@ -129,6 +129,7 @@ test('recording addition uses the real existing append-only merger and retains a
  assert.deepEqual(state,before);for(const key of ['shows','songs','notes','draws','recs','ghToken','bkKey','bkGistId','cloudAdditions'])assert.deepEqual(clone(result.state[key]),before[key],key);
  for(const key of ['groups','rsongs','members'])assert.deepEqual(clone(result.state[key].slice(0,before[key].length)),before[key],key);
  assert.deepEqual(clone(result.state.plan.slots[0]),before.plan.slots[0]);assert.equal(result.state.groups.at(-1).nopub,true);assert.ok(result.state.privatePreparations[op.id]);
+ assert.equal(result.state.groups.at(-1).recordingOnly,true,'Private REC import retains its scope independently of the current song list');
 });
 test('recording adapter returning a publishable new group is refused without changing input',async()=>{
  const state=current(),before=clone(state),op=await operation('recording-addition',recordingPacket());

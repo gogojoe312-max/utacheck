@@ -118,7 +118,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.75";
+const APP_VER = "16.41.58.76";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1615,11 +1615,21 @@ function liveGroups() {
     if (String(g.name || '').normalize('NFKC').replace(/\s/g,'') === '配信しない') return true;
     const liveSongs = (S.songs || []).filter(so => so.groupId === g.id || so.deliveryGroupId === g.id);
     const liveShows = (S.shows || []).filter(sw => sw.groupId === g.id || sw.deliveryGroupId === g.id);
-    const normalSongs = liveSongs.some(so => !recoveryMaterialShow(S.shows.find(sw => sw.id === so.showId)));
-    const normalShows = liveShows.some(sw => !recoveryMaterialShow(sw));
-    if (normalSongs || normalShows) return true;
+    const normalSongs = liveSongs.some(so => {
+      const sw = S.shows.find(sw => sw.id === so.showId);
+      return !sw?.hidden && !recoveryMaterialShow(sw);
+    });
+    // REC notes used a hidden show in older saves. Neither that show/song nor
+    // an empty restored show proves this preparation is used for LIVE. Keep
+    // genuine mixed-use LIVE songs accessible without rewriting any source.
+    if (normalSongs) return true;
+    const recording = g.recordingOnly === true
+      || (S.rsongs || []).some(so => so.groupId === g.id)
+      || Object.values(S.recordingUpdateHeads || {}).some(head => head?.groupId === g.id);
+    if (recording) return false;
+    const normalShows = liveShows.some(sw => !sw.hidden && !recoveryMaterialShow(sw));
+    if (normalShows) return true;
     if (liveShows.some(recoveryMaterialShow) || liveSongs.some(so => so.recoveredFromOriginalExcel)) return false;
-    if ((S.rsongs || []).some(so => so.groupId === g.id)) return false;
     // A deliberately named or connected empty group remains available.
     return !!(g.gistId || g.src || !/^グループ[0-9０-９]+$/.test(String(g.name || "").trim()));
   }).sort((a,b) => {
@@ -1826,7 +1836,10 @@ function showsFor() {
   const gid = U.showFilter;
   const all = showsNewestFirst().filter((x) => !x.hidden);
   if (gid === "__archive__") return VIEW() ? [] : showsNewestFirst().filter(recoveryMaterialShow);
-  const regular = all.filter(x => !recoveryMaterialShow(x));
+  const liveIds = new Set(liveGroups().map(g => g.id));
+  const regular = all.filter(sw => !recoveryMaterialShow(sw)
+    && (!showGroupIds(sw).length || showGroupIds(sw).some(id => liveIds.has(id))
+      || S.songs.some(so => so.showId === sw.id && !so.hidden)));
   if (gid === "__unassigned__") return regular.filter(sw => sw.deliveryMode !== "song" && !showDeliveryGroupId(sw));
   if (!gid || !liveGroups().some((g) => g.id === gid)) return regular;
   return regular.filter(sw => showGroupIds(sw).includes(gid)
@@ -4163,6 +4176,8 @@ function xlLookHTML(so, look, fx) {
       const cell = rw && rw.cells[c];
       const xf = (cell && cell.xf) || {};
       const m = mergeAt[r + ":" + c];
+      const addr = colName(c) + (r + 1);
+      const hit = fx.at(addr);
       const st = [];
       // 罫線は紙には引かない（塗り・文字・並びだけを再現する）
       if (xf.fill) st.push("background:" + xf.fill);
@@ -4176,18 +4191,13 @@ function xlLookHTML(so, look, fx) {
       const hz = xf.h || (cell && cell.num ? "right" : "left");
       st.push("text-align:" + (hz === "centerContinuous" || hz === "center" ? "center" : hz === "right" ? "right" : "left"));
       st.push("vertical-align:" + (xf.v === "top" ? "top" : xf.v === "center" ? "middle" : "bottom"));
-      if (xf.wrap) st.push("white-space:pre-wrap;overflow-wrap:anywhere");
-      else {
-        // 折り返さない文字は、右隣が空ならExcelと同じくはみ出して見せる
-        const nx = rw && rw.cells[c + 1];
-        const spill = hz === "left" && !(nx && nx.text) && !(m);
-        st.push("white-space:pre;overflow:" + (spill ? "visible" : "hidden"));
-      }
+      // Preserve source columns, merges and typography, while allowing every
+      // cell (including headings) to grow for the available fonts and feedback.
+      // Excel's nowrap/hidden cells otherwise lose lyrics or annotation tails.
+      st.push("white-space:pre-wrap;overflow-wrap:anywhere;overflow:visible");
       if (xf.rot === 255) st.push("writing-mode:vertical-rl");
       if (xf.indent) st.push("padding-left:" + (xf.indent * 9 + 2) + "px");
       let inner = "";
-      const addr = colName(c) + (r + 1);
-      const hit = fx.at(addr);      // {kind:"lyric"|"name"|"block", l, i, br}
       if (hit && hit.kind === "lyric" && hit.l.t) {
         const cs = xlCharStyles(cell && cell.runs, f, hit.l.t);
         inner = fx.cell(hit.l, hit.i, cs, cell && cell.runs && !cs ? runsHTML(cell.runs, f) : "");
@@ -4200,7 +4210,7 @@ function xlLookHTML(so, look, fx) {
       const span = m ? ` colspan="${m.c1 - m.c0 + 1}" rowspan="${m.r1 - m.r0 + 1}"` : "";
       tds.push(`<td${span} style="${st.join(";")}">${inner}</td>`);
     }
-    trs.push(`<tr style="height:${rowsPx[r].toFixed(2)}px">${tds.join("")}</tr>`);
+    trs.push(`<tr data-xl-row="${r}" style="height:${rowsPx[r].toFixed(2)}px">${tds.join("")}</tr>`);
   }
   const cg = cols.map((w, c) => (look.colDefs[c] && look.colDefs[c].hidden) ? "" : `<col style="width:${w}px">`).join("");
 
@@ -4211,7 +4221,7 @@ function xlLookHTML(so, look, fx) {
     const L = x0(s.c0, s.c0off), T = y0(s.r0, s.r0off);
     const W = s.c1 != null ? Math.max(20, x0(s.c1, s.c1off) - L) : (s.cx || 120);
     const H = s.r1 != null ? Math.max(14, y0(s.r1, s.r1off) - T) : (s.cy || 30);
-    return `<div class="xlshape" style="left:${L}px;top:${T}px;width:${W}px;height:${H}px;background:${s.bg};border:1px solid ${s.ln};font-size:${(s.sz * 96 / 72).toFixed(1)}px;font-family:${famOf({})}">${h(s.text).replace(/\n/g, "<br>")}</div>`;
+    return `<div class="xlshape" data-xl-from="${s.r0}" data-xl-from-offset="${s.r0off || 0}" data-xl-to="${s.r1 ?? ''}" data-xl-to-offset="${s.r1off || 0}" data-xl-height="${H}" style="left:${L}px;top:${T}px;width:${W}px;height:${H}px;background:${s.bg};border:1px solid ${s.ln};font-size:${(s.sz * 96 / 72).toFixed(1)}px;font-family:${famOf({})}">${h(s.text).replace(/\n/g, "<br>")}</div>`;
   }).join("");
 
   const html = `<div class="prxl" style="width:${totalW}px;height:${totalH}px">
@@ -8187,9 +8197,12 @@ function viewSummary() {
   else if (!ns0.length) body = `<p style="padding:40px;text-align:center;color:var(--dim);font-size:14px">この公演の記録はまだありません。</p>`;
   else if (U.mode === "member") {
     // 登録した名簿の順（＝年齢順）に並べ、グループごとに見出しを付ける
-    const named = S.groups.map((g) => g.name).filter(Boolean);
+    const named = liveGroups().map((g) => g.name).filter(Boolean);
+    const registered = new Set(S.groups.map(g => g.name));
     const gorder = named.length > 1 ? named : ((S.groupOrder || []).length ? S.groupOrder : named);
-    const gnames = Object.keys(S.rosters || {}).filter((k) => (S.rosters[k] || []).length && (!VIEW() || k === ((group() || {}).name || S.srcGroup)))
+    const gnames = Object.keys(S.rosters || {}).filter((k) => (S.rosters[k] || []).length
+      && (!registered.has(k) || named.includes(k))
+      && (!VIEW() || k === ((group() || {}).name || S.srcGroup)))
       .sort((a, b) => {
         const ia = gorder.indexOf(a), ib = gorder.indexOf(b);
         return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
@@ -10682,13 +10695,31 @@ function fitPrintDOM() {
       inner.style.width = bw + "px";
       xl.style.transform = "none";
       xl.style.marginBottom = "";
-      const tw = xl.offsetWidth, th = xl.offsetHeight;
-      const rest = inner.scrollHeight - th;          // 見出し・総括のぶん
-      const k = Math.min(1, bw / Math.max(1, tw), (bh - 8 - rest) / Math.max(1, th));
+      const table = xl.querySelector('.xlt');
+      const rows = Array.from(table?.rows || []);
+      const rowY = index => rows.find(row => Number(row.dataset.xlRow) >= index)?.offsetTop ?? table?.offsetHeight ?? 0;
+      // Callouts are anchored to Excel rows too. Follow expanded rows and let
+      // their text grow before measuring, instead of clipping or covering lyrics.
+      xl.querySelectorAll('.xlshape[data-xl-from]').forEach(shape => {
+        const top = rowY(Number(shape.dataset.xlFrom)) + Number(shape.dataset.xlFromOffset);
+        shape.style.top = top + 'px';
+        const height = shape.dataset.xlTo === '' ? Number(shape.dataset.xlHeight)
+          : Math.max(14, rowY(Number(shape.dataset.xlTo)) + Number(shape.dataset.xlToOffset) - top);
+        shape.style.height = height + 'px';
+        shape.style.height = Math.max(height, shape.scrollHeight + 2) + 'px';
+      });
+      // Annotation wrapping can grow rows beyond the original sheet height;
+      // nowrap source headings can spill beyond its final column. Measure the
+      // rendered contents before fitting, not only the old fixed Excel box.
+      const tw = Math.max(xl.offsetWidth, xl.scrollWidth);
+      const th = Math.max(xl.offsetHeight, xl.scrollHeight);
+      xl.style.height = th + "px";
+      const rest = Math.max(0, inner.scrollHeight - th);
+      const k = Math.max(0.001, Math.min(1, bw / Math.max(1, tw), (bh - 8 - rest) / Math.max(1, th)));
       xl.style.transformOrigin = "top left";
       xl.style.transform = "scale(" + k + ")";
       xl.style.marginBottom = (-(1 - k) * th) + "px";
-      box.style.height = Math.min(bh, inner.scrollHeight + 6) + "px";
+      box.style.height = Math.min(bh, rest + k * th + 6) + "px";
       return;
     }
     // 幅は紙の幅に固定し、文字の大きさだけで高さを合わせる。
@@ -15606,7 +15637,7 @@ function mergeRecordingAddition(current, packet, options = {}) {
     for (const z of p.plan.slots) if (z !== y && z.date === y.date && Math.max(z.at,y.at) < Math.min(z.at+z.min,y.at+y.min)) fail('追加資料内の予定が重なります。');
   }
   if (s.plan.slots.length && ['year','timezone'].some(k => s.plan[k] != null && s.plan[k] !== p.plan[k])) fail('既存予定の年またはタイムゾーンが異なります。');
-  s.groups.push(p.group); s.members.push(...newMembers); s.rsongs.push(...p.songs);
+  s.groups.push({...p.group, recordingOnly:true}); s.members.push(...newMembers); s.rsongs.push(...p.songs);
   if (!(p.group.name in s.rosters)) s.rosters[p.group.name] = p.roster;
   const hadSlots = s.plan.slots.length; s.plan.slots.push(...p.plan.slots);
   if (!hadSlots) for (const k of ['start','year','timezone','source']) s.plan[k] = p.plan[k];

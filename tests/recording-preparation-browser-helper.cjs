@@ -1,5 +1,6 @@
 'use strict';
 const assert=require('node:assert/strict');
+const {checkRecLiveIsolation}=require('./rec-live-isolation-browser-helper.cjs');
 const {fixture,clone,digest}=require('./recording-preparation-fixture.cjs');
 async function checkRecordingPreparation(page,width,{screenshot}){
  const dedicated=width===390,token=dedicated?'github_pat_'+'q'.repeat(40):'qa-dot-private-connection';
@@ -85,7 +86,8 @@ async function checkRecordingPreparation(page,width,{screenshot}){
  await page.evaluate(()=>{S.recMode=true;S.rsongId='dot-song';Object.assign(U,{view:'live',menu:null,sheet:null,secView:'',overview:false});renderPointers.clear();scrollingUntil=0;render(true);});await page.locator('[data-act="goplan"]').first().click();await page.waitForSelector('.plan-row');
  await page.locator('[data-act="planday"][data-id=""]').click();assert.deepEqual(await page.locator('.plan-day').allTextContents(),['12/31 · 合成会場','1/2 · 合成会場']);await page.locator('[data-act="planday"][data-id="12/31"]').click();assert.equal(await page.locator('.plan-row').count(),1);await page.locator('[data-act="planday"][data-id="1/2"]').click();assert.equal(await page.locator('.plan-row').count(),2);await screenshot(page,width,'dot-rec-moved-dates-across-year');
  await page.reload();await page.waitForFunction(()=>normalStartupInitialized);assert.equal(await page.evaluate(()=>S.recordingUpdateHeads['dot-session'].revision),3);assert.equal(await page.evaluate(()=>S.plan.slots.find(s=>s.id==='slot-1').recActualSchedule.date),'2026-10-27');
+ const isolation=await checkRecLiveIsolation(page,width,{screenshot,receive,anchor:f.anchor,append:op=>{manifest.operations.push(op);manifest.revision='qa-dot-rec-only';sourceSha='f'.repeat(40);}});
  if(dedicated)assert.equal(calls.filter(c=>c.method==='PUT').length,0,'The read-only credential only proves ownership to the server');
- return {dotRecResultCredentialMode:dedicated?'read-only-source-owner-relay':'saved-progress-private-writer',dotRecVersionedScheduleAndLyrics:true,dotRecDateOrderTimesBreaksExactScreen:true,dotRecPreservedManualNotesMediaAndPublicSharing:true,dotRecRealReceiveSaveReload:true,dotRecPrivateResultSaveAndReread:true,dotRecConflictsHeldAndReported:true,dotRecDuplicateNoExtraWrites:true,dotRecHeldCorrectionAppliedAndReloaded:true,dotRecCrossYearDateControlsAndHistory:true};
+ return {...isolation,dotRecResultCredentialMode:dedicated?'read-only-source-owner-relay':'saved-progress-private-writer',dotRecVersionedScheduleAndLyrics:true,dotRecDateOrderTimesBreaksExactScreen:true,dotRecPreservedManualNotesMediaAndPublicSharing:true,dotRecRealReceiveSaveReload:true,dotRecPrivateResultSaveAndReread:true,dotRecConflictsHeldAndReported:true,dotRecDuplicateNoExtraWrites:true,dotRecHeldCorrectionAppliedAndReloaded:true,dotRecCrossYearDateControlsAndHistory:true};
 }
 module.exports={checkRecordingPreparation};

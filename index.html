@@ -6,7 +6,7 @@
 <title>歌チェック</title>
 <meta name="color-scheme" content="dark">
 <style>@media screen{html,body{background:#111215;color-scheme:dark}}</style>
-<link rel="stylesheet" href="recflow.css?v=16.41.58.75">
+<link rel="stylesheet" href="recflow.css?v=16.41.58.76">
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="theme-color" content="#111215">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -268,6 +268,7 @@ button{cursor:pointer}
 .head{font-size:11px;color:var(--dim);font-weight:400;margin:18px 0 8px;letter-spacing:.08em}
 
 /* 紙・PDF用 */
+.pr.land{width:257mm}
 .pr.land .prbox{width:257mm;height:144mm}
 
 .pr{background:#fff;color:#111;padding:0;width:170mm;margin:0 auto}
@@ -284,7 +285,7 @@ button{cursor:pointer}
 .prn{flex:0 0 30%;max-width:110px;text-align:right;color:#555;font-size:.85em;word-break:keep-all;overflow-wrap:normal}
 .prx{flex:1;min-width:0}
 .prx u{text-decoration:underline;text-decoration-thickness:2px;text-underline-offset:2px}
-.prt{font-size:.85em;font-weight:700;margin-left:3px;white-space:nowrap}
+.prt{font-size:.85em;font-weight:700;margin-left:3px;white-space:normal;overflow-wrap:anywhere}
 .prp{font-size:.8em;color:#666;margin-left:3px}
 .prg{width:100%;border-collapse:collapse;table-layout:fixed}
 .prg td{vertical-align:baseline;padding:1px 3px;line-height:1.7}
@@ -317,7 +318,7 @@ button{cursor:pointer}
   .prs{margin:0!important;padding:0!important}
 }
 </style>
-<link rel="stylesheet" href="ui.css?v=16.41.58.75">
+<link rel="stylesheet" href="ui.css?v=16.41.58.76">
 </head>
 <body>
 <div id="app"></div>
@@ -326,44 +327,44 @@ button{cursor:pointer}
 <script src="vendor/pdf.min.js"></script>
 <script src="vendor/html2canvas.min.js"></script>
 <script src="vendor/jspdf.umd.min.js"></script>
-<script src="print-pdf.js?v=16.41.58.75"></script>
+<script src="print-pdf.js?v=16.41.58.76"></script>
 <script src="vendor/xlsx.full.min.js"></script>
-<script src="recording-inbox.js?v=16.41.58.75"></script>
-<script src="recording-inbox-ownership.js?v=16.41.58.75"></script>
-<script src="startup-backup-inspection.js?v=16.41.58.75"></script>
-<script src="startup-preserved-backup-inspection.js?v=16.41.58.75"></script>
-<script src="startup-file-inspection.js?v=16.41.58.75"></script>
-<script src="startup-file-restoration.js?v=16.41.58.75"></script>
-<script src="startup-local-storage-inventory.js?v=16.41.58.75"></script>
-<script src="startup-local-publication-recovery.js?v=16.41.58.75"></script>
-<script src="startup-local-excel-recovery.js?v=16.41.58.75"></script>
-<script src="startup-saved-publication-reader.js?v=16.41.58.75"></script>
-<script src="startup-recovered-show-addition.js?v=16.41.58.75"></script>
-<script src="recovery-delivery-scope.js?v=16.41.58.75"></script>
-<script src="recovery-delivery-store.js?v=16.41.58.75"></script>
-<script src="recovery-delivery.js?v=16.41.58.75"></script>
-<script src="private-material-input.js?v=16.41.58.75"></script>
-<script src="recording-preparation-update.js?v=16.41.58.75"></script>
-<script src="private-preparation.js?v=16.41.58.75"></script>
-<script src="private-preparation-source.js?v=16.41.58.75"></script>
-<script src="progress-preparation-source.js?v=16.41.58.75"></script>
-<script src="preparation-relay-source.js?v=16.41.58.75"></script>
-<script src="recording-schedule-update.js?v=16.41.58.75"></script>
-<script src="recording-schedule-ui.js?v=16.41.58.75"></script>
-<script src="verified-edit-backup.js?v=16.41.58.75"></script>
-<script src="absence-changes.js?v=16.41.58.75"></script>
-<script src="operation-progress.js?v=16.41.58.75"></script>
-<script src="app.js?v=16.41.58.75"></script>
-<script src="arrangement-catalog.js?v=16.41.58.75"></script>
-<script src="arrangement-verification.js?v=16.41.58.75"></script>
-<script src="arrangement-verification-ui.js?v=16.41.58.75"></script>
-<script src="preparation-results.js?v=16.41.58.75"></script>
-<script src="private-preparation-ui.js?v=16.41.58.75"></script>
-<script src="show-recovery.js?v=16.41.58.75"></script>
-<script src="reading.js?v=16.41.58.75"></script>
-<script src="gestures.js?v=16.41.58.75"></script>
-<script src="voice-notes.js?v=16.41.58.75"></script>
-<script src="ui.js?v=16.41.58.75"></script>
+<script src="recording-inbox.js?v=16.41.58.76"></script>
+<script src="recording-inbox-ownership.js?v=16.41.58.76"></script>
+<script src="startup-backup-inspection.js?v=16.41.58.76"></script>
+<script src="startup-preserved-backup-inspection.js?v=16.41.58.76"></script>
+<script src="startup-file-inspection.js?v=16.41.58.76"></script>
+<script src="startup-file-restoration.js?v=16.41.58.76"></script>
+<script src="startup-local-storage-inventory.js?v=16.41.58.76"></script>
+<script src="startup-local-publication-recovery.js?v=16.41.58.76"></script>
+<script src="startup-local-excel-recovery.js?v=16.41.58.76"></script>
+<script src="startup-saved-publication-reader.js?v=16.41.58.76"></script>
+<script src="startup-recovered-show-addition.js?v=16.41.58.76"></script>
+<script src="recovery-delivery-scope.js?v=16.41.58.76"></script>
+<script src="recovery-delivery-store.js?v=16.41.58.76"></script>
+<script src="recovery-delivery.js?v=16.41.58.76"></script>
+<script src="private-material-input.js?v=16.41.58.76"></script>
+<script src="recording-preparation-update.js?v=16.41.58.76"></script>
+<script src="private-preparation.js?v=16.41.58.76"></script>
+<script src="private-preparation-source.js?v=16.41.58.76"></script>
+<script src="progress-preparation-source.js?v=16.41.58.76"></script>
+<script src="preparation-relay-source.js?v=16.41.58.76"></script>
+<script src="recording-schedule-update.js?v=16.41.58.76"></script>
+<script src="recording-schedule-ui.js?v=16.41.58.76"></script>
+<script src="verified-edit-backup.js?v=16.41.58.76"></script>
+<script src="absence-changes.js?v=16.41.58.76"></script>
+<script src="operation-progress.js?v=16.41.58.76"></script>
+<script src="app.js?v=16.41.58.76"></script>
+<script src="arrangement-catalog.js?v=16.41.58.76"></script>
+<script src="arrangement-verification.js?v=16.41.58.76"></script>
+<script src="arrangement-verification-ui.js?v=16.41.58.76"></script>
+<script src="preparation-results.js?v=16.41.58.76"></script>
+<script src="private-preparation-ui.js?v=16.41.58.76"></script>
+<script src="show-recovery.js?v=16.41.58.76"></script>
+<script src="reading.js?v=16.41.58.76"></script>
+<script src="gestures.js?v=16.41.58.76"></script>
+<script src="voice-notes.js?v=16.41.58.76"></script>
+<script src="ui.js?v=16.41.58.76"></script>
 </body>
 </html>
 

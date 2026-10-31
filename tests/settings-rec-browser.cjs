@@ -1,6 +1,7 @@
 'use strict';
 // Isolated browser checks with synthetic data. Every external request is blocked.
 const playwright=require('playwright'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),http=require('node:http');
+const {checkPDFClipping}=require('./pdf-clipping-browser-helper.cjs');
 const {checkPassiveAudio}=require('./passive-audio-browser-helper.cjs');
 const {checkRecordingPreparation}=require('./recording-preparation-browser-helper.cjs');
 const {checkProgressPreparation}=require('./progress-preparation-browser-helper.cjs');
@@ -139,6 +140,7 @@ async function readableTitles(page,rec){
    const newAbsenceResult=await checkNewAbsenceSongs(page,width,{screenshot});
    const lyricBreakResult=await checkLyricBreaks(page,width,{mode,assertFits,screenshot});
    const lyricSizeResult=await checkLyricSize(page,width,{mode,assertFits,screenshot});
+   const pdfClippingResult=await checkPDFClipping(page,width,{screenshot});
    const memberStartDayResult=await checkMemberStartDay(page,width,{screenshot});
    const memberFeedbackStartResult=await checkMemberFeedbackStart(page,width,{screenshot});
    const noteNavigationDeliveryResult=await checkNoteNavigationDelivery(page,width,{screenshot});
@@ -179,7 +181,7 @@ async function readableTitles(page,rec){
     : await browser.newContext({viewport:{width,height:844},serviceWorkers:'block'});
    contexts.add(audioContext);await audioContext.route('**/*',route=>{const request=route.request(),url=new URL(request.url());return url.origin===allowedOrigin&&request.method()==='GET'?route.continue():route.abort('blockedbyclient');});
    const passiveAudioResult=await checkPassiveAudio(audioContext,origin,width,{screenshot});await audioContext.close();contexts.delete(audioContext);
-   results.push({width,memberRoster,legacyMemberRoster,cleanMemberRoster,arrangementDevice,progressConnection,...folderResult,...recordingBrowseResult,...absenceResult,...newAbsenceResult,...lyricBreakResult,...lyricSizeResult,...memberStartDayResult,...memberFeedbackStartResult,...noteNavigationDeliveryResult,...memberLinkSwitchResult,...recSegmentResult,...liveNoteResult,...recAutoResult,...recHeadcountResult,...recScrollResult,...recOriginalOKResult,...passiveAudioResult,...dotRecResult,excelOriginal:excelCheck,settings:true,pdfLiveRecView:true,fullTitles:true,footer:true,draftPreserved:true,saveErrorVisible:true});
+   results.push({width,memberRoster,legacyMemberRoster,cleanMemberRoster,arrangementDevice,progressConnection,...folderResult,...recordingBrowseResult,...absenceResult,...newAbsenceResult,...lyricBreakResult,...lyricSizeResult,...pdfClippingResult,...memberStartDayResult,...memberFeedbackStartResult,...noteNavigationDeliveryResult,...memberLinkSwitchResult,...recSegmentResult,...liveNoteResult,...recAutoResult,...recHeadcountResult,...recScrollResult,...recOriginalOKResult,...passiveAudioResult,...dotRecResult,excelOriginal:excelCheck,settings:true,pdfLiveRecView:true,fullTitles:true,footer:true,draftPreserved:true,saveErrorVisible:true});
   }
   assert.deepEqual(errors,[]);assert.equal(blocked.filter(x=>x.method!=='GET').length,0);
   const report={passed:true,engine,results,errors,blocked,externalRequestsAllowed:0,syntheticDataOnly:true};
