@@ -118,7 +118,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.77";
+const APP_VER = "16.41.58.78";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -8124,7 +8124,8 @@ function viewerSummaryBody() {
   return picker + (cards || `<p class="member-empty">${byMember && selected ? h(compactMemberLabel(selected.name)) + "さんへの指摘・曲の総括は" : "指摘・曲の総括は"}${U.allShows ? "まだ" : "この公演には"}ありません。</p>`);
 }
 function viewerBackButton() {
-  return VIEW() ? '<button class="member-back" data-act="summary-back" aria-label="指摘に戻る"><span aria-hidden="true">‹</span> 戻る</button>' : "";
+  const label=U.summaryReturn?.view === "absent" ? "歌割変更に戻る" : "指摘に戻る";
+  return VIEW() ? '<button class="member-back" data-act="summary-back" aria-label="'+label+'"><span aria-hidden="true">‹</span> 戻る</button>' : "";
 }
 function ownerAbsenceBackButton() {
   return !VIEW()&&!S.recMode&&U.absenceReturn?.showId===S.showId
@@ -8164,8 +8165,8 @@ function openSummarySong(id, lineIdx = null, noteId = "") {
     && (!S.groupId || !so.groupId || so.groupId === S.groupId)) : SONGS()[U.songIdx] || summarySongs()[0];
   if (!so) return;
   U.memberShowChosen = true;
-  if (U.view === "summary") U.summaryReturn = {
-    showId: S.showId, allShows: U.allShows, mode: U.mode,
+  if (U.view === "summary" || U.view === "absent") U.summaryReturn = {
+    view: U.view, showId: S.showId, allShows: U.allShows, mode: U.mode,
     scrollTop: app.querySelector(".scroll")?.scrollTop || 0,
   };
   S.showId = so.showId;
@@ -8189,13 +8190,13 @@ function backToSummary() {
     U.summaryScroll = back.scrollTop;
   }
   U.summaryReturn = null; U.lyricTarget = null;
-  U.overview = false; U.picker = false; U.view = "summary";
+  U.overview = false; U.picker = false; U.view = back?.view === "absent" ? "absent" : "summary";
   save(); render();
 }
 // Run after an actual render, so deferred touch/scroll renders cannot lose a jump.
 function applyMemberNavigation() {
   if (!VIEW()) return;
-  if (U.view === "summary" && U.summaryScroll != null) {
+  if ((U.view === "summary" || U.view === "absent") && U.summaryScroll != null) {
     const sc = app.querySelector(".scroll");
     if (sc) { sc.scrollTop = U.summaryScroll; U.summaryScroll = null; }
   }
@@ -13088,6 +13089,11 @@ function quickMark(lineIdx, range) {
 
 function openSheet(lineIdx, range, lineEnd, point) {
   if (VIEW()) return;
+  // Lyrics opened from 欠席対応 are an assignment-editing context. Reuse the
+  // same line/block editor as the performer-name control, without creating a note.
+  if (!S.recMode && U.view === "live" && U.absenceReturn && U.absenceReturn.showId === S.showId) {
+    openAssignmentForLine(lineIdx); return;
+  }
   const s = song(); if (!s) return;
   const l = s.lines[lineIdx];
   // 誰が歌う行かは歌割から自明なので、その行の担当をそのまま記録に入れる
@@ -13594,7 +13600,7 @@ document.addEventListener("pointerup", (e) => {
     openSheet(o.l, null, null, {x:e.clientX, y:e.clientY});
   }
   // メニューが指先に現れても、今離した指のクリックでは選ばない。
-  if (U.sheet) noteClickUntil = Date.now() + 500;
+  if (U.sheet || U.menu) noteClickUntil = Date.now() + 500;
   dragOn = false; clearHl();
 });
 

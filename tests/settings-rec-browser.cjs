@@ -2,6 +2,7 @@
 // Isolated browser checks with synthetic data. Every external request is blocked.
 const playwright=require('playwright'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),http=require('node:http');
 const {checkAbsenceNavigation}=require('./absence-navigation-browser-helper.cjs');
+const {checkAbsenceMemberReturn}=require('./absence-member-return-browser-helper.cjs');
 const {checkAbsenceReplacement}=require('./absence-replacement-browser-helper.cjs');
 const {checkPDFClipping}=require('./pdf-clipping-browser-helper.cjs');
 const {checkPassiveAudio}=require('./passive-audio-browser-helper.cjs');
@@ -142,6 +143,7 @@ async function readableTitles(page,rec){
    const newAbsenceResult=await checkNewAbsenceSongs(page,width,{screenshot});
    const absenceReplacementResult=await checkAbsenceReplacement(page,width,{screenshot});
    const absenceNavigationResult=await checkAbsenceNavigation(page,width,{screenshot});
+   const absenceMemberReturnResult=await checkAbsenceMemberReturn(page,width,{screenshot});
    const lyricBreakResult=await checkLyricBreaks(page,width,{mode,assertFits,screenshot});
    const lyricSizeResult=await checkLyricSize(page,width,{mode,assertFits,screenshot});
    const pdfClippingResult=await checkPDFClipping(page,width,{screenshot});
@@ -185,7 +187,7 @@ async function readableTitles(page,rec){
     : await browser.newContext({viewport:{width,height:844},serviceWorkers:'block'});
    contexts.add(audioContext);await audioContext.route('**/*',route=>{const request=route.request(),url=new URL(request.url());return url.origin===allowedOrigin&&request.method()==='GET'?route.continue():route.abort('blockedbyclient');});
    const passiveAudioResult=await checkPassiveAudio(audioContext,origin,width,{screenshot});await audioContext.close();contexts.delete(audioContext);
-   results.push({width,memberRoster,legacyMemberRoster,cleanMemberRoster,arrangementDevice,progressConnection,...folderResult,...recordingBrowseResult,...absenceResult,...newAbsenceResult,...absenceReplacementResult,...absenceNavigationResult,...lyricBreakResult,...lyricSizeResult,...pdfClippingResult,...memberStartDayResult,...memberFeedbackStartResult,...noteNavigationDeliveryResult,...memberLinkSwitchResult,...recSegmentResult,...liveNoteResult,...recAutoResult,...recHeadcountResult,...recScrollResult,...recOriginalOKResult,...passiveAudioResult,...dotRecResult,excelOriginal:excelCheck,settings:true,pdfLiveRecView:true,fullTitles:true,footer:true,draftPreserved:true,saveErrorVisible:true});
+   results.push({width,memberRoster,legacyMemberRoster,cleanMemberRoster,arrangementDevice,progressConnection,...folderResult,...recordingBrowseResult,...absenceResult,...newAbsenceResult,...absenceReplacementResult,...absenceNavigationResult,...absenceMemberReturnResult,...lyricBreakResult,...lyricSizeResult,...pdfClippingResult,...memberStartDayResult,...memberFeedbackStartResult,...noteNavigationDeliveryResult,...memberLinkSwitchResult,...recSegmentResult,...liveNoteResult,...recAutoResult,...recHeadcountResult,...recScrollResult,...recOriginalOKResult,...passiveAudioResult,...dotRecResult,excelOriginal:excelCheck,settings:true,pdfLiveRecView:true,fullTitles:true,footer:true,draftPreserved:true,saveErrorVisible:true});
   }
   assert.deepEqual(errors,[]);assert.equal(blocked.filter(x=>x.method!=='GET').length,0);
   const report={passed:true,engine,results,errors,blocked,externalRequestsAllowed:0,syntheticDataOnly:true};

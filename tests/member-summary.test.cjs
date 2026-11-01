@@ -255,3 +255,10 @@ test('a previous feedback link can still open its exact received working copy wh
  const {c,run}=fixture();c.S.shows.push({id:'current-copy',name:'初日',ts:10});c.S.songs.push({id:'current-song',showId:'current-copy',groupId:'g',title:'最新の歌割'});c.S.showId='current-copy';c.S.songs[0].lines=[{t:'元の一行目'},{t:'元の指摘箇所'}];c.notes[0].id='previous-note';c.U.view='summary';c.U.mode='diff';c.app={querySelector:()=>({scrollTop:20})};
  assert.deepEqual(Array.from(run('summaryShows()'),sw=>sw.id),['current-copy','day2']);run("openSummarySong('s1',1,'previous-note')");assert.equal(c.S.showId,'day1');assert.equal(c.U.lyricTarget.noteId,'previous-note');run('backToSummary()');assert.equal(c.S.showId,'current-copy');assert.equal(c.S.shows.length,3);
 });
+
+test('back from an absence lyric restores the absence list and its original scroll, including a stale prior summary return',()=>{
+ const {c,run}=fixture();let sc={scrollTop:1460};c.app={querySelector:q=>q==='.scroll'?sc:{classList:{add(){}},scrollIntoView(){}}};c.song=()=>c.SONGS()[c.U.songIdx||0];
+ c.U.view='absent';c.U.mode='member';c.U.allShows=false;c.U.summaryReturn={view:'summary',showId:'day1',scrollTop:0};
+ run("openSummarySong('s1',1)");assert.equal(c.U.view,'live');assert(run('viewerBackButton()').includes('歌割変更に戻る'));
+ sc.scrollTop=0;run('backToSummary();applyMemberNavigation()');assert.equal(c.U.view,'absent');assert.equal(sc.scrollTop,1460);assert.equal(c.S.showId,'day1');assert.equal(c.U.mode,'member');assert.equal(c.U.summaryReturn,null);
+});

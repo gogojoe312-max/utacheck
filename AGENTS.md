@@ -402,3 +402,20 @@ Owner absence lyric navigation acceptance:
   save/reload. Preserve all lyrics, overrides, notes, drawings, historical media,
   original sources and member delivery. Keep old-code failure/screenshots and
   run the actual controls in local and published Chromium/WebKit at both widths.
+
+Absence lyric-tap editing / member return acceptance:
+- From owner 欠席対応, tap a scrolled second song's lyric link and then tap an
+  actual lyric character on the main screen. It must open the existing line or
+  A/B block assignment editor, with no 音程/リズム draft or accidental chip
+  activation from the opening gesture. Keep duplicate phrases and contaminated
+  original/registered rosters. Select a replacement there, return to the original
+  list position, save, natively reload, publish/receive, and inspect the member's
+  changed assignment. Ordinary LIVE/REC feedback stays available outside this
+  context; member/preview cannot open owner assignment editing.
+- In the actual owner メンバーの見え方を確認 preview, enter 歌割変更, scroll to a
+  later song/change, open its lyric and press the visible 戻る control. Restore
+  歌割変更 and its exact scroll position, including a stale earlier summary-return
+  record. Repeat through real link receive, native save/reload and the member
+  selector. Preserve owner data/receipts in preview and received source content.
+  Keep old-code behavioral failures and screenshots; verify both local/published
+  Chromium and WebKit. Actual phone receipt/latest private state remain separate.
