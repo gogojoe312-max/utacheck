@@ -108,7 +108,7 @@
   if(status.kind==='deferred')return waitingText(status.reason);
   if(status.kind==='missing-token')return '本人用の自動受信は未接続です。この端末のGitHub接続を確認する必要があります。';
   if(status.kind==='access')return sourceFailureText();
-  if(status.kind==='conflict')return '更新内容と現在の曲・予定の対応を確認できず、反映を止めています。現在の記録は保持しています。';
+  if(status.kind==='conflict')return '更新を保留しています。現在の記録は保持しています。'+(status.operationTitle?' 対象：'+status.operationTitle+'。':'')+(status.code?' 理由：'+String(status.code).replace(/[^A-Za-z0-9_-]/g,'').slice(0,100)+'。':'');
   if(status.kind==='owner-required')return '安全な編集状態を確認するため、ほかの歌チェックを閉じて、この画面を開き直してください。';
   if(status.kind==='multiple-windows')return 'ほかの歌チェックの画面を閉じてから、この画面を開き直してください。現在の記録は保持しています。';
   if(status.kind==='unsupported')return 'このブラウザでは安全な自動反映を確認できません。現在の記録は保持しています。';
@@ -280,7 +280,12 @@
   if(batch?.confirmed?.get(operation.id)!==JSON.stringify(operation)){
    const fresh=await readSource({...config,token,isActive});
    if(!isActive())throw failure('DEFERRED');
-   if(fresh.status!=='ready'||fresh.sourceSha!==sourceSha)throw failure('PREPARATION_SOURCE_CHANGED');
+   if(fresh.status!=='ready'){
+     const code=fresh.code||'FETCH_FAILED';
+     if(code==='INACTIVE'||code==='ABORTED')throw failure('DEFERRED');
+     const error=failure('PREPARATION_SOURCE_RECHECK_FAILED');error.sourceCode=code;error.sourceStage=fresh.stage;throw error;
+    }
+    if(fresh.sourceSha!==sourceSha)throw failure('PREPARATION_SOURCE_CHANGED');
    const checked=await PrivatePreparation.validate(fresh.manifest,config.owner);
    const confirmed=new Map(checked.operations.filter(op=>op.type==='original-excel').map(op=>[op.id,JSON.stringify(op)]));
    if(confirmed.get(operation.id)!==JSON.stringify(operation))throw failure('PREPARATION_SOURCE_CHANGED');
@@ -370,7 +375,12 @@
     if(!active())throw failure('DEFERRED');
    }else if(root.ProgressPreparationSource||['material-update','recording-song','recording-update'].includes(operation.type)){
     const fresh=await readSource({...config,token,isActive:active});
-    if(fresh.status!=='ready'||fresh.sourceSha!==sourceSha)throw failure('PREPARATION_SOURCE_CHANGED');
+    if(fresh.status!=='ready'){
+     const code=fresh.code||'FETCH_FAILED';
+     if(code==='INACTIVE'||code==='ABORTED')throw failure('DEFERRED');
+     const error=failure('PREPARATION_SOURCE_RECHECK_FAILED');error.sourceCode=code;error.sourceStage=fresh.stage;throw error;
+    }
+    if(fresh.sourceSha!==sourceSha)throw failure('PREPARATION_SOURCE_CHANGED');
     await PrivatePreparation.validate(fresh.manifest,config.owner);
     if(!active())throw failure('DEFERRED');
    }
@@ -427,7 +437,7 @@
   }
   if(!manualPending&&!resumePending&&Date.now()-lastAttempt<60000)return {status:'throttled'};
   clearTimeout(interactionRetry);interactionRetry=null;
-  manualPending=false;resumePending=false;lastAttempt=Date.now();running=true;let token;
+  manualPending=false;resumePending=false;lastAttempt=Date.now();running=true;let token,currentOperation=null;
   try{
    await loadCredential();token=sourceToken();
    if(!token&&!root.ProgressPreparationSource){setStatus({kind:'missing-token'});return {status:'missing-token'};}
@@ -458,12 +468,12 @@
    if(unapplied.length&&!pending.length){setStatus({kind:'active-plan'});await reportResults(manifest,source.sourceSha);return {status:'deferred'};}
    if(!pending.length){setStatus({kind:'current',sourceSha:source.sourceSha,originals:originalSummary(manifest)});await reportResults(manifest,source.sourceSha);return {status:'current'};}
    await establishOwner();if(sourceToken()!==token)throw failure('DEFERRED');
-   let count=0,conflicts=0,addedRecording=false;const outcomes={};
+   let count=0,conflicts=0,addedRecording=false,firstConflict=null;const outcomes={};
    for(const operation of pending.filter(op=>op.type!=='original-excel')){
     // Check each independent addition against the current device. An older
     // conflicting packet must not keep a later, unrelated session out forever.
-    try{PrivatePreparation.apply(S,operation,operationAdapters(manifest.operations));}
-    catch(error){if(error.preparationCode==='OPERATION_ID_REUSED')throw error;outcomes[operation.id]={status:'held',code:error.preparationCode||'PREPARATION_CONFLICT'};conflicts++;continue;}
+    currentOperation=operation;try{PrivatePreparation.apply(S,operation,operationAdapters(manifest.operations));}
+    catch(error){if(error.preparationCode==='OPERATION_ID_REUSED')throw error;outcomes[operation.id]={status:'held',code:error.preparationCode||'PREPARATION_CONFLICT'};if(!firstConflict)firstConflict={code:outcomes[operation.id].code,operationTitle:operation.packet?.songs?.[0]?.title||operation.packet?.song?.title||operation.id};conflicts++;continue;}
     if(await applyOne(operation,token,source.sourceSha,undefined,manifest.operations)){count++;if(['recording-song','recording-addition'].includes(operation.type))addedRecording=true;}
    }
    const currentTitles=new Set((S.songs||[]).filter(so=>so.showId===S.showId).map(so=>String(so.title).normalize('NFKC').replace(/\s/g,'')));
@@ -473,10 +483,10 @@
    // workbooks, and each receipt tracks only the corresponding source's songs.
    for(let i=0;i<originalOperations.length;i+=3)count+=await applyOriginalBatch(originalOperations.slice(i,i+3),token,source.sourceSha,batch);
    if(addedRecording){U.recArtistFilter='';render();}
-   const originals=originalSummary(manifest);setStatus({kind:count?'applied':conflicts?'conflict':'current',count,conflicts,sourceSha:source.sourceSha,originals});await reportResults(manifest,source.sourceSha,outcomes);return {status:status.kind,count,conflicts,originals};
+   const originals=originalSummary(manifest);setStatus({kind:count?'applied':conflicts?'conflict':'current',count,conflicts,...(count?{}:firstConflict||{}),sourceSha:source.sourceSha,originals});await reportResults(manifest,source.sourceSha,outcomes);return {status:status.kind,count,conflicts,originals};
   }catch(error){const code=error.preparationCode||error.code||'PREPARATION_CONFLICT';
    const reason=code==='DEFERRED'?waitingReason():undefined;
-   setStatus({kind:code==='CREDENTIAL_UNREADABLE'?'connection-error':code==='DEFERRED'?'deferred':code==='MULTIPLE_WINDOWS'?'multiple-windows':code==='OWNER_REQUIRED'?'owner-required':code==='UNSUPPORTED'?'unsupported':code==='SAVE_UNVERIFIED'?'unverified':'conflict',code,reason});
+   setStatus({kind:code==='PREPARATION_SOURCE_RECHECK_FAILED'?'offline':code==='CREDENTIAL_UNREADABLE'?'connection-error':code==='DEFERRED'?'deferred':code==='MULTIPLE_WINDOWS'?'multiple-windows':code==='OWNER_REQUIRED'?'owner-required':code==='UNSUPPORTED'?'unsupported':code==='SAVE_UNVERIFIED'?'unverified':'conflict',code:error.sourceCode||code,stage:error.sourceStage,reason,operationTitle:currentOperation?.packet?.songs?.[0]?.title||currentOperation?.packet?.song?.title||currentOperation?.id});
    if(code==='DEFERRED')queueResume(reason);
    return {status:status.kind,code};
   }finally{running=false;}
