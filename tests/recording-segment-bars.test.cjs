@@ -61,3 +61,27 @@ test('legacy unsplit lines retain numbering and invalid segment metadata cannot 
  for(const args of [[0,0],[3,2],[-1,2]])assert.equal(f.c.setRecordingSegmentBar(f.song.lines[0],args[0],'bars',args[1]),false);
  assert.equal(f.c.setRecordingBarLengths(f.song,9,0,4),false);
 });
+test('restored added cues retain optional numbering and can use explicit starts without removing add metadata',()=>{
+ const f=fixture([{t:'合成フレーズ一',at:61,bars:1},{t:'合成フレーズ二',bars:1},{t:'合成フレーズ三',bars:0.5},{t:'合成フレーズ四',at:63,bars:1},{t:'煽り',add:1,bars:0,sec:'煽り'},{t:'後続の合成フレーズ',at:76,bars:1,sec:'3C'}],0);
+ const original=clone(f.S);assert.deepEqual(f.numbers(),[[61],[62],[63],[63],[null],[76]]);
+ assert(f.c.setRecordingSegmentBar(f.song.lines[4],0,'at',64));
+ assert.deepEqual(f.numbers(),[[61],[62],[63],[63],[64],[76]]);
+ assert.equal(f.song.lines[4].add,1);assert.equal(f.song.lines[4].bars,0);
+ const reloaded=fixture(clone(f.song.lines),0);assert.deepEqual(reloaded.numbers(),f.numbers());
+ assert.deepEqual(clone(f.S.notes),original.notes);assert.deepEqual(clone(f.S.recs),original.recs);assert.deepEqual(clone(f.S.plan),original.plan);
+ f.c.setRecordingSegmentBar(f.song.lines[4],0,'at',null);assert.deepEqual(f.numbers(),[[61],[62],[63],[63],[null],[76]]);
+});
+test('added cue length edits apply to that cue and advance unfixed bars while preserving later source lengths',()=>{
+ const f=fixture([{t:'前',at:63,bars:1},{t:'追加の掛け声',add:1,bars:0,sec:'煽り'},{t:'後',bars:1},{t:'固定',at:76,bars:2}],0);
+ f.c.setRecordingBarLengths(f.song,1,0,2);
+ assert.deepEqual(f.numbers(),[[63],[64],[66],[76]]);
+ assert.equal(f.song.lines[1].bars,2);assert.equal(f.song.lines[2].bars,1);assert.equal(f.song.lines[3].bars,2);
+ f.c.setRecordingSegmentBar(f.song.lines[1],0,'at',65);assert.deepEqual(f.numbers(),[[63],[65],[67],[76]]);
+});
+test('a split added cue can begin numbering at the selected character segment and keep earlier cue text unnumbered',()=>{
+ const f=fixture([{t:'前',at:63,bars:1},{t:'掛声😀後半',add:1,bars:0,sec:'煽り',lyricBreaks:[3]},{t:'後',bars:1}],0);
+ f.c.setRecordingSegmentBar(f.song.lines[1],1,'at',70);f.c.setRecordingBarLengths(f.song,1,1,2);
+ assert.deepEqual(f.numbers(),[[63],[null,70],[72]]);
+ assert.deepEqual(clone(f.song.lines[1].recBarOverrides),{3:{at:70,bars:2}});
+ assert.equal(f.song.lines[1].bars,0);assert.equal(f.song.lines[2].bars,1);
+});

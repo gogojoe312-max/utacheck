@@ -4,7 +4,10 @@ const {checkRecLiveIsolation}=require('./rec-live-isolation-browser-helper.cjs')
 const {fixture,clone,digest}=require('./recording-preparation-fixture.cjs');
 async function checkRecordingPreparation(page,width,{screenshot}){
  const dedicated=width===390,token=dedicated?'github_pat_'+'q'.repeat(40):'qa-dot-private-connection';
- const f=fixture(),reports=new Map(),calls=[];let manifest=clone(f.manifest),sourceSha='a'.repeat(40);
+ const f=fixture(),reports=new Map(),calls=[];
+ f.anchor.packet.plan.slots[2].name='乙（条件付き）';f.state.plan.slots[2].name='乙（条件付き）';f.update.before.slots[2].name='乙（条件付き）';
+ f.anchor.sha256=digest(f.anchor.packet);f.state.privatePreparations[f.anchor.id].sha256=f.anchor.sha256;f.update.anchor.sha256=f.update.previous.sha256=f.anchor.sha256;f.operation.sha256=digest(f.update);
+ let manifest=clone(f.manifest),sourceSha='a'.repeat(40);
  const base='https://api.github.com/repos/gogojoe312-max/shinkou-data';
  await page.route('https://api.github.com/**',async route=>{
   const request=route.request(),url=new URL(request.url()),method=request.method();calls.push({path:url.pathname,method});
@@ -46,6 +49,7 @@ async function checkRecordingPreparation(page,width,{screenshot}){
  };
  const got=await receive();assert(['applied','current'].includes(got.status),JSON.stringify({got,reports:[...reports.values()],state:await page.evaluate(()=>({songs:S.rsongs,slots:S.plan.slots,status:PrivatePreparationUI.getStatus()}))}));
  assert.equal(await page.evaluate(()=>PrivatePreparationUI.getResultStatus().status),'confirmed');assert.equal(reports.size,1);
+ assert.equal(await page.evaluate(()=>privatePreparationReceiptsMatch(JSON.parse(JSON.stringify(S)))),true,'Received recording-update receipts must survive the real save/backup comparison');
  let report=[...reports.values()][0];assert.equal(report.sessions[0].revision,1);assert(report.operations.every(o=>o.status==='applied'));assert.doesNotMatch(JSON.stringify(report),/差し替えた歌詞|指摘を保持|qa-dot-private|keep-gist|keep-key/);
  await page.locator('[data-act="ruse"][data-id="dot-song"]').click();await page.waitForSelector('[data-lyric-line]');
  assert((await page.locator('[data-lyric-line] .txt').allTextContents()).includes('差し替えた歌詞😀'));

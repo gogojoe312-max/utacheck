@@ -118,7 +118,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.78";
+const APP_VER = "16.41.58.79";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -4662,9 +4662,14 @@ function recordingLineSegments(line) {
 function recordingBarRows(so) {
   let next = Number(so.intro || 0) + 1;
   return (so.lines || []).map(line => {
-    const counted = !line.gap && !line.add && !line.cut && !recordingEmptyTextLine(line);
+    const eligible = !line.gap && !line.cut && !recordingEmptyTextLine(line);
+    // Added cues are untimed until the owner gives them a start or duration.
+    // Keep add/source rows intact; a numbered cue follows the normal sequence.
+    let counted = !line.add || Number.isSafeInteger(line.at) && line.at > 0 || Number(line.bars) > 0;
     return recordingLineSegments(line).map(segment => {
-      if (!counted) return { ...segment, number: null };
+      const override = segment.index ? line.recBarOverrides?.[segment.from] : null;
+      if (Number.isSafeInteger(override?.at) && override.at > 0 || Number.isSafeInteger(override?.bars) && override.bars > 0) counted = true;
+      if (!eligible || !counted) return { ...segment, number: null };
       if (segment.at != null) next = segment.at;
       const number = next;
       next += segment.bars;
@@ -4748,14 +4753,20 @@ function recordingBarMenuTarget() {
   if (!so || menu?.kind !== "rbar" || !Number.isSafeInteger(menu.i)) return null;
   const line = so.lines[menu.i], segmentIndex = menu.segment ?? 0;
   if (!line || !Number.isSafeInteger(segmentIndex) || segmentIndex < 0) return null;
-  const segment = recordingBarRows(so)[menu.i]?.[segmentIndex];
-  return segment ? { so, line, segment, lineIndex: menu.i } : null;
+  const rows = recordingBarRows(so), segment = rows[menu.i]?.[segmentIndex];
+  if (!segment || line.gap || line.cut || recordingEmptyTextLine(line)) return null;
+  let start = Number(so.intro || 0) + 1;
+  for (let i = 0; i <= menu.i; i++) for (const prior of rows[i]) {
+    if (i === menu.i && prior.index >= segmentIndex) break;
+    if (prior.number != null) start = prior.number + prior.bars;
+  }
+  return { so, line, segment, lineIndex: menu.i, start: segment.number ?? start };
 }
 function setRecordingBarLengths(so, lineIndex, segmentIndex, bars) {
   if (!Number.isSafeInteger(lineIndex) || lineIndex < 0 || !so.lines[lineIndex] || !Number.isSafeInteger(segmentIndex) || segmentIndex < 0 || !Number.isSafeInteger(bars) || bars < 1 || !recordingLineSegments(so.lines[lineIndex])[segmentIndex]) return false;
   for (let i = lineIndex; i < so.lines.length; i++) {
     const line = so.lines[i];
-    if (line.gap || line.add || line.cut || recordingEmptyTextLine(line)) continue;
+    if (line.gap || line.cut || recordingEmptyTextLine(line) || line.add && i !== lineIndex) continue;
     if (i === lineIndex && segmentIndex > 0) {
       recordingLineSegments(line).forEach(segment => { if (segment.index >= segmentIndex) setRecordingSegmentBar(line, segment.index, "bars", bars); });
     } else {
@@ -4763,6 +4774,8 @@ function setRecordingBarLengths(so, lineIndex, segmentIndex, bars) {
       for (const entry of Object.values(line.recBarOverrides || {})) if (entry && typeof entry === "object") delete entry.bars;
       pruneRecordingBarOverrides(line);
     }
+    // Added vocals have their own duration; never rewrite following source bars.
+    if (line.add) break;
   }
   return true;
 }
@@ -7559,7 +7572,7 @@ function renderSheet() {
         <button class="chip" data-act="rbarset" data-id="-4">−4</button>
         <button class="chip" data-act="rbarset" data-id="-1">−1</button>
         <button class="grow" data-act="rbarnum"
-          style="text-align:center;font-size:30px;font-weight:800;line-height:1.1;padding:4px 0;border-radius:10px;background:var(--panel2)">${cur}</button>
+          style="text-align:center;font-size:${cur === "" ? 17 : 30}px;font-weight:800;line-height:1.1;padding:8px 0;border-radius:10px;background:var(--panel2)">${cur === "" ? "番号を付ける" : cur}</button>
         <button class="chip" data-act="rbarset" data-id="1">＋1</button>
         <button class="chip" data-act="rbarset" data-id="4">＋4</button>
       </div>
@@ -7568,7 +7581,7 @@ function renderSheet() {
         ${[1, 2, 4, 8].map((b) => `<button class="chip sm grow" data-act="rlen" data-id="${b}"
           style="${selected?.bars === b ? "background:var(--accent);color:#0A0A0A" : ""}">${b}</button>`).join("")}
       </div>
-      <div style="font-size:10px;color:var(--dim);margin-top:6px">この行から下にも適用</div>
+      <div style="font-size:10px;color:var(--dim);margin-top:6px">${l?.add ? "長さはこの追加行だけに適用" : "この行から下にも適用"}</div>
 
       <button class="chip" data-act="rskip" style="width:100%;margin-top:14px;${
         (l || {}).skip ? "background:var(--dim);color:#0A0A0A;font-weight:700" : ""}">${
@@ -11951,8 +11964,8 @@ document.addEventListener("click", async (e) => {
     }
     case "rbar": U.menu = { kind: "rbar", i, segment: Math.max(0, Number(b.dataset.segment) || 0) }; renderSheet(); break;
     case "rbarset": {
-      const target = recordingBarMenuTarget(); if (!target || target.segment.number == null) break;
-      const value = Math.max(1, target.segment.number + Number(id));
+      const target = recordingBarMenuTarget(); if (!target) break;
+      const value = Math.max(1, target.start + Number(id));
       if (!Number.isSafeInteger(value)) break;
       pushUndo();
       setRecordingSegmentBar(target.line, target.segment.index, "at", value);
@@ -11965,8 +11978,8 @@ document.addEventListener("click", async (e) => {
       save(); renderSheet(); render(); break;
     }
     case "rbarnum": {
-      const target = recordingBarMenuTarget(); if (!target || target.segment.number == null) break;
-      const v0 = prompt("この行の小節番号", String(target.segment.number));
+      const target = recordingBarMenuTarget(); if (!target) break;
+      const v0 = prompt("この行の小節番号", String(target.start));
       if (v0 == null) break;
       const v = Math.round(Number(String(v0).replace(/[^\d]/g, "")) || 0);
       if (Number.isSafeInteger(v) && v > 0) { pushUndo(); setRecordingSegmentBar(target.line, target.segment.index, "at", v); save(); renderSheet(); render(); }
@@ -15390,7 +15403,7 @@ function privatePreparationReceiptsMatch(incoming) {
     const receipt = local[id];
     return receipt && typeof receipt === 'object' && !Array.isArray(receipt)
       && /^[a-f0-9]{64}$/.test(receipt.sha256 || '')
-      && ['recording-schedule', 'recording-addition', 'live-addition', 'recording-song', 'material-update', 'live-update', 'original-excel'].includes(receipt.type)
+      && ['recording-schedule', 'recording-addition', 'recording-update', 'live-addition', 'recording-song', 'material-update', 'live-update', 'original-excel'].includes(receipt.type)
       && Object.prototype.hasOwnProperty.call(remote, id)
       && remote[id]?.sha256 === receipt.sha256 && remote[id]?.type === receipt.type;
   });

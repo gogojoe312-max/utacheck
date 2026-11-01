@@ -109,7 +109,7 @@ test('empty preparation receipts preserve ordinary existing backup behavior',asy
 
 
 test('every current preparation receipt survives matching backup checks after serialization',()=>{
- for(const type of ['recording-song','material-update','live-update','recording-schedule','recording-addition','live-addition','original-excel']){
+ for(const type of ['recording-song','material-update','live-update','recording-schedule','recording-addition','recording-update','live-addition','original-excel']){
   const f=fixture({state:{privatePreparations:{prepared:{type,sha256:'c'.repeat(64),at:1}}}});
   const reopened=JSON.parse(JSON.stringify(f.c.S));
   assert.equal(f.c.privatePreparationReceiptsMatch(reopened),true,type);

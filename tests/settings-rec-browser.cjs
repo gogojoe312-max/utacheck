@@ -12,6 +12,7 @@ const {checkAbsence}=require('./absence-view-browser-helper.cjs');
 const {checkNewAbsenceSongs}=require('./absence-new-songs-browser-helper.cjs');
 const {checkFolderInteractions}=require('./folder-interactions-browser-helper.cjs');
 const {checkRecordingSegmentSections}=require('./recording-segment-section-browser-helper.cjs');
+const {checkRecordingAddedBars}=require('./recording-added-bars-browser-helper.cjs');
 const {checkLiveNoteInput}=require('./live-note-input-browser-helper.cjs');
 const {checkRecordingAutoStart}=require('./recording-auto-start-browser-helper.cjs');
 const {checkRecordingOKOriginal}=require('./recording-ok-original-browser-helper.cjs');
@@ -152,6 +153,7 @@ async function readableTitles(page,rec){
    const noteNavigationDeliveryResult=await checkNoteNavigationDelivery(page,width,{screenshot});
    const memberLinkSwitchResult=await checkMemberLinkSwitch(page,width,{screenshot});
    const recSegmentResult=await checkRecordingSegmentSections(page,width,{screenshot});
+   const recAddedBarsResult=await checkRecordingAddedBars(page,width,{screenshot,promptNext:reply=>{promptReply=reply;}});
    const liveNoteResult=await checkLiveNoteInput(page,width,{screenshot});
    const recAutoResult=await checkRecordingAutoStart(page,width,{screenshot});
    const excelCheck=await checkExcelReattach(page,width,dialogs);
@@ -187,7 +189,7 @@ async function readableTitles(page,rec){
     : await browser.newContext({viewport:{width,height:844},serviceWorkers:'block'});
    contexts.add(audioContext);await audioContext.route('**/*',route=>{const request=route.request(),url=new URL(request.url());return url.origin===allowedOrigin&&request.method()==='GET'?route.continue():route.abort('blockedbyclient');});
    const passiveAudioResult=await checkPassiveAudio(audioContext,origin,width,{screenshot});await audioContext.close();contexts.delete(audioContext);
-   results.push({width,memberRoster,legacyMemberRoster,cleanMemberRoster,arrangementDevice,progressConnection,...folderResult,...recordingBrowseResult,...absenceResult,...newAbsenceResult,...absenceReplacementResult,...absenceNavigationResult,...absenceMemberReturnResult,...lyricBreakResult,...lyricSizeResult,...pdfClippingResult,...memberStartDayResult,...memberFeedbackStartResult,...noteNavigationDeliveryResult,...memberLinkSwitchResult,...recSegmentResult,...liveNoteResult,...recAutoResult,...recHeadcountResult,...recScrollResult,...recOriginalOKResult,...passiveAudioResult,...dotRecResult,excelOriginal:excelCheck,settings:true,pdfLiveRecView:true,fullTitles:true,footer:true,draftPreserved:true,saveErrorVisible:true});
+   results.push({width,memberRoster,legacyMemberRoster,cleanMemberRoster,arrangementDevice,progressConnection,...folderResult,...recordingBrowseResult,...absenceResult,...newAbsenceResult,...absenceReplacementResult,...absenceNavigationResult,...absenceMemberReturnResult,...lyricBreakResult,...lyricSizeResult,...pdfClippingResult,...memberStartDayResult,...memberFeedbackStartResult,...noteNavigationDeliveryResult,...memberLinkSwitchResult,...recSegmentResult,...recAddedBarsResult,...liveNoteResult,...recAutoResult,...recHeadcountResult,...recScrollResult,...recOriginalOKResult,...passiveAudioResult,...dotRecResult,excelOriginal:excelCheck,settings:true,pdfLiveRecView:true,fullTitles:true,footer:true,draftPreserved:true,saveErrorVisible:true});
   }
   assert.deepEqual(errors,[]);assert.equal(blocked.filter(x=>x.method!=='GET').length,0);
   const report={passed:true,engine,results,errors,blocked,externalRequestsAllowed:0,syntheticDataOnly:true};

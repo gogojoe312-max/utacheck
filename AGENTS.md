@@ -419,3 +419,23 @@ Absence lyric-tap editing / member return acceptance:
   selector. Preserve owner data/receipts in preview and received source content.
   Keep old-code behavioral failures and screenshots; verify both local/published
   Chromium and WebKit. Actual phone receipt/latest private state remain separate.
+
+REC added-cue bar-number acceptance:
+- Reproduce restored add:1 / bars:0 cues between existing 61,62,63,63 source
+  numbers and a fixed 3C 76 row. Open the added cue's actual lyric-label menu,
+  enter a bar number, use +/- controls and set its duration. New cues created
+  through the same menu must also be editable. Untimed cues remain unnumbered
+  until a start/duration is chosen; do not strip add flags or rewrite lyrics.
+- Added-cue duration changes apply only to the selected cue, while numbering
+  advances through timed cues and respects later fixed starts. Check split
+  character-offset segments, the section filter, overview, print and native
+  save/reload. Preserve original row metadata, notes, section completion, plan
+  history, original-file blobs and historical audio bytes. Retain old-code
+  failures and exact REC-screen screenshots; run local/published Chromium and
+  WebKit gates. An actual phone's receipt remains a separate check.
+- Confirm a conditional schedule label only against the identical registered
+  member ID and canonical name; never reassign a slot by a name change. Keep
+  conflicting local labels held. Real private queue checks must preserve all
+  earlier operations, local added sections/rows, notes and media; open that
+  song's 進行表, inspect each requested day's exact times/order, save and reload.
+  Distinguish server delivery from the actual target phone's result receipt.

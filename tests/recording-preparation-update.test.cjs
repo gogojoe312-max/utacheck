@@ -15,6 +15,16 @@ test('dot REC actual dated member reorder, start/end, break deletion/addition, l
  assert.equal(r.recordingUpdateHeads['dot-session'].revision,1);assert.equal(P.apply(r,f.operation,adapters(f)).status,'already-applied');
 });
 test('new protocol cannot silently fall back to old receiver',async()=>{const f=fixture();await P.validate(f.manifest,'gogojoe312-max');assert.equal(apply(f).state.recordingUpdateHeads['dot-session'].operationId,f.operation.id);});
+test('a confirmed label can replace a conditional label only for the identical registered member and retains local history',()=>{
+ const f=fixture();f.anchor.packet.plan.slots[2].name='乙（条件付き）';f.state.plan.slots[2].name='乙（条件付き）';f.update.before.slots[2].name='乙（条件付き）';
+ f.anchor.sha256=digest(f.anchor.packet);f.state.privatePreparations[f.anchor.id].sha256=f.anchor.sha256;f.update.anchor.sha256=f.update.previous.sha256=f.anchor.sha256;
+ const before=clone(f.state),next=apply(f).state;
+ assert.equal(next.plan.slots[0].name,'乙');assert.equal(next.plan.slots[0].memberId,'p2');assert.deepEqual(next.notes,before.notes);assert.deepEqual(next.recs,before.recs);
+ assert.deepEqual(next.plan.slots[2].takes,before.plan.slots[0].takes);
+});
+test('confirmed member labels never overwrite a conflicting local label',()=>{
+ rejects('REC_UPDATE_LOCAL_EDIT',f=>{f.anchor.packet.plan.slots[2].name='乙（条件付き）';f.update.before.slots[2].name='乙（条件付き）';f.state.plan.slots[2].name='本人の変更';f.anchor.sha256=digest(f.anchor.packet);f.state.privatePreparations[f.anchor.id].sha256=f.anchor.sha256;f.update.anchor.sha256=f.update.previous.sha256=f.anchor.sha256;});
+});
 test('ordered revision chain requires exact predecessor and rejects rollback and modified reused operation',()=>{
  const f=fixture();f.state=apply(f).state;const v1=clone(f.operation);f.operation=clone(v1);f.operation.id='dot-update-2';f.operation.packet.revision=2;f.operation.packet.previous={id:v1.id,sha256:v1.sha256};f.operation.packet.before=clone(v1.packet.after);f.operation.packet.after=clone(v1.packet.after);f.operation.packet.after.slots[0].at=710;f.operation.sha256=digest(f.operation.packet);f.manifest.operations.push(f.operation);f.state=apply(f).state;
  assert.equal(f.state.recordingUpdateHeads['dot-session'].revision,2);assert.equal(P.apply(f.state,v1,adapters(f)).status,'already-applied');
