@@ -317,6 +317,10 @@ select.field{appearance:auto}textarea.field{resize:vertical}
 .member-note-arrow{position:absolute;right:5px;top:12px;color:var(--dim);font-size:22px;line-height:1}
 .member-back{flex:none;min-height:44px;padding:8px 12px;border-radius:10px;background:var(--panel2);color:var(--accent);font-size:14px;font-weight:600;white-space:nowrap}
 .member-back span{font-size:22px;line-height:1;vertical-align:-1px}
+.song-header .absence-back{max-width:92px;white-space:normal;font-size:12px}
+.owner-absence-row .absence-assignment{flex:0 0 100px;min-height:44px;text-align:right;font-size:11px;padding:8px 0}
+.owner-absence-row .absence-lyric-link{min-width:0;min-height:44px;text-align:left;font-size:13px;padding:8px 6px}
+#app[data-viewer="0"] .absence-lyric-target{outline:2px solid var(--accent);outline-offset:-3px;border-radius:10px;scroll-margin:16px}
 #app[data-viewer="1"] .member-lyric-target{outline:2px solid var(--accent);outline-offset:-3px;border-radius:10px;scroll-margin:16px}
 #app[data-viewer="1"] .txt .member-char-target{background:#F0B23C!important;color:#101217!important;border-bottom-color:#fff!important;font-weight:700}
 }

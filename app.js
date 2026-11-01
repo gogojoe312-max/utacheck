@@ -118,7 +118,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.76";
+const APP_VER = "16.41.58.77";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -6439,7 +6439,7 @@ function render(background = false) {
     if (sectionPositions.has(el.dataset.sectionStrip)) el.scrollLeft = sectionPositions.get(el.dataset.sectionStrip);
   });
   if (typeof updateRecordingAssignmentIndicator === "function") updateRecordingAssignmentIndicator();
-  if (VIEW()) applyMemberNavigation();
+  if (VIEW()) applyMemberNavigation(); else applyAbsenceNavigation();
   renderSheet();
   if (U.view === "live" && !U.overview) queueInkPaint();
   if (U.view === "print" || U.view === "recprint") setTimeout(fitPrintDOM, 0);
@@ -6843,7 +6843,7 @@ function viewLive() {
       </div>
     </div>` : ""}
   <div class="hd song-header">
-    ${viewerBackButton()}
+    ${viewerBackButton()}${ownerAbsenceBackButton()}
     <button class="song-heading" data-act="picker">
       <div class="t2">${s && s.mark ? `<b style="color:var(--accent)">★</b> ` : ""}${s && !S.recMode && takeLabel(s) ? `<b class="tkmk">${h(takeLabel(s))}</b>` : ""}${h(s ? s.title : "曲がありません")}</div>
       <div class="t1">${S.recMode
@@ -7052,7 +7052,7 @@ function viewOverview(s) {
 
   return `
   <div class="hd song-header">
-    ${viewerBackButton()}
+    ${viewerBackButton()}${ownerAbsenceBackButton()}
     <div class="song-heading">
       <div class="t2">${h(songName(s))}</div>
       <div class="t1">${S.recMode ? "REC" : h(showName())} ・ 全体表示</div>
@@ -7620,8 +7620,8 @@ function renderSheet() {
       <div class="row" style="margin-bottom:10px"><span class="grow trunc" style="font-size:13px">${h(songName(so))}</span>
       <button data-act="closemenu" style="width:36px;height:36px;border-radius:10px;background:var(--panel2);font-size:17px">✕</button></div>
       <div class="sec"><h4>ブロック ${h(b)} は誰ですか</h4>
-        <div class="chips">${songRoster(so).map((mid) => member(mid)).filter(Boolean).map((m) => `<button class="chip sm" data-act="setblock" data-id="${m.id}"
-          style="${cur7.includes(m.id) ? "background:var(--accent);color:#0A0A0A" : ab3.includes(m.id) ? "color:var(--bad);opacity:.5" : ""}">${h(compactMemberLabel(m.name))}</button>`).join("")}</div>
+        <div class="chips">${assignmentMembers(so).map((m) => `<button class="chip sm" data-act="setblock" data-id="${m.id}" aria-pressed="${m.assignmentIds.some(id=>cur7.includes(id))}"
+          style="${m.assignmentIds.some(id=>cur7.includes(id)) ? "background:var(--accent);color:#0A0A0A" : m.assignmentIds.some(id=>ab3.includes(id)) ? "color:var(--bad);opacity:.5" : ""}">${h(compactMemberLabel(m.name))}</button>`).join("")}</div>
       </div></div>`;
     document.body.appendChild(overlay);
     return;
@@ -7638,9 +7638,8 @@ function renderSheet() {
       <div class="row" style="margin-bottom:10px"><span class="grow trunc" style="font-size:13px">${h((U.menu.idx || [U.menu.i]).map((x) => (so.lines[x] || {}).t).join(" / "))}</span>
       <button data-act="closemenu" style="width:36px;height:36px;border-radius:10px;background:var(--panel2);font-size:17px">✕</button></div>
       <div class="sec"><h4>${h((l && l.label) || "続き")}${(U.menu.idx || []).length > 1 ? `（${U.menu.idx.length}行まとめて）` : ""}</h4>
-        <div class="chips">${(so ? songRoster(so) : showRoster()).map((mid) => member(mid)).filter(Boolean)
-          .map((m) => `<button class="chip sm" data-act="setassign" data-id="${m.id}"
-          style="${cur5.includes(m.id) ? "background:var(--accent);color:#0A0A0A" : ab2.includes(m.id) ? "color:var(--bad);opacity:.5" : ""}">${h(compactMemberLabel(m.name))}</button>`).join("")}</div>
+        <div class="chips">${assignmentMembers(so).map((m) => `<button class="chip sm" data-act="setassign" data-id="${m.id}" aria-pressed="${m.assignmentIds.some(id=>cur5.includes(id))}"
+          style="${m.assignmentIds.some(id=>cur5.includes(id)) ? "background:var(--accent);color:#0A0A0A" : m.assignmentIds.some(id=>ab2.includes(id)) ? "color:var(--bad);opacity:.5" : ""}">${h(compactMemberLabel(m.name))}</button>`).join("")}</div>
       </div>
       ${subOf(so.id, U.menu.i) ? `<button class="ghost" data-act="unassign" style="color:var(--dim)">元の歌割に戻す</button>` : ""}
       </div>`;
@@ -7905,9 +7904,8 @@ function selectSummaryShow(id) {
 function viewerMemberName(value) {
   return compactMemberLabel(value).normalize('NFKC').replace(/﨑/g,'崎').replace(/\s/g,'');
 }
-function viewerMembers() {
-  const current=typeof song==='function'?song():null;
-  const songs=(S.songs||[]).filter(so=>so.showId===S.showId);
+function viewerMembers(current=typeof song==='function'?song():null) {
+  const songs=(S.songs||[]).filter(so=>so.showId===(current?.showId||S.showId));
   const sourceGroup=(S.groups||[]).find(g=>g.id===current?.groupId);
   const contexts=[sourceGroup?.name,(group()||{}).name,S.srcGroup].filter(Boolean);
   // Imported assignment labels are not a roster. Older publications include
@@ -7951,6 +7949,36 @@ function viewerMembers() {
     }
   }
   return out;
+}
+// The owner edits real people too: keep source IDs/rosters intact, and use the
+// same formal order and unambiguous aliases as the received member screen.
+function assignmentMembers(so) {
+  const raw=(so?songRoster(so):showRoster()).map(member).filter(Boolean);
+  const formal=viewerMembers(so),keys=formal.map(m=>viewerMemberName(m.name));
+  const showId=so?.showId||S.showId,scoped=new Set(absentIds(showId));
+  for(const item of S.songs.filter(s=>(s.showId||S.showId)===showId)){
+    const key=showId+'|'+item.id;
+    for(const ids of [songRoster(item),...Object.values(item.blocks||{}),...(item.lines||[]).map(l=>l.parts||[]),...Object.values(S.subs?.[key]||{}),...Object.values(S.gsubs?.[key]||{})])
+      for(const id of ids)scoped.add(id);
+  }
+  const matches=(m,key)=>{
+    const name=viewerMemberName(m.name);
+    return name===key||name&&key.startsWith(name)&&keys.filter(full=>full.startsWith(name)).length===1;
+  };
+  return formal.filter((m,i)=>raw.some(item=>matches(item,keys[i])))
+    .map(m=>{
+      const aliases=S.members.filter(item=>scoped.has(item.id)&&matches(item,viewerMemberName(m.name)));
+      const preferred=aliases.find(item=>item.id===m.id)||aliases.find(item=>viewerMemberName(item.name)===viewerMemberName(m.name))||aliases[0];
+      return {...m,id:preferred.id,assignmentIds:aliases.map(item=>item.id)};
+    });
+}
+function nextAssignment(so,current,id) {
+  const choices=assignmentMembers(so),choice=choices.find(m=>m.id===id);
+  if(!choice)return current.slice();
+  const chosen=new Set(choice.assignmentIds),absent=new Set(absentIds(so?.showId));
+  for(const m of choices)if(m.assignmentIds.some(mid=>absent.has(mid)))m.assignmentIds.forEach(mid=>absent.add(mid));
+  const next=current.some(mid=>chosen.has(mid))?current.filter(mid=>!chosen.has(mid)):current.concat(choice.id);
+  return next.filter(mid=>!absent.has(mid));
 }
 function viewerMemberIds(id) {
   const formal=viewerMembers(),selected=formal.find(m=>m.id===id);
@@ -8097,6 +8125,37 @@ function viewerSummaryBody() {
 }
 function viewerBackButton() {
   return VIEW() ? '<button class="member-back" data-act="summary-back" aria-label="指摘に戻る"><span aria-hidden="true">‹</span> 戻る</button>' : "";
+}
+function ownerAbsenceBackButton() {
+  return !VIEW()&&!S.recMode&&U.absenceReturn?.showId===S.showId
+    ? '<button class="member-back absence-back" data-act="absence-return" aria-label="欠席対応に戻る">‹ 欠席対応に戻る</button>' : '';
+}
+function openAbsenceLyric(id,indices) {
+  if(VIEW()||S.recMode||preview||U.sheet||U.menu||U.view!=='absent')return false;
+  const so=SONGS().find(s=>s.id===id);
+  if(!so||!Array.isArray(indices)||!indices.length||indices.some(i=>!Number.isInteger(i)||i<0||i>=so.lines.length||so.lines[i].cut||so.lines[i].gap))return false;
+  U.absenceReturn={showId:S.showId,songId:song()?.id,scrollTop:app.querySelector('.scroll')?.scrollTop||0,focus:U.focus,overview:U.overview,draw:U.draw};
+  U.songIdx=SONGS().findIndex(s=>s.id===so.id);
+  U.absenceLyricTarget={songId:so.id,indices:[...new Set(indices)],pending:true};
+  U.focus='';U.draw=false;U.overview=false;U.picker=false;U.menu=null;U.sheet=null;U.view='live';render();return true;
+}
+function backToAbsence() {
+  if(VIEW()||S.recMode||!U.absenceReturn||U.absenceReturn.showId!==S.showId)return false;
+  const back=U.absenceReturn,index=SONGS().findIndex(s=>s.id===back.songId);
+  if(index>=0)U.songIdx=index;
+  U.focus=back.focus;U.draw=back.draw;U.overview=back.overview;U.absenceScroll=back.scrollTop;
+  U.absenceReturn=null;U.absenceLyricTarget=null;U.picker=false;U.menu=null;U.view='absent';render();return true;
+}
+function applyAbsenceNavigation() {
+  if(VIEW()||S.recMode)return;
+  if(U.view==='absent'&&U.absenceScroll!=null){
+    const sc=app.querySelector('.scroll');if(sc){sc.scrollTop=U.absenceScroll;U.absenceScroll=null;}
+  }
+  const target=U.absenceLyricTarget;
+  if(U.view!=='live'||U.overview||!target||song()?.id!==target.songId||U.absenceReturn?.showId!==S.showId)return;
+  const rows=target.indices.map(i=>app.querySelector(`[data-lyric-line="${i}"]`)).filter(Boolean);
+  rows.forEach(row=>row.classList.add('absence-lyric-target'));
+  if(target.pending&&rows.length){rows[0].scrollIntoView({block:'center',behavior:'instant'});target.pending=false;}
 }
 function openSummarySong(id, lineIdx = null, noteId = "") {
   if (!VIEW()) return;
@@ -8475,7 +8534,8 @@ function absentEdits(so) {
   return edits;
 }
 function absentVersionNames(ids = absentIds()) {
-  const names=[...new Set(ids.map(id=>(member(id)||{}).name).filter(Boolean))];
+  const choices=typeof absenceSelectableMembers==='function'?absenceSelectableMembers():[];
+  const names=[...new Set(ids.map(id=>choices.find(m=>(m.assignmentIds||[m.id]).includes(id))?.name||(member(id)||{}).name).filter(Boolean))];
   // Collapse only unambiguous abbreviations among the selected absentees.
   return [...new Set(names.map(name=>{
     const full=names.filter(other=>other.length>name.length&&other.startsWith(name));
@@ -8742,7 +8802,8 @@ async function toggleAbsenceMember(id, button) {
       lines:so.lines.map((_,i)=>partsOf(so,i).slice()),
       blocks:Object.fromEntries(blocksOf(so).map(b=>[b,blockParts(so,b).slice()]))
     }]));
-    sw.absent = (sw.absent || []).includes(id) ? sw.absent.filter(x=>x!==id) : (sw.absent || []).concat(id);
+    const choice=absenceSelectableMembers().find(m=>m.id===id),ids=choice.assignmentIds||[id];
+    sw.absent = ids.some(mid=>(sw.absent||[]).includes(mid)) ? sw.absent.filter(mid=>!ids.includes(mid)) : [...new Set([...(sw.absent||[]),...ids])];
     rebuildSubs();
     confirmAbsentAssignments(SONGS(),previousAssignments);
     save(); schedulePush(); render();
@@ -8886,14 +8947,15 @@ function memberAbsenceChanges(so, memberId="", byMember=false) {
       : !byMember || entry.involved.some(id=>AbsenceChanges.forMember(entry,id)));
 }
 function absenceSelectableMembers() {
-  const allowed=new Set();
+  const allowed=new Map();
   SONGS().forEach(so=>{
-    const candidates=songRoster(so).map(member).filter(Boolean);
+    const candidates=assignmentMembers(so);
     const eligible=typeof AbsenceChanges === "undefined" ? candidates
       : AbsenceChanges.eligibleMembers(candidates,{blockLabels:Object.keys(so.blocks || {})});
-    eligible.forEach(m=>allowed.add(m.id));
+    eligible.forEach(m=>allowed.set(m.id,m));
   });
-  return showRoster().map(member).filter(m=>m && allowed.has(m.id));
+  const order=viewerMembers().map(m=>m.id);
+  return [...allowed.values()].sort((a,b)=>(order.includes(a.id)?order.indexOf(a.id):order.length)-(order.includes(b.id)?order.indexOf(b.id):order.length));
 }
 function memberAbsenceRows(so, entries, memberId="") {
   const assignment=(main,extra,original=false)=>{
@@ -8937,7 +8999,7 @@ function viewAbsent() {
   const ab = absentIds();
   const chips = absenceSelectableMembers()
     .map((m) => `<button class="chip sm" data-act="toggleabsent" data-id="${m.id}" ${U.absencePending ? "disabled" : ""}
-      style="${ab.includes(m.id) ? "background:var(--bad);color:#0A0A0A" : ""}">${h(compactMemberLabel(m.name))}</button>`).join("");
+      style="${(m.assignmentIds||[m.id]).some(id=>ab.includes(id)) ? "background:var(--bad);color:#0A0A0A" : ""}">${h(compactMemberLabel(m.name))}</button>`).join("");
 
   const body = !ab.length ? `<p style="padding:40px;text-align:center;color:var(--dim);font-size:14px">${VIEW() ? "歌割の変更はありません" : "上から欠席者を選んでください"}</p>`
     : SONGS().map((so) => {
@@ -8947,12 +9009,14 @@ function viewAbsent() {
         const st3 = blockStatus(so, b);
         if (st3 !== "need" && st3 !== "changed") return "";
         const col = st3 === "need" ? "var(--bad)" : "#F0B23C";
-        return `<button class="row" ${VIEW() ? "" : `data-act="assignblock" data-id="${so.id}" data-b="${h(b)}"`}
+        const indices=so.lines.flatMap((line,i)=>!line.cut&&!line.gap&&blockOf(so,i)===b?[i]:[]);
+        const content=`${h(names((so.blocks || {})[b] || []))} → <b>${h(names(blockParts(so, b)) || "—")}</b>`;
+        return `<div class="row owner-absence-row"
           style="width:100%;text-align:left;padding:8px 10px;margin-bottom:6px;border-radius:10px;
                  background:color-mix(in srgb,${col} 16%,transparent);box-shadow:inset 2px 0 0 ${col}">
-          <span style="flex:0 0 100px;font-size:11px;color:${col};text-align:right">ブロック ${h(b)}</span>
-          <span class="grow trunc" style="font-size:13px">${h(names((so.blocks || {})[b] || []))} → <b>${h(names(blockParts(so, b)) || "—")}</b></span>
-        </button>`;
+          <button class="absence-assignment" data-act="assignblock" data-id="${so.id}" data-b="${h(b)}" style="color:${col}">ブロック ${h(b)}</button>
+          ${indices.length?`<button class="grow trunc absence-lyric-link" data-act="absence-lyrics" data-id="${so.id}" data-idx="${indices.join(',')}" data-block="${h(b)}" aria-label="ブロック${h(b)}の歌詞を開く">${content}</button>`:`<span class="grow">${content}</span>`}
+        </div>`;
       }).join("");
 
       const runs = [];
@@ -8969,12 +9033,12 @@ function viewAbsent() {
         const i0 = r.idx[0];
         const now = names(partsOf(so, i0)) || "—";
         const txt = r.idx.map((i) => so.lines[i].t).join(" / ");
-        return `<button class="row" ${VIEW() ? "" : `data-act="assign" data-id="${so.id}" data-i="${i0}" data-idx="${r.idx.join(",")}"`}
+        return `<div class="row owner-absence-row"
           style="width:100%;text-align:left;padding:8px 10px;margin-bottom:6px;border-radius:10px;
                  background:color-mix(in srgb,${col} 16%,transparent);box-shadow:inset 2px 0 0 ${col}">
-          <span style="flex:0 0 100px;font-size:11px;color:${col};text-align:right">${h(so.lines[i0].label || "続き")}${r.idx.length > 1 ? `<br>${r.idx.length}行` : ""} → ${h(now)}</span>
-          <span class="grow trunc" style="font-size:13px">${h(txt)}</span>
-        </button>`;
+          <button class="absence-assignment" data-act="assign" data-id="${so.id}" data-i="${i0}" data-idx="${r.idx.join(",")}" style="color:${col}">${h(so.lines[i0].label || "続き")}${r.idx.length > 1 ? `<br>${r.idx.length}行` : ""} → ${h(now)}</button>
+          <button class="grow trunc absence-lyric-link" data-act="absence-lyrics" data-id="${so.id}" data-i="${i0}" data-idx="${r.idx.join(",")}" aria-label="${h(txt)}の歌詞を開く">${h(txt)}</button>
+        </div>`;
       }).join("");
       if (!rows && !brows) return "";
       const need = so.lines.filter((l, i) => lineStatus(so, i) === "need").length
@@ -11312,6 +11376,8 @@ document.addEventListener("click", async (e) => {
     case "summary-lyrics": openSummarySong(); break;
     case "summary-note": openSummarySong(id, i, b.dataset.note); break;
     case "summary-back": backToSummary(); break;
+    case "absence-lyrics": openAbsenceLyric(id,String(b.dataset.idx||'').split(',').map(Number)); break;
+    case "absence-return": backToAbsence(); break;
     case "go-summary": commitFields(); U.view = "summary"; render(); break;
     case "pt-settings": if (window.PTLink) window.PTLink.open(); break;
     case "go-setup":
@@ -11650,7 +11716,8 @@ document.addEventListener("click", async (e) => {
       if(VIEW() && S.shows.some(sw=>sw.id===id)){
         S.showId=id;U.songIdx=0;U.allShows=false;U.memberShowChosen=true;rememberViewSelection();
       }
-      U.view = "absent"; render(); break;
+      U.absenceReturn=null;U.absenceLyricTarget=null;
+      U.picker = false; U.menu = null; U.view = "absent"; renderSheet(); render(); break;
     case "resetsubs":
       if (confirm("この公演の振り替えをすべてやり直しますか？")) {
         SONGS().forEach((so) => {
@@ -11672,7 +11739,7 @@ document.addEventListener("click", async (e) => {
       const b = U.menu.b, k = subKey(U.menu.id);
       const cur8 = blockParts(so5, b);
       S.gsubs[k] = S.gsubs[k] || {};
-      S.gsubs[k][b] = cur8.includes(id) ? cur8.filter((x) => x !== id) : cur8.concat(id);
+      S.gsubs[k][b] = nextAssignment(so5,cur8,id);
       recordAssignmentChange(so5,"blocks",b,S.gsubs[k][b]);
       save(); schedulePush(); renderSheet(); render();
       break;
@@ -11698,7 +11765,7 @@ document.addEventListener("click", async (e) => {
       S.subs[k] = S.subs[k] || {};
       const so3 = S.songs.find((x) => x.id === sid);
       const cur6 = so3 ? partsOf(so3,list[0]) : (S.subs[k][list[0]] || []);
-      const next = cur6.includes(id) ? cur6.filter((x) => x !== id) : cur6.concat(id);
+      const next = nextAssignment(so3,cur6,id);
       S.subsMan[k] = S.subsMan[k] || {};
       list.forEach((li) => {
         S.subs[k][li] = next.slice();

@@ -93,6 +93,24 @@ REC scheduled start acceptance (supersedes the former display-only schedule mode
   run JS timers; resume catches up only to the current confirmed slot, never marks
   every missed slot as recorded or invokes the microphone.
 
+Absence replacement / OCHA owner picker acceptance:
+- Retain the screenshot's source roster order (北原、米村、斉藤、窪田、筒井、
+  西﨑、広本、中山、西崎), duplicate spelling, short aliases and non-member labels
+  in BOTH song and registered rosters. Open the actual LIVE name long-press
+  assignment popup, select a replacement ONCE, and verify absent singers are
+  removed automatically while present partners remain. Repeat on another solo,
+  a restored incorrect manual pair, multi-person assignments and A/B blocks.
+- Owner assignment and absence pickers use exactly 斉藤、広本、米村、窪田、
+  中山、西﨑、北原、筒井 for OCHA, one choice per real person. Alias selection,
+  deselection and absence apply consistently without changing source IDs or
+  rosters. Preserve ordinary non-absence multi-select and empty selections.
+- Keep prior-code behavioral failures and screenshots. Verify source lyrics,
+  notes, assignments, original Excel bytes/format and unrelated records; export
+  the version sheet, save and natively reload, then publish/receive and inspect
+  the member screen and its actual selector. Run local and published Chromium/
+  WebKit gates. Use the supplied full backup and original cha cha SING workbook
+  in an ignored scoped check; do not claim access to newer phone-only edits.
+
 Absence additions / lyric-name assignment acceptance:
 - Create absence settings first, then add a song using the actual file picker.
   Verify the target show's absence rules also apply when another show or REC was
@@ -372,3 +390,15 @@ Private dot REC update acceptance:
   fallback in the fixture, and preserve the assertion that zero external writes
   escape. The v74 public WebKit failure must not be hidden by removing the held
   operation, stripping the result sender, or weakening the network-isolation check.
+
+Owner absence lyric navigation acceptance:
+- On the owner's 欠席対応 screen, tap the lyric portion of a scrolled second
+  song card. Keep identical phrases at two row indices and in both songs; open
+  the exact selected song/row in the main lyric screen, visibly highlight it,
+  and scroll it into view. Retain existing overview/member/draw filters before
+  navigation. The name portion must still open the assignment editor.
+- Use 欠席対応に戻る from the main screen and overview to restore the original
+  list scroll position and context. Repeat for A/B block lyrics and after native
+  save/reload. Preserve all lyrics, overrides, notes, drawings, historical media,
+  original sources and member delivery. Keep old-code failure/screenshots and
+  run the actual controls in local and published Chromium/WebKit at both widths.

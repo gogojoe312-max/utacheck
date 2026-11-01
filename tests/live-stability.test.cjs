@@ -21,6 +21,7 @@ test('touching, scrolling and open dialogs defer background renders until intera
  const app={dataset:{},querySelector:()=>null,set innerHTML(v){writes++;}};
  const c=testContext({...time,document:doc,window:win,Set,S:{recMode:false},U:{view:'live'},app,
   song:()=>({id:'song'}),takeCtx:()=>'',alertPending:()=>null,memberLinkScreen:()=>'',viewLive:()=>'<div>歌詞</div>',saveErr:false,VIEW:()=>false,queueInkPaint(){},renderSheet(){}});
+ vm.runInContext(block('function applyAbsenceNavigation()', 'function openSummarySong('),c);
  vm.runInContext(block('let pendingRender = false;', '// 今日の日付'),c);
  const run=s=>vm.runInContext(s,c);
  doc.fire('pointerdown');run('render(true)');assert.equal(writes,0);
@@ -144,6 +145,7 @@ test('changing take at the same list index starts at the top, while edits keep p
  const app={dataset:{},querySelector:()=>sc,set innerHTML(v){sc={scrollTop:0};}};
  const c=testContext({...time,document:doc,window:win,Set,S:{recMode:false},U:{view:'live',songIdx:0},app,
   song:()=>current,takeCtx:()=>take,alertPending:()=>null,memberLinkScreen:()=>'',viewLive:()=>'<div>歌詞</div>',saveErr:false,VIEW:()=>false,queueInkPaint(){},renderSheet(){}});
+ vm.runInContext(block('function applyAbsenceNavigation()', 'function openSummarySong('),c);
  vm.runInContext(block('let pendingRender = false;', '// 今日の日付'),c);
  const render=()=>vm.runInContext('render()',c);
  render();sc.scrollTop=1800;render();assert.equal(sc.scrollTop,1800);

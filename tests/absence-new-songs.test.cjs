@@ -4,6 +4,7 @@ const source=fs.readFileSync(process.env.QA_APP_SOURCE||__dirname+'/../app.js','
 function read(name){const a=source.indexOf('function '+name+'(');return a<0?'':source.slice(a,source.indexOf('\n}',a)+2);}
 test('the assignment chip toggles its displayed original selection before any override exists',()=>{
  const S={songs:[{id:'song',lines:[{parts:['keep']}]}],subs:{},subsMan:{}},c={S,U:{menu:{id:'song',i:0}},id:'keep',subKey:()=> 'show|song',partsOf:so=>so.lines[0].parts,recordAssignmentChange(){},rememberSub(){},save(){},schedulePush(){},renderSheet(){},render(){}};vm.createContext(c);
+ c.assignmentMembers=()=>[{id:'keep',assignmentIds:['keep']}];c.absentIds=()=>[];vm.runInContext(read('nextAssignment'),c);
  const a=source.indexOf('    case "setassign": {'),b=source.indexOf('\n    case ',a+10);vm.runInContext('switch("setassign"){'+source.slice(a,b)+'}',c);
  assert.deepEqual(Array.from(S.subs['show|song'][0]),[],'Pressing an already selected original singer removes that singer');
 });
