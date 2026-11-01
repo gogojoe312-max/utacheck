@@ -118,7 +118,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.80";
+const APP_VER = "16.41.58.81";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -9310,7 +9310,8 @@ function recordingClassification(so) {
 }
 function recordingSelectionSongs() {
   const selected = U.recArtistFilter || "";
-  return S.rsongs.filter(x => !selected || recordingClassification(x).artist === selected);
+  return S.rsongs.filter(x => (!selected || recordingClassification(x).artist === selected)
+    && (typeof recordingScheduleBackingHidden !== 'function' || !recordingScheduleBackingHidden(x)));
 }
 function recordingDateInfo(label) {
   const text=String(label || '').normalize('NFKC').trim();
@@ -9687,7 +9688,8 @@ function recordingPlanEntryHTML() {
   const song = S.rsongs.find(so => so.id === S.rsongId);
   const target = song && (typeof recordingPlanSourceId === "function" ? recordingPlanSourceId(song.id) : song.id);
   const linked = song && (S.plan?.slots || []).some(slot => slot.songId === target);
-  return '<div class="card"><button class="primary" data-act="goplan">この曲の進行表をひらく</button>' + (linked ? '' : '<p class="note">'+(song ? 'この曲に連携した進行表はありません。' : 'RECの曲を選択してください。')+'</p>') + '</div>';
+  const receiving = typeof PrivatePreparationUI !== 'undefined' && PrivatePreparationUI.getStatus?.().kind === 'checking';
+  return '<div class="card"><button class="primary" data-act="goplan">この曲の進行表をひらく</button>' + (linked ? '' : '<p class="note">'+(song ? receiving ? '進行表の資料の受信を待っています。' : 'この曲に連携した進行表はありません。' : 'RECの曲を選択してください。')+'</p>') + '</div>';
 }
 function recordingGroupSelector() {
   const artists = [...new Set(S.rsongs.map(x => recordingClassification(x).artist))];
@@ -9893,15 +9895,38 @@ function recScheduleClock(at = Date.now()) {
   const p = Object.fromEntries(parts.map(x => [x.type,x.value]));
   return {day:p.year+"-"+p.month+"-"+p.day, year:Number(p.year), month:Number(p.month), date:Number(p.day), seconds:Number(p.hour)*3600+Number(p.minute)*60+Number(p.second)};
 }
-// A manual REC import and a private delivery can have different IDs. Only the
-// same immutable workbook and unchanged source lyrics can share an upcoming
-// schedule. Never borrow another session by title, artist or approximate date.
+// Manual and delivered REC material have separate IDs. Workbook identity or an
+// authenticated Word-import projection can identify a unique upcoming schedule.
+// Do not replace the manual song, its added cues, numbering or annotation IDs.
 function recordingPlanSourceId(id) {
   const slots = S.plan?.slots || [], song = S.rsongs.find(so => so.id === id);
-  if (!song || slots.some(slot => slot.songId === id) || song.recSession?.id || song.folder
-    || !/^sha256-[a-f0-9]{64}$/.test(song.xlsSourceId || "")) return id;
+  if (!song || slots.some(slot => slot.songId === id) || song.recSession?.id || song.folder) return id;
   const importedAt = Number(song.at);
   const importedDay = new Date((Number.isFinite(importedAt) && importedAt > 0 && importedAt < 8e15 ? importedAt : Date.now()) + 9*3600000).toISOString().slice(0,10);
+  if (!/^sha256-[a-f0-9]{64}$/.test(song.xlsSourceId || "")) {
+    const sourceLines = (song.lines || []).filter(l => !l.add && !l.gap && typeof l.t === 'string' && l.t.trim()).map(l => l.t);
+    const projection = JSON.stringify([song.cols,song.perLine,song.rowsPerCol,sourceLines]);
+    const deadline = new Date(Date.parse(importedDay+'T00:00:00Z')+31*86400000).toISOString().slice(0,10);
+    const matches = S.rsongs.filter(other => {
+      if (other.id === id || !other.recSession?.id || song.recArtist && other.recArtist && song.recArtist !== other.recArtist) return false;
+      const head = S.recordingUpdateHeads?.[other.recSession.id], receipt = head && S.privatePreparations?.[head.operationId];
+      const saved = Array.isArray(head?.snapshot?.songs) ? head.snapshot.songs.find(s => s?.id === other.id) : null;
+      const proof = saved?.recSession?.sourceImport;
+      if (!head || head.groupId !== other.groupId || !/^[a-f0-9]{64}$/.test(head.sha256 || '') || receipt?.type !== 'recording-update' || receipt.sha256 !== head.sha256
+        || !(S.groups || []).some(g => g.id === head.groupId && [true,1].includes(g.nopub))
+        || proof?.app !== 'utacheck-word-import' || proof.version !== 1 || proof.parser !== 'utacheck-word-v1'
+        || !/^[a-f0-9]{64}$/.test(proof.sha256 || '') || typeof proof.title !== 'string'
+        || !Array.isArray(proof.lines) || !proof.lines.length || proof.lines.length > 5000 || proof.lines.some(t => typeof t !== 'string' || !t.trim())
+        || ![proof.cols,proof.perLine,proof.rowsPerCol].every(n => Number.isSafeInteger(n) && n > 0)) return false;
+      if (song.recordingSource) {
+        if (song.recordingSource.parser !== proof.parser || song.recordingSource.sha256 !== proof.sha256) return false;
+      } else if (song.title !== proof.title || sourceLines.length < 16 || sourceLines.join('').length < 128) return false;
+      return projection === JSON.stringify([proof.cols,proof.perLine,proof.rowsPerCol,proof.lines])
+        && slots.some(slot => slot.songId === other.id && /^\d{4}-\d{2}-\d{2}$/.test(slot.date || '') && slot.date >= importedDay && slot.date <= deadline
+          && Number.isFinite(Date.parse(slot.date+'T00:00:00Z')) && new Date(slot.date+'T00:00:00Z').toISOString().slice(0,10) === slot.date);
+    });
+    return matches.length === 1 ? matches[0].id : id;
+  }
   const text = JSON.stringify((song.lines || []).map(line => [!!line.gap,line.t || ""]));
   const matches = S.rsongs.filter(other => other.id !== id && other.xlsSourceId === song.xlsSourceId
     && (!song.recArtist || !other.recArtist || song.recArtist === other.recArtist)
@@ -9909,6 +9934,19 @@ function recordingPlanSourceId(id) {
     && slots.some(slot => slot.songId === other.id && /^\d{4}-\d{2}-\d{2}$/.test(slot.date || "") && slot.date >= importedDay
       && Number.isFinite(Date.parse(slot.date + "T00:00:00Z")) && new Date(slot.date + "T00:00:00Z").toISOString().slice(0,10) === slot.date));
   return matches.length === 1 ? matches[0].id : id;
+}
+// Keep an untouched received Word companion in storage, without adding a second
+// normal settings row once the owner's manual document has been verified.
+function recordingScheduleBackingHidden(so) {
+  if (!so || so.id === S.rsongId || !so.recSession?.sourceImport || so.folder || so.cols || so.xlsSourceId) return false;
+  const head=S.recordingUpdateHeads?.[so.recSession.id], saved=Array.isArray(head?.snapshot?.songs)?head.snapshot.songs.find(s=>s.id===so.id):null;
+  if (!saved || ['title','credit','recArtist','recSession','lines','roster','blocks','intro','sections','order'].some(k=>JSON.stringify(so[k])!==JSON.stringify(saved[k]))) return false;
+  if ([...(S.notes||[]),...(S.pubNotes||[])].some(n=>n.songId===so.id)) return false;
+  if (Object.entries(S.recs||{}).some(([key,value])=>key.split('|').includes(so.id)||value?.songId===so.id)) return false;
+  for (const field of [S.draws,S.memos,S.staffMemos,S.subs,S.subsMan,S.gsubs,S.assignmentEdits]) {
+    if (Object.entries(field||{}).some(([key,value])=>key.split('|').includes(so.id)&&value&&(typeof value==='string'?value.length:Object.keys(value).length))) return false;
+  }
+  return S.rsongs.some(other=>other.id!==so.id&&recordingPlanSourceId(other.id)===so.id);
 }
 // A song's imported schedule is linked by its exact ID, independently of the
 // older session that may still be selected in the global progression table.
@@ -13915,6 +13953,7 @@ async function loadRecDocs(picked) {
       const so = parsed ? {id:uid(),title:parsed.title,credit:parsed.credit,intro:8,
         lines:recordingLinesFromParsed(parsed),cols:1,colBreaks:[],at:Date.now()}
         : await parseDocx(f);
+      if (!parsed && globalThis.crypto?.subtle) so.recordingSource = {parser:'utacheck-word-v1',sha256:await startupExcelDigest(new Uint8Array(result.buffer))};
       so.groupId = targetGroupId;
       if (U.recArtistFilter) so.recArtist = U.recArtistFilter;
       S.rsongs.push(so); S.rsongId = so.id; last = so; save(); succeeded.push(item.name);
@@ -15704,7 +15743,7 @@ function mergeRecordingAddition(current, packet, options = {}) {
   const ids = new Set(), titles = new Set();
   for (const so of p.songs) {
     if (!so.id || !so.title || !Array.isArray(so.lines) || so.groupId !== p.group.id) fail('曲資料が不正です。');
-    if (ids.has(so.id) || titles.has(so.title) || s.rsongs.some(x => x.id === so.id || x.title === so.title)) fail('同名曲または曲IDが既にあります。重複追加していません。');
+    if (ids.has(so.id) || titles.has(so.title) || s.rsongs.some(x => x.id === so.id || options.strictMemberIdentity !== true && x.title === so.title)) fail('同名曲または曲IDが既にあります。重複追加していません。');
     ids.add(so.id); titles.add(so.title); so.roster = remap(so.roster);
     for (const k of Object.keys(so.blocks || {})) so.blocks[k] = remap(so.blocks[k]);
     for (const l of so.lines) for (const k of ['parts','main','extra']) l[k] = remap(l[k]);

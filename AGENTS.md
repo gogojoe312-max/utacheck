@@ -443,3 +443,20 @@ REC added-cue bar-number acceptance:
   rejected/cancelled transaction must defer with no writes, then apply once
   when stable. Never downgrade a committed-but-unverified write or an actual
   storage failure; keep recovery guards and immutable backups intact.
+
+Legacy Word REC schedule-link acceptance:
+- Reproduce the actual selected manual Word copy: 66 non-gap rows, two columns,
+  unknown date, three add cues, custom bar/section/break/cut metadata and notes,
+  no legacy source hash. Retain the received same-title 81-row document including
+  its extra header text; never clean either source to make them equal.
+- Receive the confirmed private addition and authenticated Word-import proof via
+  the real owner path. Same-title manual copies must not block permanent-ID
+  reception or be overwritten. Manual imports retain duplicate protection.
+- Open the exact settings bottom progression control for the selected manual
+  song, not the delivered copy. Verify both days/times/member order, original
+  song selection and custom sections after member selection, original Word/audio
+  bytes, save and native reload. Preserve all source records and sharing settings.
+  Repeat a scoped private check with the actual original Word and full queue.
+  Reject different lyrics/layout/hash, missing receipts, explicit other sessions,
+  distant/past and ambiguous schedules. Keep old-code failures/screenshots and
+  local/public Chromium/WebKit gates. A phone screenshot is not its local DB.

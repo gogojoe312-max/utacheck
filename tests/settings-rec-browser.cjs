@@ -13,6 +13,7 @@ const {checkNewAbsenceSongs}=require('./absence-new-songs-browser-helper.cjs');
 const {checkFolderInteractions}=require('./folder-interactions-browser-helper.cjs');
 const {checkRecordingSegmentSections}=require('./recording-segment-section-browser-helper.cjs');
 const {checkRecordingAddedBars}=require('./recording-added-bars-browser-helper.cjs');
+const {checkRecordingWordPlan}=require('./recording-word-plan-browser-helper.cjs');
 const {checkLiveNoteInput}=require('./live-note-input-browser-helper.cjs');
 const {checkRecordingAutoStart}=require('./recording-auto-start-browser-helper.cjs');
 const {checkRecordingOKOriginal}=require('./recording-ok-original-browser-helper.cjs');
@@ -184,12 +185,18 @@ async function readableTitles(page,rec){
    contexts.add(dotContext);await dotContext.route('**/*',route=>{const request=route.request(),url=new URL(request.url());return url.origin===allowedOrigin&&request.method()==='GET'?route.continue():route.abort('blockedbyclient');});
    const dotPage=await dotContext.newPage();dotPage.on('pageerror',e=>errors.push(e.stack||e.message));dotPage.on('dialog',d=>d.dismiss());await dotPage.goto(origin);await dotPage.waitForFunction(()=>normalStartupInitialized);
    const dotRecResult=await checkRecordingPreparation(dotPage,width,{screenshot});await dotContext.close();contexts.delete(dotContext);
+   const wordContext=engine==='webkit'
+    ? await playwright.webkit.launchPersistentContext(fs.mkdtempSync(path.join(require('node:os').tmpdir(),'utacheck-word-webkit-')),{headless:true,viewport:{width,height:844},serviceWorkers:'block'})
+    : await browser.newContext({viewport:{width,height:844},serviceWorkers:'block'});
+   contexts.add(wordContext);await wordContext.route('**/*',route=>{const request=route.request(),url=new URL(request.url());return url.origin===allowedOrigin&&request.method()==='GET'?route.continue():route.abort('blockedbyclient');});
+   const wordPage=await wordContext.newPage();wordPage.on('pageerror',e=>errors.push(e.stack||e.message));await wordPage.goto(origin);await wordPage.waitForFunction(()=>normalStartupInitialized);
+   const wordPlanResult=await checkRecordingWordPlan(wordPage,width,{screenshot});await wordContext.close();contexts.delete(wordContext);
    const audioContext=engine==='webkit'
     ? await playwright.webkit.launchPersistentContext(fs.mkdtempSync(path.join(require('node:os').tmpdir(),'utacheck-audio-webkit-')),{headless:true,viewport:{width,height:844},serviceWorkers:'block'})
     : await browser.newContext({viewport:{width,height:844},serviceWorkers:'block'});
    contexts.add(audioContext);await audioContext.route('**/*',route=>{const request=route.request(),url=new URL(request.url());return url.origin===allowedOrigin&&request.method()==='GET'?route.continue():route.abort('blockedbyclient');});
    const passiveAudioResult=await checkPassiveAudio(audioContext,origin,width,{screenshot});await audioContext.close();contexts.delete(audioContext);
-   results.push({width,memberRoster,legacyMemberRoster,cleanMemberRoster,arrangementDevice,progressConnection,...folderResult,...recordingBrowseResult,...absenceResult,...newAbsenceResult,...absenceReplacementResult,...absenceNavigationResult,...absenceMemberReturnResult,...lyricBreakResult,...lyricSizeResult,...pdfClippingResult,...memberStartDayResult,...memberFeedbackStartResult,...noteNavigationDeliveryResult,...memberLinkSwitchResult,...recSegmentResult,...recAddedBarsResult,...liveNoteResult,...recAutoResult,...recHeadcountResult,...recScrollResult,...recOriginalOKResult,...passiveAudioResult,...dotRecResult,excelOriginal:excelCheck,settings:true,pdfLiveRecView:true,fullTitles:true,footer:true,draftPreserved:true,saveErrorVisible:true});
+   results.push({width,memberRoster,legacyMemberRoster,cleanMemberRoster,arrangementDevice,progressConnection,...folderResult,...recordingBrowseResult,...absenceResult,...newAbsenceResult,...absenceReplacementResult,...absenceNavigationResult,...absenceMemberReturnResult,...lyricBreakResult,...lyricSizeResult,...pdfClippingResult,...memberStartDayResult,...memberFeedbackStartResult,...noteNavigationDeliveryResult,...memberLinkSwitchResult,...recSegmentResult,...recAddedBarsResult,...liveNoteResult,...recAutoResult,...recHeadcountResult,...recScrollResult,...recOriginalOKResult,...passiveAudioResult,...dotRecResult,...wordPlanResult,excelOriginal:excelCheck,settings:true,pdfLiveRecView:true,fullTitles:true,footer:true,draftPreserved:true,saveErrorVisible:true});
   }
   assert.deepEqual(errors,[]);assert.equal(blocked.filter(x=>x.method!=='GET').length,0);
   const report={passed:true,engine,results,errors,blocked,externalRequestsAllowed:0,syntheticDataOnly:true};
