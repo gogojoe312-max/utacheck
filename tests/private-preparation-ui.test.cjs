@@ -42,6 +42,17 @@ function prepareOriginalFixture(f,options={}){
  };
  return {get calls(){return calls;}};
 }
+test('an interaction interrupting the precommit preservation hash defers safely and can later apply once',async()=>{
+ const f=await setup(),before=clone(f.run('S')),disk=f.idb.snapshot(),originalHash=f.c.backupDigest;
+ let interrupted=false;
+ f.c.backupDigest=async raw=>{const digest=await originalHash(raw);if(!interrupted){interrupted=true;f.run('U.menu={kind:"existing-user-operation"}');}return digest;};
+ const result=await f.c.PrivatePreparationUI.receive(true);
+ assert.equal(interrupted,true);assert.equal(result.status,'deferred',JSON.stringify(result));assert.equal(result.code,'DEFERRED');
+ assert.deepEqual(clone(f.run('S')),before);assert.deepEqual(f.idb.snapshot(),disk);assert.equal(f.run('app.inert'),false);
+ f.run('U.menu=null');f.c.backupDigest=originalHash;
+ assert.equal((await f.c.PrivatePreparationUI.receive(true)).status,'applied');
+ assert.equal(f.run('S.plan.slots[0].min'),75);assert.equal((await f.c.PrivatePreparationUI.receive(true)).status,'current');
+});
 test('original reception prepares files before the short writer transaction and reuses one confirmed source snapshot',async()=>{
  let commits=0;const f=await setup({store:{commit:options=>{commits++;return Store.commit(options);}}}),first=await originalOperation(),second=await originalOperation('other.xlsx','other synthetic bytes');f.manifest.operations=[first,second];
  f.run('S.plan.slots[0].a1=null');const before=clone(f.run('S')),prepared=prepareOriginalFixture(f);

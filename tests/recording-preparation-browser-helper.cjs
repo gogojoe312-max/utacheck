@@ -86,12 +86,25 @@ async function checkRecordingPreparation(page,width,{screenshot}){
  const yearPacket=clone(corrected.packet);delete yearPacket.supersedes;yearPacket.revision=3;yearPacket.previous={id:corrected.id,sha256:corrected.sha256};yearPacket.before=clone(corrected.packet.after);yearPacket.after=clone(corrected.packet.after);
  yearPacket.after.slots.forEach((slot,i)=>Object.assign(slot,i===0?{date:'2026-12-31',day:'12/31'}:{date:'2027-01-02',day:'1/2'}));
  const nextYear={id:'dot-update-next-year',type:'recording-update',packet:yearPacket,sha256:digest(yearPacket)};manifest.operations.push(nextYear);manifest.revision='qa-dot-next-year';sourceSha='e'.repeat(40);
+ // A queued UI update during preservation hashing must cancel before any
+ // transaction, then safely retry. Retain real store checks and prior history.
+ await page.evaluate(()=>{
+  const store=RecoveryDeliveryStore;window.__qaPrecommitInterrupted=false;window.__qaPrecommitResults=[];
+  window.RecoveryDeliveryStore={...store,commit:async options=>{
+   const result=await store.commit({...options,hash:async raw=>{const digest=await options.hash(raw);if(!window.__qaPrecommitInterrupted){window.__qaPrecommitInterrupted=true;U.planSec='queued-background-view';}return digest;}});
+   window.__qaPrecommitResults.push({status:result.status,committed:result.committed,reason:result.reason});return result;
+  }};
+  window.__qaPrecommitStore=store;
+ });
  await page.evaluate(()=>{recordingInboxProfileRequired=true;recordingInboxOwner={canWrite:true};recordingInboxIntegration=setupRecordingInboxIntegration();});const yearResult=await receive();assert(['applied','current'].includes(yearResult.status),JSON.stringify(yearResult));
+ assert.deepEqual(await page.evaluate(()=>__qaPrecommitResults[0]),{status:'rejected',committed:false,reason:'cancelled'});
+ assert.equal(await page.evaluate(()=>__qaPrecommitResults.filter(r=>r.committed).length),1);
+ await page.evaluate(()=>{window.RecoveryDeliveryStore=__qaPrecommitStore;});
  await page.evaluate(()=>{S.recMode=true;S.rsongId='dot-song';Object.assign(U,{view:'live',menu:null,sheet:null,secView:'',overview:false});renderPointers.clear();scrollingUntil=0;render(true);});await page.locator('[data-act="goplan"]').first().click();await page.waitForSelector('.plan-row');
  await page.locator('[data-act="planday"][data-id=""]').click();assert.deepEqual(await page.locator('.plan-day').allTextContents(),['12/31 · 合成会場','1/2 · 合成会場']);await page.locator('[data-act="planday"][data-id="12/31"]').click();assert.equal(await page.locator('.plan-row').count(),1);await page.locator('[data-act="planday"][data-id="1/2"]').click();assert.equal(await page.locator('.plan-row').count(),2);await screenshot(page,width,'dot-rec-moved-dates-across-year');
  await page.reload();await page.waitForFunction(()=>normalStartupInitialized);assert.equal(await page.evaluate(()=>S.recordingUpdateHeads['dot-session'].revision),3);assert.equal(await page.evaluate(()=>S.plan.slots.find(s=>s.id==='slot-1').recActualSchedule.date),'2026-10-27');
  const isolation=await checkRecLiveIsolation(page,width,{screenshot,receive,anchor:f.anchor,append:op=>{manifest.operations.push(op);manifest.revision='qa-dot-rec-only';sourceSha='f'.repeat(40);}});
  if(dedicated)assert.equal(calls.filter(c=>c.method==='PUT').length,0,'The read-only credential only proves ownership to the server');
- return {...isolation,dotRecResultCredentialMode:dedicated?'read-only-source-owner-relay':'saved-progress-private-writer',dotRecVersionedScheduleAndLyrics:true,dotRecDateOrderTimesBreaksExactScreen:true,dotRecPreservedManualNotesMediaAndPublicSharing:true,dotRecRealReceiveSaveReload:true,dotRecPrivateResultSaveAndReread:true,dotRecConflictsHeldAndReported:true,dotRecDuplicateNoExtraWrites:true,dotRecHeldCorrectionAppliedAndReloaded:true,dotRecCrossYearDateControlsAndHistory:true};
+ return {...isolation,dotRecResultCredentialMode:dedicated?'read-only-source-owner-relay':'saved-progress-private-writer',dotRecVersionedScheduleAndLyrics:true,dotRecDateOrderTimesBreaksExactScreen:true,dotRecPreservedManualNotesMediaAndPublicSharing:true,dotRecRealReceiveSaveReload:true,dotRecPrivateResultSaveAndReread:true,dotRecConflictsHeldAndReported:true,dotRecDuplicateNoExtraWrites:true,dotRecHeldCorrectionAppliedAndReloaded:true,dotRecPrecommitInterruptionRetriesSafely:true,dotRecCrossYearDateControlsAndHistory:true};
 }
 module.exports={checkRecordingPreparation};

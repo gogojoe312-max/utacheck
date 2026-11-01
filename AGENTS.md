@@ -439,3 +439,7 @@ REC added-cue bar-number acceptance:
   earlier operations, local added sections/rows, notes and media; open that
   song's 進行表, inspect each requested day's exact times/order, save and reload.
   Distinguish server delivery from the actual target phone's result receipt.
+- Interrupt real precommit preservation hashing with a queued UI change. A
+  rejected/cancelled transaction must defer with no writes, then apply once
+  when stable. Never downgrade a committed-but-unverified write or an actual
+  storage failure; keep recovery guards and immutable backups intact.

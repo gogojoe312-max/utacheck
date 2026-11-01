@@ -335,7 +335,7 @@
    const stored=await RecoveryDeliveryStore.commit({database:()=>DB,hash:backupDigest,isActive:active,readLegacy:()=>localStorage.getItem(KEY),expectedLegacyRaw:legacy,
     expectedSlotsRaw:JSON.stringify(slots),expectedHoldRaw:JSON.stringify(hold),allowMissingHold:true,originalStateRaw:original,nextStateRaw:nextRaw,remoteCopies:[]});
    committed=stored.committed===true;
-   if(stored.status!=='committed'||!active())throw failure(committed?'SAVE_UNVERIFIED':'LOCAL_SAVE_UNCONFIRMED');
+   if(stored.status!=='committed'||!active())throw failure(committed?'SAVE_UNVERIFIED':stored.reason==='cancelled'&&stateRevision===revision&&JSON.stringify(S)===original?'DEFERRED':'LOCAL_SAVE_UNCONFIRMED');
    S=next;saveSeq=stored.seq;stateRevision++;saveDirty=false;savePend=null;
    if(selectedSongId&&typeof SONGS==='function'){const selectedIndex=SONGS().findIndex(x=>x.id===selectedSongId);if(selectedIndex>=0)U.songIdx=selectedIndex;}
    U.recScheduleInputUntil=Date.now()+2000;render();return operations.length;
@@ -388,7 +388,7 @@
    const stored=await RecoveryDeliveryStore.commit({database:()=>DB,hash:backupDigest,isActive:active,readLegacy:()=>localStorage.getItem(KEY),expectedLegacyRaw:legacy,
     expectedSlotsRaw:JSON.stringify(slots),expectedHoldRaw:JSON.stringify(hold),allowMissingHold:true,originalStateRaw:original,nextStateRaw:nextRaw,remoteCopies:[]});
    committed=stored.committed===true;
-   if(stored.status!=='committed'||!active())throw failure(committed?'SAVE_UNVERIFIED':'LOCAL_SAVE_UNCONFIRMED');
+   if(stored.status!=='committed'||!active())throw failure(committed?'SAVE_UNVERIFIED':stored.reason==='cancelled'&&stateRevision===revision&&JSON.stringify(S)===original?'DEFERRED':'LOCAL_SAVE_UNCONFIRMED');
    S=next;saveSeq=stored.seq;stateRevision++;saveDirty=false;savePend=null;
    if(selectedSongId && typeof SONGS==='function'){const selectedIndex=SONGS().findIndex(x=>x.id===selectedSongId);if(selectedIndex>=0)U.songIdx=selectedIndex;}
    U.recScheduleInputUntil=Date.now()+2000;render();return true;
