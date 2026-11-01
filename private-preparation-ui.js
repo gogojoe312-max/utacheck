@@ -280,7 +280,12 @@
   if(batch?.confirmed?.get(operation.id)!==JSON.stringify(operation)){
    const fresh=await readSource({...config,token,isActive});
    if(!isActive())throw failure('DEFERRED');
-   if(fresh.status!=='ready'||fresh.sourceSha!==sourceSha)throw failure('PREPARATION_SOURCE_CHANGED');
+   if(fresh.status!=='ready'){
+     const code=fresh.code||'FETCH_FAILED';
+     if(code==='INACTIVE'||code==='ABORTED')throw failure('DEFERRED');
+     const error=failure('PREPARATION_SOURCE_RECHECK_FAILED');error.sourceCode=code;error.sourceStage=fresh.stage;throw error;
+    }
+    if(fresh.sourceSha!==sourceSha)throw failure('PREPARATION_SOURCE_CHANGED');
    const checked=await PrivatePreparation.validate(fresh.manifest,config.owner);
    const confirmed=new Map(checked.operations.filter(op=>op.type==='original-excel').map(op=>[op.id,JSON.stringify(op)]));
    if(confirmed.get(operation.id)!==JSON.stringify(operation))throw failure('PREPARATION_SOURCE_CHANGED');
@@ -370,7 +375,12 @@
     if(!active())throw failure('DEFERRED');
    }else if(root.ProgressPreparationSource||['material-update','recording-song','recording-update'].includes(operation.type)){
     const fresh=await readSource({...config,token,isActive:active});
-    if(fresh.status!=='ready'||fresh.sourceSha!==sourceSha)throw failure('PREPARATION_SOURCE_CHANGED');
+    if(fresh.status!=='ready'){
+     const code=fresh.code||'FETCH_FAILED';
+     if(code==='INACTIVE'||code==='ABORTED')throw failure('DEFERRED');
+     const error=failure('PREPARATION_SOURCE_RECHECK_FAILED');error.sourceCode=code;error.sourceStage=fresh.stage;throw error;
+    }
+    if(fresh.sourceSha!==sourceSha)throw failure('PREPARATION_SOURCE_CHANGED');
     await PrivatePreparation.validate(fresh.manifest,config.owner);
     if(!active())throw failure('DEFERRED');
    }
@@ -476,7 +486,7 @@
    const originals=originalSummary(manifest);setStatus({kind:count?'applied':conflicts?'conflict':'current',count,conflicts,...(count?{}:firstConflict||{}),sourceSha:source.sourceSha,originals});await reportResults(manifest,source.sourceSha,outcomes);return {status:status.kind,count,conflicts,originals};
   }catch(error){const code=error.preparationCode||error.code||'PREPARATION_CONFLICT';
    const reason=code==='DEFERRED'?waitingReason():undefined;
-   setStatus({kind:code==='CREDENTIAL_UNREADABLE'?'connection-error':code==='DEFERRED'?'deferred':code==='MULTIPLE_WINDOWS'?'multiple-windows':code==='OWNER_REQUIRED'?'owner-required':code==='UNSUPPORTED'?'unsupported':code==='SAVE_UNVERIFIED'?'unverified':'conflict',code,reason,operationTitle:currentOperation?.packet?.songs?.[0]?.title||currentOperation?.packet?.song?.title||currentOperation?.id});
+   setStatus({kind:code==='PREPARATION_SOURCE_RECHECK_FAILED'?'offline':code==='CREDENTIAL_UNREADABLE'?'connection-error':code==='DEFERRED'?'deferred':code==='MULTIPLE_WINDOWS'?'multiple-windows':code==='OWNER_REQUIRED'?'owner-required':code==='UNSUPPORTED'?'unsupported':code==='SAVE_UNVERIFIED'?'unverified':'conflict',code:error.sourceCode||code,stage:error.sourceStage,reason,operationTitle:currentOperation?.packet?.songs?.[0]?.title||currentOperation?.packet?.song?.title||currentOperation?.id});
    if(code==='DEFERRED')queueResume(reason);
    return {status:status.kind,code};
   }finally{running=false;}
