@@ -23,7 +23,7 @@ async function checkAbsenceNavigation(page,width,{screenshot}){
    const row=page.locator('[data-lyric-line="7"]');await row.waitFor({state:'visible'});assert(await row.evaluate(el=>el.classList.contains('absence-lyric-target')));
    const rect=await row.boundingBox();assert(rect.y>=0&&rect.y+rect.height<=844,'The exact second duplicate phrase is scrolled into view');
    await screenshot(page,width,'absence-exact-main-lyric-'+suffix);
-   await page.locator('[data-act="overview"]').click();await page.waitForFunction(()=>U.overview&&!!document.querySelector('.absence-back'));assert.equal(await page.locator('[data-act="absence-return"]').count(),1);await page.locator('[data-act="absence-return"]').click();
+   await page.locator('[data-act="overview"]').click();await page.locator('[data-act="ovsize"]').waitFor({state:'visible'});await screenshot(page,width,'absence-overview-with-return-'+suffix);assert.equal(await page.locator('[data-act="absence-return"]').count(),1);await page.locator('[data-act="absence-return"]').click();
    await page.locator('.owner-absence-row').first().waitFor({state:'visible'});assert.equal(await page.evaluate(()=>U.view),'absent');assert(Math.abs(await page.locator('#app > .scroll').evaluate(el=>el.scrollTop)-scroll)<=2,'Back restores the original scroll position');
    assert.equal(await page.locator('.mask').count(),0);await screenshot(page,width,'absence-return-same-position-'+suffix);
   };
