@@ -7,7 +7,7 @@ function setup(){
   folderOf:x=>x?.folder||'',h:x=>String(x).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;')});
  c.VIEW=()=>c.viewer;c.recordingInboxCanWrite=()=>c.canWrite;c.save=()=>c.saves++;c.render=()=>c.renders++;c.alert=x=>c.alerts.push(x);c.confirm=x=>(c.confirmations.push(x),c.confirmResult);
  c.automaticBackupBeforeEdit=async reason=>{c.backups.push(reason);if(c.duringBackup)c.duringBackup();return c.backupResult;};
- for(const n of ['groupDisplayName','privateDeliveryGroup','performanceDateOrder','performanceSelectionOrder','performanceFolderGroups','groupedPerformanceHTML','autoShowGroupId','recoveryMaterialShow','showDeliveryGroupId','songDeliveryGroupId','showGroupIds','performanceFolderContext','updatePerformanceFolderReference','changePerformanceFolderOrder','performanceFolderChangeKeepsDelivery','removePerformanceFolder','pushUndo','organizeSheetHTML','folderNames'])vm.runInContext(fn(n),c);
+ for(const n of ['groupDisplayName','privateDeliveryGroup','performanceDateOrder','performanceSelectionOrder','performanceEmptyFolderNames','rememberPerformanceEmptyFolder','performanceFolderStillUsed','performanceFolderGroups','groupedPerformanceHTML','autoShowGroupId','recoveryMaterialShow','showDeliveryGroupId','songDeliveryGroupId','showGroupIds','performanceFolderContext','updatePerformanceFolderReference','changePerformanceFolderOrder','performanceFolderChangeKeepsDelivery','removePerformanceFolder','pushUndo','organizeSheetHTML','folderNames'])vm.runInContext(fn(n),c);
  c.showsFor=()=>c.S.shows.filter(sw=>!sw.hidden&&!c.recoveryMaterialShow(sw)&&(!c.U.showFilter||c.showGroupIds(sw).includes(c.U.showFilter)));
  c.open=name=>(c.U.menu=c.performanceFolderContext(name));return c;
 }

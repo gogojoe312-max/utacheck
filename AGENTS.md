@@ -460,3 +460,21 @@ Legacy Word REC schedule-link acceptance:
   Reject different lyrics/layout/hash, missing receipts, explicit other sessions,
   distant/past and ambiguous schedules. Keep old-code failures/screenshots and
   local/public Chromium/WebKit gates. A phone screenshot is not its local DB.
+
+Cross-group folder-name acceptance:
+- LIVE duplicate-folder checks belong to the captured group, not the whole
+  library. Keep another group's same-name nonempty folder, legacy global folder
+  registry entries, both groups' songs/notes, private REC material and media in
+  the fixture. Use the actual folder creation and rename forms; same-group
+  duplicates still show an error. Preserve captured rename IDs when filters move.
+- Newly created empty folders belong to the selected group, including when both
+  groups create the same name. Retain legacy unowned empty folders as shared;
+  do not infer/migrate their ownership. Scoped empty-folder ownership is stored
+  in performanceFolderOrders[JSON.stringify([groupId])].folders and must survive
+  manual/date ordering, undo, backup and native reload. Rename/delete one group
+  without changing another group's same-name records or empty-folder ownership.
+- Keep old-code failures and screenshots. Exercise real group selectors,
+  creation/rename/delete, durable save/native reload, publication payloads and
+  member receive/render/reload in Chromium/WebKit at 320/390 and on the published
+  revision. Current REC browsing has no folder controls; retain its source data.
+  Browser checks do not establish receipt on the user's actual phone.

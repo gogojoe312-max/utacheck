@@ -118,7 +118,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.81";
+const APP_VER = "16.41.58.82";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1559,10 +1559,8 @@ function performanceFolderGroups(list, includeEmpty = false, scope = null) {
     groups.get(name).push(show);
   });
   if (includeEmpty) {
-    // Empty folders have no group ownership. Keep them usable without showing
-    // another group's nonempty folders in a filtered list.
-    (S.folderOrder || []).forEach(name => {
-      if (name && !(S.shows || []).some(show => (show.folder || "") === name)) groups.set(name, []);
+    performanceEmptyFolderNames(scope || "").forEach(name => {
+      if (!groups.has(name)) groups.set(name, []);
     });
   }
   // First appearance after the one date sort is the folder's newest performance.
@@ -7088,6 +7086,24 @@ function viewOverview(s) {
 }
 
 /* ---- sheet ---- */
+// Old unowned empty folders remain shared. New empty folders remember the
+// selected group so a name used elsewhere never becomes a global reservation.
+function performanceEmptyFolderNames(scope) {
+  const owned = Object.entries(S.performanceFolderOrders || {}).filter(([,v]) => Array.isArray(v?.folders));
+  const declared = new Set(owned.flatMap(([,v]) => v.folders));
+  const names = (S.folderOrder || []).filter(name => name && !declared.has(name) && !(S.shows || []).some(sw => folderOf(sw) === name));
+  for (const [key,value] of owned) if (!scope || key === JSON.stringify([scope])) names.push(...value.folders.filter(name => typeof name === "string" && name));
+  return [...new Set(names)];
+}
+function rememberPerformanceEmptyFolder(name, scope) {
+  if (!scope) return;
+  S.performanceFolderOrders ||= {};
+  const key = JSON.stringify([scope]), saved = S.performanceFolderOrders[key] || {};
+  S.performanceFolderOrders[key] = {...saved, folders:[...new Set([...(Array.isArray(saved.folders) ? saved.folders : []),name])]};
+}
+function performanceFolderStillUsed(name) {
+  return S.shows.some(sw => folderOf(sw) === name) || Object.values(S.performanceFolderOrders || {}).some(value => Array.isArray(value?.folders) && value.folders.includes(name));
+}
 function folderNames(rec = false) {
   const list = rec ? S.rsongs : S.shows, order = rec ? S.rfolderOrder : S.folderOrder;
   return [...new Set([...(order || []), ...list.map(folderOf)].filter(Boolean))];
@@ -7103,15 +7119,18 @@ function performanceFolderContext(name) {
   if (!name || scope === "__archive__") return null;
   const showIds = showsFor().filter(sw => !sw.hidden && !recoveryMaterialShow(sw) && folderOf(sw) === name).map(sw => sw.id);
   if (showIds.some(id => !id || S.shows.filter(sw => sw.id === id).length !== 1)) return null;
-  const exists = showIds.length || (S.folderOrder || []).includes(name) && !S.shows.some(sw => folderOf(sw) === name);
+  const exists = showIds.length || performanceEmptyFolderNames(scope).includes(name);
   return exists ? {kind:"organize",mode:"folder-actions",id:name,scope,showIds} : null;
 }
 function updatePerformanceFolderReference(oldName, newName, scope, allScopes = false) {
   const orders = S.performanceFolderOrders;
   if (!orders || typeof orders !== "object") return;
   for (const [key, value] of Object.entries(orders)) {
-    if ((!allScopes && key !== JSON.stringify([scope || ""])) || !Array.isArray(value?.names)) continue;
-    value.names = [...new Set(value.names.flatMap(name => name === oldName ? (newName ? [newName] : []) : [name]))];
+    if (!allScopes && key !== JSON.stringify([scope || ""])) continue;
+    for (const field of ["names", "folders"]) if (Array.isArray(value?.[field]))
+      value[field] = [...new Set(value[field].flatMap(name => name === oldName ? (newName ? [newName] : []) : [name]))];
+    if (Array.isArray(value?.folders) && !value.folders.length) delete value.folders;
+    if (!Object.keys(value || {}).length) delete orders[key];
   }
 }
 async function changePerformanceFolderOrder(action, name, targetName) {
@@ -7130,7 +7149,7 @@ async function changePerformanceFolderOrder(action, name, targetName) {
   }
   pushUndo();
   S.performanceFolderOrders ||= {};
-  S.performanceFolderOrders[key] = {mode:action === "date" ? "date" : "manual", names};
+  S.performanceFolderOrders[key] = {...S.performanceFolderOrders[key],mode:action === "date" ? "date" : "manual", names};
   U.menu = null; save(); render(); return true;
 }
 function performanceFolderChangeKeepsDelivery(showIds, folder = "") {
@@ -7160,7 +7179,7 @@ async function removePerformanceFolder(menu) {
   const elsewhere = S.shows.some(sw => folderOf(sw) === menu.id && !menu.showIds.includes(sw.id));
   const message = menu.showIds.length
     ? `「${menu.id}」を${scopeName}から外しますか？\n対象の${menu.showIds.length}公演を「フォルダなし」へ移します。曲・記録・録音は残ります。${shared ? "\n他グループにも表示される共有公演は、そちらでもフォルダなしになります。" : ""}${elsewhere ? "\n対象外の公演と、そのフォルダは残します。" : ""}`
-    : `空のフォルダ「${menu.id}」を削除しますか？\n空のフォルダは全グループ共通です。公演・曲・記録・録音は変更しません。`;
+    : `空のフォルダ「${menu.id}」を削除しますか？\n${S.performanceFolderOrders?.[JSON.stringify([menu.scope])]?.folders?.includes(menu.id) ? "表示中のグループが対象です。" : "空のフォルダは全グループ共通です。"}公演・曲・記録・録音は変更しません。`;
   if (!confirm(message)) return false;
   const before = JSON.stringify(S);
   if (!await automaticBackupBeforeEdit("folder-delete")) return false;
@@ -7169,9 +7188,9 @@ async function removePerformanceFolder(menu) {
   }
   pushUndo();
   S.shows.filter(sw => menu.showIds.includes(sw.id)).forEach(sw => { sw.folder = ""; });
-  const remains = S.shows.some(sw => folderOf(sw) === menu.id);
-  if (!remains) { S.folderOrder = (S.folderOrder || []).filter(name => name !== menu.id); delete S.folders[menu.id]; }
-  updatePerformanceFolderReference(menu.id, "", menu.scope, !remains);
+  updatePerformanceFolderReference(menu.id, "", menu.scope, !menu.scope);
+  const remains = performanceFolderStillUsed(menu.id);
+  if (!remains) { S.folderOrder = (S.folderOrder || []).filter(name => name !== menu.id); delete S.folders[menu.id]; updatePerformanceFolderReference(menu.id, "", menu.scope, true); }
   U.menu = null; save(); render(); return true;
 }
 function organizeSheetHTML(m) {
@@ -7215,13 +7234,16 @@ function saveOrganization(m, values) {
   const folder = (values.folder || "").trim().normalize("NFC");
   if (m.mode !== "move" && !name) return "名前を入力してください。";
   if (m.mode === "folder") {
-    if (name !== m.id && folderNames(rec).includes(name)) return "同じ名前のフォルダがあります。";
+    const scope = m.scope ?? U.showFilter ?? "";
+    if (!rec && !m.id && scope !== (U.showFilter || "")) return "表示中のグループが変わりました。一覧から操作し直してください。";
+    const names = rec ? folderNames(true) : !scope ? folderNames(false) : [...S.shows.filter(sw => !sw.hidden && !recoveryMaterialShow(sw) && showGroupIds(sw).includes(scope)).map(folderOf), ...performanceEmptyFolderNames(scope)];
+    if (name !== m.id && names.some(folder => typeof folder === "string" && folder.normalize("NFC") === name)) return "同じ名前のフォルダがあります。";
     // Capture the visible shows when the rename dialog opens. A later filter
     // change must not turn a group-scoped rename into an all-group edit.
     const showIds = !rec && Array.isArray(m.showIds) ? new Set(m.showIds) : null;
     if (m.id && !rec && m.showIds === undefined && U.showFilter)
       return "フォルダ一覧から名前の変更を開き直してください。";
-    if (m.id && showIds && (showIds.size ? !list.some(x => showIds.has(x.id) && folderOf(x) === m.id) : list.some(x => folderOf(x) === m.id)))
+    if (m.id && showIds && (showIds.size ? !list.some(x => showIds.has(x.id) && folderOf(x) === m.id) : !performanceEmptyFolderNames(scope).includes(m.id)))
       return "変更する公演が見つかりません。フォルダ一覧を開き直してください。";
     if (m.id && !rec && !performanceFolderChangeKeepsDelivery(list.filter(x => folderOf(x) === m.id && (!showIds || showIds.has(x.id))).map(x => x.id), name))
       return "改名すると配信先が変わる公演があります。先に各公演のグループを保存してください。";
@@ -7229,11 +7251,12 @@ function saveOrganization(m, values) {
     if (m.id) {
       list.forEach(x => { if (folderOf(x) === m.id && (!showIds || showIds.has(x.id))) x.folder = name; });
       const key = rec ? "rfolderOrder" : "folderOrder", state = rec ? "rfolders" : "folders";
-      if (!list.some(x => folderOf(x) === m.id)) {
-        S[key] = S[key].map(n => n === m.id ? name : n); delete S[state][m.id];
+      if (!rec) updatePerformanceFolderReference(m.id, name, scope, !scope);
+      if (rec ? !list.some(x => folderOf(x) === m.id) : !performanceFolderStillUsed(m.id)) {
+        S[key] = S[key].map(n => n === m.id ? name : n).filter((n,i,names) => names.indexOf(n) === i); delete S[state][m.id];
+        if (!rec) updatePerformanceFolderReference(m.id, name, scope, true);
       }
-      if (!rec) updatePerformanceFolderReference(m.id, name, m.scope ?? U.showFilter, !list.some(x => folderOf(x) === m.id));
-    }
+    } else if (!rec) rememberPerformanceEmptyFolder(name, scope);
     rememberFolder(name, rec);
   } else if (m.mode === "move") {
     if (!item) return "移動する項目が見つかりません。";
@@ -12720,7 +12743,7 @@ document.addEventListener("click", async (e) => {
     }
     case "newfolder":
       if (!VIEW() && !preview && recordingInboxCanWrite()) {
-        U.menu = S.recMode ? {kind:"rec-folder-create",artistFilter:U.recArtistFilter || ""} : {kind:"organize",mode:"folder"}; renderSheet();
+        U.menu = S.recMode ? {kind:"rec-folder-create",artistFilter:U.recArtistFilter || ""} : {kind:"organize",mode:"folder",scope:U.showFilter || ""}; renderSheet();
       }
       break;
     case "show-actions": U.menu = {kind:"organize",mode:"actions",id}; renderSheet(); break;
