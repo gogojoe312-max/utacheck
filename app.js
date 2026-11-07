@@ -118,7 +118,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.83";
+const APP_VER = "16.41.58.84";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1948,9 +1948,9 @@ function splitAssign(so, i) {
 }
 
 // その曲の指摘の中身をひとまとめにした印。変わったかどうかの判定に使う。
-function noteSig(so) {
+function noteSig(so, projectedNotes) {
   if (!so) return 0;
-  const ns = NOTES().filter((n) => n.songId === so.id)
+  const ns = (Array.isArray(projectedNotes) ? projectedNotes : NOTES()).filter((n) => n.songId === so.id)
     .map((n) => [n.lineIdx, n.lineEnd, n.from, n.to, (n.tags || []).join(","), n.memo, n.pitch,
       (n.memberIds || []).map((m) => (member(m) || {}).name).sort().join("・")].join(":") + (n.hand ? ":" + JSON.stringify(n.hand) : ""))
     .sort().join("|");
@@ -1959,8 +1959,12 @@ function noteSig(so) {
   return hash32(ns + "//" + ((S.memos || {})[mk] || ""));
 }
 const seenKey = (so) => so ? (so.showId + "|" + so.title + "|" + (so.take || 1)) : "";
-const isUnread = (so) => VIEW() && so && noteSig(so) !== (S.seen || {})[seenKey(so)];
-const unreadSongs = () => (VIEW() ? SONGS().filter(isUnread) : []);
+const isUnread = (so, projectedNotes) => VIEW() && so && noteSig(so,projectedNotes) !== (S.seen || {})[seenKey(so)];
+const unreadSongs = (projectedNotes) => {
+  if (!VIEW()) return [];
+  const notes=Array.isArray(projectedNotes)?projectedNotes:NOTES();
+  return SONGS().filter(so=>isUnread(so,notes));
+};
 function markRead(so) {
   if (!VIEW() || !so) return;
   const k = seenKey(so), sig = noteSig(so);
@@ -7761,6 +7765,7 @@ function renderSheet() {
   }
 
   if (U.picker) {
+    const pickerNotes=NOTES(),pickerUnread=new Set(unreadSongs(pickerNotes).map(so=>so.id));
     const gfil = liveGroups().length > 1 || !!U.showFilter || (!VIEW() && liveGroups().some(privateDeliveryGroup)) ? `<div class="chips" style="margin-bottom:8px">
         <button class="chip sm" data-act="showfilter" data-id="" style="${!U.showFilter ? "background:var(--accent);color:#0A0A0A" : ""}">全公演を表示</button>
         ${liveGroups().map((g) => `<button class="chip sm" data-act="showfilter" data-id="${g.id}"
@@ -7770,10 +7775,10 @@ function renderSheet() {
         style="${sw.id === S.showId ? "background:var(--accent);color:#0A0A0A" : ""}">${h(sw.name)}</button>`);
     const list = SONGS().map((x, i) => {
       const gn = (S.groups.find((g) => g.id === x.groupId) || {}).name || "";
-      const cnt = NOTES().filter((n) => n.songId === x.id && n.showId === S.showId).length;
+      const cnt = pickerNotes.filter((n) => n.songId === x.id && n.showId === S.showId).length;
       return `<button class="ghost" data-act="jump" data-i="${i}"
         style="text-align:left;margin-bottom:6px;${i === U.songIdx ? "background:var(--accent);color:#0A0A0A" : ""}">
-        <span style="opacity:.6">${i + 1}.</span> ${isUnread(x) ? `<b class="newmk">新</b>` : ""}${h(songName(x))}
+        <span style="opacity:.6">${i + 1}.</span> ${pickerUnread.has(x.id) ? `<b class="newmk">新</b>` : ""}${h(songName(x))}
         <span style="font-size:11px;opacity:.7">　${h(gn)}${cnt ? " ・ " + cnt + "件" : ""}</span></button>`;
     }).join("") || `<p class="note">曲がありません</p>`;
     overlay = document.createElement("div");
@@ -7795,8 +7800,8 @@ ${shows}</div>
           テイク${nextTake(song())} を作る</button>
   ` : ""}
       </div>
-      ${VIEW() && unreadSongs().length ? `<div class="sec">
-        <button class="ghost" data-act="readall" style="text-align:left;color:var(--accent)">未読 ${unreadSongs().length}曲 をすべて既読にする</button>
+      ${VIEW() && pickerUnread.size ? `<div class="sec">
+        <button class="ghost" data-act="readall" style="text-align:left;color:var(--accent)">未読 ${pickerUnread.size}曲 をすべて既読にする</button>
       </div>` : ""}
       ${S.members.length && !S.recMode ? `<div class="sec"><h4>注目するメンバー</h4><div class="chips">
         <button class="chip sm" data-act="focus" data-id="" style="${!U.focus ? "background:var(--accent);color:#0A0A0A" : ""}">なし</button>
@@ -8959,7 +8964,10 @@ function memberAbsenceNames(id = S.showId) {
   }))];
 }
 function memberCanReviewAssignments(id = S.showId) {
-  return memberAbsenceNames(id).length > 0 || memberPerformanceIsToday(id);
+  // Eligibility is a boolean check, not a display-name/whole-roster projection.
+  // This runs for every lyric row and must never build all songs' member lists.
+  const absent=S.shows.find(sw=>sw.id===id)?.absent || [];
+  return Array.isArray(absent) && absent.some(mid=>!!member(mid)?.name) || memberPerformanceIsToday(id);
 }
 function memberReviewNav() {
   if (!VIEW() || U.allShows) return "";

@@ -12,7 +12,7 @@ const {checkAbsence}=require('./absence-view-browser-helper.cjs');
 const {checkNewAbsenceSongs}=require('./absence-new-songs-browser-helper.cjs');
 const {checkFolderInteractions}=require('./folder-interactions-browser-helper.cjs');
 const {checkScopedFolders}=require('./scoped-folders-browser-helper.cjs');
-const {checkAbsenceAllHeadings}=require('./absence-all-headings-browser-helper.cjs');
+const {checkAbsenceAllHeadings,checkMemberLargePicker}=require('./absence-all-headings-browser-helper.cjs');
 const {checkRecordingSegmentSections}=require('./recording-segment-section-browser-helper.cjs');
 const {checkRecordingAddedBars}=require('./recording-added-bars-browser-helper.cjs');
 const {checkRecordingWordPlan}=require('./recording-word-plan-browser-helper.cjs');
@@ -204,13 +204,13 @@ async function readableTitles(page,rec){
     : await browser.newContext({viewport:{width,height:844},serviceWorkers:'block'});
    contexts.add(allHeadingContext);await allHeadingContext.route('**/*',route=>{const request=route.request(),url=new URL(request.url());return url.origin===allowedOrigin&&request.method()==='GET'?route.continue():route.abort('blockedbyclient');});
    const allHeadingPage=await allHeadingContext.newPage();allHeadingPage.on('pageerror',e=>errors.push(e.stack||e.message));await allHeadingPage.goto(origin);await allHeadingPage.waitForFunction(()=>normalStartupInitialized);
-   const allHeadingResult=await checkAbsenceAllHeadings(allHeadingPage,width,{screenshot});await allHeadingContext.close();contexts.delete(allHeadingContext);
+   const allHeadingResult=await checkAbsenceAllHeadings(allHeadingPage,width,{screenshot});const largePickerResult=await checkMemberLargePicker(allHeadingPage,width,{screenshot});await allHeadingContext.close();contexts.delete(allHeadingContext);
    const audioContext=engine==='webkit'
     ? await playwright.webkit.launchPersistentContext(fs.mkdtempSync(path.join(require('node:os').tmpdir(),'utacheck-audio-webkit-')),{headless:true,viewport:{width,height:844},serviceWorkers:'block'})
     : await browser.newContext({viewport:{width,height:844},serviceWorkers:'block'});
    contexts.add(audioContext);await audioContext.route('**/*',route=>{const request=route.request(),url=new URL(request.url());return url.origin===allowedOrigin&&request.method()==='GET'?route.continue():route.abort('blockedbyclient');});
    const passiveAudioResult=await checkPassiveAudio(audioContext,origin,width,{screenshot});await audioContext.close();contexts.delete(audioContext);
-   results.push({width,memberRoster,legacyMemberRoster,cleanMemberRoster,arrangementDevice,progressConnection,...folderResult,...recordingBrowseResult,...absenceResult,...newAbsenceResult,...absenceReplacementResult,...absenceNavigationResult,...absenceMemberReturnResult,...lyricBreakResult,...lyricSizeResult,...pdfClippingResult,...memberStartDayResult,...memberFeedbackStartResult,...noteNavigationDeliveryResult,...memberLinkSwitchResult,...recSegmentResult,...recAddedBarsResult,...liveNoteResult,...recAutoResult,...recHeadcountResult,...recScrollResult,...recOriginalOKResult,...passiveAudioResult,...dotRecResult,...wordPlanResult,...scopedFolderResult,...allHeadingResult,excelOriginal:excelCheck,settings:true,pdfLiveRecView:true,fullTitles:true,footer:true,draftPreserved:true,saveErrorVisible:true});
+   results.push({width,memberRoster,legacyMemberRoster,cleanMemberRoster,arrangementDevice,progressConnection,...folderResult,...recordingBrowseResult,...absenceResult,...newAbsenceResult,...absenceReplacementResult,...absenceNavigationResult,...absenceMemberReturnResult,...lyricBreakResult,...lyricSizeResult,...pdfClippingResult,...memberStartDayResult,...memberFeedbackStartResult,...noteNavigationDeliveryResult,...memberLinkSwitchResult,...recSegmentResult,...recAddedBarsResult,...liveNoteResult,...recAutoResult,...recHeadcountResult,...recScrollResult,...recOriginalOKResult,...passiveAudioResult,...dotRecResult,...wordPlanResult,...scopedFolderResult,...allHeadingResult,...largePickerResult,excelOriginal:excelCheck,settings:true,pdfLiveRecView:true,fullTitles:true,footer:true,draftPreserved:true,saveErrorVisible:true});
   }
   assert.deepEqual(errors,[]);assert.equal(blocked.filter(x=>x.method!=='GET').length,0);
   const report={passed:true,engine,results,errors,blocked,externalRequestsAllowed:0,syntheticDataOnly:true};

@@ -506,3 +506,19 @@ Explicit 全 / self-introduction heading acceptance:
   publisher -> member receive/render/reload, plus a private scoped check using
   the actual M04 workbook and complete real received packet. Do not publish those
   private fixtures. Desktop browser evidence is not receipt on the user's phone.
+
+
+Large received-library picker acceptance:
+- Retain a full 439-song / 27-show / 1,660-note / 71-registered-name member
+  publication, including non-member roster labels and saved private REC metadata.
+  Receive with applySetlist, open the actual summary 歌詞 control and lyric-header
+  song picker, select a song, save and natively reload, then open the picker again.
+  Keep old-code failures and screenshots; check both engines at 320/390 locally
+  and on the published revision. Also exercise the unchanged actual private
+  received packet and real public member URL without remote writes.
+- Per-row assignment eligibility must not project the whole library's rosters.
+  Picker counts and unread badges share one fresh notes projection for that
+  synchronous render only; retain existing unread signatures and scope rules,
+  without persistent caches or changes to songs, notes, rosters or REC records.
+  Canonical structural comparison must ignore object property insertion order
+  across storage serialization, while checking every value and array position.

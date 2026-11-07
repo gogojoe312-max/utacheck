@@ -43,3 +43,24 @@ async function checkAbsenceAllHeadings(page,width,{screenshot,only='',workbook=n
  return {absenceAllPickerAndPresentMembers:true,absenceAllBlockAndExcel:true,absenceAllAbsenteeChangesAndNativeReload:true,introHeadingsFreshAndLegacySafe:true,introHeadingsMemberReceiveAndReload:true,absenceAllOriginalExcelAndSourcePreserved:true};
 }
 module.exports={checkAbsenceAllHeadings};
+
+async function checkMemberLargePicker(page,width,{screenshot}){
+ const names=['橋田','吉田','小野田','村越','植村','松原','島川','上村','相馬'];
+ const packet={version:1,authorId:'large-member-fixture',groupName:'ロージークロニクル',members:[...names,'全','A','間奏','お客さん',...Array.from({length:58},(_,i)=>'旧登録名'+i)].map(name=>({name})),rosters:{},focusShow:'large-show-0',
+  lib:Array.from({length:19},(_,i)=>({title:'選曲確認の合成曲'+i,order:names,groups:{A:names.slice(0,4),B:names.slice(4)},lines:Array.from({length:12},(_,j)=>[j%3===0?'全':j%3===1?'小野田':'A','保持する合成歌詞'+j,'A'+(j+1),'B'+(j+1),'','','',''])})),
+  shows:Array.from({length:27},(_,i)=>({id:'large-show-'+i,name:'2026/11/'+(i===0?'08':'07')+' 合成公演'+i,folder:'受信フォルダ'+i%7,absent:['小野田']})),
+  songs:Array.from({length:439},(_,i)=>({showId:'large-show-'+(i<19?0:1+(i-19)%26),libIdx:i<19?i:Math.floor((i-19)/26)%19,take:1})),notes:[],subs:[],gsubs:[],memos:[]};
+ packet.rosters['ロージークロニクル']=packet.members.map(m=>m.name);
+ packet.notes=Array.from({length:1660},(_,i)=>({songIdx:i%439,showId:packet.songs[i%439].showId,lineIdx:i%12,memberNames:[names[i%9]],tags:['rhythm'],memo:'保持する指摘'+i}));
+ await page.evaluate(async d=>{document.activeElement?.blur();S=Object.assign(structuredClone(S0),{viewer:true,recMode:false,groups:[{id:'large-g',name:d.groupName}],groupId:'large-g',members:[],ghToken:'',src:'',bkGistId:'',autoPub:false,rsongs:[{id:'keep-rec',title:'保存済みREC',lines:[{t:'RECを保持'}]}],recs:{kept:{dur:3}},plan:{slots:[]}});startupRecoveryNetworkHold=true;Object.assign(U,{view:'summary',showFilter:'',mode:'member',allShows:false,absenceReturn:null,absenceLyricTarget:null,memberName:'',memberScope:'',sumOpen:'',summaryReturn:null,menu:null,sheet:null,picker:false,overview:false,focus:'',songIdx:0});applySetlist(d);U.view='summary';save();await saveNow();renderPointers.clear();scrollingUntil=0;render(true);},packet);
+ const snapshot=()=>page.evaluate(()=>structuredClone({songs:S.songs,shows:S.shows,members:S.members,pubNotes:S.pubNotes,subs:S.subs,gsubs:S.gsubs,rsongs:S.rsongs,recs:S.recs,plan:S.plan}));
+ const stable=value=>Array.isArray(value)?value.map(stable):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().map(key=>[key,stable(value[key])])):value;
+ const digest=async()=>Object.fromEntries(Object.entries(await snapshot()).map(([key,value])=>[key,require('node:crypto').createHash('sha256').update(JSON.stringify(stable(value))).digest('hex')]));
+ const before=await digest();assert.deepEqual(await page.evaluate(()=>[S.songs.length,S.pubNotes.length,S.shows.length,S.members.length]),[439,1660,27,71]);
+ await page.locator('[data-act="summary-lyrics"]').click({timeout:15000});await page.locator('[data-act="picker"]').waitFor({state:'visible'});
+ await page.evaluate(()=>{window.__largePicker={names:memberAbsenceNames,notes:memberViewNotes,projections:0};const notes=memberViewNotes;memberViewNotes=function(...args){window.__largePicker.projections++;return notes(...args);};});
+ const started=Date.now();try{await page.locator('[data-act="picker"]').click({timeout:15000});await page.locator('.mask [data-act="jump"]').first().waitFor({state:'visible'});assert.equal(await page.locator('.mask [data-act="jump"]').count(),19);await screenshot(page,width,'member-large-library-picker-open');assert((await page.evaluate(()=>window.__largePicker.projections))<10,'The picker projects received notes once rather than for every unread count');await page.locator('.mask [data-act="jump"][data-i="4"]').click();await page.waitForFunction(()=>U.songIdx===4&&!U.picker);}finally{await page.evaluate(()=>{if(window.__largePicker){memberViewNotes=window.__largePicker.notes;delete window.__largePicker;}});}
+ assert.deepEqual(await digest(),before);await page.evaluate(async()=>{save();await saveNow();});await page.reload();await page.waitForFunction(()=>normalStartupInitialized);assert.deepEqual(await digest(),before);await page.locator('[data-act="summary-lyrics"]').click({timeout:15000});await page.locator('[data-act="picker"]').click({timeout:15000});assert.equal(await page.locator('.mask [data-act="jump"]').count(),19);await screenshot(page,width,'member-large-library-picker-after-reload');
+ return {memberLargePickerFullReceivedLibrary:true,memberLargePickerNoRepeatedProjection:true,memberLargePickerSaveReload:true,memberLargePickerElapsedMs:Date.now()-started};
+}
+module.exports.checkMemberLargePicker=checkMemberLargePicker;

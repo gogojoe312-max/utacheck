@@ -233,3 +233,9 @@ test('selected historical absence shows the formal absentee without counts and p
  const banner=c.memberReviewNav();assert(banner.includes('欠席歌割'));assert(banner.includes('北原が欠席'));assert(!banner.includes('北原・北'));assert(!/\d+件/.test(banner));assert(c.viewMemberAbsence().includes('北原が欠席'));assert.equal(JSON.stringify(c.S),before);
  c.S.shows[0].absent=['north-short'];assert(c.memberReviewNav().includes('北原が欠席'));c.U.allShows=true;assert.equal(c.memberReviewNav(),'');
 });
+
+test('per-row member assignment eligibility never projects the full absence roster',()=>{
+ const c=fixture();c.memberAbsenceNames=()=>{throw Error('The display-only roster must not run for each lyric row');};
+ for(let i=0;i<2500;i++)assert.equal(c.memberCanReviewAssignments('show'),true);
+ c.S.shows[0].absent=['unknown-id'];assert.equal(c.memberCanReviewAssignments('show'),true,'The current-day rule still applies');c.S.shows[0].date='2026-10-14';assert.equal(c.memberCanReviewAssignments('show'),false);c.S.shows[0].absent=['m1'];assert.equal(c.memberCanReviewAssignments('show'),true,'Historical active absence stays available');
+});
