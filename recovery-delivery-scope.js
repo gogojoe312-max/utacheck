@@ -193,7 +193,7 @@
     song:['showId','libIdx','take','fromIdx'],
     library:['title','credit','groups','order','lines','sections','lyricBreaks','displayCuts','groupRows','sheetName','micSheet','micMap','groupCells'],
     note:['songIdx','lineIdx','memberNames','tags','memo','hand','pitch','lineEnd','from','to','showId','at'],
-    memo:['showId','songIdx','text'],sub:['showId','songIdx','lineIdx','names','confirmed'],gsub:['showId','songIdx','block','names','confirmed']
+    memo:['showId','songIdx','text'],sub:['showId','songIdx','lineIdx','names','confirmed','all'],gsub:['showId','songIdx','block','names','confirmed','all']
   };
   function validateHand(hand,bad){
     // Historical public handwriting is kept intact, but it is not an escape
@@ -324,6 +324,7 @@
       const seen=new Set();
       for(const row of publication[field]||[]){
         only(row,fields[field==='notes'?'note':field==='memos'?'memo':field==='subs'?'sub':'gsub'],bad);
+        if((field==='subs'||field==='gsubs')&&own(row,'all')&&(typeof row.all!=='boolean'||row.all===true&&(row.confirmed!==true||!row.names?.length)))fail(bad);
         if((field==='subs'||field==='gsubs')&&own(row,'confirmed')&&typeof row.confirmed!=='boolean')fail(bad);
         if(!Number.isSafeInteger(row.songIdx)||row.songIdx<0||row.songIdx>=publication.songs.length)fail('publication-song-reference');
         const song=publication.songs[row.songIdx],entry=publication.lib[song.libIdx];
@@ -415,8 +416,8 @@
         hand:optional(row.hand),pitch:row.pitch||null,lineEnd:optional(row.lineEnd),
         from:optional(row.from),to:optional(row.to),at:optional(row.at)};
       else if(field==='memos')normalized={text:row.text};
-      else if(field==='subs')normalized={lineIdx:row.lineIdx,names:row.names,confirmed:row.confirmed===true};
-      else normalized={block:row.block,names:row.names,confirmed:row.confirmed===true};
+      else if(field==='subs')normalized={lineIdx:row.lineIdx,names:row.names,confirmed:row.confirmed===true,...(row.all===true?{all:true}:{})};
+      else normalized={block:row.block,names:row.names,confirmed:row.confirmed===true,...(row.all===true?{all:true}:{})};
       records.get(row.songIdx)[field].push(normalized);
     }
     for(const rows of records.values()){

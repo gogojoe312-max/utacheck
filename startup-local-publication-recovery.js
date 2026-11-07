@@ -109,6 +109,7 @@
           if((x.from==null)!==(x.to==null)||(x.from!=null&&x.from>x.to))fail('publication-invalid');
         }else{
           if(field==='memos'&&typeof x.text!=='string')fail('publication-invalid');
+          if((field==='subs'||field==='gsubs')&&own(x,'all')&&(typeof x.all!=='boolean'||x.all===true&&(x.confirmed!==true||!x.names?.length)))fail('publication-invalid');
           if((field==='subs'||field==='gsubs')&&!strings(x.names))fail('publication-invalid');
           if(field==='gsubs'&&(!id(x.block)||!own(d.lib[so.libIdx].groups||{},x.block)))fail('publication-invalid');
           const k=x.songIdx+'|'+(field==='subs'?x.lineIdx:field==='gsubs'?x.block:'');
@@ -244,7 +245,8 @@
         for(const m of p.d.memos||[]){const so=added[m.songIdx];base.memos[(m.showId||so.showId)+'|'+so.id]=m.text;}
         for(const field of ['subs','gsubs'])for(const x of p.d[field]||[]){
           const so=added[x.songIdx],k=(x.showId||so.showId)+'|'+so.id;const map=base[field][k]||(base[field][k]={});
-          map[field==='subs'?x.lineIdx:x.block]=x.names.map(name=>addMember(name).id);
+          const index=field==='subs'?x.lineIdx:x.block,after=x.names.map(name=>addMember(name).id);map[index]=after;
+          if(x.all===true){const kind=field==='subs'?'lines':'blocks',before=kind==='lines'?so.lines[index]?.parts||[]:so.blocks?.[index]||[];base.assignmentEdits||={};base.assignmentEdits[k]||={lines:{},blocks:{}};base.assignmentEdits[k][kind][index]={before:before.slice(),after:after.slice(),all:true,...(kind==='lines'?{text:String(so.lines[index]?.t||'')}:{})};}
         }
       }
       const hasRecoveredSongs=sid=>existingShows.has(sid)&&base.songs.some(so=>so.showId===sid);

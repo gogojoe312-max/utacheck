@@ -10,7 +10,8 @@ function fixture(){
    {id:'finished',songId:'old',date:'2026-10-01',day:'10/1',name:'Past member',at:600,min:60,a0:603,a1:665,takes:{A:3}},
    ...Array.from({length:9},(_,i)=>({id:'new-'+i,songId:'new',date:i<4?'2026-11-02':'2026-11-03',day:i<4?'11/2':'11/3',name:'Member '+(i+1),at:600+(i<4?i:i-4)*60,min:60,place:'Test studio'}))
   ]}};
- const c=vm.createContext({S,U:{view:'setup',planDay:'10/1',planSec:'',songIdx:0},Date,Intl,JSON,preview:null,VIEW:()=>false,
+ // Keep the November 2/3 fixture upcoming as the real calendar advances.
+ const c=vm.createContext({S,U:{view:'setup',planDay:'10/1',planSec:'',songIdx:0},Date:class extends Date {constructor(...args){super(...(args.length?args:['2026-11-01T03:00:00Z']));}static now(){return Date.parse('2026-11-01T03:00:00Z');}},Intl,JSON,preview:null,VIEW:()=>false,
   REC:null,recordingStartPending:false,recordingFinalizePending:false,pitchStartPending:false,PT:{on:false},micStream:null,
   h:x=>String(x??''),hm2min:x=>Number(x.split(':')[0])*60+Number(x.split(':')[1]),nowMin:()=>600,
   min2hm:x=>Math.floor(x/60)+':'+String(x%60).padStart(2,'0'),dmin:x=>String(x),compactMemberLabel:x=>x,

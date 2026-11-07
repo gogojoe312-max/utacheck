@@ -239,3 +239,9 @@ test('actual trimming importer retains exact recovery text and zero/nonzero note
  assert.equal(so.lines[s.notes[1].lineIdx].t.slice(s.notes[1].from,s.notes[1].to),'PRIV');assert.equal(so.lines[1].t.slice(1,3),'  ');
  assert.equal(touches,0);assert.equal(JSON.stringify(original),before);safe(answer);
 });
+
+test('publication recovery retains explicit all labels with real source/member identities',()=>{
+ const body=publication();for(const field of ['subs','gsubs']){body[field][0].all=true;body[field][0].confirmed=true;}
+ const result=run([record({},1,0,body)]);assert.equal(result.status,'ready');const s=result.packet.state,so=s.songs[0],key=so.showId+'|'+so.id;
+ assert.equal(s.assignmentEdits[key].lines[1].all,true);assert.deepEqual(s.assignmentEdits[key].lines[1].after,s.subs[key][1]);assert.equal(s.assignmentEdits[key].lines[1].text,so.lines[1].t);assert.equal(s.assignmentEdits[key].blocks.A.all,true);assert(!s.members.some(m=>m.name==='全'));safe(result);
+});

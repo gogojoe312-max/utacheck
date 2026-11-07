@@ -478,3 +478,31 @@ Cross-group folder-name acceptance:
   member receive/render/reload in Chromium/WebKit at 320/390 and on the published
   revision. Current REC browsing has no folder controls; retain its source data.
   Browser checks do not establish receipt on the user's actual phone.
+
+Explicit 全 / self-introduction heading acceptance:
+- In 欠席対応's actual line and A/B block assignment pickers, offer a separate
+  全 control. Store real present performer IDs (formal aliases collapsed), plus
+  explicit all intent on the existing assignmentEdits receipt; never invent a
+  member named 全 or rewrite the original lyric/assignment. Individual edits and
+  元の歌割に戻す remove the intent. Absentee changes, confirmation/export, backup
+  and member publication/receive/native reload must preserve the intended label.
+- Owner lyric/absence/overview/print, Excel version cells and member lyric/change
+  screens show 全. Keep original workbook bytes, source sheets, actual assignments,
+  notes and recordings. Permit the typed optional all field only on confirmed,
+  nonempty substitution records in guarded publication/recovery paths.
+- Reproduce M04_バラ色アンソロージー's #橋田自己紹介 / #植村自己紹介 and all nine
+  headings: their source name cells are blank and unmerged. Preserve prior
+  全/全（…以外） lyric rows, contaminated legacy carried parts, confirmed received
+  substitutes, full rosters and the following named questions/answers. Headings
+  must have no effective assignment, colored change, absence replacement row or
+  accidental assignment editor; retain their text/cells and stored legacy data.
+- Stop the carry during fresh import and handle already saved/received rows as
+  well. Original-Excel verification may ignore only this proven heading's carried
+  assignment/continuation; full text/cell mapping and explicitly assigned rows
+  remain strict. Keep original source bytes unchanged and legacy overrides stored.
+- Retain old-code failures for both the missing 全 control and the screenshot's
+  eight-name heading on the actual main lyric screen. Run local/published
+  Chromium/WebKit 320/390, real controls, Excel export, owner save/native reload,
+  publisher -> member receive/render/reload, plus a private scoped check using
+  the actual M04 workbook and complete real received packet. Do not publish those
+  private fixtures. Desktop browser evidence is not receipt on the user's phone.

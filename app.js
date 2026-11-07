@@ -118,7 +118,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.82";
+const APP_VER = "16.41.58.83";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1917,6 +1917,7 @@ const subOf = (songId, i) => {
 };
 // その行を実際に歌う人
 const partsOf = (so, i) => {
+  if (typeof AbsenceChanges !== 'undefined' && AbsenceChanges.heading(so.lines[i])) return [];
   const key = (so.showId || S.showId) + "|" + so.id;
   const sub = (S.subs || {})[key]?.[i];
   if (Array.isArray(sub)) return sub;
@@ -2212,6 +2213,7 @@ function labelHTML(so, i) {
 
 function labelOf(so, i) {
   const l = so.lines[i] || {};
+  if (!S.recMode && typeof AbsenceChanges !== 'undefined' && AbsenceChanges.heading(l)) return "";
   if (S.recMode) {
     const b = barsOf(so)[i];
     const position = (l.sec ? l.sec + " " : "") + (S.recBars && b != null ? b : "");
@@ -2229,8 +2231,9 @@ function labelOf(so, i) {
       if (!so.lines[k].cut) return l.label || "";
       if (!so.lines[k].cont) break;
     }
-    return names(partsOf(so,i)) || l.label || "";
+    return assignmentIsAll(so,"lines",i) ? "全" : names(partsOf(so,i)) || l.label || "";
   }
+  if (assignmentIsAll(so,"lines",i)) return "全";
   if (/^(?:全|zenn\b)/i.test(l.labelRaw || l.raw || l.label || '')) return l.labelRaw || l.raw || l.label;
   if (subOf(so.id, i)) {
     const sp = splitAssign(so, i);
@@ -2244,7 +2247,9 @@ function lineStatus(so, i) {
   if (VIEW() && !memberCanReviewAssignments(so.showId)) return "";
   if (VIEW() && typeof AbsenceChanges !== "undefined") return AbsenceChanges.line(so,i,memberAbsenceContext(so))?.status === "changed" ? "changed" : "";
   const l = so.lines[i] || {};
+  if (typeof AbsenceChanges !== 'undefined' && AbsenceChanges.heading(l)) return "";
   if (l.gap || l.cut) return "";                            // カット（グレー）の行は歌わないので触らない
+  if (assignmentIsAll(so,"lines",i)) return "changed";
   if (/^(?:全|zenn\b)/i.test(l.labelRaw || l.label || "")) return "";   // 「全」は見れば分かるので触らない
   // 歌割が書かれていない行（カットした所など）は触らない
   if (!(l.parts || []).length && !(l.labelRaw || l.label)) return "";
@@ -2261,6 +2266,7 @@ function blockStatus(so, b) {
   if (VIEW() && typeof AbsenceChanges !== "undefined") return AbsenceChanges.block(so,b,memberAbsenceContext(so))?.status === "changed" ? "changed" : "";
   const ab = absentIds();
   const sub = gsubOf(so.id, b), original = so.blocks?.[b] || [];
+  if (assignmentIsAll(so,"blocks",b)) return "changed";
   if (sub && (new Set(sub).size !== new Set(original).size || sub.some(id=>!original.includes(id)))) return "changed";
   if (!ab.length) return "";
   return ((so.blocks && so.blocks[b]) || []).some((p) => ab.includes(p)) ? "need" : "";
@@ -2289,7 +2295,7 @@ function blockBar(so) {
     const st = blockStatus(so, b);
     const col = st === "need" ? "var(--bad)" : st === "changed" ? "#F0B23C" : "var(--dim)";
     return `<button class="blkc" ${VIEW() ? "" : `data-act="assignblock" data-id="${so.id}" data-b="${h(b)}"`}
-      style="color:${col}"><b style="color:${st ? col : "var(--text)"}">${h(b)}</b> ${h(names(blockParts(so, b)) || "—")}</button>`;
+      style="color:${col}"><b style="color:${st ? col : "var(--text)"}">${h(b)}</b> ${h((assignmentIsAll(so,"blocks",b) ? "全" : names(blockParts(so, b))) || "—")}</button>`;
   }).join("")}</div>`;
 }
 // 2人以上の行から欠席者を抜く。ソロと全員欠席の行は赤のまま残す。
@@ -2312,7 +2318,7 @@ function autoSubs(songs = SONGS(), showId = S.showId, persist = true) {
       n++;
     });
     so.lines.forEach((l, i) => {
-      if (l.gap || l.cut || !l.parts || !l.parts.length) return;
+      if (l.gap || l.cut || !l.parts || !l.parts.length || typeof AbsenceChanges !== 'undefined' && AbsenceChanges.heading(l)) return;
       if (/^(?:全|zenn\b)/i.test(l.labelRaw || l.label || "")) return;   // 「全」は触らない
       if (blockOf(so, i)) return;              // ブロックの行はブロック側で扱う
       if (S.subs[k] && S.subs[k][i]) return;
@@ -2351,11 +2357,11 @@ function reconcileNewAbsenceSongs() {
 }
 // 一度決めた振り分けは覚えておく。曲名・グループ・欠席の顔ぶれが同じなら次も使う。
 const libKey = (so) => `${sigOf(so)}|${so.groupId}|${absentIds().slice().sort().join(",")}`;
-function rememberSub(so, i, ids) {
+function rememberSub(so, i, ids, all=false) {
   const l = so.lines[i] || {};
   const k = libKey(so);
   const e = S.subLib[k] && S.subLib[k].lines ? S.subLib[k] : { lines: {} };
-  e.lines[i] = { t: l.t || "", from: (l.parts || []).join(","), to: ids.slice() };
+  e.lines[i] = { t: l.t || "", from: (l.parts || []).join(","), to: ids.slice(),...(all?{all:true}:{}) };
   e.showId = S.showId;
   e.name = showName();
   e.at = Date.now();
@@ -2377,7 +2383,8 @@ function applyLib() {
       if (!l || l.t !== e.t || (l.parts || []).join(",") !== e.from) return;
       if (S.subsMan[k] && S.subsMan[k][i]) return;
       S.subs[k] = S.subs[k] || {};
-      S.subs[k][i] = e.to.slice();
+      S.subs[k][i] = e.all===true ? allAssignmentParts(so) : e.to.slice();
+      if(e.all===true)recordAssignmentChange(so,"lines",Number(i),S.subs[k][i],true);
       S.subsMan[k] = S.subsMan[k] || {};
       S.subsMan[k][i] = 1;
       n++;
@@ -2392,9 +2399,13 @@ function rebuildSubs() {
   const ab = absentIds();
   SONGS().forEach((so) => {
     const k = subKey(so.id);
+    const allLines=so.lines.flatMap((_,i)=>assignmentIsAll(so,'lines',i)?[i]:[]),allBlocks=blocksOf(so).filter(b=>assignmentIsAll(so,'blocks',b));
+    for(const i of allLines){S.subs[k][i]=allAssignmentParts(so);recordAssignmentChange(so,'lines',i,S.subs[k][i],true);}
+    for(const b of allBlocks){S.gsubs[k][b]=allAssignmentParts(so);recordAssignmentChange(so,'blocks',b,S.gsubs[k][b],true);}
     // ブロックは自動で作り直すので、いったん全部捨てる
     if (S.gsubs[k]) {
       Object.keys(S.gsubs[k]).forEach((b) => {
+        if (allBlocks.includes(b)) return;
         const cur = (so.blocks && so.blocks[b]) || [];
         if (!ab.length || !cur.some((p) => ab.includes(p))) delete S.gsubs[k][b];
       });
@@ -2403,6 +2414,7 @@ function rebuildSubs() {
     const m = S.subs[k];
     if (!m) return;
     Object.keys(m).forEach((i) => {
+      if (allLines.includes(Number(i))) return;
       const l = so.lines[i] || {};
       const still = ab.length && (l.parts || []).some((p) => ab.includes(p));
       const manual = S.subsMan[k] && S.subsMan[k][i];
@@ -2832,6 +2844,10 @@ function buildSong(parsed, local) {
     const t = (r[1] || "").trim();
     if (!label && !t) return { gap: true, label: "", t: "", parts: [], cell: r[2] || "", lcell: r[3] || "" };
     const exRaw = r[4] || "";
+    if (typeof AbsenceChanges !== 'undefined' && AbsenceChanges.heading({t,label,labelRaw:r[6] || '',extraRaw:exRaw})) {
+      carry=[];
+      return {label:"",raw:"",labelRaw:"",t,parts:[],main:[],extra:[],cell:r[2] || "",lcell:r[3] || "",...(r[8] === 'cut' ? {cut:1} : {})};
+    }
     const exIds = [];
     if (exRaw) splitNames(exRaw.replace(/(ハモ|ハーモニー|コーラス|ｺｰﾗｽ|Cho|cho)/gi, " ")).forEach((k) => {
       (groups[k] || [addName(k).id]).forEach((n) => { if (!exIds.includes(n)) exIds.push(n); });
@@ -3793,7 +3809,7 @@ async function parseXLSX(file, buf, local) {
       if (!nv && topRun && bi > 0 && ri < bodyStart) { head.push(lv); return; }
       if (!nv && !noName && !rows.length && lead.length < 3 && ri < bodyStart) { lead.push(["→", lv, col(nc) + (ri + 1), col(lc) + (ri + 1), "", "", "", ""]); return; }
       // 名前がまだ一度も出ていない組の歌詞は、前の組の担当を引き継がず、担当なしで入れる
-      rows.push([nv || (noName || topRun ? "" : "→"), lv, col(nc) + (ri + 1), col(lc) + (ri + 1), extraRaw, extraCell, nvRaw, softText(ac != null ? (r[ac] || "") : ""), cut ? "cut" : "", ...(predictedCols.has(nc) ? ["predicted"] : [])]);
+      rows.push([nv || (noName || topRun || typeof AbsenceChanges !== 'undefined' && AbsenceChanges.heading({t:lv,label:nv,extraRaw}) ? "" : "→"), lv, col(nc) + (ri + 1), col(lc) + (ri + 1), extraRaw, extraCell, nvRaw, softText(ac != null ? (r[ac] || "") : ""), cut ? "cut" : "", ...(predictedCols.has(nc) ? ["predicted"] : [])]);
     });
     flushPend();
   });
@@ -5582,13 +5598,16 @@ function originalExcelLayout(so, resolveName = id => member(id)?.name, original)
     blockCells:pairs(so.blockCells), blockRows:(so.blockRows || []).map(r => [r.b,r.ncell || "",r.lcell || ""]),
     // An empty separator has no editable Excel content. Older imports chose
     // different empty cells at a printed-column break for the same separator.
-    lines:so.lines.map((l,i) => [!!l.gap,text(l.t),l.gap && !l.t && !(l.parts || []).length ? "" : text(l.cell),l.gap && !l.t && !(l.parts || []).length ? "" : text(l.lcell),
-      text(l.raw == null ? l.labelRaw == null ? l.label : l.labelRaw : l.raw),
-      text(l.labelRaw == null ? l.raw == null ? l.label : l.raw : l.labelRaw),
+    lines:so.lines.map((l,i) => {
+      const heading=typeof AbsenceChanges!=='undefined' && AbsenceChanges.heading(l);
+      return [!!l.gap,text(l.t),l.gap && !l.t && !(l.parts || []).length ? "" : text(l.cell),l.gap && !l.t && !(l.parts || []).length ? "" : text(l.lcell),
+      heading ? "" : text(l.raw == null ? l.labelRaw == null ? l.label : l.labelRaw : l.raw),
+      heading ? "" : text(l.labelRaw == null ? l.raw == null ? l.label : l.raw : l.labelRaw),
       // Older publications omitted the gray-fill-derived cut marker. Infer it
       // only for comparison when absent; never change the saved song or accept
       // a contradictory explicit marker. Lyrics, owners and cells still match.
-      text(l.extraCell),text(l.extraRaw),!!l.cont,!!(l.sourceCut ?? l.cut ?? original?.lines[i]?.cut),named(l.parts)])
+      text(l.extraCell),text(l.extraRaw),heading ? false : !!l.cont,!!(l.sourceCut ?? l.cut ?? original?.lines[i]?.cut),heading ? [] : named(l.parts)];
+    })
   });
 }
 function originalExcelSourceGroupAllowed(so,key) {
@@ -7035,7 +7054,7 @@ function viewOverview(s) {
           const col3 = st3 === "need" ? "var(--bad)" : st3 === "changed" ? "#F0B23C" : "";
           return bb.kind === "name"
             ? `<td class="ogn"><b>${h(bb.br.b)}</b></td>`
-            : `<td class="ogx"${col3 ? ` style="color:${col3}"` : ""}>${h(names(blockParts(s, bb.br.b)) || "—")}</td>`;
+            : `<td class="ogx"${col3 ? ` style="color:${col3}"` : ""}>${h((assignmentIsAll(s,"blocks",bb.br.b) ? "全" : names(blockParts(s, bb.br.b))) || "—")}</td>`;
         }
         const en = byName[key], el = byLyric[key], ex = byExtra[key];
         if (el && el.l.t) {
@@ -7656,7 +7675,7 @@ function renderSheet() {
       <div class="row" style="margin-bottom:10px"><span class="grow trunc" style="font-size:13px">${h(songName(so))}</span>
       <button data-act="closemenu" style="width:36px;height:36px;border-radius:10px;background:var(--panel2);font-size:17px">✕</button></div>
       <div class="sec"><h4>ブロック ${h(b)} は誰ですか</h4>
-        <div class="chips">${assignmentMembers(so).map((m) => `<button class="chip sm" data-act="setblock" data-id="${m.id}" aria-pressed="${m.assignmentIds.some(id=>cur7.includes(id))}"
+        <div class="chips"><button class="chip sm" data-act="setblock-all" aria-pressed="${assignmentIsAll(so,'blocks',b)}" style="${assignmentIsAll(so,'blocks',b) ? 'background:var(--accent);color:#0A0A0A' : ''}">全</button>${assignmentMembers(so).map((m) => `<button class="chip sm" data-act="setblock" data-id="${m.id}" aria-pressed="${m.assignmentIds.some(id=>cur7.includes(id))}"
           style="${m.assignmentIds.some(id=>cur7.includes(id)) ? "background:var(--accent);color:#0A0A0A" : m.assignmentIds.some(id=>ab3.includes(id)) ? "color:var(--bad);opacity:.5" : ""}">${h(compactMemberLabel(m.name))}</button>`).join("")}</div>
       </div></div>`;
     document.body.appendChild(overlay);
@@ -7674,7 +7693,7 @@ function renderSheet() {
       <div class="row" style="margin-bottom:10px"><span class="grow trunc" style="font-size:13px">${h((U.menu.idx || [U.menu.i]).map((x) => (so.lines[x] || {}).t).join(" / "))}</span>
       <button data-act="closemenu" style="width:36px;height:36px;border-radius:10px;background:var(--panel2);font-size:17px">✕</button></div>
       <div class="sec"><h4>${h((l && l.label) || "続き")}${(U.menu.idx || []).length > 1 ? `（${U.menu.idx.length}行まとめて）` : ""}</h4>
-        <div class="chips">${assignmentMembers(so).map((m) => `<button class="chip sm" data-act="setassign" data-id="${m.id}" aria-pressed="${m.assignmentIds.some(id=>cur5.includes(id))}"
+        <div class="chips"><button class="chip sm" data-act="setassign-all" aria-pressed="${assignmentIsAll(so,'lines',U.menu.i)}" style="${assignmentIsAll(so,'lines',U.menu.i) ? 'background:var(--accent);color:#0A0A0A' : ''}">全</button>${assignmentMembers(so).map((m) => `<button class="chip sm" data-act="setassign" data-id="${m.id}" aria-pressed="${m.assignmentIds.some(id=>cur5.includes(id))}"
           style="${m.assignmentIds.some(id=>cur5.includes(id)) ? "background:var(--accent);color:#0A0A0A" : m.assignmentIds.some(id=>ab2.includes(id)) ? "color:var(--bad);opacity:.5" : ""}">${h(compactMemberLabel(m.name))}</button>`).join("")}</div>
       </div>
       ${subOf(so.id, U.menu.i) ? `<button class="ghost" data-act="unassign" style="color:var(--dim)">元の歌割に戻す</button>` : ""}
@@ -8007,6 +8026,33 @@ function assignmentMembers(so) {
       const preferred=aliases.find(item=>item.id===m.id)||aliases.find(item=>viewerMemberName(item.name)===viewerMemberName(m.name))||aliases[0];
       return {...m,id:preferred.id,assignmentIds:aliases.map(item=>item.id)};
     });
+}
+function allAssignmentParts(so) {
+  const absent=new Set(absentIds(so?.showId));
+  return assignmentMembers(so).filter(m=>!m.assignmentIds.some(id=>absent.has(id))).map(m=>m.id);
+}
+function assignmentIsAll(so,kind,index) {
+  if (!so || typeof AbsenceChanges === 'undefined') return false;
+  const key=(so.showId || S.showId)+'|'+so.id;
+  const before=kind==='blocks' ? so.blocks?.[index] || [] : so.lines[index]?.parts || [];
+  const after=kind==='blocks' ? S.gsubs?.[key]?.[index] : S.subs?.[key]?.[index];
+  return Array.isArray(after) && AbsenceChanges.all(S.assignmentEdits?.[key]?.[kind]?.[index],before,after,kind==='lines'?so.lines[index]?.t:undefined);
+}
+function setAllAssignment() {
+  if (VIEW() || preview || S.recMode || !recordingInboxCanWrite()) return false;
+  const menu=U.menu, so=S.songs.find(s=>s.id===menu?.id);
+  if (!so || !['assign','block'].includes(menu.kind)) return false;
+  const parts=allAssignmentParts(so);
+  const indices=menu.kind==='block' ? [menu.b] : menu.idx || [menu.i];
+  if (!parts.length || indices.some(i=>menu.kind==='block' ? !so.blocks?.[i] : !so.lines[i] || AbsenceChanges.heading(so.lines[i]))) return false;
+  pushUndo();const key=(so.showId || S.showId)+'|'+so.id;
+  for (const index of indices) {
+    const kind=menu.kind==='block'?'blocks':'lines',store=kind==='blocks'?'gsubs':'subs';
+    S[store][key] ||= {};S[store][key][index]=parts.slice();
+    if (kind==='lines') { S.subsMan[key] ||= {};S.subsMan[key][index]=1;rememberSub(so,index,parts,true); }
+    recordAssignmentChange(so,kind,index,parts,true);
+  }
+  save();schedulePush();renderSheet();render();return true;
 }
 function nextAssignment(so,current,id) {
   const choices=assignmentMembers(so),choice=choices.find(m=>m.id===id);
@@ -8541,15 +8587,17 @@ function absentEdits(so) {
     const g = gsubOf(so.id, b) || (rest.length&&rest.length<original.length?rest:null);
     if (!g) return;
     const before = ((so.blocks || {})[b] || []).map((x) => (member(x) || {}).name).filter(Boolean).join("・");
-    const after = g.map((x) => (member(x) || {}).name).filter(Boolean).join("・");
+    const after = assignmentIsAll(so,'blocks',b) ? '全' : g.map((x) => (member(x) || {}).name).filter(Boolean).join("・");
     if (before !== after) edits[cell] = after;
   });
   so.lines.forEach((l, i) => {
+    if (typeof AbsenceChanges !== 'undefined' && AbsenceChanges.heading(l)) return;
     if (blockOf(so, i)) return;   // ブロックの行は書き換えない
     if (!l.cell) return;
     // 続きの行（結合セルの2行目以降）に書くと、まとまりが割れて2行に分かれる。
     // 名前は先頭の行にだけ書く。
     if (l.cont) return;
+    if (assignmentIsAll(so,'lines',i)) { edits[l.cell]='全';if(l.extraCell && l.extra?.length)edits[l.extraCell]='';return; }
     // 「全」はそのまま。欠席がいても書き換えない。
     if (/^(?:全|zenn\b)/i.test(l.labelRaw || l.label || "")) return;
     // 歌割が書かれていない行（ワンハーフでカットした所など）は、誰の名前も入れない
@@ -8923,15 +8971,17 @@ function memberReviewNav() {
     + (absent.length ? '欠席歌割<span class="member-absent-names">'+h(absent.join("・"))+'が欠席</span>' : '歌割変更') + '</button></div>';
 }
 
-function recordAssignmentChange(so,kind,index,after) {
+function recordAssignmentChange(so,kind,index,after,all) {
   if(!so)return;
   const before=kind === "blocks" ? (so.blocks || {})[index] || [] : (so.lines[index] || {}).parts || [];
   const key=(so.showId || S.showId)+"|"+so.id;
   S.assignmentEdits ||= {};
   const edits=S.assignmentEdits[key] ||= {lines:{},blocks:{}};
   edits[kind] ||= {};
-  if(new Set(before).size === new Set(after).size && before.every(id=>after.includes(id)))delete edits[kind][index];
-  else edits[kind][index]={before:before.slice(),after:after.slice(),...(kind === "lines" ? {text:String(so.lines[index]?.t || "")} : {})};
+  const text=kind==='lines'?String(so.lines[index]?.t || ''):undefined;
+  const isAll=all===true || all===undefined && typeof AbsenceChanges!=='undefined' && AbsenceChanges.all(edits[kind][index],before,after,text);
+  if(!isAll && new Set(before).size === new Set(after).size && before.every(id=>after.includes(id)))delete edits[kind][index];
+  else edits[kind][index]={before:before.slice(),after:after.slice(),...(kind === "lines" ? {text} : {}),...(isAll?{all:true}:{})};
 }
 // Explicit absence edits and successful Excel creation both confirm the
 // resulting assignments. Passive import/rebuild and idle preparation do not.
@@ -8979,7 +9029,7 @@ function memberAbsenceChanges(so, memberId="", byMember=false) {
         beforeMain:viewerAssignmentIds(entry.beforeMain,so,true,formal),beforeExtra:viewerAssignmentIds(entry.beforeExtra,so,true,formal),
         afterMain:viewerAssignmentIds(entry.afterMain,so,false,formal),afterExtra:viewerAssignmentIds(entry.afterExtra,so,false,formal)};
     })
-    .filter(entry=>entry.added.length||entry.removed.length)
+    .filter(entry=>entry.afterLabel || entry.added.length||entry.removed.length)
     .filter(entry=>memberId ? selectedIds.some(id=>AbsenceChanges.forMember(entry,id))
       : !byMember || entry.involved.some(id=>AbsenceChanges.forMember(entry,id)));
 }
@@ -9005,7 +9055,7 @@ function memberAbsenceRows(so, entries, memberId="") {
       : entry.added.some(id=>selectedIds.has(id)) ? "新しく担当" : entry.removed.some(id=>selectedIds.has(id)) ? "担当から外れます" : "一緒に歌うメンバーが変更";
     const content='<span class="member-note-top"><span class="member-note-location">'+h(entry.kind==="block" ? "ブロック "+entry.label : rowNo(so,entry.lineIdx)+"行目"+(entry.lineIndices.length>1 ? "から "+entry.lineIndices.length+"行" : ""))+'</span><span class="member-note-tag">'+status+'</span></span>'
       +'<span class="member-note-members"><span>変更前</span><span>'+h(assignment(entry.beforeMain,entry.beforeExtra,true))+'</span></span>'
-      +'<span class="member-note-members"><span>変更後</span><span>'+h(assignment(entry.afterMain,entry.afterExtra))+'</span></span>'
+      +'<span class="member-note-members"><span>変更後</span><span>'+h(entry.afterLabel || assignment(entry.afterMain,entry.afterExtra))+'</span></span>'
       +(entry.text ? '<span class="member-lyric" style="display:block;white-space:pre-wrap;overflow-wrap:anywhere">'+h(entry.text)+'</span>' : '');
     const attrs=' class="member-note member-note-link member-absence-change" data-absence-status="'+entry.status+'"';
     return Number.isInteger(entry.lineIdx)
@@ -9047,7 +9097,7 @@ function viewAbsent() {
         if (st3 !== "need" && st3 !== "changed") return "";
         const col = st3 === "need" ? "var(--bad)" : "#F0B23C";
         const indices=so.lines.flatMap((line,i)=>!line.cut&&!line.gap&&blockOf(so,i)===b?[i]:[]);
-        const content=`${h(names((so.blocks || {})[b] || []))} → <b>${h(names(blockParts(so, b)) || "—")}</b>`;
+        const content=`${h(names((so.blocks || {})[b] || []))} → <b>${h((assignmentIsAll(so,"blocks",b) ? "全" : names(blockParts(so, b))) || "—")}</b>`;
         return `<div class="row owner-absence-row"
           style="width:100%;text-align:left;padding:8px 10px;margin-bottom:6px;border-radius:10px;
                  background:color-mix(in srgb,${col} 16%,transparent);box-shadow:inset 2px 0 0 ${col}">
@@ -9068,7 +9118,7 @@ function viewAbsent() {
       const rows = runs.map((r) => {
         const col = r.st === "need" ? "var(--bad)" : "#F0B23C";
         const i0 = r.idx[0];
-        const now = names(partsOf(so, i0)) || "—";
+        const now = assignmentIsAll(so,"lines",i0) ? "全" : names(partsOf(so, i0)) || "—";
         const txt = r.idx.map((i) => so.lines[i].t).join(" / ");
         return `<div class="row owner-absence-row"
           style="width:100%;text-align:left;padding:8px 10px;margin-bottom:6px;border-radius:10px;
@@ -10986,7 +11036,7 @@ function viewPrint() {
         block: (br, side) => {
           if (side === "name") return "";
           const st = blockStatus(so, br.b);
-          return st ? `<span style="font-weight:700;text-decoration:underline">${h(names(blockParts(so, br.b)) || "—")}</span>` : "";
+          return st ? `<span style="font-weight:700;text-decoration:underline">${h((assignmentIsAll(so,"blocks",br.b) ? "全" : names(blockParts(so, br.b))) || "—")}</span>` : "";
         },
       };
       const out = xlLookHTML(so, look, fx);
@@ -11050,7 +11100,7 @@ function viewPrint() {
             const st = blockStatus(so, bb.br.b);
             return bb.kind === "name"
               ? `<td class="prn"><b>${h(bb.br.b)}</b></td>`
-              : `<td class="prx"${st ? ' style="font-weight:700;text-decoration:underline"' : ""}>${h(names(blockParts(so, bb.br.b)) || "—")}</td>`;
+              : `<td class="prx"${st ? ' style="font-weight:700;text-decoration:underline"' : ""}>${h((assignmentIsAll(so,"blocks",bb.br.b) ? "全" : names(blockParts(so, bb.br.b))) || "—")}</td>`;
           }
           const en = byName[key], el = byLyric[key], ex = byExtra[key];
           if (el && el.l.t) { has = true; return `<td class="prx">${cellHTML(el.l, el.i)}</td>`; }
@@ -11082,7 +11132,7 @@ function viewPrint() {
 
     return `<section class="prs"><div class="prbox"><div class="prin">
       <h3>${h(songName(so))}<span class="prc">　${h((S.groups.find((x) => x.id === (VIEW() ? so.groupId : showDeliveryGroupId(S.shows.find(sw=>sw.id===so.showId)) || songDeliveryGroupId(so))) || {}).name || "")}　${h(showName())}　${ns0.length}件</span></h3>
-      ${blocksOf(so).length && !(hasGrid && (so.blockRows || []).length) ? `<div class="prb">${blocksOf(so).map((b) => `<span><b>${h(b)}</b> ${h(names(blockParts(so, b)) || "—")}</span>`).join("　")}</div>` : ""}
+      ${blocksOf(so).length && !(hasGrid && (so.blockRows || []).length) ? `<div class="prb">${blocksOf(so).map((b) => `<span><b>${h(b)}</b> ${h((assignmentIsAll(so,"blocks",b) ? "全" : names(blockParts(so, b))) || "—")}</span>`).join("　")}</div>` : ""}
       ${inner}
       ${mm ? `<div class="prm"><b>総括</b>　${h(mm)}</div>` : ""}
     </div></div></section>`;
@@ -11809,13 +11859,14 @@ document.addEventListener("click", async (e) => {
       U.menu = { kind: "block", id, b: el3 ? el3.dataset.b : "" };
       renderSheet(); break;
     }
+    case "setassign-all": case "setblock-all": setAllAssignment();break;
     case "setblock": {
       const so5 = S.songs.find((x) => x.id === U.menu.id);
       const b = U.menu.b, k = subKey(U.menu.id);
       const cur8 = blockParts(so5, b);
       S.gsubs[k] = S.gsubs[k] || {};
       S.gsubs[k][b] = nextAssignment(so5,cur8,id);
-      recordAssignmentChange(so5,"blocks",b,S.gsubs[k][b]);
+      recordAssignmentChange(so5,"blocks",b,S.gsubs[k][b],false);
       save(); schedulePush(); renderSheet(); render();
       break;
     }
@@ -11845,7 +11896,7 @@ document.addEventListener("click", async (e) => {
       list.forEach((li) => {
         S.subs[k][li] = next.slice();
         S.subsMan[k][li] = 1;
-        recordAssignmentChange(so3,"lines",li,next);
+        recordAssignmentChange(so3,"lines",li,next,false);
         if (so3) rememberSub(so3, li, next);   // 次に同じ人が休んだ時のために覚える
       });
       save(); schedulePush(); renderSheet(); render();
@@ -13587,7 +13638,7 @@ function openAssignmentForLine(i, expected) {
   if (VIEW() || preview || S.recMode || !recordingInboxCanWrite() || !so || !Number.isSafeInteger(i)
     || expected && (expected.songId !== so.id || expected.showId !== S.showId)) return false;
   const line = so.lines[i];
-  if (!line || !(line.parts || []).length && !(line.labelRaw || line.label)) return false;
+  if (!line || typeof AbsenceChanges!=='undefined' && AbsenceChanges.heading(line) || !(line.parts || []).length && !(line.labelRaw || line.label)) return false;
   const block = blockOf(so,i);
   U.sheet = null;
   U.menu = block ? {kind:"block",id:so.id,b:block} : {kind:"assign",id:so.id,i,idx:runAt(so,i)};
@@ -14216,6 +14267,7 @@ function publicationData(gid, previous, isolatedLibraries = false) {
             Object.keys(m).forEach((b) => {
               arr.push({ showId: sid, songIdx: idx.get(x.id), block: b,
                 names: (m[b] || []).map((mid) => (member(mid) || {}).name).filter(Boolean),
+                ...(assignmentIsAll(x,'blocks',b)?{all:true,confirmed:true}:{}),
                 ...(typeof AbsenceChanges !== "undefined" && (AbsenceChanges.confirmed(S.assignmentEdits?.[sid+"|"+x.id]?.blocks?.[b],x.blocks?.[b],m[b]) || AbsenceChanges.activeAbsenceChange(x.blocks?.[b],m[b],absentIds(sid))) ? {confirmed:true} : {}) });
             });
           });
@@ -14230,8 +14282,10 @@ function publicationData(gid, previous, isolatedLibraries = false) {
             const m = S.subs[sid + "|" + x.id];
             if (!m) return;
             Object.keys(m).forEach((li) => {
+              if (typeof AbsenceChanges!=='undefined' && AbsenceChanges.heading(x.lines[li])) return;
               arr.push({ showId: sid, songIdx: idx.get(x.id), lineIdx: Number(li),
                 names: (m[li] || []).map((mid) => (member(mid) || {}).name).filter(Boolean),
+                ...(assignmentIsAll(x,'lines',li)?{all:true,confirmed:true}:{}),
                 ...(typeof AbsenceChanges !== "undefined" && (AbsenceChanges.confirmed(S.assignmentEdits?.[sid+"|"+x.id]?.lines?.[li],x.lines[li]?.parts,m[li],x.lines[li]?.t) || AbsenceChanges.activeAbsenceChange(x.lines[li]?.parts,m[li],absentIds(sid))) ? {confirmed:true} : {}) });
             });
           });
@@ -16007,7 +16061,7 @@ function applySetlist(d) {
       const k = x.showId + "|" + so.id;
       S.gsubs[k] = S.gsubs[k] || {};
       S.gsubs[k][x.block] = (x.names || []).map((nm) => addMember(nm).id);
-      if(x.confirmed === true)recordAssignmentChange(so,"blocks",x.block,S.gsubs[k][x.block]);
+      if(x.confirmed === true)recordAssignmentChange(so,"blocks",x.block,S.gsubs[k][x.block],x.all === true);
     });
     S.subs = {};
     (d.subs || []).forEach((x) => {
@@ -16016,7 +16070,7 @@ function applySetlist(d) {
       const k = x.showId + "|" + so.id;
       S.subs[k] = S.subs[k] || {};
       S.subs[k][x.lineIdx] = (x.names || []).map((nm) => addMember(nm).id);
-      if(x.confirmed === true)recordAssignmentChange(so,"lines",x.lineIdx,S.subs[k][x.lineIdx]);
+      if(x.confirmed === true)recordAssignmentChange(so,"lines",x.lineIdx,S.subs[k][x.lineIdx],x.all === true);
     });
     // 曲も記録も無い公演は、そのグループに関係が無いので残さない
     S.shows = S.shows.filter((sw) =>

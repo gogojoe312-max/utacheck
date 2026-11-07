@@ -858,3 +858,11 @@ test('recovery comparison keeps differing display-cut provenance instead of sile
  const f=equivalentMergeFixture();f.remote.lib[0].displayCuts=[{lineIdx:0,hidden:false,sourceCut:true}];f.local.lib[0].displayCuts=[{lineIdx:0,hidden:false,sourceCut:false}];
  const out=API.mergePublication(f.target,f.remote,f.local);assert.deepEqual(out.preservedShowIds,['SOURCE_ONE']);assert.deepEqual(out.heldLocalShowIds,['LOCAL_ONE']);assert.deepEqual(out.payload.lib[0].displayCuts,f.remote.lib[0].displayCuts);
 });
+
+test('explicit all labels survive publication validation and cannot be dropped as semantically equivalent',()=>{
+ const remote=publication(),payload=publication(true);for(const d of [remote,payload])for(const field of ['subs','gsubs']){d[field][0].all=true;d[field][0].confirmed=true;}
+ assert.equal(API.verifyPublication(target(),remote,payload).ok,true);
+ const dropped=clone(remote);delete dropped.subs[0].all;assert.equal(API.verifyUnchangedManaged(target(),dropped,remote,['SOURCE_TWO']),false);
+ for(const value of ['全',1,null]){const bad=clone(payload);bad.subs[0].all=value;fails('payload-publication-invalid',()=>API.verifyPublication(target(),remote,bad));}
+ const bad=clone(payload);bad.gsubs[0].confirmed=false;fails('payload-publication-invalid',()=>API.verifyPublication(target(),remote,bad));
+});
