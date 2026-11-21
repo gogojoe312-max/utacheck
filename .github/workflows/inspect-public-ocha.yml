@@ -1,0 +1,32 @@
+name: Inspect public OCHA delivery metadata
+on:
+  push:
+    branches: ['work/ocha-live-status-20261121']
+    paths: ['.github/workflows/inspect-public-ocha.yml']
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - name: Read public delivery metadata only
+        uses: actions/github-script@v7
+        with:
+          script: |
+            let matches=0,scanned=0;
+            for(let page=1;page<=5;page++){
+              const response=await fetch('https://api.github.com/users/gogojoe312-max/gists?per_page=100&page='+page,{headers:{Accept:'application/vnd.github+json'}});
+              if(!response.ok){console.log(JSON.stringify({publicReadFailed:response.status}));break;}
+              const list=await response.json();scanned+=list.length;
+              for(const gist of list){
+                const file=gist.files?.['utacheck.json'];if(!file)continue;
+                try{
+                  const r=await fetch(file.raw_url);if(!r.ok)continue;const d=await r.json();
+                  if(!/OCHA|Original\s*CHaracter/i.test(d.groupName||''))continue;
+                  matches++;console.log(JSON.stringify({public:true,gistId:gist.id,source:file.raw_url,group:d.groupName,updatedAt:gist.updated_at,publicationVersion:d.version,songs:d.songs?.length,notes:d.notes?.length,shows:d.shows?.map(s=>({id:s.id,name:s.name,date:s.date})).slice(-3)}));
+                }catch(e){console.log('Unreadable public publication; no data changed.');}
+              }
+              if(list.length<100)break;
+            }
+            console.log(JSON.stringify({publicGistsScanned:scanned,publicOchaMatches:matches,privateGistsNotListed:true,readOnly:true}));
