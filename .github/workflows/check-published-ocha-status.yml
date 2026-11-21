@@ -1,0 +1,42 @@
+name: Verify published OCHA LIVE status
+on:
+  push:
+    branches: ['work/ocha-live-status-20261121']
+    paths: ['.github/workflows/check-published-ocha-status.yml']
+permissions:
+  contents: read
+jobs:
+  public-check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: cdf52fe6c5e2fd264434e4b177b7b9f313c7f6c8
+      - name: Load the previously verified focused browser driver
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs=require('fs');
+            const response=await github.rest.repos.getContent({owner:'gogojoe312-max',repo:'utacheck',path:'scripts/prepare-ocha-live-status.cjs',ref:'11113e513dc5615c9ee655b01f8b904ac2a9a2ff'});
+            const source=Buffer.from(response.data.content,'base64').toString('utf8');
+            const match=/^const BROWSER_DRIVER=(.*);$/m.exec(source);
+            if(!match)throw Error('Missing verified driver');
+            const driver=JSON.parse(match[1]).replace('.origin===origin', '.origin===new URL(origin).origin');
+            fs.mkdirSync('release-evidence',{recursive:true});fs.writeFileSync('release-evidence/ocha-focused-driver.cjs',driver);
+      - name: Install test browsers
+        run: bash scripts/install-test-browsers.sh
+      - name: Verify exact public assets and actual LIVE screen
+        run: |
+          export NODE_PATH="$RUNNER_TEMP/utacheck-browser/node_modules"
+          node tests/published-assets.cjs
+          for engine in chromium webkit; do
+            BROWSER_ENGINE="$engine" QA_BASE_URL=https://gogojoe312-max.github.io/utacheck/ QA_EXPECT_VERSION=16.41.58.85 QA_OUTPUT="release-evidence/public-$engine" timeout 150s node release-evidence/ocha-focused-driver.cjs
+          done
+          echo "PUBLIC_UI_VERIFIED_COMMIT=$(git rev-parse HEAD)"
+      - name: Keep public screen evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: public-ocha-live-status
+          path: release-evidence/
