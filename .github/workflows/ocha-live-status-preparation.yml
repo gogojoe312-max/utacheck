@@ -1,0 +1,55 @@
+name: Prepare and verify OCHA LIVE publication status
+on:
+  push:
+    branches: ['work/ocha-live-status-20261121']
+    paths: ['scripts/prepare-ocha-live-status.cjs', '.github/workflows/ocha-live-status-preparation.yml']
+permissions:
+  contents: write
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      NODE_PATH: ${{ runner.temp }}/utacheck-browser/node_modules
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Prepare isolated code change
+        run: |
+          node scripts/prepare-ocha-live-status.cjs
+          git fetch origin 6df732d7dc94b455165b66bd4c3b7205cfc0a16c
+          git read-tree 6df732d7dc94b455165b66bd4c3b7205cfc0a16c
+          git add app.js index.html sw.js tests/recovery-publication-status.test.cjs tests/publication-status-browser-helper.cjs tests/settings-rec-browser.cjs scripts/release-gate.cjs
+          git config user.name Codex
+          git config user.email codex@users.noreply.github.com
+          tree=$(git write-tree)
+          commit=$(git commit-tree "$tree" -p 6df732d7dc94b455165b66bd4c3b7205cfc0a16c -m "Scope LIVE publication status to its delivery group")
+          git update-ref HEAD "$commit"
+          echo "TARGET_COMMIT=$commit" >> "$GITHUB_ENV"
+      - name: Verify old behavior fails and fixed transport checks pass
+        run: |
+          if QA_APP_SOURCE=release-evidence/old-app.js node --test --test-name-pattern='OCHA LIVE status' tests/recovery-publication-status.test.cjs > release-evidence/old-unit.log 2>&1; then exit 1; fi
+          cat release-evidence/old-unit.log
+          node --test tests/recovery-publication-status.test.cjs tests/publication-preservation.test.cjs tests/publication-source.test.cjs tests/publication-transport.test.cjs
+      - name: Install isolated test browsers
+        run: bash scripts/install-test-browsers.sh
+      - name: Verify LIVE header, group switch, save and reload in both engines
+        run: |
+          for engine in chromium webkit; do
+            if BROWSER_ENGINE="$engine" QA_OLD_APP=release-evidence/old-app.js QA_OUTPUT="release-evidence/old-$engine" timeout 70s node release-evidence/ocha-focused-driver.cjs > "release-evidence/old-$engine.log" 2>&1; then exit 1; fi
+            cat "release-evidence/old-$engine.log"
+            node -e 'const s=require("fs").readFileSync(process.argv[1],"utf8"); if(!s.includes("配信保留（1件）")||!s.includes("配信内容を確認済み"))process.exit(1)' "release-evidence/old-$engine.log"
+            BROWSER_ENGINE="$engine" QA_OUTPUT="release-evidence/fixed-$engine" timeout 100s node release-evidence/ocha-focused-driver.cjs
+          done
+      - name: Save verified commit to a new result branch only
+        run: |
+          git push origin "$TARGET_COMMIT:refs/heads/work/ocha-live-status-result-${{ github.run_id }}"
+          echo "VERIFIED_CODE_COMMIT=$TARGET_COMMIT"
+      - name: Keep verification screenshots and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ocha-live-publication-status
+          path: release-evidence/
