@@ -1,6 +1,6 @@
 'use strict';
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
-const source=fs.readFileSync(__dirname+'/../app.js','utf8');
+const source=fs.readFileSync(process.env.QA_APP_SOURCE||__dirname+'/../app.js','utf8');
 const block=(start,end)=>source.slice(source.indexOf(start),source.indexOf(end,source.indexOf(start)));
 function fixture(statuses=['ready','blocked']) {
  const calls=[],alerts=[],status={textContent:'',style:{}},sheet={memo:'Keep this draft'};
@@ -34,7 +34,7 @@ test('initial status rendering cannot show stale success after a recovery hold',
  assert.match(f.status.textContent,/配信結果の確認待ち/);assert.doesNotMatch(f.status.textContent,/公開済/);
  assert.equal(f.c.U.sheet,f.sheet);
  const live=block('  const noSong = VIEW()', '  <div class="hd song-header">');
- assert(live.includes('const publicationStatus = publicationStatusText()'));
+ assert(live.includes('const publicationStatus = publicationStatusText(publicationGroup || undefined)'));
 });
 for(const result of [false,'skip'])test('declined transport '+String(result)+' never becomes a successful publication',async()=>{
  const f=fixture(['ready']);f.c.gistPush=async id=>{f.calls.push(id);return result;};
@@ -103,4 +103,21 @@ for(const [kind,expected,remaining] of [
  const o=f.S.recoveryDelivery.targets[1],g=f.S.groups[1];
  if(['foreign','persist-fails'].includes(kind)){assert.equal(o.status,'uncertain');assert.equal(o.pendingDigest,'sent');assert.equal(g.lastKey,'old-key');assert.equal(g.publishKeyPending,true);}
  else{assert.equal(o.status,'ready');assert.equal(o.pendingDigest,undefined);assert.equal(g.lastKey,kind==='old'?'old-key':f.key('o'));assert.equal(f.c.RecoveryDelivery.pending('o'),kind==='old');}
+});
+
+for(const held of ['blocked','prepared','sending','uncertain'])test('OCHA LIVE status excludes another group hold without clearing it: '+held,()=>{
+ const f=fixture(['ready',held]);f.S.groups[0].name='OCHA NORMA';f.S.groups[1].name='ロージークロニクル';const state=JSON.stringify(f.S);
+ f.c.RecoveryDelivery.pending=()=>false;
+ assert.equal(f.c.publicationStatusText('g0'),'配信内容を確認済み');
+ assert.match(f.c.publicationStatusText(),held==='sending'||held==='uncertain'?/結果の確認待ち/:/配信保留/);
+ assert.match(f.c.publicationStatusText('g1'),held==='sending'||held==='uncertain'?/結果の確認待ち（1件）/:/配信保留（1件）/);
+ assert.equal(JSON.stringify(f.S),state);f.status.dataset={publicationGroup:'g0'};f.c.renderPublishStatus();
+ assert.equal(f.status.textContent,' ・ 配信内容を確認済み');assert.equal(f.c.U.sheet,f.sheet);
+});
+test('OCHA unsent edits and unresolved OCHA warnings never become a confirmed publication',()=>{
+ const f=fixture();f.c.RecoveryDelivery.pending=()=>true;assert.equal(f.c.publicationStatusText('g0'),'未送信');
+ f.c.RecoveryDelivery.pending=()=>false;f.S.groups[0].publishWarning='端末版差分は保留';assert.equal(f.c.publicationStatusText('g0'),'配信に確認事項あり');
+ delete f.S.groups[0].publishWarning;f.S.recoveryDelivery.targets[0].heldLocalShowIds=['ocha-live'];assert.equal(f.c.publicationStatusText('g0'),'配信に確認事項あり');
+ delete f.S.recoveryDelivery.targets[0].heldLocalShowIds;f.c.publishIssues=['Group 0：通信エラー'];assert.equal(f.c.publicationStatusText('g0'),'配信に確認事項あり');
+ f.c.publishIssues=[];f.c.RecoveryDelivery.canPublish=()=>false;assert.match(f.c.publicationStatusText('g0'),/未送信/);
 });

@@ -32,7 +32,7 @@ function main(stage){
   const dir=path.join(out,name);fs.mkdirSync(dir,{recursive:true});
   const log=fs.openSync(path.join(dir,'check.log'),'w');
   console.log('Checking '+name+'…');
-  try{return spawnSync(process.execPath,args,{cwd:root,env:{...process.env,...env,QA_OUTPUT:dir},stdio:['ignore',log,log]}).status;}
+  try{const status=spawnSync(process.execPath,args,{cwd:root,env:{...process.env,...env,QA_OUTPUT:dir},stdio:['ignore',log,log]}).status;if(status!==0)console.error(fs.readFileSync(path.join(dir,'check.log'),'utf8').slice(-20000));else if(fs.existsSync(path.join(dir,'report.json'))){const report=JSON.parse(fs.readFileSync(path.join(dir,'report.json'),'utf8'));console.log(JSON.stringify({check:name,passed:report.passed,errors:report.errors,livePublicationStatus:report.results?.map(row=>({width:row.width,scoped:row.livePublicationStatusScopedToDeliveryGroup,otherHoldPreserved:row.otherGroupHoldPreserved,ownWarningVisible:row.ownPendingAndUnknownRemainVisible,reloaded:row.livePublicationStatusReload}))}));}return status;}
   finally{fs.closeSync(log);}
  });
  const version=/utacheck-([0-9.]+)/.exec(fs.readFileSync(path.join(root,'sw.js'),'utf8'))?.[1];

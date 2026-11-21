@@ -118,7 +118,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.84";
+const APP_VER = "16.41.58.85";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -6850,7 +6850,8 @@ function viewLive() {
       「${h(fsec)}」の歌詞がありません</div>`;
   }
   const noSong = VIEW() && !SONGS().length;
-  const publicationStatus = publicationStatusText();
+  const publicationGroup = s && !S.recMode && !VIEW() ? songDeliveryGroupId(s) : "";
+  const publicationStatus = publicationStatusText(publicationGroup || undefined);
   return `
   ${preview ? `<div class="noprint" style="padding:10px 12px;background:#1F2E24;color:#8FD9A8;font-size:12px">
       メンバーの見え方を確認中（手元のデータは変わりません／既読も残りません）
@@ -6882,7 +6883,7 @@ function viewLive() {
       <div class="t2">${s && s.mark ? `<b style="color:var(--accent)">★</b> ` : ""}${s && !S.recMode && takeLabel(s) ? `<b class="tkmk">${h(takeLabel(s))}</b>` : ""}${h(s ? s.title : "曲がありません")}</div>
       <div class="t1">${S.recMode
         ? `録音${s ? " ・ " + h(recordingClassification(s).artist) : ""}`
-        : `${s ? h((S.groups.find((x) => x.id === (VIEW() ? s.groupId : songDeliveryGroupId(s))) || {}).name || "") + " ・ " : ""}${h(showName() || "公演名未設定")}${SONGS().length ? ` ・ ${U.songIdx + 1}/${SONGS().length}` : ""}${showNoPub() ? ` ・ <span style="color:var(--dim)">配信しない</span>` : `<span data-push-state style="color:${/未送信|保留|一部送信|確認待ち|確認事項|結果不明/.test(publicationStatus) ? "var(--bad)" : "var(--dim)"}">${publicationStatus ? " ・ " + h(publicationStatus) : ""}</span>`}`}${recWho()}${S.recMode ? `<span id="pcd2" style="margin-left:8px;font-variant-numeric:tabular-nums"></span>` : ""}</div>
+        : `${s ? h((S.groups.find((x) => x.id === (VIEW() ? s.groupId : songDeliveryGroupId(s))) || {}).name || "") + " ・ " : ""}${h(showName() || "公演名未設定")}${SONGS().length ? ` ・ ${U.songIdx + 1}/${SONGS().length}` : ""}${showNoPub() ? ` ・ <span style="color:var(--dim)">配信しない</span>` : `<span data-push-state data-publication-group="${h(publicationGroup || "")}" style="color:${/未送信|保留|一部送信|確認待ち|確認事項|結果不明/.test(publicationStatus) ? "var(--bad)" : "var(--dim)"}">${publicationStatus ? " ・ " + h(publicationStatus) : ""}</span>`}`}${recWho()}${S.recMode ? `<span id="pcd2" style="margin-left:8px;font-variant-numeric:tabular-nums"></span>` : ""}</div>
       ${typeof ArrangementVerificationUI !== "undefined" ? ArrangementVerificationUI.html(s) : ""}
       ${VIEW() && S.pubAt ? `<div class="song-freshness">${freshLine()}</div>` : ""}
     </button>
@@ -14829,8 +14830,21 @@ function recoveryPublicationHolds() {
     return {groupId:t.groupId, unknown, message:name + "：" + reason};
   });
 }
-function publicationStatusText() {
-  const held = recoveryPublicationHolds();
+function publicationStatusText(groupId) {
+  const allHolds = recoveryPublicationHolds();
+  const held = groupId ? allHolds.filter(t => t.groupId === groupId) : allHolds;
+  // The LIVE header describes its song's destination. Settings retains all holds.
+  if (groupId && allHolds.length && !held.length) {
+    const g = S.groups.find(g => g.id === groupId);
+    const binding = S.recoveryDelivery?.targets?.find(t => t.groupId === groupId);
+    const issues = typeof publishIssues !== "undefined" ? publishIssues : [];
+    if (g?.publishWarning || binding?.heldLocalShowIds?.length
+        || g && issues.some(issue => issue.startsWith(g.name + "："))) return "配信に確認事項あり";
+    if (!g || typeof RecoveryDelivery === "undefined"
+        || typeof RecoveryDelivery.canPublish !== "function" || !RecoveryDelivery.canPublish(groupId)
+        || typeof RecoveryDelivery.pending !== "function") return "未送信（設定で原因を確認）";
+    return RecoveryDelivery.pending(groupId) ? "未送信" : "配信内容を確認済み";
+  }
   if (!held.length) {
     // A hold label can have been cached in pushState by an earlier send.
     // Reconciliation clears the ledger; do not keep showing that old warning.
@@ -14855,7 +14869,7 @@ function renderPublishStatus() {
   if (U.view === "setup") { render(true); return; }
   const status = app.querySelector("[data-push-state]");
   if (status) {
-    const text = publicationStatusText();
+    const text = publicationStatusText(status.dataset?.publicationGroup || undefined);
     status.textContent = text ? " ・ " + text : "";
     status.style.color = /未送信|保留|一部送信|確認待ち|確認事項|結果不明/.test(text) ? "var(--bad)" : "var(--dim)";
   }
