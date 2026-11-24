@@ -470,6 +470,7 @@
     if(!canPublish(gid)||pushing)return false;
     const binding=currentBinding(gid),token=S.ghToken,group=S.groups.find(g=>g.id===gid),baseline=JSON.stringify(S),contentSnapshot=JSON.stringify({...S,recoveryDelivery:undefined});
     pushing=true;
+    const retry=binding.baselineRetry,priorPendingDigest=binding.pendingDigest,priorPendingKey=binding.pendingKey;
     let attempted=false,pendingDigest='',pendingKey='',previousDigest=binding.expectedRemoteSha256,release;
     const destination=group.gistId,source=group.src,encryptionKey=group.key;
     const bound=()=>ready()&&!session&&currentBinding(gid)===binding&&S.ghToken===token&&S.groups.find(g=>g.id===gid)===group&&!group.nopub
@@ -484,6 +485,9 @@
       const localPayload=payloadFor(S,gid),key=payloadKey(localPayload);
       if(!force&&!group.publishKeyPending&&samePublicationKey(group.lastKey,key))return 'same';
       const remote=await readTarget(target,token,active);
+      if(retry&&(!singleOwner()||retry.owner!==S.deviceId||retry.groupId!==gid||retry.gistId!==destination||retry.src!==source
+        ||retry.baseline!==remote.digest||retry.baseline!==binding.expectedRemoteSha256||retry.receipt!==priorPendingDigest
+        ||retry.tokenDigest!==await backupDigest(token)||!active()))fail('source-changed');
       if(remote.digest!==binding.expectedRemoteSha256&&!singleOwner())fail('source-changed');
       const merged=singleOwner() ? RecoveryDeliveryScope.mergeOwnerPublication(target,remote.data,localPayload)
         : RecoveryDeliveryScope.mergePublication(target,remote.data,localPayload,binding.preservedShowIds),payload=merged.payload;
@@ -501,12 +505,30 @@
       const confirmed=await readTarget(target,token,confirming);if(confirmed.digest!==digest)fail('unknown');
       await preserveRemote(target,confirmed,confirming);
       binding.expectedRemoteSha256=digest;binding.status='ready';delete binding.pendingDigest;delete binding.pendingKey;
-      group.lastKey=key;group.publishKeyPending=false;delete binding.lastFailure;group.publishWarning=merged.heldLocalShowIds.length?'現配信の公演を保持しています。同じ公演の端末版差分は保留です。':'';await persist();return 'sent';
+      delete binding.baselineRetry;group.lastKey=key;group.publishKeyPending=false;delete binding.lastFailure;group.publishWarning=merged.heldLocalShowIds.length?'現配信の公演を保持しています。同じ公演の端末版差分は保留です。':'';await persist();return 'sent';
     }catch(e){
+      if(retry)binding.baselineRetry=retry;
       if(attempted){binding.expectedRemoteSha256=previousDigest;binding.status='uncertain';binding.pendingDigest=pendingDigest;binding.pendingKey=pendingKey;try{await persist();}catch(_){};const error=new Error(message({reconnectCode:'unknown'}));error.publicationUnknown=true;throw error;}
+      if(retry){
+        binding.status='uncertain';binding.pendingDigest=priorPendingDigest;binding.pendingKey=priorPendingKey;
+        try{await persist();}catch(_){}throw new Error(message(e));
+      }
       if(binding.status==='sending'||!['cancelled','local-changed'].includes(e.reconnectCode)){binding.status='blocked';binding.lastFailure=message(e);try{await persist();}catch(_){}}
       throw new Error(message(e));
     }finally{release?.();pushing=false;}
+  }
+  const baselineObservations=new WeakMap();
+  function stableBaseline(target,group,token,digest){
+    if(!singleOwner()||!token||target.baselineRetry||!digest||digest!==target.expectedRemoteSha256||digest===target.pendingDigest){
+      baselineObservations.delete(target);return false;
+    }
+    const prior=baselineObservations.get(target),now=typeof performance==='undefined'?Date.now():performance.now();
+    if(prior&&prior.group===group&&prior.owner===S.deviceId&&prior.token===token&&prior.gistId===target.gistId&&prior.src===target.src
+      &&prior.baseline===digest&&prior.receipt===target.pendingDigest&&prior.key===target.pendingKey){
+      return now-prior.at>=30000;
+    }
+    baselineObservations.set(target,{group,owner:S.deviceId,token,gistId:target.gistId,src:target.src,baseline:digest,receipt:target.pendingDigest,key:target.pendingKey,at:now});
+    return false;
   }
   async function reconcile({silent=false,onlyUncertain=false,includeBlocked=false,groupId}={}){
     if(!ready()||session||pushing||publishInFlight||S.recoveryDelivery?.version!==2)return;pushing=true;let release;
@@ -527,7 +549,13 @@
         // not prevent reading it or allow an unrelated remote revision to count.
         if(!confirming)RecoveryDeliveryScope.plan(S,packetForBindings(target.groupId));
         const remote=await readTarget(target,token,active);
-        if(confirming&&remote.digest!==target.pendingDigest)fail('unknown');
+        let retry=null;
+        if(confirming&&remote.digest!==target.pendingDigest){
+          if(!stableBaseline(target,group,token,remote.digest))fail('unknown');
+          const receipt=target.pendingDigest,pendingKey=target.pendingKey,tokenDigest=await backupDigest(token);
+          if(!active()||!stableBaseline(target,group,token,remote.digest)||target.pendingDigest!==receipt||target.pendingKey!==pendingKey)fail('unknown');
+          retry={owner:S.deviceId,groupId:target.groupId,gistId:target.gistId,src:target.src,baseline:remote.digest,receipt,tokenDigest};
+        }
         let rebased=false,ownerMerge=null;
         if(!confirming&&includeBlocked&&singleOwner()){
           const scope=RecoveryDeliveryScope.extendForOwnedShows(S,RecoveryDeliveryScope.plan(S,packetForBindings(target.groupId)).targets[0]);
@@ -553,7 +581,10 @@
           Object.assign(target,{preservedShowIds:ownerMerge.preservedShowIds,heldLocalShowIds:ownerMerge.heldLocalShowIds,managedLocalShowIds:ownerMerge.managedLocalShowIds,preservedShowNames:ownerMerge.preservedShowNames});
           if(g)g.publishKeyPending=true;
         }
-        target.status='ready';delete target.pendingDigest;delete target.pendingKey;delete target.lastFailure;
+        target.status='ready';delete target.lastFailure;
+        if(retry){target.baselineRetry=retry;g.publishKeyPending=true;}
+        else {delete target.baselineRetry;delete target.pendingDigest;delete target.pendingKey;}
+        baselineObservations.delete(target);
         try{await persist();}catch(error){Object.keys(target).forEach(k=>delete target[k]);Object.assign(target,prior);if(g){g.lastKey=priorKey;g.publishKeyPending=priorPending;}throw error;}
         confirmed++;
         const name=g?.name||target.groupName||'配信先';
