@@ -1,0 +1,34 @@
+name: Verify public LIVE and unscheduled REC
+on:
+  push:
+    branches: [work/verify-public-live-rec-20261124]
+permissions:
+  contents: read
+jobs:
+  public:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 22
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: [chromium, webkit]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ceb80e737fedd8ca9ccbb09d996b1190d1def78a
+      - run: bash scripts/install-test-browsers.sh
+      - name: Verify deployed file digests
+        run: node tests/published-assets.cjs
+      - name: Test deployed app at both phone widths
+        env:
+          BROWSER_ENGINE: ${{ matrix.engine }}
+          QA_BASE_URL: https://gogojoe312-max.github.io/utacheck/
+          QA_OUTPUT: release-evidence/public
+        run: |
+          NODE_PATH="$RUNNER_TEMP/utacheck-browser/node_modules" node tests/settings-rec-browser.cjs
+          node -e "const r=require('./release-evidence/public/report.json'); console.log(r.results.map(x=>({width:x.width,rec:x.unscheduledRecordingReload,undo:x.unscheduledRecordingUndo,other:x.otherSongSchedulePreserved,delivery:x.livePublicationStatusReload})));if(!r.passed||r.results.length!==2||r.results.some(x=>!x.unscheduledRecordingReload||!x.unscheduledRecordingUndo||!x.otherSongSchedulePreserved||!x.livePublicationStatusReload))process.exit(1)"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: published-live-rec-${{ matrix.engine }}
+          path: release-evidence/public
