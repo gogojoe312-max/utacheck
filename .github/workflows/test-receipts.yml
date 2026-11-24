@@ -1,0 +1,12 @@
+name: LIVE receipt regression diagnostics
+on:
+  push:
+    branches: [work/live-receipt-qa-20261124]
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: node --test tests/*.test.cjs >/tmp/check.log || { grep -A35 '^not ok' /tmp/check.log; exit 1; }
