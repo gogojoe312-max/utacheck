@@ -1,0 +1,19 @@
+name: Phone-width REC verification
+on:
+  push:
+    branches: [work/rec-phone-checks-20261124]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: [chromium, webkit]
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/install-test-browsers.sh
+      - run: |
+          python3 -m http.server 8432 --bind 127.0.0.1 >/tmp/http.log 2>&1 &
+          NODE_PATH="$RUNNER_TEMP/utacheck-browser/node_modules" ENGINE="${{ matrix.engine }}" node rec-phone-check.cjs
