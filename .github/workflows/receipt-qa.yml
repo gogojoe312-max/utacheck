@@ -1,0 +1,13 @@
+name: Recovery receipt QA
+on:
+  push:
+    branches: [work/astra-receipt-qa-20261124]
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: node --test tests/*.test.cjs > /tmp/qa.log || { grep -A35 '^not ok' /tmp/qa.log; tail -10 /tmp/qa.log; exit 1; }
+      - run: tail -10 /tmp/qa.log
