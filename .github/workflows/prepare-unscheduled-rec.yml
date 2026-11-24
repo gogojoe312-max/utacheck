@@ -1,0 +1,26 @@
+name: Prepare unscheduled REC change
+on:
+  push:
+    branches: [work/prepare-unscheduled-rec-20261124]
+permissions:
+  contents: write
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: node scripts/prepare-unscheduled-rec.cjs
+      - name: Save application changes on an isolated branch
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git read-tree cdf52fe6c5e2fd264434e4b177b7b9f313c7f6c8
+          git add -- app.js sw.js index.html tests/settings-rec-browser.cjs tests/unscheduled-recording-browser-helper.cjs
+          tree=$(git write-tree)
+          commit=$(git commit-tree "$tree" -p cdf52fe6c5e2fd264434e4b177b7b9f313c7f6c8 -m "Allow REC section start and OK without a schedule")
+          git push origin "$commit:refs/heads/work/unscheduled-rec-source-${GITHUB_RUN_ID}"
+          echo "REC_SOURCE=$commit"
+      - name: Behavior tests
+        run: node --test tests/*.test.cjs > /tmp/rec-suite.log || { grep -A35 '^not ok' /tmp/rec-suite.log; exit 1; }
