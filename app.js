@@ -118,7 +118,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.85";
+const APP_VER = "16.41.58.86";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -2088,8 +2088,8 @@ function recordingSectionKinds(ctx) {
 function recordingSectionContext(so = recSong(), section = focusSec(), selectedSlot = null) {
   if (!S.recMode || !so || !Array.isArray(so.lines)) return null;
   const slots = S.plan?.slots || [], selected = slots.filter(s => s.id === S.planFocus);
-  const slot = selectedSlot || (selected.length === 1 ? selected[0] : focusRow()?.s);
-  if (!slot || slot.kind === "break" || !slot.id || !String(slot.name || "").trim() || slots.filter(s => s.id === slot.id).length !== 1) return null;
+  const slot = selectedSlot || focusRow()?.s || (selected.length === 1 ? selected[0] : null);
+  if (!slot || slot.kind === "break" || !slot.id || !String(slot.name || "").trim() || (slot.kind === "unscheduled" ? slot.songId !== so.id : slots.filter(s => s.id === slot.id).length !== 1)) return null;
   const songId = typeof recordingPlanSourceId === "function" ? recordingPlanSourceId(so.id) : so.id;
   if (slot.songId && slot.songId !== songId && slot.songId !== so.id) return null;
   section ||= slot.secCur || "";
@@ -2121,7 +2121,7 @@ function changeRecordingSectionProgress(action, button) {
   if (VIEW() || preview || U.view !== "live" || U.overview || U.sheet || U.menu || !recordingInboxCanWrite()) return false;
   if (!["split","merge"].includes(action)) return false;
   const ctx = recordingSectionContext();
-  if (!ctx || action === "split" && !recordingSectionKinds(ctx).mixed) return false;
+  if (!ctx || ctx.slot.kind === "unscheduled" && !ctx.so.freeRecSlots?.includes(ctx.slot) || action === "split" && !recordingSectionKinds(ctx).mixed) return false;
   const next = updatedRecordingSectionState(recordingSectionRecord(ctx),action);
   if (!ctx || !next || button?.dataset.slot !== ctx.slot.id || button.dataset.song !== ctx.so.id || button.dataset.section !== ctx.section) return false;
   pushUndo();ctx.slot.sectionChecks = {...ctx.slot.sectionChecks,[ctx.key]:next};
@@ -2135,8 +2135,9 @@ function recordingSectionDone(slot, section) {
   const ctx=recordingSectionContext(recSong(),section,slot);
   return ctx ? recordingSectionSummary(ctx).done : slot.secLog?.[section]!=null;
 }
-function completeRecordingSection() {
+function completeRecordingSection(button) {
   const live=focusRow();
+  if (button?.dataset.song && (button.dataset.song !== recSong()?.id || button.dataset.slot !== live?.s.id || button.dataset.section !== live?.s.secCur)) return false;
   if (VIEW() || preview || !S.recMode || !recordingInboxCanWrite() || !live?.live || live.s.kind==='break' || !live.s.secCur) return false;
   const slot=live.s, section=slot.secCur,ctx=recordingSectionContext(recSong(),section,slot), value=recordingSectionRecord(ctx);
   if (ctx && !value) return false;
@@ -2157,14 +2158,14 @@ function completeRecordingSection() {
   slot.secLog={...slot.secLog,[section]:slot.secStart ? Math.max(1,Math.round((Date.now()-slot.secStart)/60000)) : 0};
   const next=sectionsOf(slot).find(x=>!x.done && !x.skip && x.name!==section);
   if (next) { slot.secCur=next.name;slot.secStart=Date.now();U.secView=next.name; }
-  else { finishSlot(slot);S.planFocus=slot.id; }
+  else { finishSlot(slot);if (slot.kind !== "unscheduled") S.planFocus=slot.id; }
   save();render();
   if (next) setTimeout(()=>document.getElementById('sec-'+next.name)?.scrollIntoView?.({block:'start'}),0);
   return true;
 }
 function recordingSectionControlsHTML(so) {
   const ctx = recordingSectionContext(so), state = recordingSectionSummary(ctx);
-  if (!ctx || !state.value || !recordingSectionKinds(ctx).mixed) return "";
+  if (!ctx || !state.value || ctx.slot.kind === "unscheduled" && !so.freeRecSlots?.includes(ctx.slot) || !recordingSectionKinds(ctx).mixed) return "";
   const value = state.value, selected = recordingSingerFilter(so);
   const attributes = ' data-slot="'+h(ctx.slot.id)+'" data-song="'+h(so.id)+'" data-section="'+h(ctx.section)+'"';
   if (!value.split) return '<div class="rec-section-controls"><button class="chip sm" data-act="rec-section-progress" data-id="split"'+attributes+'>ソロ／ユニゾンに分ける</button></div>';
@@ -6706,6 +6707,7 @@ function linesInSec(so, nm) {
   const ls = so.lines || [];
   const out = [];
   if (!nm) return out;
+  if (nm === "曲全体" && !sectionOrder().length) return ls.flatMap((line,i) => line.gap || line.cut ? [] : [i]);
   // Gaya1 のような枝番も、表記の枠として扱う
   const isTag = tagSecNames().includes(nm) || tagSecNames().includes(tagBase(nm));
   ls.forEach((l, i) => {
@@ -6723,6 +6725,7 @@ function focusSec() {
   if (!U.secView) return "";
   // Gaya1 のような枝番は、並びには Gaya としてしか入っていない。
   // 基底名が並びにあれば、その枝番も出せるようにする。
+  if (!ord.length && U.secView === "曲全体") return U.secView;
   if (ord.includes(U.secView) || ord.includes(tagBase(U.secView))) return U.secView;
   return "";
 }
@@ -9819,7 +9822,7 @@ function recordingClassificationSheetHTML(menu) {
 function recWho() {
   if (!S.recMode) return "";
   const r = focusRow();
-  if (!r || r.s.kind === "break") return "";
+  if (!r || r.s.kind === "break" || r.s.kind === "unscheduled" && !r.s.memberId) return "";
   return `<span style="color:var(--accent);font-weight:700">　${h(compactMemberLabel(r.s.name))}</span>`;
 }
 
@@ -9834,14 +9837,43 @@ function takeNo(slot) {
 }
 
 /* いま扱っている枠。進行で人を押していればその人、なければ進行中の人。 */
+function unscheduledRecordingRow(so) {
+  if (!so?.lines?.some(line => !line.gap && !line.cut && !line.skip && String(line.t || "").trim())) return null;
+  const selected = U.recFocusId ?? so.freeRecMemberId ?? "";
+  const member = selected && focusList().find(m => m.id === selected);
+  const memberId = member?.id || "";
+  const saved = so.freeRecSlots?.find(slot => slot.memberId === memberId);
+  const slot = saved || {kind:"unscheduled",id:JSON.stringify([so.id,memberId]),songId:so.id,
+    memberId,name:member?.name || "進行表なし",prep:0};
+  return {s:slot, live:slot.a0 != null && slot.a1 == null, done:slot.a1 != null};
+}
+function startUnscheduledRecording(button) {
+  if (!S.recMode || U.view !== "live" || VIEW() || preview || !recordingInboxCanWrite()) return;
+  const row = focusRow(), so = recSong(), slot = row?.s;
+  if (!so || slot?.kind !== "unscheduled" || row.live || button.dataset.song !== so.id || button.dataset.id !== slot.id) return;
+  const sections = sectionsOf(slot).filter(s => !s.skip);
+  const section = sections.find(s => s.name === focusSec()) || sections.find(s => !s.done);
+  if (!section) return;
+  pushUndo();
+  pauseRecSchedule();
+  so.freeRecSlots ||= [];
+  if (!so.freeRecSlots.includes(slot)) so.freeRecSlots.push(slot);
+  so.freeRecMemberId = slot.memberId;
+  slot.a0 = nowMin(); delete slot.a1;
+  slot.startAt = slot.secStart = Date.now();
+  slot.secCur = U.secView = section.name;
+  save(); render();
+}
 function focusRow() {
-  if (recordingPlanExpired() && U.view !== "recplan") return null;
+  const free = S.recMode && U.view === "live";
+  if (recordingPlanExpired() && U.view !== "recplan") return free ? unscheduledRecordingRow(recSong()) : null;
   const rows = planRows();
   const foc = S.planFocus ? rows.find((r) => r.s.id === S.planFocus) : null;
   const scheduled = !U.recSchedulePaused && U.recScheduleId ? rows.find(r => r.s.id === U.recScheduleId) : null;
   // An explicitly running take always keeps its existing context.
-  if (scheduled && !rows.some(r => r.live)) return {...scheduled, scheduled:true};
-  return foc || rows.find((r) => r.live);
+  const row = scheduled && !rows.some(r => r.live) ? {...scheduled, scheduled:true} : foc || rows.find(r => r.live);
+  if (!free || row && (!row.s.songId || row.s.songId === recSong()?.id || row.s.songId === recordingPlanSourceId(recSong()?.id))) return row;
+  return unscheduledRecordingRow(recSong());
 }
 
 // 録音枠の人を歌割のメンバーへ結び付ける。曖昧な姓は選ばない。
@@ -9933,15 +9965,16 @@ function recBar() {
   return `${tabs ? `<div class="sectabs" data-section-strip="main">${tabs}</div>` : ""}${subTabs}${recordingSingerFilterHTML(recSong())}
   <div class="aubar rec-tools">
     <div class="rec-tools-meta">
-      ${recordingPlanExpired() ? '' : '<button class="chip sm" data-act="goplan">進行表</button><button class="chip sm" data-act="recschedule" aria-pressed="'+!U.recSchedulePaused+'">'+(U.recSchedulePaused ? '予定に合わせる' : '自動開始中')+'</button>'}
+      ${recordingPlanExpired() ? '' : '<button class="chip sm" data-act="goplan">進行表</button>'+(live?.s.kind === 'unscheduled' ? '' : '<button class="chip sm" data-act="recschedule" aria-pressed="'+!U.recSchedulePaused+'">'+(U.recSchedulePaused ? '予定に合わせる' : '自動開始中')+'</button>')}
       ${live ? `<span class="rec-person">${h(live.s.name)}${live.done ? " · 終了" : ""}</span>` : '<span class="grow"></span>'}
-      ${live && (live.live || live.scheduled) ? '<span id="pcd">—</span>' : ""}
+      ${live && live.s.kind !== "unscheduled" && (live.live || live.scheduled) ? '<span id="pcd">—</span>' : ""}
       <button class="chip sm" data-act="draw" aria-label="手書き" aria-pressed="${!!U.draw}">✎</button>
       ${U.draw ? `<button class="chip sm" data-act="eraser" aria-label="消しゴム" aria-pressed="${!!U.erase}">消</button>` : ""}
     </div>
     <div class="rec-tools-actions">
       <button class="chip sm" data-act="undoall" aria-label="取り消す">取消</button>
-      ${live && live.live ? `<button class="chip sm rec-primary" data-act="pnextsec">OK</button>`
+      ${live && live.live ? `<button class="chip sm rec-primary" data-act="pnextsec" data-song="${h(recSong()?.id || "")}" data-slot="${h(live.s.id)}" data-section="${h(live.s.secCur || "")}">OK</button>`
+        : live?.s.kind === "unscheduled" ? ((!live.done || focusSec()) && secs.some(s => !s.skip) ? `<button class="chip sm rec-primary" data-act="free-rec-start" data-id="${h(live.s.id)}" data-song="${h(live.s.songId)}">開始</button>` : "")
         : live && !live.done ? `<button class="chip sm rec-primary" data-act="pstart" data-id="${live.s.id}">開始</button>` : ""}
     </div>
   </div>`;
@@ -10115,6 +10148,7 @@ for (const event of ["pointerup","pointercancel"]) document.addEventListener(eve
 function autoPlan() {
   if (!S.recMode || VIEW() || preview || document.hidden || !recordingInboxCanWrite() || !["live","recplan"].includes(U.view) || U.recSchedulePaused || recScheduleEditing()) return;
   if (REC || recordingStartPending || recordingFinalizePending || pitchStartPending || PT.on || micStream) return;
+  if (U.view === "live" && recSong()?.freeRecSlots?.some(slot => slot.a0 != null && slot.a1 == null)) return;
   const active = (S.plan.slots || []).filter(s => s.a0 != null && s.a1 == null);
   // Manual starts keep control, including after a reload that clears UI flags.
   if (active.length > 1 || active.some(s => !s.autoSchedule || s.autoSchedule.startAt !== s.startAt)) { U.recScheduleId = ""; return; }
@@ -10195,6 +10229,10 @@ function tickPlan() {
     return;
   }
   if (!live || !live.live) { if (el) el.textContent = "—"; if (el2) el2.textContent = ""; return; }
+  if (live.s.kind === "unscheduled") {
+    if (el2) { el2.textContent = fmtLeft(Math.max(0,(Date.now()-live.s.startAt)/1000)); el2.style.color = "var(--dim)"; }
+    return;
+  }
   if (el2 && !live.s.startAt) { el2.textContent = ""; }
   else if (el2) {
     const all = Number(live.s.min || 0) * 60 - (live.s.startAt ? (Date.now() - live.s.startAt) / 1000 : 0);
@@ -10398,6 +10436,7 @@ const SEC_MIN = 5;
 function sectionsOf(slot) {
   if (!slot || slot.kind === "break") return [];
   const names2 = sectionOrder();
+  if (!names2.length && slot.kind === "unscheduled") names2.push("曲全体");
   const log = slot.secLog || {};
   const adj = slot.sec || {};
   const prep = adj[PREP] != null ? Number(adj[PREP]) : (slot.prep != null ? Number(slot.prep) : Number(S.planPrep || 0));
@@ -11724,7 +11763,12 @@ document.addEventListener("click", async (e) => {
     case "metsub": S.sub = Number(id); save(); render(); break;
     case "focus": U.focus = id; U.picker = false; render(); break;
     case "recschedule": U.recSchedulePaused=!U.recSchedulePaused; U.recScheduleId=""; if(!U.recSchedulePaused)autoPlan(); render(); break;
-    case "recfocus": pauseRecSchedule(); U.recFocusId = id; render(); break;
+    case "recfocus": {
+      pauseRecSchedule(); U.recFocusId = id;
+      const so = recSong();
+      if (so?.freeRecSlots?.length) { so.freeRecMemberId = id; save(); }
+      render(); break;
+    }
     case "rec-section-progress": changeRecordingSectionProgress(id,b); break;
     case "rec-singer-filter":
       { const ctx=recordingSectionContext(); if (ctx && recordingSectionRecord(ctx)?.split && ["","solo","unison"].includes(id)) { U.recSingerSongId = ctx.so.id;U.recSingerSlotId=ctx.slot.id;U.recSingerSection=ctx.section;U.recSingerFilter = id;render(); } }
@@ -12379,7 +12423,7 @@ document.addEventListener("click", async (e) => {
       secApply(t, (sl) => { delete sl.sec; });   // 手で決めた分数だけ捨てる（録らない指定はそのまま）
       save(); render(); break;
     }
-    case "pnextsec": completeRecordingSection(); break;
+    case "pnextsec": completeRecordingSection(typeof b === "undefined" ? null : b); break;
     case "psetstart": {
       const el = document.getElementById("pstarttime");
       if (el && el.value.trim()) { S.plan.start = min2hm(hm2min(el.value)); save(); render(); }
@@ -12499,6 +12543,7 @@ document.addEventListener("click", async (e) => {
       catch (error) { alert(error.message); }
       break;
     }
+    case "free-rec-start": startUnscheduledRecording(b); break;
     case "pstart": {
       const s2 = S.plan.slots.find((x) => x.id === id);
       if (s2) { pushUndo(); startSlot(s2); S.planFocus = s2.id; save(); render(); }
