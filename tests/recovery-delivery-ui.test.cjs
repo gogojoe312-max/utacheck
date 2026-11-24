@@ -34,7 +34,7 @@ async function fixture(options={}){
  });
  c.group=id=>c.S.groups.find(g=>g.id===(id||c.S.groupId));c.member=id=>c.S.members.find(m=>m.id===id);c.showsNewestFirst=()=>c.S.shows;
  vm.runInContext(app.slice(app.indexOf('function autoShowGroupId('),app.indexOf('function showsFor()')),c);
- vm.runInContext(app.slice(app.indexOf('function publicationData('),app.indexOf('async function gh(')),c);vm.runInContext(fn('payloadKey'),c);vm.runInContext(fn('gistRawSource'),c);
+ vm.runInContext(app.slice(app.indexOf('function publicationData('),app.indexOf('async function gh(')),c);vm.runInContext(fn('payloadKey')+'\n'+fn('samePublicationKey'),c);vm.runInContext(fn('gistRawSource'),c);
  vm.runInContext(app.match(/^const NAMESEP = .*;$/m)[0]+'\n'+app.match(/^const hash32 = .*;$/m)[0]+'\n'+['stripParens','splitNames','songSig','buildSong'].map(fn).join('\n'),c);
  const orig=c.S;c.S=clone(orig);c.S.groups[0].nopub=false;c.S.groups[0].gistId=gistId;c.S.groups[0].src=src;c.S.shows[0].nopub=false;
  const remote=clone(c.publicationData('g'));delete remote.shows[0].recoveredSourceShowId;remote.folderOrder=[];remoteRaw=JSON.stringify(remote);c.S=orig;
@@ -662,4 +662,25 @@ test('Excel reattachment metadata no longer blocks the single-phone delivery and
  assert.equal(await f.c.RecoveryDelivery.reconcilePending(),true);assert.equal(await f.c.RecoveryDelivery.push('g',false),'sent');
  const wire=JSON.parse(f.remote());assert.equal(wire.lib[0].sheetName,'歌割');assert.equal(wire.lib[0].micSheet,'マイク');assert.deepEqual(wire.lib[0].micMap,{Member:'1'});assert.equal(wire.lib[0].groupCells.A,'B4');
  assert.equal(wire.notes[0].memo,'Phone feedback after Excel reattachment');assert.equal(f.c.S.recoveryDelivery.targets[0].status,'ready');assert.equal(f.patches(),1);assert.equal(f.c.RecoveryDelivery.pending('g'),false);
+});
+
+test('an edit during PATCH preserves the confirmed receipt and queues the newer local note',async()=>{
+ const f=await fixture({network:async(_url,options,c)=>{
+   if(options.method==='PATCH')c.S.notes[0].memo='Newer live correction';
+ }});
+ await f.check();f.modal().querySelector('#rd-approve').checked=true;f.modal().querySelector('#rd-exclusive').checked=true;
+ f.click('rd-commit');await f.until(()=>f.calls.some(x=>x.action==='pushOne'));
+ assert.equal(await f.c.RecoveryDelivery.push('g',true),'sent');
+ assert.equal(f.patches(),1);assert.equal(JSON.parse(f.remote()).notes[0].memo,'Correction');
+ assert.equal(f.c.S.recoveryDelivery.targets[0].status,'ready');assert.equal(f.c.S.notes[0].memo,'Newer live correction');
+ assert.equal(f.c.RecoveryDelivery.pending('g'),true);
+});
+
+test('legacy focus-only signatures do not trigger another recovery PATCH',async()=>{
+ const f=await fixture();await f.check();f.modal().querySelector('#rd-approve').checked=true;f.modal().querySelector('#rd-exclusive').checked=true;
+ f.click('rd-commit');await f.until(()=>f.calls.some(x=>x.action==='pushOne'));
+ assert.equal(await f.c.RecoveryDelivery.push('g',true),'sent');
+ const g=f.c.S.groups[0],legacy=JSON.parse(g.lastKey);legacy.focusShow='old-selection';g.lastKey=JSON.stringify(legacy);
+ assert.equal(f.c.RecoveryDelivery.pending('g'),false);
+ assert.equal(await f.c.RecoveryDelivery.push('g',false),'same');assert.equal(f.patches(),1);
 });
