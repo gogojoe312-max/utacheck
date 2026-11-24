@@ -9965,7 +9965,7 @@ function recBar() {
   return `${tabs ? `<div class="sectabs" data-section-strip="main">${tabs}</div>` : ""}${subTabs}${recordingSingerFilterHTML(recSong())}
   <div class="aubar rec-tools">
     <div class="rec-tools-meta">
-      ${recordingPlanExpired() ? '' : '<button class="chip sm" data-act="goplan">進行表</button><button class="chip sm" data-act="recschedule" aria-pressed="'+!U.recSchedulePaused+'">'+(U.recSchedulePaused ? '予定に合わせる' : '自動開始中')+'</button>'}
+      ${recordingPlanExpired() ? '' : '<button class="chip sm" data-act="goplan">進行表</button>'+(live?.s.kind === 'unscheduled' ? '' : '<button class="chip sm" data-act="recschedule" aria-pressed="'+!U.recSchedulePaused+'">'+(U.recSchedulePaused ? '予定に合わせる' : '自動開始中')+'</button>')}
       ${live ? `<span class="rec-person">${h(live.s.name)}${live.done ? " · 終了" : ""}</span>` : '<span class="grow"></span>'}
       ${live && live.s.kind !== "unscheduled" && (live.live || live.scheduled) ? '<span id="pcd">—</span>' : ""}
       <button class="chip sm" data-act="draw" aria-label="手書き" aria-pressed="${!!U.draw}">✎</button>
@@ -10229,6 +10229,10 @@ function tickPlan() {
     return;
   }
   if (!live || !live.live) { if (el) el.textContent = "—"; if (el2) el2.textContent = ""; return; }
+  if (live.s.kind === "unscheduled") {
+    if (el2) { el2.textContent = fmtLeft(Math.max(0,(Date.now()-live.s.startAt)/1000)); el2.style.color = "var(--dim)"; }
+    return;
+  }
   if (el2 && !live.s.startAt) { el2.textContent = ""; }
   else if (el2) {
     const all = Number(live.s.min || 0) * 60 - (live.s.startAt ? (Date.now() - live.s.startAt) / 1000 : 0);

@@ -684,3 +684,29 @@ test('legacy focus-only signatures do not trigger another recovery PATCH',async(
  assert.equal(f.c.RecoveryDelivery.pending('g'),false);
  assert.equal(await f.c.RecoveryDelivery.push('g',false),'same');assert.equal(f.patches(),1);
 });
+
+for(const outcome of ['sent','lost-again','destination-changed'])test('guarded baseline retry: '+outcome,async()=>{
+ let drop=true;const f=await fixture({network:async(_url,opts)=>{if(opts.method==='PATCH'&&drop)throw Error('lost request');}});
+ await f.check();f.modal().querySelector('#rd-approve').checked=true;f.modal().querySelector('#rd-exclusive').checked=true;
+ f.click('rd-commit');await f.until(()=>f.calls.some(call=>call.action==='pushOne'));
+ const g=f.c.S.groups[0],target=f.c.S.recoveryDelivery.targets[0];f.c.S.deliveryOwnerDeviceId=f.c.S.deviceId;
+ let now=0;f.c.performance={now:()=>now};
+ const base=f.remote(),beforeKey=g.lastKey,confirm=()=>f.c.RecoveryDelivery.reconcile({groupId:'g',silent:true});
+ f.c.S.notes[0].memo='Unsent note';
+ await assert.rejects(()=>f.c.RecoveryDelivery.push('g',true));
+ const writes=()=>f.calls.filter(call=>call.method==='PATCH').length;
+ assert.equal(writes(),1);assert.equal(await confirm(),false);now=29999;assert.equal(await confirm(),false);
+ f.setRemote(base+' ');now=30001;assert.equal(await confirm(),false);f.setRemote(base);assert.equal(await confirm(),false);
+ now+=30000;assert.equal(await confirm(),true);assert.equal(writes(),1);assert.equal(g.lastKey,beforeKey);assert.equal(g.publishKeyPending,true);
+ assert.equal(target.status,'ready');assert(target.baselineRetry);assert(target.pendingDigest);
+ if(outcome==='sent'){
+   drop=false;assert.equal(await f.c.RecoveryDelivery.push('g',false),'sent');assert.equal(writes(),2);
+   assert.equal(target.status,'ready');assert.equal(target.baselineRetry,undefined);assert.equal(JSON.parse(f.remote()).notes[0].memo,'Unsent note');return;
+ }
+ if(outcome==='destination-changed'){
+   f.setRemote(base+' ');await assert.rejects(()=>f.c.RecoveryDelivery.push('g',false));assert.equal(writes(),1);assert.equal(target.status,'uncertain');return;
+ }
+ await assert.rejects(()=>f.c.RecoveryDelivery.push('g',false));assert.equal(writes(),2);
+ now+=60000;assert.equal(await confirm(),false);now+=60000;assert.equal(await confirm(),false);assert.equal(writes(),2);
+ assert.equal(target.status,'uncertain');
+});
