@@ -9,5 +9,5 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: node --test tests/*.test.cjs > /tmp/qa.log || { grep -A35 '^not ok' /tmp/qa.log; tail -10 /tmp/qa.log; exit 1; }
+      - run: node --test --test-reporter=tap tests/*.test.cjs > /tmp/qa.log || { grep -A35 '^not ok' /tmp/qa.log || true; tail -10 /tmp/qa.log; exit 1; }
       - run: tail -10 /tmp/qa.log
