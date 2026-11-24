@@ -22,6 +22,7 @@ async function checkUnscheduledRecording(page) {
     });
     await page.locator('[data-act="jumpsec"][data-id="1B"]').click();
     await start.click();
+    await page.waitForFunction(() => /^\d+:\d{2}$/.test(document.getElementById('pcd2')?.textContent));
     await ok.click();
     assert.equal(await page.locator('#tab-1B').getAttribute('aria-label'),'1B：録り終わり');
     await page.evaluate(() => saveNow());
