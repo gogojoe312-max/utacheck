@@ -59,7 +59,8 @@ function recoverySlice(text,start,end){
 function reconcileFixture(kind){
  const key=id=>JSON.stringify({groupId:id,work:'latest'}),names=kind==='duplicate-names'?['Same','Same']:['Rosy','OCHA'];
  const target=(id,status)=>({groupId:id,groupName:id==='r'?names[0]:names[1],gistId:'existing-'+id,src:'https://example.invalid/'+id,status,expectedRemoteSha256:id==='r'?'r-seen':'before',heldLocalShowIds:[]});
- const S={ghToken:'SYNTHETIC',autoPub:true,groups:[
+ let now=0;
+ const S={ghToken:'SYNTHETIC',deviceId:'local',deliveryOwnerDeviceId:'local',autoPub:true,groups:[
   {id:'r',name:names[0],gistId:'existing-r',src:'https://example.invalid/r',lastKey:key('r'),publishKeyPending:false},
   {id:'o',name:names[1],gistId:'existing-o',src:'https://example.invalid/o',lastKey:'old-key',publishKeyPending:true}],
   recoveryDelivery:{version:2,targets:[target('r','ready'),{...target('o','uncertain'),pendingDigest:'sent',pendingKey:key('o')}]},
@@ -72,18 +73,21 @@ function reconcileFixture(kind){
  if(kind==='partial-success')issues.push('Other：配信結果の確認待ち');
  const calls=[],screen={textContent:'',style:{}},draft={memo:'Keep draft'},privateBefore=JSON.stringify([S.rosters,S.notes,S.staffMemos,S.recs]),rosyBefore=JSON.stringify([S.groups[0],S.recoveryDelivery.targets[0]]);
  const c=vm.createContext({S,U:{view:'live',sheet:draft},startupRecoveryNetworkHold:true,pushState:'配信結果の確認待ち（1件）',publishIssues:issues,
-  session:null,pushing:false,publishInFlight:false,ready:()=>true,recordingInboxAdmitWriter:()=>()=>{},RecoveryDeliveryScope:{plan(){}},packetForBindings:()=>({}),
+  performance:{now:()=>now},backupDigest:async()=> 'token-digest',session:null,pushing:false,publishInFlight:false,ready:()=>true,recordingInboxAdmitWriter:()=>()=>{},RecoveryDeliveryScope:{plan(){}},packetForBindings:()=>({}),
   currentBinding:id=>S.recoveryDelivery.targets.find(t=>t.groupId===id),copy:v=>JSON.parse(JSON.stringify(v)),payloadFor:(_s,id)=>({groupId:id,work:'latest'}),payloadKey:JSON.stringify,
   readTarget:async(t,token,active)=>{assert.equal(token,'SYNTHETIC');assert(active());calls.push('GET:'+t.groupId);return {digest:kind==='old'?'before':kind==='foreign'||t.groupId==='x'?'foreign':'sent'};},
   persist:async()=>{calls.push('persist');if(kind==='persist-fails')throw Error('synthetic-save-failure');},
   fail:code=>{throw Object.assign(Error(code),{reconnectCode:code});},message:e=>e.reconnectCode==='unknown'?unknown:e.reconnectCode||e.message,
   alert(){},render(){},app:{querySelector:()=>screen},fetch(){throw Error('External transport forbidden');}});
- vm.runInContext(recoverySlice(deliverySource,'function canPublish(','\n  // Preview')+'\n'+
+ vm.runInContext(recoverySlice(deliverySource,'function singleOwner(','function canPublish(')+'\n'+
+  recoverySlice(deliverySource,'function savedTargets(','function savedTarget(')+'\n'+
+  recoverySlice(source,'function samePublicationKey(','async function gistPush(')+'\n'+
+  recoverySlice(deliverySource,'function canPublish(','\n  // Preview')+'\n'+
   recoverySlice(deliverySource,'function pending(','function packetForBindings(')+'\nglobalThis.RecoveryDelivery={pending,hasResumed};\n'+
   recoverySlice(source,'function recoveryPublicationHolds()','async function pushOne(')+'\n'+
-  recoverySlice(deliverySource,'async function reconcile({',"\n  document.addEventListener('click'"),c);
+  recoverySlice(deliverySource,'const baselineObservations=',"\n  document.addEventListener('click'"),c);
  c.renderPublishStatus();
- return {c,S,calls,screen,draft,privateBefore,rosyBefore,key};
+ return {c,S,calls,screen,draft,privateBefore,rosyBefore,key,advance:ms=>{now+=ms;}};
 }
 for(const [kind,expected,remaining] of [
  ['pending','配信結果を確認済み',[]],['old','未送信',[]],
@@ -94,15 +98,19 @@ for(const [kind,expected,remaining] of [
  ['other-error','配信に確認事項あり',['Rosy：別の通信エラー']],['held-show','配信に確認事項あり',[]]
 ])test('reconciled status preserves unsent work: '+kind,async()=>{
  const f=reconcileFixture(kind);await f.c.reconcile();
+ if(kind==='old'){
+   assert.equal(f.S.recoveryDelivery.targets[1].status,'uncertain');assert.equal(f.c.publicationStatusText(),'配信結果の確認待ち（1件）');
+   f.advance(30000);await f.c.reconcile();
+ }
  assert.equal(f.c.publicationStatusText(),expected);assert.equal(f.screen.textContent,' ・ '+expected);
  assert.equal(f.screen.style.color,expected==='配信結果を確認済み'?'var(--dim)':'var(--bad)');
  assert.deepEqual(Array.from(f.c.publishIssues),remaining);assert.equal(f.c.pushState,'配信結果の確認待ち（1件）');
  assert.equal(f.c.U.sheet,f.draft);assert.equal(JSON.stringify([f.S.groups[0],f.S.recoveryDelivery.targets[0]]),f.rosyBefore);
  assert.equal(JSON.stringify([f.S.rosters,f.S.notes,f.S.staffMemos,f.S.recs]),f.privateBefore);assert.equal(f.c.pushing,false);
- assert.deepEqual(f.calls,kind==='partial-success'?['GET:o','persist','GET:x']:kind==='foreign'?['GET:o']:['GET:o','persist']);
+ assert.deepEqual(f.calls,kind==='partial-success'?['GET:o','persist','GET:x']:kind==='foreign'?['GET:o']:kind==='old'?['GET:o','GET:o','persist']:['GET:o','persist']);
  const o=f.S.recoveryDelivery.targets[1],g=f.S.groups[1];
  if(['foreign','persist-fails'].includes(kind)){assert.equal(o.status,'uncertain');assert.equal(o.pendingDigest,'sent');assert.equal(g.lastKey,'old-key');assert.equal(g.publishKeyPending,true);}
- else{assert.equal(o.status,'ready');assert.equal(o.pendingDigest,undefined);assert.equal(g.lastKey,kind==='old'?'old-key':f.key('o'));assert.equal(f.c.RecoveryDelivery.pending('o'),kind==='old');}
+ else{assert.equal(o.status,'ready');assert.equal(o.pendingDigest,kind==='old'?'sent':undefined);assert.equal(g.lastKey,kind==='old'?'old-key':f.key('o'));assert.equal(f.c.RecoveryDelivery.pending('o'),kind==='old');}
 });
 
 for(const held of ['blocked','prepared','sending','uncertain'])test('OCHA LIVE status excludes another group hold without clearing it: '+held,()=>{
