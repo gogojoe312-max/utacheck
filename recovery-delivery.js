@@ -156,7 +156,7 @@
     }catch(error){el.textContent=error?.reconnectCode==='local-changed'?'確認中に手元の内容が変わりました。入力後にもう一度確認してください。':'差分を読み取れませんでした。手元の歌詞・指摘と現在の配信は変更していません。';}
     finally{differenceBusy=false;if(button)button.disabled=false;}
   }
-  function pending(gid){if(!canPublish(gid))return false;const g=S.groups.find(g=>g.id===gid);try{return g.publishKeyPending||payloadKey(payloadFor(S,gid))!==g.lastKey;}catch(_){return true;}}
+  function pending(gid){if(!canPublish(gid))return false;const g=S.groups.find(g=>g.id===gid);try{return g.publishKeyPending||!samePublicationKey(payloadKey(payloadFor(S,gid)),g.lastKey);}catch(_){return true;}}
   function hasResumed(){return ready()&&!session&&(S.recoveryDelivery?.targets||[]).some(t=>canPublish(t.groupId));}
   function packetForBindings(gid){return {app:'utacheck-existing-delivery',version:2,targets:S.recoveryDelivery.targets.filter(t=>!gid||t.groupId===gid).map(t=>{
     const {sourceSha256,groupName,gistId,src,sourceShowIds,expectedRemoteSha256}=t;return {sourceSha256,groupName,gistId,src,sourceShowIds,expectedRemoteSha256};
@@ -471,13 +471,18 @@
     const binding=currentBinding(gid),token=S.ghToken,group=S.groups.find(g=>g.id===gid),baseline=JSON.stringify(S),contentSnapshot=JSON.stringify({...S,recoveryDelivery:undefined});
     pushing=true;
     let attempted=false,pendingDigest='',pendingKey='',previousDigest=binding.expectedRemoteSha256,release;
-    const active=()=>ready()&&!session&&currentBinding(gid)===binding&&S.ghToken===token&&S.groups.find(g=>g.id===gid)===group&&!group.nopub&&group.gistId===binding.gistId&&group.src===binding.src&&JSON.stringify({...S,recoveryDelivery:undefined})===contentSnapshot;
+    const destination=group.gistId,source=group.src,encryptionKey=group.key;
+    const bound=()=>ready()&&!session&&currentBinding(gid)===binding&&S.ghToken===token&&S.groups.find(g=>g.id===gid)===group&&!group.nopub
+      &&group.gistId===destination&&binding.gistId===destination&&group.src===source&&binding.src===source&&group.key===encryptionKey;
+    const active=()=>bound()&&JSON.stringify({...S,recoveryDelivery:undefined})===contentSnapshot;
+    // After dispatch, verify the submitted bytes even if the editor continues working.
+    const confirming=()=>bound()&&binding.status==='sending'&&binding.pendingDigest===pendingDigest&&binding.pendingKey===pendingKey;
     try{
       release=recordingInboxAdmitWriter();
       const plan=RecoveryDeliveryScope.plan(S,packetForBindings(gid)),originalTarget=plan.targets.find(t=>t.groupId===gid);if(!originalTarget)fail('target');
       const target=RecoveryDeliveryScope.extendForOwnedShows(S,originalTarget);
       const localPayload=payloadFor(S,gid),key=payloadKey(localPayload);
-      if(!force&&!group.publishKeyPending&&group.lastKey===key)return 'same';
+      if(!force&&!group.publishKeyPending&&samePublicationKey(group.lastKey,key))return 'same';
       const remote=await readTarget(target,token,active);
       if(remote.digest!==binding.expectedRemoteSha256&&!singleOwner())fail('source-changed');
       const merged=singleOwner() ? RecoveryDeliveryScope.mergeOwnerPublication(target,remote.data,localPayload)
@@ -492,10 +497,10 @@
       pendingDigest=digest;pendingKey=key;binding.expectedRemoteSha256=previousDigest;binding.status='sending';binding.pendingDigest=digest;binding.pendingKey=key;
       await persist();if(!active())fail('cancelled');
       attempted=true;
-      await request('https://api.github.com/gists/'+target.gistId,token,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({files:{'utacheck.json':{content:raw}}})},active);
-      const confirmed=await readTarget(target,token,active);if(confirmed.digest!==digest)fail('unknown');
+      await request('https://api.github.com/gists/'+target.gistId,token,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({files:{'utacheck.json':{content:raw}}})},confirming);
+      const confirmed=await readTarget(target,token,confirming);if(confirmed.digest!==digest)fail('unknown');
+      await preserveRemote(target,confirmed,confirming);
       binding.expectedRemoteSha256=digest;binding.status='ready';delete binding.pendingDigest;delete binding.pendingKey;
-      await preserveRemote(target,confirmed,active);
       group.lastKey=key;group.publishKeyPending=false;delete binding.lastFailure;group.publishWarning=merged.heldLocalShowIds.length?'現配信の公演を保持しています。同じ公演の端末版差分は保留です。':'';await persist();return 'sent';
     }catch(e){
       if(attempted){binding.expectedRemoteSha256=previousDigest;binding.status='uncertain';binding.pendingDigest=pendingDigest;binding.pendingKey=pendingKey;try{await persist();}catch(_){};const error=new Error(message({reconnectCode:'unknown'}));error.publicationUnknown=true;throw error;}
