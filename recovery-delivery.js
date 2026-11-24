@@ -508,17 +508,23 @@
     const resolvedIssues=new Set();let confirmed=0;
     try{
       release=recordingInboxAdmitWriter();
-      RecoveryDeliveryScope.plan(S,packetForBindings(groupId));
+      savedTargets();
       for(const target of S.recoveryDelivery?.targets||[]){
         if(groupId&&target.groupId!==groupId)continue;
         if(onlyUncertain&&!['sending','uncertain'].includes(target.status)&&!(includeBlocked&&target.status==='blocked'))continue;
-        if(target.status==='ready')continue;if(target.status==='prepared')fail('storage');if(!target.pendingDigest&&target.status!=='blocked')fail('unknown');
+        if(target.status==='ready')continue;if(target.status==='prepared')fail('storage');const confirming=target.status==='sending'||target.status==='uncertain';
+        if(confirming&&(!target.pendingDigest||!target.pendingKey))fail('unknown');
         const token=S.ghToken,group=S.groups.find(g=>g.id===target.groupId),key=group?.key;
         const active=()=>ready()&&!session&&S.ghToken===token&&currentBinding(target.groupId)===target
           &&S.groups.find(g=>g.id===target.groupId)===group&&!group?.nopub&&group?.gistId===target.gistId&&group?.src===target.src&&group?.key===key;
+        if(!group||group.gistId!==target.gistId||group.src!==target.src||group.nopub)fail('target');
+        // A receipt concerns the bytes already sent. Subsequent local edits must
+        // not prevent reading it or allow an unrelated remote revision to count.
+        if(!confirming)RecoveryDeliveryScope.plan(S,packetForBindings(target.groupId));
         const remote=await readTarget(target,token,active);
+        if(confirming&&remote.digest!==target.pendingDigest)fail('unknown');
         let rebased=false,ownerMerge=null;
-        if(includeBlocked&&singleOwner()){
+        if(!confirming&&includeBlocked&&singleOwner()){
           const scope=RecoveryDeliveryScope.extendForOwnedShows(S,RecoveryDeliveryScope.plan(S,packetForBindings(target.groupId)).targets[0]);
           ownerMerge=RecoveryDeliveryScope.mergeOwnerPublication(scope,remote.data,payloadFor(S,target.groupId));
           await preserveRemote(scope,remote,active);rebased=true;
