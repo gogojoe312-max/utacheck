@@ -1,0 +1,25 @@
+name: Verify half-length lyric import
+on:
+  push:
+    branches: [work/check-half-lyric-sheet-1127]
+permissions:
+  contents: write
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: |
+          node <<'JS'
+          const fs=require('fs');for(const p of ['app.js','sw.js','index.html']){let s=fs.readFileSync(p,'utf8');if(p==='app.js'){const old="    const half=names.filter(name=>/1[\\s_-]*half|ワンハーフ/i.test(name.normalize('NFKC')));";if(s.split(old).length!==2)throw Error('unexpected source');s=s.replace(old,()=>"    const half=names.filter(name=>!/マイク|番号|表紙|メモ/i.test(name.normalize('NFKC')) && /1[\\s_-]*half|ワンハーフ/i.test(name.normalize('NFKC')));");}fs.writeFileSync(p,s.replaceAll('16.41.58.86','16.41.58.87'));}
+          JS
+          node --test tests/*.test.cjs > /tmp/results || { grep -A20 '^not ok' /tmp/results; exit 1; }
+          tail -10 /tmp/results
+          git config user.name github-actions
+          git config user.email actions@users.noreply.github.com
+          git read-tree ceb80e737fedd8ca9ccbb09d996b1190d1def78a
+          git add app.js index.html sw.js tests/half-mic-selection.test.cjs
+          commit=$(git commit-tree "$(git write-tree)" -p ceb80e737fedd8ca9ccbb09d996b1190d1def78a -m "Exclude microphone sheets when importing half-length lyrics")
+          git push origin "$commit:refs/heads/work/verified-half-mic-1127"
