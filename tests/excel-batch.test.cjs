@@ -93,9 +93,9 @@ test('formatting to the end of a worksheet does not expand the import grid',asyn
  const result=await c.parseXLSX(file('歌詞.xlsx',XLSX.write(w,{type:'buffer'})));
  assert.deepEqual(Array.from(result.lines.filter(r=>r[1]),r=>[r[0],r[1],r[3]]),[['','先頭の歌詞','A3'],['','最後の歌詞','A4']]);
 });
-test('blank first sheet and macro or binary Excel formats still find the lyric sheet',async()=>{
+test('empty first sheet does not import lyrics from later sheets',async()=>{
  for(const type of ['xlsx','xlsm','xlsb']){const {c}=setup();const w=XLSX.utils.book_new();XLSX.utils.book_append_sheet(w,XLSX.utils.aoa_to_sheet([]),'Sheet1');XLSX.utils.book_append_sheet(w,XLSX.utils.aoa_to_sheet([['佐藤','最初の歌詞です'],['鈴木','最後の歌詞です']]),'歌割');
- const result=await c.parseXLSX(file('歌割.'+type,XLSX.write(w,{type:'buffer',bookType:type,compression:true})));assert.equal(result.sheetName,'歌割');assert.equal(result.lines.filter(r=>r[1]).length,2);}
+ await assert.rejects(c.parseXLSX(file('歌割.'+type,XLSX.write(w,{type:'buffer',bookType:type,compression:true}))),/歌詞がありません/);}
 });
 
 test('recording mode accepts multiple Excel files and keeps lyric text',async()=>{
