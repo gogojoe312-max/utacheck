@@ -115,10 +115,10 @@ test('error explanations retain details and separate known capacity errors from 
 });
 
 
-test('an explicitly named 1Half import selects its half sheet even when Full is first',()=>{
+test('file names cannot override the first tab selected for import',()=>{
  const {c}=setup(),wb=XLSX.utils.book_new();
  for(const name of ['Full','1Half'])XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([['佐藤','合成歌詞です']]),name);
- assert.equal(c.pickSheet(wb,c.S,'合成曲_1Half_歌割.xlsx'),'1Half');
- assert.equal(c.pickSheet(wb,c.S,'合成曲_１Ｈａｌｆ_歌割.xlsx'),'1Half');
+ assert.equal(c.pickSheet(wb,c.S,'合成曲_1Half_歌割.xlsx'),'Full');
+ assert.equal(c.pickSheet(wb,c.S,'合成曲_１Ｈａｌｆ_歌割.xlsx'),'Full');
  assert.equal(c.pickSheet(wb,c.S,'合成曲_歌割.xlsx'),'Full','Ordinary imports retain their existing first-sheet choice');
 });
