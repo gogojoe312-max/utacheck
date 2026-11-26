@@ -118,7 +118,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.86";
+const APP_VER = "16.41.58.87";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -3563,42 +3563,9 @@ function nameScore(v) {
 }
 const looksName = (v) => nameScore(v) >= 0.6;
 
-// どのシートが歌割かを選ぶ。
-// 1枚目が「マイク番号」のように番号だけの表のことがあるため。
-function pickSheet(wb, localState=S, filename="") {
-  const names = wb.SheetNames;
-  if(/1[\s_-]*half|ワンハーフ/i.test(String(filename).normalize('NFKC'))){
-    const half=names.filter(name=>/1[\s_-]*half|ワンハーフ/i.test(name.normalize('NFKC')));
-    if(half.length===1)return half[0];
-  }
-  const score = (sn) => {
-    const sh2 = wb.Sheets[sn];
-    if (!sh2 || !sh2["!ref"]) return -1e9;
-    let pt = 0;
-    if (/歌割|唄割|うたわり/.test(sn)) pt += 1000;
-    if (/マイク|ﾏｲｸ|番号|MC|表紙|メモ/i.test(sn)) pt -= 800;
-    if (/^(sheet|シート)\s*\d*$/i.test(sn.trim())) pt -= 600;   // 名前を付けていない予備のシート
-    // グループ名が付いたシートは、その曲の歌割である見込みが高い
-    if ((localState.groups || []).some((g) => g.name && sn.indexOf(g.name) >= 0)) pt += 500;
-    (Object.keys(localState.rosters || {})).forEach((gn) => { if (gn && sn.indexOf(gn) >= 0) pt += 500; });
-    // 名前らしい文字（漢字・かな）が入った短いセルを数える
-    const g = XLSX.utils.sheet_to_json(sh2, { header: 1, blankrows: false, defval: "" });
-    let nameLike = 0, numLike = 0;
-    g.forEach((r) => (r || []).forEach((v) => {
-      const t = String(v == null ? "" : v).trim();
-      if (!t || t.length > 24) return;
-      if (/^[\d０-９１-９・\s]+$/.test(t)) numLike++;
-      else if (/[\u3040-\u30ff\u4e00-\u9fff]/.test(t) && t.length <= 12) nameLike++;
-    }));
-    return pt + nameLike - numLike * 2;
-  };
-  // 基本は1枚目。1枚目が明らかに歌割でない時だけ、他を探す。
-  const first = names[0];
-  const bad = /マイク|ﾏｲｸ|番号/i.test(first) || score(first) < 0;
-  if (!bad) return first;
-  let best = first, bs = score(first);
-  names.forEach((sn) => { const v = score(sn); if (v > bs) { bs = v; best = sn; } });
-  return best;
+// 新しい歌割は、ファイル名に関係なく先頭のタブから取り込む。
+function pickSheet(wb) {
+  return wb.SheetNames[0];
 }
 
 // Excelの吹き出し（テキストボックス）を読む。煽りがここに書かれていることがある。
@@ -3644,11 +3611,12 @@ async function parseXLSX(file, buf, local) {
   // cellStyles を付けると、セルの塗りつぶしの色が読める。
   // 歌割表ではワンハーフでカットした箇所をグレーで塗ってあるので、それを歌詞から外す。
   let wb=local?.workbook;
-  if(!wb){try { wb = XLSX.read(raw0, { type: "array", cellStyles: true, bookFiles: true }); }
-  catch (e) { wb = XLSX.read(raw0, { type: "array", bookFiles: true }); }}
-  Object.values(wb.Sheets).forEach(trimExcelRange);
-  const pickedName = local?.sheetName || pickSheet(wb,local?.state||S,file.name);
+  if(!wb){try { wb = XLSX.read(raw0, { sheets: 0, type: "array", cellStyles: true, bookFiles: true }); }
+  catch (e) { wb = XLSX.read(raw0, { sheets: 0, type: "array", bookFiles: true }); }}
+  const pickedName = local?.sheetName || pickSheet(wb);
   const sh = wb.Sheets[pickedName];
+  if (!sh) throw new Error("先頭のタブを読み取れません。");
+  trimExcelRange(sh);
   const bubbles = readBubbles(wb.files, wb.SheetNames.indexOf(pickedName));
   const isGray = (ri, ci) => {
     const cell = sh[XLSX.utils.encode_cell({ r: ri, c: ci })];
@@ -3824,7 +3792,7 @@ async function parseXLSX(file, buf, local) {
   const sheetName = pickedName;
   // マイク番号のシートは歌割と同じ並びで、名前の代わりに番号が入っている。
   // 書き出しの時に、そちらも直せるよう覚えておく。
-  const micName = wb.SheetNames.find((n) => n !== pickedName && /マイク|ﾏｲｸ/i.test(n)) || "";
+  const micName = local?.inspectOriginal ? wb.SheetNames.find((n) => n !== pickedName && /マイク|ﾏｲｸ/i.test(n)) || "" : "";
   // どの行にも当てはまらなかった吹き出しは、最後にまとめて入れる
   Object.keys(bubbleAt).forEach((k) => bubbleAt[k].forEach((t2) => rows.push(["煽り", softText(t2), "", "", "", "", "煽り", ""])));
   const parsed0 = finalize(cleanName(file.name), head.join("　"), rows);
@@ -5666,7 +5634,7 @@ async function readOriginalExcel(blob, prepared = {}) {
 async function originalExcelSheet(prepared, sheetName, current = S) {
   if (!prepared.workbook.SheetNames.includes(sheetName)) return null;
   if (!prepared.songs.has(sheetName)) {
-    const parsed = await parseXLSX({name:"original.xlsx"},prepared.bytes,{state:current,workbook:prepared.workbook,sheetName});
+    const parsed = await parseXLSX({name:"original.xlsx"},prepared.bytes,{state:current,workbook:prepared.workbook,sheetName,inspectOriginal:true});
     const candidate = buildSong(parsed,{addMember:name => ({id:name}),uid:() => "original-excel-inspection"});
     prepared.songs.set(sheetName,candidate);
     prepared.layouts.set(sheetName,originalExcelLayout(candidate,id => id));
