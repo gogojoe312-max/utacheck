@@ -10,5 +10,5 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: b5eb10682e8a844d93eb4a4fd77357c1dab5afb8
+          ref: 2c1b64434c7b68f17a44b80ac96cb8943e2473fe
       - run: node --test --test-reporter=tap tests/*.test.cjs >/tmp/results || { grep -A20 '^not ok' /tmp/results; exit 1; }
