@@ -118,7 +118,7 @@ recordingInboxOwnerUI();
 
 
 const KEY = "utacheck.v1";
-const APP_VER = "16.41.58.86";
+const APP_VER = "16.41.58.87";
 const uid = () => Math.random().toString(36).slice(2, 9);
 const h = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -3568,7 +3568,7 @@ const looksName = (v) => nameScore(v) >= 0.6;
 function pickSheet(wb, localState=S, filename="") {
   const names = wb.SheetNames;
   if(/1[\s_-]*half|ワンハーフ/i.test(String(filename).normalize('NFKC'))){
-    const half=names.filter(name=>/1[\s_-]*half|ワンハーフ/i.test(name.normalize('NFKC')));
+    const half=names.filter(name=>!/マイク|番号|表紙|メモ/i.test(name.normalize('NFKC')) && /1[\s_-]*half|ワンハーフ/i.test(name.normalize('NFKC')));
     if(half.length===1)return half[0];
   }
   const score = (sn) => {
