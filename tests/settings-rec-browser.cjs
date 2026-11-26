@@ -336,7 +336,9 @@ async function checkExcelReattach(page,width,dialogs){
     return new Uint8Array(XLSX.write(wb,{bookType:'xlsx',type:'array'}));
    },correct=make(),wrong=make(true);
    const file=new File([correct],title+'.xlsx',{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
-   const parsed=await parseXLSX(file,correct,{sheetName:'歌割',state:S});
+   // Recreate a previously saved song linked to the second sheet for reattachment.
+   const workbook=XLSX.read(correct,{type:'array',cellStyles:true,bookFiles:true});
+   const parsed=await parseXLSX(file,correct,{workbook,sheetName:'歌割',state:S});
    const addMember=name=>{const id='qa-excel-member-'+name;if(!S.members.some(m=>m.id===id))S.members.push({id,name});return{id};};
    const so=buildSong(parsed,{addMember,uid:()=> 'qa-excel-song'});
    Object.assign(so,{showId:'qa-excel-show',groupId:'qa-excel-group',xls:1,xlsSourceId:'qa-excel-missing',xlsAt:123});
