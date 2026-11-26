@@ -1,0 +1,24 @@
+name: Verify first-tab imports
+on:
+  push:
+    branches: [work/first-tab-1127]
+permissions:
+  contents: write
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: |
+          node <<'JS'
+          const fs=require('fs');let s=fs.readFileSync('app.js','utf8');for(const [o,n] of [["// どのシートが歌割かを選ぶ。\n// 1枚目が「マイク番号」のように番号だけの表のことがあるため。\nfunction pickSheet(wb, localState=S, filename=\"\") {\n  const names = wb.SheetNames;\n  if(/1[\\s_-]*half|ワンハーフ/i.test(String(filename).normalize('NFKC'))){\n    const half=names.filter(name=>/1[\\s_-]*half|ワンハーフ/i.test(name.normalize('NFKC')));\n    if(half.length===1)return half[0];\n  }\n  const score = (sn) => {\n    const sh2 = wb.Sheets[sn];\n    if (!sh2 || !sh2[\"!ref\"]) return -1e9;\n    let pt = 0;\n    if (/歌割|唄割|うたわり/.test(sn)) pt += 1000;\n    if (/マイク|ﾏｲｸ|番号|MC|表紙|メモ/i.test(sn)) pt -= 800;\n    if (/^(sheet|シート)\\s*\\d*$/i.test(sn.trim())) pt -= 600;   // 名前を付けていない予備のシート\n    // グループ名が付いたシートは、その曲の歌割である見込みが高い\n    if ((localState.groups || []).some((g) => g.name && sn.indexOf(g.name) >= 0)) pt += 500;\n    (Object.keys(localState.rosters || {})).forEach((gn) => { if (gn && sn.indexOf(gn) >= 0) pt += 500; });\n    // 名前らしい文字（漢字・かな）が入った短いセルを数える\n    const g = XLSX.utils.sheet_to_json(sh2, { header: 1, blankrows: false, defval: \"\" });\n    let nameLike = 0, numLike = 0;\n    g.forEach((r) => (r || []).forEach((v) => {\n      const t = String(v == null ? \"\" : v).trim();\n      if (!t || t.length > 24) return;\n      if (/^[\\d０-９１-９・\\s]+$/.test(t)) numLike++;\n      else if (/[\\u3040-\\u30ff\\u4e00-\\u9fff]/.test(t) && t.length <= 12) nameLike++;\n    }));\n    return pt + nameLike - numLike * 2;\n  };\n  // 基本は1枚目。1枚目が明らかに歌割でない時だけ、他を探す。\n  const first = names[0];\n  const bad = /マイク|ﾏｲｸ|番号/i.test(first) || score(first) < 0;\n  if (!bad) return first;\n  let best = first, bs = score(first);\n  names.forEach((sn) => { const v = score(sn); if (v > bs) { bs = v; best = sn; } });\n  return best;\n}\n\n","// 新しい歌割は、ファイル名に関係なく先頭のタブから取り込む。\nfunction pickSheet(wb) {\n  return wb.SheetNames[0];\n}\n\n"],["XLSX.read(raw0, { type: \"array\",","XLSX.read(raw0, { sheets: 0, type: \"array\","],["  Object.values(wb.Sheets).forEach(trimExcelRange);\n",""],["local?.sheetName || pickSheet(wb,local?.state||S,file.name)","local?.sheetName || pickSheet(wb)"],["  const sh = wb.Sheets[pickedName];","  const sh = wb.Sheets[pickedName];\n  if (!sh) throw new Error(\"先頭のタブを読み取れません。\");\n  trimExcelRange(sh);"],["const micName = wb.SheetNames.find","const micName = local?.inspectOriginal ? wb.SheetNames.find"],["/マイク|ﾏｲｸ/i.test(n)) || \"\";","/マイク|ﾏｲｸ/i.test(n)) || \"\" : \"\";"],["{state:current,workbook:prepared.workbook,sheetName}","{state:current,workbook:prepared.workbook,sheetName,inspectOriginal:true}"]]){if(!s.includes(o))throw Error('source mismatch');s=s.replaceAll(o,n)}fs.writeFileSync('app.js',s);for(const f of ['app.js','index.html','sw.js'])fs.writeFileSync(f,fs.readFileSync(f,'utf8').replaceAll('16.41.58.86','16.41.58.87'));
+          JS
+          git config user.name github-actions
+          git config user.email actions@users.noreply.github.com
+          git read-tree ceb80e737fedd8ca9ccbb09d996b1190d1def78a
+          git add app.js index.html sw.js tests/first-tab.test.cjs
+          commit=$(git commit-tree "$(git write-tree)" -p ceb80e737fedd8ca9ccbb09d996b1190d1def78a -m "Import new lyric workbooks from their first sheet only")
+          git push origin "$commit:refs/heads/work/first-tab-import-1127"
+          node --test tests/*.test.cjs >/tmp/results || { grep -A20 '^not ok' /tmp/results; exit 1; }
