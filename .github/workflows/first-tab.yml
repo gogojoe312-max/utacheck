@@ -20,5 +20,5 @@ jobs:
           git read-tree ceb80e737fedd8ca9ccbb09d996b1190d1def78a
           git add app.js index.html sw.js tests/first-tab.test.cjs
           commit=$(git commit-tree "$(git write-tree)" -p ceb80e737fedd8ca9ccbb09d996b1190d1def78a -m "Import new lyric workbooks from their first sheet only")
-          git push origin "$commit:refs/heads/work/first-tab-import-1127"
-          node --test tests/*.test.cjs >/tmp/results || { grep -A20 '^not ok' /tmp/results; exit 1; }
+          echo "checking first-tab behavior"
+          node --test --test-reporter=tap tests/*.test.cjs >/tmp/results || { grep -A20 '^not ok' /tmp/results; exit 1; }
